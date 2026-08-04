@@ -700,11 +700,15 @@ CREATE TABLE shipping_bills (
   created_at                          timestamptz NOT NULL DEFAULT now()
 );
 
--- Old sheet: Purchase Bill — raw-material/vendor purchases. "WORK1" was
--- never explained in the source spec either — kept as free text, flagged
--- as an open question (SCHEMA_NOTES.md #6). "G. TOTAL + GST" assumes a flat
--- 5% GST (2.5% CGST + 2.5% SGST) — same assumption the source made,
--- flagged there as adjustable if a different HSN/GST slab applies.
+-- Old sheet: Purchase Bill — raw-material/vendor purchases (2026-08-04:
+-- user confirmed this is the bill entry for goods received from a vendor
+-- party). "WORK1" -> renamed work_description: the job/work this purchase
+-- was for (e.g. printing, washing, dyeing) — kept as free text since the
+-- exact structured vocabulary wasn't pinned down, but its general purpose
+-- is now confirmed rather than a total unknown (SCHEMA_NOTES.md #6).
+-- "G. TOTAL + GST" assumes a flat 5% GST (2.5% CGST + 2.5% SGST) — same
+-- assumption the source made, flagged there as adjustable if a different
+-- HSN/GST slab applies.
 CREATE TABLE purchase_bills (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   vendor_party_id         uuid NOT NULL REFERENCES parties(id),
@@ -712,7 +716,7 @@ CREATE TABLE purchase_bills (
   vendor_invoice_date       date,
   qty                        integer NOT NULL DEFAULT 1,
   sq_feet                     numeric(10,2) NOT NULL DEFAULT 0,
-  work_notes                   text,        -- "WORK1" in the source — meaning unclear, see SCHEMA_NOTES.md #6
+  work_description             text,        -- "WORK1" in the source — general purpose confirmed 2026-08-04, see SCHEMA_NOTES.md #6
   unit_rate                     numeric(14,2) NOT NULL DEFAULT 0,
   order_id                       uuid REFERENCES orders(id),   -- optional make-to-order reference (added 2026-08 round)
   -- TOTAL SQ FEET = QTY * SQ FEET, then TOTAL AMOUNT = TOTAL SQ FEET * UNIT

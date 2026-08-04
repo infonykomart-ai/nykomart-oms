@@ -256,9 +256,12 @@ schema is treated as final.
    photo. Renamed to `orders.photo_type`, now a proper `order_photo_type`
    enum (`'Dispatch'`, `'Website'`) instead of free text.
 
-6. **`purchase_bills.work_notes`** ("WORK1" in the source) — the *original*
-   author's own comment says this "wasn't explained in the spec" and left
-   it as free text. Same here — still unresolved, flagging it forward.
+6. ~~`purchase_bills.work_notes`~~ **PARTIALLY RESOLVED (2026-08-04).** User
+   confirmed the sheet's general purpose: it's the bill entry for goods
+   received from a vendor party. Renamed to `work_description` — general
+   purpose is now known, but the exact structured vocabulary for what goes
+   in that specific field (job type? fabric type?) still wasn't pinned
+   down, so it stays free text rather than an enum.
 
 7. **`credit_notes.order_id`** — the source's "ORDER ID" column on Credit
    Note isn't clearly documented as either the marketplace order number or
@@ -289,15 +292,13 @@ schema is treated as final.
    supply the real mapping rule, this is a good candidate for a proper FK
    later.
 
-10. **`company_id` added to the statement-family import tables** (Bank
+10. ~~`company_id` added to the statement-family import tables~~ **RESOLVED
+    (2026-08-04).** User confirmed: Rugara and CASA ARRA DO have (or will
+    have) their own separate bank/portal accounts — `company_id` on Bank
     Statement, Etsy Ledger, eBay Transaction Report, eBay Freight Invoice,
-    eBay Shipment & Customs Report, eBay Prepaid Wallet Ledger, eBay Tax
-    Invoice Detail) that the *old* sheets didn't have, because at the time
-    they were built only one PNB bank account and one eBay/Etsy seller
-    account existed. **Confirm whether Rugara/CASA ARRA will ever have
-    their own separate bank/Etsy/eBay accounts** — if genuinely never, this
-    column is harmless but unnecessary; if yes, it's required and this
-    schema is already ready for it.
+    eBay Shipment & Customs Report, eBay Prepaid Wallet Ledger, and eBay Tax
+    Invoice Detail is required, not speculative. No schema change needed —
+    it was already modeled this way; just confirming the design is correct.
 
 11. **`skus` and `sizes` are both "hybrid" (nullable FK + raw text
     fallback) on `orders`**, but `item_categories` is a **strict NOT NULL
