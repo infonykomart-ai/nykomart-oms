@@ -250,12 +250,11 @@ schema is treated as final.
    historical rows to attach `size_id` will need a fuzzy-matching/cleanup
    pass, not a straight import.
 
-5. **`orders.website_dispatch`** ("WEBSITE/DISPATCH" in the source) — its
-   exact meaning was never fully clear from `build.py`/`Code.gs` either
-   (the column exists in `ORDER_COLUMNS` and is written from
-   `formObject.websiteDispatch`, but nothing in the business logic reads
-   it back or explains what it's for beyond the name). Kept as free text;
-   worth asking the business what it's actually used for.
+5. ~~`orders.website_dispatch`~~ **RESOLVED (2026-08-04).** User confirmed:
+   it records which kind of photo is attached to the order — the single
+   photo taken at dispatch time, vs. the product's website/portal listing
+   photo. Renamed to `orders.photo_type`, now a proper `order_photo_type`
+   enum (`'Dispatch'`, `'Website'`) instead of free text.
 
 6. **`purchase_bills.work_notes`** ("WORK1" in the source) — the *original*
    author's own comment says this "wasn't explained in the spec" and left

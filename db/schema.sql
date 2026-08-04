@@ -141,6 +141,13 @@ CREATE TYPE shipment_status AS ENUM
 
 CREATE TYPE address_type AS ENUM ('Residential', 'Commercial');
 
+-- 2026-08-04: user confirmed what the old "WEBSITE/DISPATCH" free-text order
+-- column actually meant (open question #5 in SCHEMA_NOTES.md, now resolved)
+-- — it records which kind of photo is attached to the order: the single
+-- photo taken at dispatch time, vs. the product's website/portal listing
+-- photo. A real enum now, not free text.
+CREATE TYPE order_photo_type AS ENUM ('Dispatch', 'Website');
+
 CREATE TYPE duty_tax_mode AS ENUM ('CSB-IV', 'CSB-V');
 
 CREATE TYPE delivered_status AS ENUM ('Delivered', 'NOT Delivered');
@@ -521,7 +528,7 @@ CREATE TABLE orders (
   tax_id                   text,      -- VAT / IOSS / Tax ID
 
   address_type             address_type NOT NULL DEFAULT 'Residential',
-  website_dispatch         text,      -- meaning not fully clear from source — see SCHEMA_NOTES.md open question #5
+  photo_type               order_photo_type,  -- old "WEBSITE/DISPATCH" — Dispatch photo vs. Website listing photo (2026-08-04, confirmed by user)
   colour                   text,
 
   entry_by_employee_id     uuid NOT NULL REFERENCES employees(id),  -- old "CHECK BY / ORDER ENTRY BY" free-typed name;
