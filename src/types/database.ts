@@ -3211,7 +3211,49 @@ export type Database = {
         Relationships: [];
       };
     };
-    Functions: Record<string, never>;
+    Functions: {
+      format_document_no: {
+        Args: {
+          p_company_short_code: string;
+          p_doc_type: string;
+          p_fy: string;
+          p_num: number;
+        };
+        Returns: string;
+      };
+      format_order_ref_no: {
+        Args: {
+          p_prefix: string;
+          p_num: number;
+        };
+        Returns: string;
+      };
+      fy_label: {
+        Args: {
+          p_date: string;
+        };
+        Returns: string;
+      };
+      get_official_rate_as_of: {
+        Args: {
+          p_currency_code: string;
+          p_as_of: string;
+        };
+        Returns: {
+          rate_to_inr: number | null;
+          effective_from: string | null;
+        }[];
+      };
+      reserve_next_number: {
+        Args: {
+          p_company_id: string;
+          p_scope: string;
+          p_use_fy: boolean;
+          p_as_of_date: string;
+        };
+        Returns: number;
+      };
+    };
     Enums: {
       address_type: "Residential" | "Commercial";
       attendance_source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
