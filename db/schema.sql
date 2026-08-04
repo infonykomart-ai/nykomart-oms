@@ -191,6 +191,7 @@ CREATE TABLE companies (
   short_code    text NOT NULL UNIQUE,             -- "NM" / "RUG" / "CA" — used in document numbers (NM/CN/26-27/0006)
   ref_prefix    text NOT NULL UNIQUE,             -- "PO" / "RG" / "RF" — used in order ref numbers (PO-0001)
   active        boolean NOT NULL DEFAULT true,    -- old Company_Registry.ACTIVE ("No" = hidden from login flow)
+  logo_url      text,                              -- new (2026-08-04, webapp rewrite) — dashboard header branding, no old-system equivalent
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE companies IS
