@@ -12,9 +12,12 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-600 text-2xl font-bold text-white shadow-lg">
-            OMS
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="Nyko Mart · Rugara · CASA ARRA"
+            className="mx-auto mb-4 h-16 w-16 rounded-full object-contain shadow-lg"
+          />
           <h1 className="text-xl font-semibold text-white">Order Management System</h1>
           <p className="mt-1 text-sm text-slate-400">Nyko Mart · Rugara · CASA ARRA</p>
         </div>
