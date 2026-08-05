@@ -40,8 +40,32 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user && request.nextUrl.pathname === "/login") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+  // A Supabase Auth session existing is NOT the same as "this is a real
+  // employee" — a login can be created in Authentication -> Users before
+  // (or without) a matching active `employees` row. Bouncing every
+  // authenticated user away from /login used to skip this check entirely:
+  // that user would then hit /dashboard, dashboard/layout.tsx's
+  // getAuthedEmployee() would throw, its catch redirect()s back to /login,
+  // and THIS middleware would immediately bounce them back to /dashboard —
+  // an infinite ERR_TOO_MANY_REDIRECTS loop. Checking here breaks the loop
+  // by signing out a session that can never resolve to a real employee.
+  if (user) {
+    const { data: employee } = await supabase
+      .from("employees")
+      .select("id")
+      .eq("auth_user_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (!employee) {
+      await supabase.auth.signOut();
+      if (request.nextUrl.pathname === "/login") return response;
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
+
+    if (request.nextUrl.pathname === "/login") {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
   }
 
   return response;
