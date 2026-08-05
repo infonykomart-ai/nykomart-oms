@@ -1910,6 +1910,14 @@ JOIN (VALUES
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
+  -- 2026-08-05: Admin is the account the owner actually logs in as day-to-
+  -- day (unlike the old system's per-department role split) — give it every
+  -- remaining capability too, so it's a true superuser role rather than
+  -- missing exactly the ones (order_entry, csv_upload, etc.) an owner would
+  -- hit first while testing/administering the system.
+  ('Admin',              'order_entry'), ('Admin', 'csv_upload'), ('Admin', 'bill_payment'),
+  ('Admin',              'salary_admin'), ('Admin', 'statement_entry'), ('Admin', 'approve_level1'),
+  ('Admin',              'approve_level2'),
   ('Listing',            'attendance_punch'),
   ('Photoshop/Graphics', 'attendance_punch'),
   ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch')
