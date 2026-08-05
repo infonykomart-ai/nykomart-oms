@@ -8,14 +8,14 @@ export default async function NewOrderPage() {
 
   const [{ data: stores }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: recentOrders }] =
     await Promise.all([
-      supabase.from("stores").select("id, name").eq("company_id", employee.companyId).eq("active", true).order("name"),
+      supabase.from("stores").select("id, name").eq("company_id", employee.currentCompanyId).eq("active", true).order("name"),
       supabase.from("item_categories").select("id, name").order("name"),
       supabase.from("sizes").select("id, label").order("label"),
       supabase.from("currencies").select("code, name").order("code"),
       supabase
         .from("orders")
         .select("id, ref_no, order_date, buyer_name_address, qty, order_value_original, order_currency, status")
-        .eq("company_id", employee.companyId)
+        .eq("company_id", employee.currentCompanyId)
         .order("entry_timestamp", { ascending: false })
         .limit(10),
     ]);

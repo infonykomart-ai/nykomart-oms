@@ -5,7 +5,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next();
+  const response = NextResponse.next();
 
   // Internal Next.js runtime routes, including Server Action fetches, must
   // bypass this auth proxy so they can preserve the required request shape.

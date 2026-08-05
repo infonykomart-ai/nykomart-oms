@@ -1,23 +1,30 @@
 import { LogoutButton } from "./logout-button";
+import { CompanySwitcher } from "./company-switcher";
 
 /**
- * Professional dashboard header — company logo + name, signed-in employee's
- * name + role (their "department" in the old system's language), logout.
- * Direct answer to the user's explicit ask: "Company ka naam bhi aana
- * chaiye" + "kis bande ne login kiya hai uska naam, kis dipartment me login
- * kiya hai uska naam". Refresh/backup/export live at the page level (each
- * module has its own relevant export), not duplicated here on every screen.
+ * Professional dashboard header — company logo + name (with a switcher for
+ * logins that work across more than one company, see
+ * db/schema.sql's employee_company_access), signed-in employee's name +
+ * role (their "department" in the old system's language), logout. Direct
+ * answer to the user's explicit ask: "Company ka naam bhi aana chaiye" +
+ * "kis bande ne login kiya hai uska naam, kis dipartment me login kiya hai
+ * uska naam". Refresh/backup/export live at the page level (each module has
+ * its own relevant export), not duplicated here on every screen.
  */
 export function DashboardHeader({
   companyName,
   logoUrl,
   employeeName,
   roleName,
+  companies,
+  currentCompanyId,
 }: {
   companyName: string;
   logoUrl: string | null;
   employeeName: string;
   roleName: string;
+  companies: { id: string; name: string }[];
+  currentCompanyId: string;
 }) {
   const initials = companyName
     .split(" ")
@@ -44,6 +51,7 @@ export function DashboardHeader({
       </div>
 
       <div className="flex items-center gap-4">
+        <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
         <div className="text-right">
           <div className="text-sm font-medium leading-tight text-slate-900">{employeeName}</div>
           <div className="text-xs leading-tight text-slate-500">{roleName}</div>

@@ -64,7 +64,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
   const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, ref_prefix")
-    .eq("id", employee.companyId)
+    .eq("id", employee.currentCompanyId)
     .single();
   if (companyError || !company) {
     return { error: "Company record nahi mila — Admin se contact karo.", success: null };
@@ -81,7 +81,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
       const { data: candidates } = await supabase
         .from("orders")
         .select("ref_no_base, contact_no, buyer_name_address")
-        .eq("company_id", employee.companyId)
+        .eq("company_id", employee.currentCompanyId)
         .eq("status", "Dispatched")
         .eq("marketplace_order_no", marketplaceOrderNo);
 
@@ -99,7 +99,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
       const { data: todaysOrders } = await supabase
         .from("orders")
         .select("ref_no_base, contact_no, buyer_name_address")
-        .eq("company_id", employee.companyId)
+        .eq("company_id", employee.currentCompanyId)
         .eq("order_date", orderDate);
 
       const sibling = (todaysOrders ?? []).find(
@@ -113,7 +113,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     // 3. Genuinely new — reserve a fresh number now, at actual save time.
     if (!baseRefNo) {
       const { data: num, error: reserveError } = await supabase.rpc("reserve_next_number", {
-        p_company_id: employee.companyId,
+        p_company_id: employee.currentCompanyId,
         p_scope: "ORDER_REF",
         p_use_fy: false,
         p_as_of_date: orderDate,
@@ -139,7 +139,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
   const { count: existingSiblingsToday } = await supabase
     .from("orders")
     .select("id", { count: "exact", head: true })
-    .eq("company_id", employee.companyId)
+    .eq("company_id", employee.currentCompanyId)
     .eq("order_date", orderDate)
     .eq("ref_no_base", baseRefNo);
   const provisionalTotal = (existingSiblingsToday ?? 0) + 1;
@@ -147,7 +147,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     provisionalTotal > 1 ? `${baseRefNo}-${provisionalTotal}/${provisionalTotal}` : baseRefNo;
 
   const { error: insertError } = await supabase.from("orders").insert({
-    company_id: employee.companyId,
+    company_id: employee.currentCompanyId,
     store_id: storeId,
     order_date: orderDate,
     ref_no: provisionalRefNo,
@@ -186,7 +186,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
   const { data: batch } = await supabase
     .from("orders")
     .select("id, entry_timestamp")
-    .eq("company_id", employee.companyId)
+    .eq("company_id", employee.currentCompanyId)
     .eq("order_date", orderDate)
     .eq("ref_no_base", baseRefNo)
     .order("entry_timestamp", { ascending: true });

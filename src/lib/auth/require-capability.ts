@@ -7,6 +7,7 @@
 // Unlike the old ROLE_CAPABILITIES hardcoded object, capabilities are now a
 // real roles/capabilities/role_capabilities join — see db/schema.sql — so
 // granting a role a new capability is a data change, not a redeploy.
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
 export class UnauthorizedError extends Error {
@@ -23,9 +24,21 @@ export class ForbiddenError extends Error {
   }
 }
 
+// 2026-08-05: user confirmed real staff work across all 3 companies from
+// ONE login — this cookie holds "which company is this login currently
+// acting as", switchable via the header's company dropdown (see
+// src/lib/auth/switch-company.ts + src/components/company-switcher.tsx).
+// It's read-only in most places (Server Components can't set cookies —
+// see supabase/server.ts's same caveat) so a stale/tampered value simply
+// falls back to the employee's home company below; it's never trusted for
+// anything beyond "which company's data to show".
+export const CURRENT_COMPANY_COOKIE = "oms_company_id";
+
 export type AuthedEmployee = {
   id: string;
-  companyId: string;
+  homeCompanyId: string;
+  currentCompanyId: string;
+  companyIds: string[];
   name: string;
   roleId: string;
   roleName: string;
@@ -33,8 +46,9 @@ export type AuthedEmployee = {
 };
 
 /**
- * Resolves the currently-signed-in employee (via Supabase Auth session) and
- * their role's capabilities. Throws UnauthorizedError if no session.
+ * Resolves the currently-signed-in employee (via Supabase Auth session),
+ * their role's capabilities, and which company they're currently acting as.
+ * Throws UnauthorizedError if no session / no matching active employee row.
  */
 export async function getAuthedEmployee(): Promise<AuthedEmployee> {
   const supabase = await createClient();
@@ -44,12 +58,12 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
 
   if (!user) throw new UnauthorizedError();
 
-  // Two plain queries rather than an embedded-resource join (`roles(name)`)
-  // — the hand-rolled Database type (scripts/gen-types.mjs, used because
-  // this sandbox has no working Docker for the official `supabase gen
-  // types` CLI) doesn't emit the `Relationships` metadata the JS client
-  // needs to type embedded joins, so those come back typed as `never`.
-  // Plain queries need no such metadata and are just as correct.
+  // Plain queries rather than embedded-resource joins (`roles(name)`) — the
+  // hand-rolled Database type (scripts/gen-types.mjs, used because this
+  // sandbox has no working Docker for the official `supabase gen types`
+  // CLI) doesn't emit full `Relationships` metadata for every join shape,
+  // so those come back typed as `never`. Plain queries need no such
+  // metadata and are just as correct.
   const { data: employee, error } = await supabase
     .from("employees")
     .select("id, company_id, name, role_id, active")
@@ -60,14 +74,25 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     throw new UnauthorizedError("No active employee record for this account.");
   }
 
-  const [{ data: role }, { data: caps }] = await Promise.all([
+  const [{ data: role }, { data: caps }, { data: access }] = await Promise.all([
     supabase.from("roles").select("name").eq("id", employee.role_id).single(),
     supabase.from("role_capabilities").select("capability_code").eq("role_id", employee.role_id),
+    supabase.from("employee_company_access").select("company_id").eq("employee_id", employee.id),
   ]);
+
+  const companyIds = Array.from(
+    new Set([employee.company_id, ...(access ?? []).map((a) => a.company_id)])
+  );
+
+  const cookieStore = await cookies();
+  const requested = cookieStore.get(CURRENT_COMPANY_COOKIE)?.value;
+  const currentCompanyId = requested && companyIds.includes(requested) ? requested : employee.company_id;
 
   return {
     id: employee.id,
-    companyId: employee.company_id,
+    homeCompanyId: employee.company_id,
+    currentCompanyId,
+    companyIds,
     name: employee.name,
     roleId: employee.role_id,
     roleName: role?.name ?? "",

@@ -1507,6 +1507,36 @@ export type Database = {
           },
         ];
       };
+      employee_company_access: {
+        Row: {
+          employee_id: string;
+          company_id: string;
+        };
+        Insert: {
+          employee_id: string;
+          company_id: string;
+        };
+        Update: {
+          employee_id?: string;
+          company_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_company_access_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_company_access_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       employees: {
         Row: {
           id: string;

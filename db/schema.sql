@@ -287,6 +287,24 @@ CREATE TABLE employees (
 CREATE INDEX idx_employees_company ON employees(company_id);
 CREATE UNIQUE INDEX idx_employees_code ON employees(employee_code) WHERE employee_code IS NOT NULL;
 
+-- 2026-08-05: user confirmed real staff routinely work across all 3
+-- companies from ONE login (not one login per company, which is what a bare
+-- employees.company_id would imply). employees.company_id stays as the
+-- employee's HOME/default company (still required — used as the default
+-- selection and for things like entry_by_employee_id lineage); this table
+-- is the actual "which companies can this login act as" grant list, checked
+-- by the web app's company-switcher (see src/lib/auth/require-capability.ts)
+-- instead of hard-coding company_id from the session alone.
+CREATE TABLE employee_company_access (
+  employee_id   uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  company_id    uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  PRIMARY KEY (employee_id, company_id)
+);
+COMMENT ON TABLE employee_company_access IS
+  'Which companies a login may switch into and act as, in addition to their home employees.company_id. '
+  'A row here for (employee, their own home company) is redundant but harmless — the app always treats '
+  'the home company as accessible regardless of what is in this table.';
+
 
 -- =============================================================================
 -- SECTION 3 — DOCUMENT / REFERENCE-NUMBER SEQUENCING INFRASTRUCTURE
