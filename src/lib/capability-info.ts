@@ -47,6 +47,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Generate Joining / Promotion / Experience / Salary Slip and other letters." },
   { code: "employee_admin", label: "Employees", icon: "👥", href: "/dashboard/admin/employees",
     description: "Manage the employee roster." },
+  { code: "permissions_admin", label: "Roles & Permissions", icon: "🔐", href: "/dashboard/admin/permissions",
+    description: "Set which role gets which capability — self-service, no code change needed." },
   { code: "reports", label: "Reports", icon: "📈", href: "/dashboard/reports",
     description: "The Reports suite." },
 ];
