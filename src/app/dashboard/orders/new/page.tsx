@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { OrderForm } from "./order-form";
+import { OrderWhatsAppButton } from "./order-whatsapp-button";
 
 export default async function NewOrderPage() {
   const employee = await requireCapability("order_entry");
@@ -14,11 +15,15 @@ export default async function NewOrderPage() {
       supabase.from("currencies").select("code, name").order("code"),
       supabase
         .from("orders")
-        .select("id, ref_no, order_date, buyer_name_address, qty, order_value_original, order_currency, status")
+        .select(
+          "id, ref_no, order_date, buyer_name_address, contact_no, photo_url, qty, size_label, item_category_id, order_value_original, order_currency, status, whatsapp_sent_at"
+        )
         .eq("company_id", employee.currentCompanyId)
         .order("entry_timestamp", { ascending: false })
         .limit(10),
     ]);
+
+  const categoryName = new Map((itemCategories ?? []).map((c) => [c.id, c.name]));
 
   return (
     <div>
@@ -53,6 +58,23 @@ export default async function NewOrderPage() {
                 <p className="mt-1 text-xs text-slate-400">
                   Qty {o.qty} · {o.order_value_original} {o.order_currency}
                 </p>
+                <div className="mt-2 border-t border-slate-100 pt-2">
+                  <OrderWhatsAppButton
+                    order={{
+                      id: o.id,
+                      ref_no: o.ref_no,
+                      buyer_name_address: o.buyer_name_address,
+                      contact_no: o.contact_no,
+                      photo_url: o.photo_url,
+                      item_category_name: categoryName.get(o.item_category_id) ?? null,
+                      size_label: o.size_label,
+                      qty: o.qty,
+                      order_value_original: o.order_value_original,
+                      order_currency: o.order_currency,
+                      whatsapp_sent_at: o.whatsapp_sent_at,
+                    }}
+                  />
+                </div>
               </div>
             ))}
             {(recentOrders ?? []).length === 0 && (
