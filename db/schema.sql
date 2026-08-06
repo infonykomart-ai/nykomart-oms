@@ -192,6 +192,12 @@ CREATE TABLE companies (
   ref_prefix    text NOT NULL UNIQUE,             -- "PO" / "RG" / "RF" — used in order ref numbers (PO-0001)
   active        boolean NOT NULL DEFAULT true,    -- old Company_Registry.ACTIVE ("No" = hidden from login flow)
   logo_url      text,                              -- new (2026-08-04, webapp rewrite) — dashboard header branding, no old-system equivalent
+  -- 2026-08-06: sales_invoices' "Master Invoice No." prefix (see
+  -- claude/invoice-origin-declarations-and-numbering.md section 3/5) — one
+  -- fixed prefix per company (NYM/RA/CASA), separate from ref_prefix
+  -- (PO/RF/RG, which is per-ORDER not per-invoice) and from
+  -- stores.invoice_ref_prefix (which is per-STORE/marketplace, not company).
+  master_invoice_prefix text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE companies IS
@@ -227,6 +233,15 @@ CREATE TABLE stores (
   company_id    uuid NOT NULL REFERENCES companies(id),
   name          text NOT NULL,
   active        boolean NOT NULL DEFAULT true,
+  -- 2026-08-06: sales_invoices' customer-facing "Invoice No." prefix (see
+  -- claude/invoice-origin-declarations-and-numbering.md section 3/5) —
+  -- confirmed per-STORE/marketplace, not per-company: Nyko Mart's Etsy+
+  -- Website stores share "NL", but its Amazon stores are "AN" and eBay is
+  -- "EBY". Nullable — a newly-added store has no prefix until an admin
+  -- sets one (see db/2026-08-06-invoice-prefixes.sql for the seed mapping
+  -- of all 17 existing stores); invoice generation refuses to proceed
+  -- without one rather than silently guessing.
+  invoice_ref_prefix text,
   UNIQUE (company_id, name)
 );
 CREATE INDEX idx_stores_company ON stores(company_id);
@@ -381,6 +396,16 @@ LANGUAGE sql IMMUTABLE AS $$ SELECT p_prefix || '-' || lpad(p_num::text, 4, '0')
 -- below (section 10) on debit_notes/credit_notes/washing_entries/internal_invoices.
 CREATE OR REPLACE FUNCTION format_document_no(p_company_short_code text, p_doc_type text, p_fy text, p_num integer) RETURNS text
 LANGUAGE sql IMMUTABLE AS $$ SELECT p_company_short_code || '/' || p_doc_type || '/' || p_fy || '/' || lpad(p_num::text, 4, '0'); $$;
+
+-- sales_invoices numbering: "NL-26-27-001" (prefix / FY / 3-digit sequence,
+-- hyphen-separated) — 2026-08-06 user's explicit decision, confirmed over
+-- the real historical samples' different "NL-170-26-27" (sequence-first)
+-- ordering (see claude/invoice-origin-declarations-and-numbering.md section
+-- 3). Used for BOTH the customer-facing Invoice No. (prefix = the order's
+-- store.invoice_ref_prefix) and the Master Invoice No. (prefix = the
+-- company's master_invoice_prefix) — same format, different prefix source.
+CREATE OR REPLACE FUNCTION format_invoice_no(p_prefix text, p_fy text, p_num integer) RETURNS text
+LANGUAGE sql IMMUTABLE AS $$ SELECT p_prefix || '-' || p_fy || '-' || lpad(p_num::text, 3, '0'); $$;
 
 -- Generic BEFORE INSERT trigger function: reserves + formats a document
 -- number for any table with (company_id, <date column>, document_no)
@@ -1049,6 +1074,80 @@ BEGIN
 END; $$;
 CREATE TRIGGER internal_invoices_before_insert BEFORE INSERT ON internal_invoices
   FOR EACH ROW WHEN (NEW.invoice_no IS NULL) EXECUTE FUNCTION trg_internal_invoices_doc_no();
+
+-- 2026-08-06: customer-facing export sales invoice (CSB-V/CSB-IV) — item
+-- from claude/pending-feature-requests-2026-08-06.md + fully scoped in
+-- claude/invoice-origin-declarations-and-numbering.md. NOT the same thing
+-- as `internal_invoices` above (that's company-to-company, no customs
+-- content at all) — kept as a clearly separate table rather than
+-- overloading one "invoices" table with two unrelated shapes.
+--
+-- One sales_invoice covers one OR MORE `orders` rows (a buyer-batch that
+-- ships together — see orders.ref_no_base) via orders.invoice_id below,
+-- rather than duplicating line-item data here; the invoice's own item
+-- table is built by querying orders WHERE invoice_id = this row's id.
+--
+-- Numbering: invoice_no uses the order's STORE's invoice_ref_prefix (e.g.
+-- "NL"), master_invoice_no uses the COMPANY's master_invoice_prefix (e.g.
+-- "NYM") — both via format_invoice_no(), both reserved through
+-- reserve_next_number() at generation time in application code (same
+-- "app reserves, not a DB trigger" reasoning as orders.ref_no — see that
+-- column's comment — because which store's prefix to use depends on which
+-- orders were picked, which the DB can't know before the row exists).
+CREATE TABLE sales_invoices (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                 uuid NOT NULL REFERENCES companies(id),
+  store_id                     uuid NOT NULL REFERENCES stores(id),   -- whose invoice_ref_prefix was used
+  invoice_no                     text NOT NULL,
+  master_invoice_no                text NOT NULL,
+  invoice_date                       date NOT NULL DEFAULT CURRENT_DATE,
+
+  -- Shipment Term deliberately free text, not an enum — real samples show
+  -- more than just DDP/DDU (see section 6 of the invoice notes doc).
+  shipment_term                        text NOT NULL,
+  csb_type                               text NOT NULL CHECK (csb_type IN ('CSB-V', 'CSB-IV')),
+  courier_company                          text NOT NULL,
+
+  -- FedEx-only, auto-generated per section 2 of the invoice notes doc
+  -- (<SCHEME>/N/<TERM>/B/E/-/<DDMMYY>, SCHEME = CS5 for CSB-V / CS4 for
+  -- CSB-IV) — application-computed at generation time, stored (not a
+  -- generated column) because it's editable afterward like everything else
+  -- on an invoice before it's finalized/printed.
+  department_reference_no                    text,
+
+  destination_country                          text,
+  -- Origin declaration text, auto-selected by destination_country per
+  -- section 1 of the invoice notes doc, always editable afterward — same
+  -- "generate once into an editable field, never auto-resynced" pattern as
+  -- HR Letters' bodyTemplate (see letter-form.tsx).
+  origin_declaration                             text,
+
+  -- Per-order (not per-company) — user confirmed 2026-08-06 this is typed
+  -- in at invoice time, only when applicable (see section 1c).
+  ioss_number                                      text,
+
+  buyer_name_address                                 text NOT NULL,   -- copied from the order(s) at generation time, editable
+  remark                                               text,
+
+  created_by_employee_id                                 uuid NOT NULL REFERENCES employees(id),
+  created_at                                               timestamptz NOT NULL DEFAULT now(),
+
+  UNIQUE (company_id, invoice_no)
+);
+CREATE INDEX idx_sales_invoices_company ON sales_invoices(company_id);
+
+COMMENT ON TABLE sales_invoices IS
+  'PID (Product Identifier) block for EU B2C orders — section 1b of the invoice notes doc — is deliberately '
+  'NOT implemented yet: user asked (2026-08-06) to discuss the Manufacturer Product ID / GTIN fallback '
+  'approach separately before building it. Every other section (origin declaration, numbering, Department '
+  'Reference No., HSN, exporter block) is built.';
+
+-- Added here (not on the `orders` table above, at its original definition)
+-- because it references sales_invoices, which is defined after orders in
+-- this file. One or more orders (a buyer-batch) point at the same invoice
+-- once generated; NULL = not yet invoiced.
+ALTER TABLE orders ADD COLUMN invoice_id uuid REFERENCES sales_invoices(id);
+CREATE INDEX idx_orders_invoice ON orders(invoice_id);
 
 
 -- =============================================================================
@@ -1873,10 +1972,10 @@ ORDER BY activity_date DESC, entry_by_employee_id;
 -- See SCHEMA_NOTES.md for the full list of what still needs migrating.
 -- =============================================================================
 
-INSERT INTO companies (name, short_code, ref_prefix) VALUES
-  ('Nyko Mart', 'NM', 'PO'),
-  ('Rugara', 'RUG', 'RG'),
-  ('CASA ARRA', 'CA', 'RF');
+INSERT INTO companies (name, short_code, ref_prefix, master_invoice_prefix) VALUES
+  ('Nyko Mart', 'NM', 'PO', 'NYM'),
+  ('Rugara', 'RUG', 'RG', 'RA'),
+  ('CASA ARRA', 'CA', 'RF', 'CASA');
 
 INSERT INTO company_profiles (company_id, address, phone, whatsapp, email, iec, gstin, bank_name, account_no, ifsc_code, ad_code)
 SELECT id, 'D-489, Sector-29, Pratap Nagar, Jaipur-302033, India', '+91 141 480 5979', '+91 774099 1175',
@@ -1893,16 +1992,20 @@ SELECT id, 'Plot No. 80, Ashadeep Green Vatika, Sanganer, Bagru, Jaipur, RJ, Ind
        'info.casaarra@gmail.com', 'AUXPR4630C', '08AUXPR4630C1ZA', 'PNB Bank', '6143002100008801', 'PUNB0614300', '0304993/PUNB0614300'
 FROM companies WHERE short_code = 'CA';
 
-INSERT INTO stores (company_id, name)
-SELECT c.id, s.name FROM companies c
+-- invoice_ref_prefix per claude/invoice-origin-declarations-and-numbering.md
+-- section 3/5: Nyko Mart Etsy+Website -> NL, Amazon -> AN, eBay -> EBY;
+-- Rugara Etsy -> ERG, Amazon -> ARG, eBay -> EBRG, Website -> WRG;
+-- CASA ARRA all stores combined -> ECA.
+INSERT INTO stores (company_id, name, invoice_ref_prefix)
+SELECT c.id, s.name, s.prefix FROM companies c
 JOIN (VALUES
-  ('NM', 'Amazon Arts of Jaipur'), ('NM', 'Etsy Arts of Jaipur'), ('NM', 'Etsy The Decor House'),
-  ('NM', 'Etsy Handloom Decor'), ('NM', 'Ebay Arts of Jaipur'), ('NM', 'Arts of Jaipur (Website)'),
-  ('NM', 'Jaipur Arts (Website)'),
-  ('RUG', 'Amazon Rugara'), ('RUG', 'Etsy The Rugara'), ('RUG', 'Ebay Rugara'), ('RUG', 'The Rugara (Website)'),
-  ('CA', 'Amazon Kanjush'), ('CA', 'Etsy Casa Arra'), ('CA', 'Etsy Kanjush'), ('CA', 'Ebay Casa Arra'),
-  ('CA', 'CASA ARRA (Website)'), ('CA', 'Kanjush (Website)')
-) AS s(short_code, name) ON s.short_code = c.short_code;
+  ('NM', 'Amazon Arts of Jaipur', 'AN'), ('NM', 'Etsy Arts of Jaipur', 'NL'), ('NM', 'Etsy The Decor House', 'NL'),
+  ('NM', 'Etsy Handloom Decor', 'NL'), ('NM', 'Ebay Arts of Jaipur', 'EBY'), ('NM', 'Arts of Jaipur (Website)', 'NL'),
+  ('NM', 'Jaipur Arts (Website)', 'NL'),
+  ('RUG', 'Amazon Rugara', 'ARG'), ('RUG', 'Etsy The Rugara', 'ERG'), ('RUG', 'Ebay Rugara', 'EBRG'), ('RUG', 'The Rugara (Website)', 'WRG'),
+  ('CA', 'Amazon Kanjush', 'ECA'), ('CA', 'Etsy Casa Arra', 'ECA'), ('CA', 'Etsy Kanjush', 'ECA'), ('CA', 'Ebay Casa Arra', 'ECA'),
+  ('CA', 'CASA ARRA (Website)', 'ECA'), ('CA', 'Kanjush (Website)', 'ECA')
+) AS s(short_code, name, prefix) ON s.short_code = c.short_code;
 
 INSERT INTO currencies (code, name) VALUES
   ('USD','US Dollar'), ('EUR','Euro'), ('GBP','British Pound'), ('CAD','Canadian Dollar'),
@@ -1931,8 +2034,9 @@ INSERT INTO capabilities (code, description) VALUES
   ('company_item_admin',  'Add new companies / item categories / sizes'),
   ('hr_letters',          'Generate HR letters (Joining/Promotion/Experience/Salary Slip/...)'),
   ('employee_admin',      'Manage the Employees roster (not yet built in the source system)'),
-  ('reports',             'Access the Reports suite (not yet built in the source system)'),
-  ('permissions_admin',   'Manage which role gets which capability — the Roles & Permissions screen itself');
+  ('reports',             'Access the Reports suite'),
+  ('permissions_admin',   'Manage which role gets which capability — the Roles & Permissions screen itself'),
+  ('invoicing',           'Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -1942,7 +2046,7 @@ JOIN (VALUES
   ('Finance',            'csv_upload'),  ('Finance', 'doc_entry'), ('Finance', 'stock_entry'),
   ('Finance',            'bill_payment'),('Finance', 'salary_admin'), ('Finance', 'statement_entry'),
   ('Finance',            'party_admin'),('Finance', 'exchange_rate_admin'), ('Finance', 'attendance_punch'),
-  ('Finance',            'attendance_admin'), ('Finance', 'crm_dashboard'),
+  ('Finance',            'attendance_admin'), ('Finance', 'crm_dashboard'), ('Finance', 'invoicing'),
   ('Higher Authority',   'approve_level1'), ('Higher Authority', 'attendance_punch'), ('Higher Authority', 'crm_dashboard'),
   ('MD',                 'approve_level2'), ('MD', 'company_item_admin'), ('MD', 'doc_entry'), ('MD', 'stock_entry'),
   ('MD',                 'statement_entry'), ('MD', 'party_admin'), ('MD', 'exchange_rate_admin'),
@@ -1954,8 +2058,10 @@ JOIN (VALUES
                                                 -- ("jisko jo permission set karni hai... vo md ke pass honi
                                                 -- chhiaye vo apne login kar ke set kar sake").
   ('MD',                 'reports'), -- 2026-08-06: Universal Reports system (item 6) — MD (owner login) gets it too.
+  ('MD',                 'invoicing'), -- 2026-08-06: Invoice Generation module.
   ('Admin',              'permissions_admin'),
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
+  ('Admin',              'invoicing'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
   -- 2026-08-05: Admin is the account the owner actually logs in as day-to-
