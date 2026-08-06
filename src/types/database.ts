@@ -305,6 +305,7 @@ export type Database = {
           ref_prefix: string;
           active: boolean;
           logo_url: string | null;
+          master_invoice_prefix: string | null;
           created_at: string;
         };
         Insert: {
@@ -314,6 +315,7 @@ export type Database = {
           ref_prefix: string;
           active?: boolean;
           logo_url?: string | null;
+          master_invoice_prefix?: string | null;
           created_at?: string;
         };
         Update: {
@@ -323,6 +325,7 @@ export type Database = {
           ref_prefix?: string;
           active?: boolean;
           logo_url?: string | null;
+          master_invoice_prefix?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -2087,6 +2090,7 @@ export type Database = {
           order_value_inr: number | null;
           exchange_rate_source: string | null;
           created_at: string;
+          invoice_id: string | null;
         };
         Insert: {
           id?: string;
@@ -2133,6 +2137,7 @@ export type Database = {
           order_value_inr?: number | null;
           exchange_rate_source?: string | null;
           created_at?: string;
+          invoice_id?: string | null;
         };
         Update: {
           id?: string;
@@ -2179,6 +2184,7 @@ export type Database = {
           order_value_inr?: number | null;
           exchange_rate_source?: string | null;
           created_at?: string;
+          invoice_id?: string | null;
         };
         Relationships: [
           {
@@ -2236,6 +2242,13 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "currencies";
             referencedColumns: ["code"];
+          },
+          {
+            foreignKeyName: "orders_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "sales_invoices";
+            referencedColumns: ["id"];
           },
         ];
       };
@@ -2705,6 +2718,88 @@ export type Database = {
           },
         ];
       };
+      sales_invoices: {
+        Row: {
+          id: string;
+          company_id: string;
+          store_id: string;
+          invoice_no: string;
+          master_invoice_no: string;
+          invoice_date: string;
+          shipment_term: string;
+          csb_type: string;
+          courier_company: string;
+          department_reference_no: string | null;
+          destination_country: string | null;
+          origin_declaration: string | null;
+          ioss_number: string | null;
+          buyer_name_address: string;
+          remark: string | null;
+          created_by_employee_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          store_id: string;
+          invoice_no: string;
+          master_invoice_no: string;
+          invoice_date?: string;
+          shipment_term: string;
+          csb_type: string;
+          courier_company: string;
+          department_reference_no?: string | null;
+          destination_country?: string | null;
+          origin_declaration?: string | null;
+          ioss_number?: string | null;
+          buyer_name_address: string;
+          remark?: string | null;
+          created_by_employee_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          store_id?: string;
+          invoice_no?: string;
+          master_invoice_no?: string;
+          invoice_date?: string;
+          shipment_term?: string;
+          csb_type?: string;
+          courier_company?: string;
+          department_reference_no?: string | null;
+          destination_country?: string | null;
+          origin_declaration?: string | null;
+          ioss_number?: string | null;
+          buyer_name_address?: string;
+          remark?: string | null;
+          created_by_employee_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "sales_invoices_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "sales_invoices_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "sales_invoices_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       sequence_counters: {
         Row: {
           id: string;
@@ -2972,18 +3067,21 @@ export type Database = {
           company_id: string;
           name: string;
           active: boolean;
+          invoice_ref_prefix: string | null;
         };
         Insert: {
           id?: string;
           company_id: string;
           name: string;
           active?: boolean;
+          invoice_ref_prefix?: string | null;
         };
         Update: {
           id?: string;
           company_id?: string;
           name?: string;
           active?: boolean;
+          invoice_ref_prefix?: string | null;
         };
         Relationships: [
           {
@@ -3255,6 +3353,14 @@ export type Database = {
         Args: {
           p_company_short_code: string;
           p_doc_type: string;
+          p_fy: string;
+          p_num: number;
+        };
+        Returns: string;
+      };
+      format_invoice_no: {
+        Args: {
+          p_prefix: string;
           p_fy: string;
           p_num: number;
         };
