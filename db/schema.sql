@@ -1921,7 +1921,8 @@ INSERT INTO capabilities (code, description) VALUES
   ('company_item_admin',  'Add new companies / item categories / sizes'),
   ('hr_letters',          'Generate HR letters (Joining/Promotion/Experience/Salary Slip/...)'),
   ('employee_admin',      'Manage the Employees roster (not yet built in the source system)'),
-  ('reports',             'Access the Reports suite (not yet built in the source system)');
+  ('reports',             'Access the Reports suite (not yet built in the source system)'),
+  ('permissions_admin',   'Manage which role gets which capability — the Roles & Permissions screen itself');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -1939,6 +1940,10 @@ JOIN (VALUES
   ('MD',                 'employee_admin'), -- 2026-08-06: MD (the actual owner login) should be able to create new
                                              -- employee logins too, not just the separate Admin role — see pending
                                              -- item 12 ("naye user banane ka... sabhi kaam add karo").
+  ('MD',                 'permissions_admin'), -- 2026-08-06: MD self-service permissions editor — item 2
+                                                -- ("jisko jo permission set karni hai... vo md ke pass honi
+                                                -- chhiaye vo apne login kar ke set kar sake").
+  ('Admin',              'permissions_admin'),
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
