@@ -1543,6 +1543,7 @@ export type Database = {
           company_id: string;
           auth_user_id: string | null;
           name: string;
+          email: string | null;
           role_id: string;
           active: boolean;
           password_hash: string | null;
@@ -1556,6 +1557,7 @@ export type Database = {
           company_id: string;
           auth_user_id?: string | null;
           name: string;
+          email?: string | null;
           role_id: string;
           active?: boolean;
           password_hash?: string | null;
@@ -1569,6 +1571,7 @@ export type Database = {
           company_id?: string;
           auth_user_id?: string | null;
           name?: string;
+          email?: string | null;
           role_id?: string;
           active?: boolean;
           password_hash?: string | null;
@@ -2023,14 +2026,17 @@ export type Database = {
         Row: {
           id: string;
           name: string;
+          hsn_code: string | null;
         };
         Insert: {
           id?: string;
           name: string;
+          hsn_code?: string | null;
         };
         Update: {
           id?: string;
           name?: string;
+          hsn_code?: string | null;
         };
         Relationships: [
         ];
