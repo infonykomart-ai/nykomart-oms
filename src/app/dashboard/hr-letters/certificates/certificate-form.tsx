@@ -185,7 +185,7 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
         {(!employeeId || !companyId) && <p className="text-xs text-slate-400">Pehle employee aur company select karo.</p>}
       </div>
 
-      <div>
+      <div style={{ containerType: "inline-size" }}>
         <div
           id="certificate-print-area"
           className="relative mx-auto aspect-[1200/850] w-full overflow-hidden rounded-lg"
@@ -210,45 +210,45 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
                 <span className="text-xs text-slate-400">Logo</span>
               )}
             </div>
-            <div className="mt-[1.5%] text-[1.6vw] font-bold uppercase tracking-[0.3em]" style={{ color: "#f2d99b" }}>
+            <div className="mt-[1.5%] font-bold uppercase tracking-[0.3em]" style={{ color: "#f2d99b", fontSize: "1.6cqw" }}>
               {company?.name ?? "Select company"}
             </div>
-            <div className="mt-[2%] text-[3.6vw]" style={{ color: "#ffffff" }}>
+            <div className="mt-[2%]" style={{ color: "#ffffff", fontSize: "3.6cqw" }}>
               Certificate <span style={{ color: "#d9a441" }}>{occasion.certWord}</span>
             </div>
-            <div className="mt-[0.5%] text-[1.3vw] font-bold uppercase tracking-[0.35em]" style={{ color: "#d9a441" }}>
+            <div className="mt-[0.5%] font-bold uppercase tracking-[0.35em]" style={{ color: "#d9a441", fontSize: "1.3cqw" }}>
               {occasion.subtitle}
             </div>
-            <div className="mt-[2.5%] text-[1vw] uppercase tracking-[0.25em]" style={{ color: "#8b8fa3" }}>
+            <div className="mt-[2.5%] uppercase tracking-[0.25em]" style={{ color: "#8b8fa3", fontSize: "1cqw" }}>
               This certificate is proudly presented to
             </div>
             <div
-              className="mt-[1%] border-b px-8 pb-2 text-[4vw]"
-              style={{ fontFamily: "'Brush Script MT', cursive", color: "#ffffff", borderColor: "#d9a441", minWidth: "45%" }}
+              className="mt-[1%] border-b px-8 pb-2"
+              style={{ fontFamily: "'Brush Script MT', cursive", color: "#ffffff", borderColor: "#d9a441", minWidth: "45%", fontSize: "4cqw" }}
             >
               {employeeName || "Employee Name"}
             </div>
-            <div className="mx-auto mt-[2%] max-w-[65%] px-[2%] text-[1vw] leading-relaxed" style={{ color: "#c7cad6" }}>
+            <div className="mx-auto mt-[2%] max-w-[65%] px-[2%] leading-relaxed" style={{ color: "#c7cad6", fontSize: "1cqw" }}>
               {bodyText}
             </div>
           </div>
 
           <div className="absolute bottom-[11%] left-0 right-0 flex justify-between px-[11%] text-center">
             <div style={{ width: "18%" }}>
-              <div className="border-t pt-1 text-[1vw]" style={{ borderColor: "#8b8fa3", color: "#ffffff", fontFamily: "'Brush Script MT', cursive", minHeight: "1.5em" }}>
+              <div className="border-t pt-1" style={{ borderColor: "#8b8fa3", color: "#ffffff", fontFamily: "'Brush Script MT', cursive", minHeight: "1.5em", fontSize: "1cqw" }}>
                 {hrName}
               </div>
-              <div className="text-[0.8vw] uppercase tracking-widest" style={{ color: "#8b8fa3" }}>HR Manager</div>
+              <div className="uppercase tracking-widest" style={{ color: "#8b8fa3", fontSize: "0.8cqw" }}>HR Manager</div>
             </div>
             <div style={{ width: "18%" }}>
-              <div className="text-[1vw]" style={{ color: "#ffffff" }}>{dateIssued}</div>
-              <div className="text-[0.8vw] uppercase tracking-widest" style={{ color: "#8b8fa3" }}>Date Issued</div>
+              <div style={{ color: "#ffffff", fontSize: "1cqw" }}>{dateIssued}</div>
+              <div className="uppercase tracking-widest" style={{ color: "#8b8fa3", fontSize: "0.8cqw" }}>Date Issued</div>
             </div>
             <div style={{ width: "18%" }}>
-              <div className="border-t pt-1 text-[1vw]" style={{ borderColor: "#8b8fa3", color: "#ffffff", fontFamily: "'Brush Script MT', cursive" }}>
+              <div className="border-t pt-1" style={{ borderColor: "#8b8fa3", color: "#ffffff", fontFamily: "'Brush Script MT', cursive", fontSize: "1cqw" }}>
                 {directorName}
               </div>
-              <div className="text-[0.8vw] uppercase tracking-widest" style={{ color: "#8b8fa3" }}>Director / CEO</div>
+              <div className="uppercase tracking-widest" style={{ color: "#8b8fa3", fontSize: "0.8cqw" }}>Director / CEO</div>
             </div>
           </div>
         </div>
