@@ -43,17 +43,25 @@ export function LetterForm({
   const [bodyText, setBodyText] = useState("");
   const [hasGenerated, setHasGenerated] = useState(false);
 
+  const [companyId, setCompanyId] = useState("");
+
   const companyMap = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
   const profileMap = useMemo(() => new Map(companyProfiles.map((p) => [p.company_id, p])), [companyProfiles]);
-  const selectedEmployee = employees.find((e) => e.id === employeeId);
-  const company = selectedEmployee ? companyMap.get(selectedEmployee.company_id) : undefined;
+  const company = companyMap.get(companyId);
   const profile = company ? profileMap.get(company.id) : undefined;
 
+  // Company is a SEPARATE, directly-editable dropdown — not derived from
+  // the employee's `company_id` (their fixed "home company" in the DB).
+  // Real staff work across all 3 companies from one login (see
+  // employee_company_access), so an employee's home company often has
+  // nothing to do with which company's letterhead is actually needed.
+  // Picking an employee just pre-fills a sensible default company.
   function handleEmployeeChange(id: string) {
     setEmployeeId(id);
     const emp = employees.find((e) => e.id === id);
     if (emp) {
       setEmployeeName(emp.name);
+      if (!companyId) setCompanyId(emp.company_id);
       // Pre-fill any matching common fields (job title comes from designation, etc.)
       setFieldValues((prev) => ({
         ...prev,
@@ -100,6 +108,19 @@ export function LetterForm({
               <option key={e.id} value={e.id}>{e.name}{e.designation ? ` — ${e.designation}` : ""}</option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label className={labelClass} htmlFor="company">Company (letterhead) *</label>
+          <select id="company" className={inputClass} value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+            <option value="">Select company</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-400">
+            Employee select karte hi ek default company aa jayegi — chaho to yahan se khud badal bhi sakte ho.
+          </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -162,7 +183,7 @@ export function LetterForm({
         <button
           type="button"
           onClick={generateBody}
-          disabled={!employeeId}
+          disabled={!employeeId || !companyId}
           className="w-full rounded-lg border border-amber-500 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40"
         >
           {hasGenerated ? "Text dobara banao (neeche wala edit overwrite hoga)" : "Letter text banao"}
@@ -193,7 +214,7 @@ export function LetterForm({
               <img src={company.logo_url} alt={company.name} className="h-14 w-14 object-contain" />
             )}
             <div>
-              <div className="text-lg font-bold">{company?.name ?? "Select employee"}</div>
+              <div className="text-lg font-bold">{company?.name ?? "Select company"}</div>
               <div className="text-xs text-slate-500">
                 {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
               </div>
