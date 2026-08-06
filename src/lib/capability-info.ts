@@ -51,6 +51,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Set which role gets which capability — self-service, no code change needed." },
   { code: "reports", label: "Reports", icon: "📈", href: "/dashboard/reports",
     description: "The Reports suite." },
+  { code: "invoicing", label: "Invoices", icon: "🧾", href: "/dashboard/invoices",
+    description: "Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {
