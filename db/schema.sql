@@ -275,6 +275,10 @@ CREATE TABLE employees (
   company_id      uuid NOT NULL REFERENCES companies(id),
   auth_user_id    uuid UNIQUE,           -- FK to Supabase auth.users(id) once real auth is wired up; nullable during migration
   name            text NOT NULL,
+  email           text UNIQUE,           -- 2026-08-06: denormalized copy of the auth.users login email — added for the
+                                          -- in-app "create new employee login" admin screen (was previously created by
+                                          -- hand in the Supabase dashboard). Postgres UNIQUE allows multiple NULLs, so
+                                          -- this stays optional for any row created before this column existed.
   role_id         uuid NOT NULL REFERENCES roles(id),
   active          boolean NOT NULL DEFAULT true,
   password_hash   text,                  -- bcrypt/argon2 hash — NEVER plaintext (unlike the old PASSWORD column)
@@ -1932,6 +1936,9 @@ JOIN (VALUES
   ('MD',                 'approve_level2'), ('MD', 'company_item_admin'), ('MD', 'doc_entry'), ('MD', 'stock_entry'),
   ('MD',                 'statement_entry'), ('MD', 'party_admin'), ('MD', 'exchange_rate_admin'),
   ('MD',                 'attendance_punch'), ('MD', 'attendance_admin'), ('MD', 'hr_letters'), ('MD', 'crm_dashboard'),
+  ('MD',                 'employee_admin'), -- 2026-08-06: MD (the actual owner login) should be able to create new
+                                             -- employee logins too, not just the separate Admin role — see pending
+                                             -- item 12 ("naye user banane ka... sabhi kaam add karo").
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
