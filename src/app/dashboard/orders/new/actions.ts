@@ -206,3 +206,24 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
   const finalRefNo = batch && batch.length > 1 ? `${baseRefNo} (batch of ${batch.length})` : baseRefNo!;
   return { error: null, success: { refNo: finalRefNo } };
 }
+
+/**
+ * WhatsApp — item 5. No Business API is used; the order-entry employee
+ * shares the order (photo + details) via their OWN WhatsApp using the
+ * browser's Web Share API / a wa.me link (see order-whatsapp-button.tsx).
+ * This action only records that the share was triggered, so the "Aaj ki
+ * recent entries" list can show a status and hide the button once sent.
+ */
+export async function markOrderWhatsAppSent(orderId: string): Promise<{ error: string | null }> {
+  await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { error } = await supabase
+    .from("orders")
+    .update({ whatsapp_sent_at: new Date().toISOString() })
+    .eq("id", orderId);
+
+  if (error) return { error: error.message };
+  revalidatePath("/dashboard/orders/new");
+  return { error: null };
+}
