@@ -1953,6 +1953,7 @@ JOIN (VALUES
   ('MD',                 'permissions_admin'), -- 2026-08-06: MD self-service permissions editor — item 2
                                                 -- ("jisko jo permission set karni hai... vo md ke pass honi
                                                 -- chhiaye vo apne login kar ke set kar sake").
+  ('MD',                 'reports'), -- 2026-08-06: Universal Reports system (item 6) — MD (owner login) gets it too.
   ('Admin',              'permissions_admin'),
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
