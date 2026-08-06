@@ -58,15 +58,25 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
   const [hrName, setHrName] = useState("");
   const [directorName, setDirectorName] = useState("RD Lohra");
   const [dateIssued, setDateIssued] = useState(todayFormatted());
+  const [companyId, setCompanyId] = useState("");
 
   const companyMap = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
-  const selectedEmployee = employees.find((e) => e.id === employeeId);
-  const company = selectedEmployee ? companyMap.get(selectedEmployee.company_id) : undefined;
+  const company = companyMap.get(companyId);
 
+  // Company is a SEPARATE, directly-editable dropdown — not derived from
+  // the employee's `company_id` (their fixed "home company" in the DB).
+  // Real staff work across all 3 companies from one login (see
+  // employee_company_access), so an employee's home company often has
+  // nothing to do with which company's certificate is actually being
+  // issued. Picking an employee just pre-fills a sensible default; picking
+  // a company on its own (before/without an employee) also works.
   function handleEmployeeChange(id: string) {
     setEmployeeId(id);
     const emp = employees.find((e) => e.id === id);
-    if (emp) setEmployeeName(emp.name);
+    if (emp) {
+      setEmployeeName(emp.name);
+      if (!companyId) setCompanyId(emp.company_id);
+    }
   }
 
   function handleOccasionChange(key: (typeof OCCASIONS)[number]["key"]) {
@@ -108,6 +118,19 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label className={labelClass} htmlFor="company">Company (letterhead) *</label>
+          <select id="company" className={inputClass} value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+            <option value="">Select company</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-400">
+            Employee select karte hi ek default company aa jayegi — chaho to yahan se khud badal bhi sakte ho.
+          </p>
         </div>
 
         <div>
@@ -154,12 +177,12 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
         <button
           type="button"
           onClick={() => window.print()}
-          disabled={!employeeId}
+          disabled={!employeeId || !companyId}
           className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-40"
         >
           Print / Save as PDF
         </button>
-        {!employeeId && <p className="text-xs text-slate-400">Pehle employee select karo.</p>}
+        {(!employeeId || !companyId) && <p className="text-xs text-slate-400">Pehle employee aur company select karo.</p>}
       </div>
 
       <div>
@@ -188,7 +211,7 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
               )}
             </div>
             <div className="mt-[1.5%] text-[1.6vw] font-bold uppercase tracking-[0.3em]" style={{ color: "#f2d99b" }}>
-              {company?.name ?? "Select employee"}
+              {company?.name ?? "Select company"}
             </div>
             <div className="mt-[2%] text-[3.6vw]" style={{ color: "#ffffff" }}>
               Certificate <span style={{ color: "#d9a441" }}>{occasion.certWord}</span>
