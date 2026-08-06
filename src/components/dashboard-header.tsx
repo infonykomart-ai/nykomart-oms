@@ -1,71 +1,71 @@
-import { LogoutButton } from "./logout-button";
-import { CompanySwitcher } from "./company-switcher";
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { CAPABILITY_INFO } from "@/lib/capability-info";
 
 /**
- * Professional dashboard header — company logo + name (with a switcher for
- * logins that work across more than one company, see
- * db/schema.sql's employee_company_access), signed-in employee's name +
- * role (their "department" in the old system's language), logout. Direct
- * answer to the user's explicit ask: "Company ka naam bhi aana chaiye" +
- * "kis bande ne login kiya hai uska naam, kis dipartment me login kiya hai
- * uska naam". Refresh/backup/export live at the page level (each module has
- * its own relevant export), not duplicated here on every screen.
+ * Professional role-based left sidebar work menu — only shows tiles for
+ * capabilities the signed-in employee's role actually has (server-resolved
+ * in dashboard/layout.tsx, passed down as plain data).
+ *
+ * 2026-08-06: redesigned from a flat vertical link list into a 2-column
+ * "app launcher" style box/tile grid, per the user's ask: "jo menu ek line
+ * me aate hai vo boxes me style me aaye, pura dashboard bhara hua lage aur
+ * pyara lage." Each item is a square-ish tile with its icon large and
+ * centered, label below — denser and more visual than a row of text links,
+ * while keeping the same dark sidebar theme, active-state highlight, and
+ * capability-filtered items as before.
  */
-export function DashboardHeader({
-  companyName,
-  logoUrl,
-  employeeName,
-  roleName,
-  companies,
-  currentCompanyId,
-}: {
-  companyName: string;
-  logoUrl: string | null;
-  employeeName: string;
-  roleName: string;
-  companies: { id: string; name: string }[];
-  currentCompanyId: string;
-}) {
-  const initials = companyName
-    .split(" ")
-    .map((w) => w[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
+  const pathname = usePathname();
+  const items = CAPABILITY_INFO.filter((c) => capabilities.includes(c.code));
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
-      <div className="flex items-center gap-3">
-        {logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={logoUrl} alt={companyName} className="h-9 w-9 rounded-lg object-contain" />
-        ) : (
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-sm font-bold text-white">
-            {initials || "OMS"}
-          </div>
-        )}
-        <div>
-          <div className="text-sm font-semibold leading-tight text-slate-900">{companyName}</div>
-          <div className="text-xs leading-tight text-slate-500">Order Management System</div>
-        </div>
+    <aside className="flex w-72 flex-col border-r border-slate-200 bg-slate-900">
+      <div className="flex h-16 items-center gap-2 border-b border-slate-800 px-6">
+        <span className="text-lg font-bold text-white">Work Menu</span>
       </div>
+      <nav className="flex-1 overflow-y-auto p-3">
+        <div className="grid grid-cols-2 gap-2.5">
+          <SidebarTile href="/dashboard" icon="🏠" label="Home" active={pathname === "/dashboard"} />
+          {items.map((item) => (
+            <SidebarTile
+              key={item.code}
+              href={item.href}
+              icon={item.icon}
+              label={item.label}
+              active={pathname.startsWith(item.href)}
+            />
+          ))}
+        </div>
+      </nav>
+    </aside>
+  );
+}
 
-      <div className="flex items-center gap-4">
-        <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
-        <div className="text-right">
-          <div className="text-sm font-medium leading-tight text-slate-900">{employeeName}</div>
-          <div className="text-xs leading-tight text-slate-500">{roleName}</div>
-        </div>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
-          {employeeName
-            .split(" ")
-            .map((w) => w[0])
-            .slice(0, 2)
-            .join("")
-            .toUpperCase()}
-        </div>
-        <LogoutButton />
-      </div>
-    </header>
+function SidebarTile({
+  href,
+  icon,
+  label,
+  active,
+}: {
+  href: string;
+  icon: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`group flex flex-col items-center justify-center gap-1.5 rounded-xl border px-2 py-4 text-center transition ${
+        active
+          ? "border-amber-400 bg-amber-500 text-white shadow-md shadow-amber-500/20"
+          : "border-slate-800 bg-slate-800/60 text-slate-300 hover:-translate-y-0.5 hover:border-amber-500/40 hover:bg-slate-800 hover:text-white hover:shadow-md"
+      }`}
+    >
+      <span className="text-2xl leading-none">{icon}</span>
+      <span className="text-[11px] font-medium leading-tight">{label}</span>
+    </Link>
   );
 }
