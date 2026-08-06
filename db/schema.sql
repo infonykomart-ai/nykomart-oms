@@ -570,6 +570,16 @@ CREATE TABLE orders (
 
   entry_timestamp           timestamptz NOT NULL DEFAULT now(),
 
+  -- 2026-08-06: "WHATS APP INTIGRATION" — item 5. No WhatsApp Business API
+  -- is used (user chose the simpler route: share via the order-entry
+  -- employee's OWN WhatsApp, using the Web Share API / wa.me link from the
+  -- browser — see order-whatsapp-button.tsx). This column only tracks
+  -- "has someone triggered the share for this order yet" so the Order
+  -- Entry list can show a status + only prompt again for orders not sent.
+  -- Not proof of delivery — the actual send/confirm still happens inside
+  -- WhatsApp itself, outside this app's control.
+  whatsapp_sent_at          timestamptz,
+
   -- Multi-currency (2026-08-01 round). order_value_usd/order_value_inr/
   -- exchange_rate_source are APPLICATION-COMPUTED (see business rules note
   -- at top) via the same official-rate/live-estimate/unavailable chain as
