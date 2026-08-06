@@ -2080,6 +2080,7 @@ export type Database = {
           shipment_status: "Order Placed" | "In Production" | "Ready to Ship" | "Shipped" | "In Transit" | "Delivered" | "Returned" | "Cancelled";
           tassel_fringes: boolean | null;
           entry_timestamp: string;
+          whatsapp_sent_at: string | null;
           order_currency: string;
           order_value_original: number;
           order_value_usd: number | null;
@@ -2125,6 +2126,7 @@ export type Database = {
           shipment_status?: "Order Placed" | "In Production" | "Ready to Ship" | "Shipped" | "In Transit" | "Delivered" | "Returned" | "Cancelled";
           tassel_fringes?: boolean | null;
           entry_timestamp?: string;
+          whatsapp_sent_at?: string | null;
           order_currency?: string;
           order_value_original?: number;
           order_value_usd?: number | null;
@@ -2170,6 +2172,7 @@ export type Database = {
           shipment_status?: "Order Placed" | "In Production" | "Ready to Ship" | "Shipped" | "In Transit" | "Delivered" | "Returned" | "Cancelled";
           tassel_fringes?: boolean | null;
           entry_timestamp?: string;
+          whatsapp_sent_at?: string | null;
           order_currency?: string;
           order_value_original?: number;
           order_value_usd?: number | null;
