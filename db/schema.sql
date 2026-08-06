@@ -412,9 +412,16 @@ COMMENT ON FUNCTION trg_assign_document_no() IS
 -- =============================================================================
 
 -- Old: Lists!F ("Item Categories"), extended at runtime by addItemCategory_().
+-- 2026-08-06: hsn_code added — the CSB-V/CSB-IV invoice's item table needs a
+-- per-category HSN code (see real sample invoices NL1702627.pdf/ERG122627.pdf/
+-- ERG092627.pdf) printed against every line item. Nullable because we only
+-- have confirmed codes for 3 of 9 real categories so far; invoice generation
+-- must not silently print a blank/wrong HSN — validate it's set before
+-- allowing an invoice to be created for that category.
 CREATE TABLE item_categories (
-  id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name    citext NOT NULL UNIQUE
+  id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name      citext NOT NULL UNIQUE,
+  hsn_code  text
 );
 
 -- Old: Lists!T ("Sizes", ~280 messy real-world values), extended at runtime
