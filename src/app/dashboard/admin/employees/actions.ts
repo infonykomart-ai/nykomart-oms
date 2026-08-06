@@ -1,143 +1,139 @@
-"use client";
+"use server";
 
-import { useActionState, useRef, useEffect } from "react";
-import { createEmployee, type EmployeeFormState } from "./actions";
+// Employee/login admin — implements pending feature item 12: "naye user
+// banane ka, user ke password banane ka sabhi kaam add karo." Every action
+// here is capability-gated to `employee_admin` (currently MD + Admin roles
+// — see db/schema.sql's role_capabilities seed) and uses the Supabase Admin
+// API (service-role only, NEVER exposed client-side) to create/manage the
+// actual auth.users login alongside the employees row, exactly like
+// db/2026-08-05-employee-setup.sql did by hand for the first 15 real
+// employees.
+import { requireCapability } from "@/lib/auth/require-capability";
+import { createServiceRoleClient } from "@/lib/supabase/server";
+import { revalidatePath } from "next/cache";
 
-const initialState: EmployeeFormState = { error: null, success: null };
+export type EmployeeFormState = {
+  error: string | null;
+  success: { email: string } | null;
+};
 
-const inputClass =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
-const labelClass = "mb-1 block text-sm font-medium text-slate-700";
-
-function generatePassword(): string {
-  // Simple, readable-enough default so the admin doesn't have to think one
-  // up on the spot — always shown in the field so it can be copied to the
-  // new employee before submitting; edit-in-place if they'd rather set
-  // their own. Kept as an uncontrolled field (ref-driven, not React state)
-  // so regenerating/resetting it is a plain DOM write, never a setState
-  // call inside an effect.
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-  let out = "";
-  for (let i = 0; i < 10; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
+function str(formData: FormData, key: string): string {
+  return String(formData.get(key) ?? "").trim();
 }
 
-export function EmployeeForm({
-  roles,
-  companies,
-}: {
-  roles: { id: string; name: string }[];
-  companies: { id: string; name: string }[];
-}) {
-  const [state, formAction, pending] = useActionState(createEmployee, initialState);
-  const formRef = useRef<HTMLFormElement>(null);
-  const passwordRef = useRef<HTMLInputElement>(null);
+/**
+ * Creates a brand-new employee login: a Supabase Auth user (email +
+ * password) plus the linked `employees` row plus `employee_company_access`
+ * grants for every company ticked in the form. All three happen together —
+ * if the employees insert fails after the auth user was created, the
+ * orphaned auth user is deleted so a retry doesn't hit "email already
+ * registered".
+ */
+export async function createEmployee(_prev: EmployeeFormState, formData: FormData): Promise<EmployeeFormState> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
 
-  useEffect(() => {
-    if (state.success) {
-      formRef.current?.reset();
-      if (passwordRef.current) passwordRef.current.value = generatePassword();
+  const name = str(formData, "name");
+  const email = str(formData, "email").toLowerCase();
+  const password = str(formData, "password");
+  const homeCompanyId = str(formData, "home_company_id");
+  const roleId = str(formData, "role_id");
+  const designation = str(formData, "designation") || null;
+  const employeeCode = str(formData, "employee_code") || null;
+  const dateOfJoining = str(formData, "date_of_joining") || null;
+  const extraCompanyIds = formData.getAll("company_access").map(String).filter(Boolean);
+
+  if (!name || !email || !password || !homeCompanyId || !roleId) {
+    return { error: "Naam, email, password, company aur role — sab zaroori hain.", success: null };
+  }
+  if (password.length < 8) {
+    return { error: "Password kam se kam 8 characters ka hona chahiye.", success: null };
+  }
+  if (!/^\S+@\S+\.\S+$/.test(email)) {
+    return { error: "Email sahi format me nahi hai.", success: null };
+  }
+
+  const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
+  if (authError || !authUser?.user) {
+    const msg = authError?.message ?? "";
+    if (msg.toLowerCase().includes("already been registered") || msg.toLowerCase().includes("already exists")) {
+      return { error: "Ye email pehle se ek login me use ho chuki hai.", success: null };
     }
-  }, [state.success]);
+    return { error: `Login create nahi ho paya: ${msg || "unknown error"}`, success: null };
+  }
 
-  return (
-    <form ref={formRef} action={formAction} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-900">Naya Employee / Login Banao</h2>
+  const { data: employee, error: empError } = await supabase
+    .from("employees")
+    .insert({
+      company_id: homeCompanyId,
+      auth_user_id: authUser.user.id,
+      name,
+      email,
+      role_id: roleId,
+      designation,
+      employee_code: employeeCode,
+      date_of_joining: dateOfJoining,
+      active: true,
+    })
+    .select("id")
+    .single();
 
-      {state.success && (
-        <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
-          Login ban gaya — <strong>{state.success.email}</strong>. Email/password employee ko de do.
-        </p>
-      )}
-      {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
+  if (empError || !employee) {
+    // Roll back the orphaned auth user so the email is free to retry.
+    await supabase.auth.admin.deleteUser(authUser.user.id);
+    return { error: `Employee record save nahi hua: ${empError?.message ?? "unknown error"}`, success: null };
+  }
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label className={labelClass} htmlFor="name">Naam *</label>
-          <input id="name" name="name" required className={inputClass} />
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="email">Email (login ke liye) *</label>
-          <input id="email" name="email" type="email" required className={inputClass} placeholder="name@company.com" />
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="password">Password *</label>
-          <div className="flex gap-2">
-            <input
-              id="password"
-              name="password"
-              required
-              minLength={8}
-              ref={passwordRef}
-              defaultValue={generatePassword()}
-              className={inputClass}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (passwordRef.current) passwordRef.current.value = generatePassword();
-              }}
-              className="shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100"
-            >
-              Naya
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-slate-400">Kam se kam 8 characters. Save karne se pehle copy kar lo.</p>
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="role_id">Role *</label>
-          <select id="role_id" name="role_id" required className={inputClass} defaultValue="">
-            <option value="" disabled>Select role</option>
-            {roles.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="home_company_id">Home Company *</label>
-          <select id="home_company_id" name="home_company_id" required className={inputClass} defaultValue="">
-            <option value="" disabled>Select company</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="designation">Designation</label>
-          <input id="designation" name="designation" className={inputClass} />
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="employee_code">Employee Code (biometric)</label>
-          <input id="employee_code" name="employee_code" className={inputClass} />
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="date_of_joining">Date of Joining</label>
-          <input id="date_of_joining" name="date_of_joining" type="date" className={inputClass} />
-        </div>
-      </div>
+  const companyIds = Array.from(new Set([homeCompanyId, ...extraCompanyIds]));
+  if (companyIds.length > 0) {
+    await supabase
+      .from("employee_company_access")
+      .insert(companyIds.map((company_id) => ({ employee_id: employee.id, company_id })));
+  }
 
-      <div>
-        <span className={labelClass}>Extra Company Access (home company ke alawa bhi kaam karega)</span>
-        <div className="flex flex-wrap gap-3">
-          {companies.map((c) => (
-            <label key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700">
-              <input type="checkbox" name="company_access" value={c.id} className="rounded border-slate-300" />
-              {c.name}
-            </label>
-          ))}
-        </div>
-        <p className="mt-1 text-xs text-slate-400">
-          Home company ko yahan dobara tick karna zaroori nahi — wo hamesha included hoti hai.
-        </p>
-      </div>
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null, success: { email } };
+}
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
-      >
-        {pending ? "Ban raha hai..." : "Login Banao"}
-      </button>
-    </form>
-  );
+export type SimpleActionState = { error: string | null; success: boolean };
+
+/** Toggles an employee between active and inactive — never a hard delete, so history (orders, documents, etc. tied to this employee) stays intact. Matches the existing `employees.active` column that login already checks. */
+export async function setEmployeeActive(employeeId: string, active: boolean): Promise<SimpleActionState> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const { error } = await supabase.from("employees").update({ active }).eq("id", employeeId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null, success: true };
+}
+
+/** Sets a brand-new password for an existing employee's login — the in-app equivalent of resetting a forgotten password, previously only possible from the Supabase dashboard. */
+export async function resetEmployeePassword(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const employeeId = str(formData, "employee_id");
+  const password = str(formData, "password");
+  if (!employeeId || !password) return { error: "Employee aur naya password zaroori hai.", success: false };
+  if (password.length < 8) return { error: "Password kam se kam 8 characters ka hona chahiye.", success: false };
+
+  const { data: employee, error: lookupError } = await supabase
+    .from("employees")
+    .select("auth_user_id")
+    .eq("id", employeeId)
+    .single();
+  if (lookupError || !employee?.auth_user_id) {
+    return { error: "Is employee ka login nahi mila.", success: false };
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(employee.auth_user_id, { password });
+  if (error) return { error: error.message, success: false };
+
+  return { error: null, success: true };
 }
