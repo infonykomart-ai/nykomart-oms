@@ -263,3 +263,243 @@ export async function saveInternalInvoice(_prev: DocFormState, formData: FormDat
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: data.id, docNo: data.invoice_no ?? "" } };
 }
+
+// 2026-08-07: "edit modify delet sabhi section me rahega" — extending the
+// same edit/modify/delete pattern built for Orders to the 4 Document Entry
+// types. Unlike Orders, none of these tables have a status/soft-delete
+// concept, so the rule here is simpler: delete is a straightforward hard
+// delete UNLESS another table still points at this row (bill_pass_register
+// / refunds -> credit_notes, credit_notes -> debit_notes — see
+// db/schema.sql sections 9/11/13), in which case it's blocked with a
+// message telling the user to unlink it there first, exactly like Postgres
+// itself would refuse the delete via the FK — just with a readable message
+// instead of a raw constraint error. Doc numbers (cn_no/debit_note_no/
+// chalan_no/invoice_no) and the order_id link are never editable, same
+// reasoning as ref_no on Orders: they're assigned once and other rows
+// (and the order <-> document chain this whole module exists to show)
+// key off them.
+export type DocEditState = { error: string | null; success: boolean };
+export type SimpleResult = { error: string | null; success: boolean };
+
+export async function updateCreditNote(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing Credit Note.", success: false };
+  const { data: existing } = await supabase.from("credit_notes").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Credit Note not found or you don't have access to this company.", success: false };
+  }
+  const creditNoteDate = str(formData, "credit_note_date");
+  if (!creditNoteDate) return { error: "Credit Note Date is required.", success: false };
+
+  const { error } = await supabase
+    .from("credit_notes")
+    .update({
+      store_id: strOrNull(formData, "store_id"),
+      credit_note_date: creditNoteDate,
+      item_id: strOrNull(formData, "item_id"),
+      buyer_name: strOrNull(formData, "buyer_name"),
+      refund_date: strOrNull(formData, "refund_date"),
+      item_name: strOrNull(formData, "item_name"),
+      item_price: numOrNull(formData, "item_price"),
+      invoice_no: strOrNull(formData, "invoice_no"),
+      invoice_value_usd: numOrNull(formData, "invoice_value_usd"),
+      invoice_value_inr: numOrNull(formData, "invoice_value_inr"),
+      refund_amount: numOrZero(formData, "refund_amount"),
+      refund_amt_usd: numOrNull(formData, "refund_amt_usd"),
+      refund_amt_inr: numOrNull(formData, "refund_amt_inr"),
+      credit_note_status: strOrNull(formData, "credit_note_status"),
+      refund_type: strOrNull(formData, "refund_type") as never,
+      remark: strOrNull(formData, "remark"),
+    })
+    .eq("id", id);
+
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deleteCreditNote(id: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("credit_notes").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Credit Note not found or you don't have access to this company.", success: false };
+  }
+
+  const [billPass, refund] = await Promise.all([
+    supabase.from("bill_pass_register").select("id").eq("credit_note_id", id).limit(1).maybeSingle(),
+    supabase.from("refunds").select("id").eq("credit_note_id", id).limit(1).maybeSingle(),
+  ]);
+  if (billPass.data || refund.data) {
+    return { error: "This Credit Note is linked to a Bill Pass Register or Refund entry — remove that link first.", success: false };
+  }
+
+  const { error } = await supabase.from("credit_notes").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function updateDebitNote(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing Debit Note.", success: false };
+  const { data: existing } = await supabase.from("debit_notes").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Debit Note not found or you don't have access to this company.", success: false };
+  }
+  const debitNoteDate = str(formData, "debit_note_date");
+  const partyId = str(formData, "party_id");
+  if (!debitNoteDate) return { error: "Debit Note Date is required.", success: false };
+  if (!partyId) return { error: "Select a party.", success: false };
+
+  const { error } = await supabase
+    .from("debit_notes")
+    .update({
+      debit_note_date: debitNoteDate,
+      against_invoice_bill_no: strOrNull(formData, "against_invoice_bill_no"),
+      party_id: partyId,
+      particulars: strOrNull(formData, "particulars"),
+      bill_no: strOrNull(formData, "bill_no"),
+      bill_date: strOrNull(formData, "bill_date"),
+      sq_ft: numOrNull(formData, "sq_ft"),
+      qty: numOrNull(formData, "qty"),
+      rate: numOrNull(formData, "rate"),
+      debit_amount: numOrZero(formData, "debit_amount"),
+      remark: strOrNull(formData, "remark"),
+    })
+    .eq("id", id);
+
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deleteDebitNote(id: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("debit_notes").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Debit Note not found or you don't have access to this company.", success: false };
+  }
+
+  const { data: linkedCreditNote } = await supabase
+    .from("credit_notes")
+    .select("id")
+    .eq("debit_note_id", id)
+    .limit(1)
+    .maybeSingle();
+  if (linkedCreditNote) {
+    return { error: "This Debit Note is linked to a Credit Note — unlink it there first.", success: false };
+  }
+
+  const { error } = await supabase.from("debit_notes").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function updateWashingEntry(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing Washing Entry.", success: false };
+  const { data: existing } = await supabase.from("washing_entries").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Washing Entry not found or you don't have access to this company.", success: false };
+  }
+  const partyId = str(formData, "party_id");
+  const chalanDate = str(formData, "chalan_date");
+  if (!partyId) return { error: "Select a party.", success: false };
+  if (!chalanDate) return { error: "Chalan Date is required.", success: false };
+
+  const { error } = await supabase
+    .from("washing_entries")
+    .update({
+      party_id: partyId,
+      chalan_date: chalanDate,
+      item_size: strOrNull(formData, "item_size"),
+      pcs: numOrNull(formData, "pcs"),
+      sq_mtr_ft: numOrNull(formData, "sq_mtr_ft"),
+      rate: numOrNull(formData, "rate"),
+      debit_charges: numOrNull(formData, "debit_charges"),
+      store_id: strOrNull(formData, "store_id"),
+    })
+    .eq("id", id);
+
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deleteWashingEntry(id: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("washing_entries").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Washing Entry not found or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("washing_entries").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function updateInternalInvoice(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing Internal Invoice.", success: false };
+  const { data: existing } = await supabase.from("internal_invoices").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Internal Invoice not found or you don't have access to this company.", success: false };
+  }
+  const invoiceDate = str(formData, "invoice_date");
+  const description = str(formData, "description");
+  const qty = numOrNull(formData, "qty");
+  const rate = numOrNull(formData, "rate");
+  if (!invoiceDate) return { error: "Invoice Date is required.", success: false };
+  if (!description) return { error: "Description is required.", success: false };
+  if (!qty || !rate) return { error: "Qty and Rate are required.", success: false };
+
+  const { error } = await supabase
+    .from("internal_invoices")
+    .update({
+      invoice_date: invoiceDate,
+      description,
+      qty,
+      rate,
+      remark: strOrNull(formData, "remark"),
+    } as never)
+    .eq("id", id);
+
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deleteInternalInvoice(id: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("internal_invoices").select("id, company_id").eq("id", id).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Internal Invoice not found or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("internal_invoices").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
