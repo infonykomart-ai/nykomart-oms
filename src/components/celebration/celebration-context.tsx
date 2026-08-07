@@ -16,8 +16,9 @@ import { FireworksOverlay } from "./fireworks-overlay";
 
 export type CelebrationPayload = {
   name: string;
-  kind: "birthday" | "anniversary";
+  kind: "birthday" | "anniversary" | "work_anniversary";
   photoUrl: string | null;
+  years?: number;
 };
 
 type CelebrationContextValue = {
