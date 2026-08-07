@@ -5,11 +5,15 @@ import { CreditNoteForm } from "./credit-note-form";
 import { DebitNoteForm } from "./debit-note-form";
 import { WashingEntryForm } from "./washing-entry-form";
 import { InternalInvoiceForm } from "./internal-invoice-form";
+import { PurchaseBillForm } from "./purchase-bill-form";
+import { FreightBillSection, type FreightBillRow } from "./freight-bill-section";
+import { DutyBillSection, type DutyBillRow } from "./duty-bill-section";
 import { CreditNoteEditForm, type EditableCreditNote } from "./credit-note-edit-form";
 import { DebitNoteEditForm, type EditableDebitNote } from "./debit-note-edit-form";
 import { WashingEntryEditForm, type EditableWashingEntry } from "./washing-entry-edit-form";
 import { InternalInvoiceEditForm, type EditableInternalInvoice } from "./internal-invoice-edit-form";
-import { deleteCreditNote, deleteDebitNote, deleteWashingEntry, deleteInternalInvoice, type SimpleResult } from "./actions";
+import { PurchaseBillEditForm, type EditablePurchaseBill } from "./purchase-bill-edit-form";
+import { deleteCreditNote, deleteDebitNote, deleteWashingEntry, deleteInternalInvoice, deletePurchaseBill, type SimpleResult } from "./actions";
 
 type Company = { id: string; name: string };
 type Party = { id: string; name: string };
@@ -20,6 +24,9 @@ type Recent = {
   debitNotes: (EditableDebitNote & { companyName: string })[];
   washingEntries: (EditableWashingEntry & { companyName: string; amount: number })[];
   internalInvoices: (EditableInternalInvoice & { fromCompanyName: string; toCompanyName: string; total_amount: number })[];
+  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number })[];
+  freightBills: FreightBillRow[];
+  dutyBills: DutyBillRow[];
 };
 
 const TABS = [
@@ -27,6 +34,9 @@ const TABS = [
   { key: "debit-note", label: "Debit Note" },
   { key: "washing-entry", label: "Washing Entry" },
   { key: "internal-invoice", label: "Internal Invoice" },
+  { key: "purchase-bill", label: "Purchase Bill" },
+  { key: "courier-bill", label: "Courier Bill" },
+  { key: "duty-tax-bill", label: "Duty & Tax Bill" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -50,29 +60,48 @@ export function DocumentEntryTabs({
 }) {
   const [tab, setTab] = useState<TabKey>("credit-note");
 
+  const tabBar = (
+    <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
+      {TABS.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          onClick={() => setTab(t.key)}
+          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+            tab === t.key ? "bg-amber-500 text-white" : "text-slate-500 hover:bg-slate-50"
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  // Courier Bill / Duty & Tax Bill are a different shape from the other 5
+  // types — one bill header covers MANY AWBs/orders (see
+  // freight-bill-section.tsx), so their create-form + list live together in
+  // one full-width section instead of the usual "form on the left, recent
+  // list on the right" split.
+  if (tab === "courier-bill" || tab === "duty-tax-bill") {
+    return (
+      <div>
+        {tabBar}
+        {tab === "courier-bill" ? <FreightBillSection bills={recent.freightBills} /> : <DutyBillSection bills={recent.dutyBills} />}
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div>
-        <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                tab === t.key ? "bg-amber-500 text-white" : "text-slate-500 hover:bg-slate-50"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {tabBar}
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           {tab === "credit-note" && <CreditNoteForm companies={companies} stores={stores} />}
           {tab === "debit-note" && <DebitNoteForm companies={companies} parties={parties} />}
           {tab === "washing-entry" && <WashingEntryForm companies={companies} parties={parties} stores={stores} />}
           {tab === "internal-invoice" && <InternalInvoiceForm companies={companies} />}
+          {tab === "purchase-bill" && <PurchaseBillForm parties={parties} />}
         </div>
       </div>
 
@@ -132,6 +161,19 @@ export function DocumentEntryTabs({
           }))}
           onDelete={deleteInternalInvoice}
           renderEdit={(r, onDone) => <InternalInvoiceEditForm invoice={r} onDone={onDone} />}
+        />
+        <DocList
+          title="Recent Purchase Bills"
+          rows={recent.purchaseBills.map((r) => ({
+            id: r.id,
+            no: r.vendor_invoice_no ?? "—",
+            date: r.vendor_invoice_date ?? "—",
+            sub: r.vendorName,
+            amount: `₹${r.total_amount}`,
+            record: r,
+          }))}
+          onDelete={deletePurchaseBill}
+          renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
         />
       </div>
     </div>
