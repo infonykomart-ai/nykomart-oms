@@ -1553,6 +1553,18 @@ export type Database = {
           employee_code: string | null;
           designation: string | null;
           date_of_joining: string | null;
+          whatsapp_no: string | null;
+          gender: "Male" | "Female" | null;
+          marital_status: "Married" | "Unmarried" | null;
+          dob: string | null;
+          anniversary_date: string | null;
+          photo_url: string | null;
+          family_contact_1_name: string | null;
+          family_contact_1_relation: string | null;
+          family_contact_1_number: string | null;
+          family_contact_2_name: string | null;
+          family_contact_2_relation: string | null;
+          family_contact_2_number: string | null;
           created_at: string;
         };
         Insert: {
@@ -1567,6 +1579,18 @@ export type Database = {
           employee_code?: string | null;
           designation?: string | null;
           date_of_joining?: string | null;
+          whatsapp_no?: string | null;
+          gender?: "Male" | "Female" | null;
+          marital_status?: "Married" | "Unmarried" | null;
+          dob?: string | null;
+          anniversary_date?: string | null;
+          photo_url?: string | null;
+          family_contact_1_name?: string | null;
+          family_contact_1_relation?: string | null;
+          family_contact_1_number?: string | null;
+          family_contact_2_name?: string | null;
+          family_contact_2_relation?: string | null;
+          family_contact_2_number?: string | null;
           created_at?: string;
         };
         Update: {
@@ -1581,6 +1605,18 @@ export type Database = {
           employee_code?: string | null;
           designation?: string | null;
           date_of_joining?: string | null;
+          whatsapp_no?: string | null;
+          gender?: "Male" | "Female" | null;
+          marital_status?: "Married" | "Unmarried" | null;
+          dob?: string | null;
+          anniversary_date?: string | null;
+          photo_url?: string | null;
+          family_contact_1_name?: string | null;
+          family_contact_1_relation?: string | null;
+          family_contact_1_number?: string | null;
+          family_contact_2_name?: string | null;
+          family_contact_2_relation?: string | null;
+          family_contact_2_number?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -3406,6 +3442,8 @@ export type Database = {
       bank_status: "Pending" | "Realized" | "Partially Realized";
       delivered_status: "Delivered" | "NOT Delivered";
       duty_tax_mode: "CSB-IV" | "CSB-V";
+      employee_gender: "Male" | "Female";
+      employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
       order_photo_type: "Dispatch" | "Website";
