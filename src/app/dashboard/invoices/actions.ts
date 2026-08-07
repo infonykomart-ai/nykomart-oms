@@ -159,6 +159,40 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
  * persisted (an invoice number is a real legal/tax document reference,
  * unlike a certificate — losing edits on refresh would be a real problem).
  */
+export type SimpleResult = { error: string | null; success: boolean };
+
+/**
+ * 2026-08-07: "galat invoice ban gaya ya galat PO/RF/RG se ban gaya jiska
+ * banna nahi tha uska bhi delete chahiye" — deleting a wrong/duplicate
+ * invoice must ALSO free up the orders it was generated from, otherwise
+ * they'd stay stuck showing as already-invoiced (orders.invoice_id set)
+ * forever with no way to invoice them again. So: null out invoice_id on
+ * every order pointing at this invoice FIRST (they reappear in "Ready to
+ * invoice" on the Invoices page immediately), then delete the invoice row.
+ * Nothing else references sales_invoices by a real foreign key — Credit
+ * Notes/Debit Notes only store invoice_no as free text (a copy, not a
+ * link, see db/schema.sql section 9) — so there's no other guard needed.
+ */
+export async function deleteInvoice(invoiceId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("invoicing");
+  const supabase = createServiceRoleClient();
+
+  const { data: invoice } = await supabase.from("sales_invoices").select("id, company_id").eq("id", invoiceId).single();
+  if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
+    return { error: "Invoice not found or you don't have access to this company.", success: false };
+  }
+
+  const { error: unlinkError } = await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", invoiceId);
+  if (unlinkError) return { error: `Could not unlink orders from this invoice: ${unlinkError.message}`, success: false };
+
+  const { error } = await supabase.from("sales_invoices").delete().eq("id", invoiceId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/invoices");
+  revalidatePath(`/dashboard/invoices/${invoiceId}`);
+  return { error: null, success: true };
+}
+
 export async function updateInvoiceFields(
   invoiceId: string,
   fields: {
