@@ -20,6 +20,35 @@ export type EmployeeFormState = {
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
 }
+function strOrNull(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
+  return v ? v : null;
+}
+
+// 2026-08-07: Employee Master expansion — shared by createEmployee (new
+// login) and updateEmployeeDetails (existing employee) below, so the same
+// field set/validation applies whether you're filling this in on day one
+// or backfilling it later for one of the 15 employees who already existed
+// before these columns did.
+function profileFields(formData: FormData) {
+  return {
+    whatsapp_no: strOrNull(formData, "whatsapp_no"),
+    gender: strOrNull(formData, "gender") as never,
+    marital_status: strOrNull(formData, "marital_status") as never,
+    dob: strOrNull(formData, "dob"),
+    // anniversary_date only makes sense for Married — dropped even if the
+    // client sent one for an Unmarried submission (form hides the field,
+    // but never trust the client alone).
+    anniversary_date: str(formData, "marital_status") === "Married" ? strOrNull(formData, "anniversary_date") : null,
+    photo_url: strOrNull(formData, "photo_url"),
+    family_contact_1_name: strOrNull(formData, "family_contact_1_name"),
+    family_contact_1_relation: strOrNull(formData, "family_contact_1_relation"),
+    family_contact_1_number: strOrNull(formData, "family_contact_1_number"),
+    family_contact_2_name: strOrNull(formData, "family_contact_2_name"),
+    family_contact_2_relation: strOrNull(formData, "family_contact_2_relation"),
+    family_contact_2_number: strOrNull(formData, "family_contact_2_number"),
+  };
+}
 
 /**
  * Creates a brand-new employee login: a Supabase Auth user (email +
@@ -78,6 +107,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
       employee_code: employeeCode,
       date_of_joining: dateOfJoining,
       active: true,
+      ...profileFields(formData),
     })
     .select("id")
     .single();
@@ -135,5 +165,37 @@ export async function resetEmployeePassword(_prev: SimpleActionState, formData: 
   const { error } = await supabase.auth.admin.updateUserById(employee.auth_user_id, { password });
   if (error) return { error: error.message, success: false };
 
+  return { error: null, success: true };
+}
+
+export type EmployeeDetailsFormState = { error: string | null; success: boolean };
+
+/**
+ * Backfills/edits the Employee Master profile fields (2026-08-07 round) on
+ * an EXISTING employee — the 15 real employees created before these
+ * columns existed all need this, not just brand-new logins going through
+ * createEmployee above. Designation/employee code/date of joining are also
+ * editable here since there was previously no way to fix a typo in those
+ * without going into Supabase directly.
+ */
+export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, formData: FormData): Promise<EmployeeDetailsFormState> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const employeeId = str(formData, "employee_id");
+  if (!employeeId) return { error: "Employee missing.", success: false };
+
+  const { error } = await supabase
+    .from("employees")
+    .update({
+      designation: strOrNull(formData, "designation"),
+      employee_code: strOrNull(formData, "employee_code"),
+      date_of_joining: strOrNull(formData, "date_of_joining"),
+      ...profileFields(formData),
+    })
+    .eq("id", employeeId);
+
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/admin/employees");
   return { error: null, success: true };
 }
