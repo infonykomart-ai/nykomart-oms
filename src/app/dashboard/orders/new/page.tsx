@@ -80,16 +80,11 @@ export default async function NewOrderPage() {
                 <div className="mt-2 border-t border-slate-100 pt-2">
                   <OrderWhatsAppButton
                     order={{
-                      id: o.id,
                       ref_no: o.ref_no,
-                      buyer_name_address: o.buyer_name_address,
-                      contact_no: o.contact_no,
                       photo_url: o.photo_url,
                       item_category_name: categoryName.get(o.item_category_id) ?? null,
                       size_label: o.size_label,
                       qty: o.qty,
-                      order_value_original: o.order_value_original,
-                      order_currency: o.order_currency,
                       whatsapp_sent_at: o.whatsapp_sent_at,
                       dispatch_date: o.dispatch_date,
                       sku_label: o.sku_label,
