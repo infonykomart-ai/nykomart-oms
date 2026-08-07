@@ -119,13 +119,13 @@ export function LetterForm({
             ))}
           </select>
           <p className="mt-1 text-xs text-slate-400">
-            Employee select karte hi ek default company aa jayegi — chaho to yahan se khud badal bhi sakte ho.
+            Selecting an employee fills in a default company — you can change it here if needed.
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className={labelClass} htmlFor="employee_name">Naam (letter par)</label>
+            <label className={labelClass} htmlFor="employee_name">Name (on letter)</label>
             <input id="employee_name" className={inputClass} value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} />
           </div>
           <div>
@@ -186,12 +186,12 @@ export function LetterForm({
           disabled={!employeeId || !companyId}
           className="w-full rounded-lg border border-amber-500 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40"
         >
-          {hasGenerated ? "Text dobara banao (neeche wala edit overwrite hoga)" : "Letter text banao"}
+          {hasGenerated ? "Regenerate text (this will overwrite your edits below)" : "Generate letter text"}
         </button>
 
         {hasGenerated && (
           <div>
-            <label className={labelClass} htmlFor="body_text">Letter Text (edit kar sakte ho)</label>
+            <label className={labelClass} htmlFor="body_text">Letter Text (editable)</label>
             <textarea id="body_text" rows={14} className={inputClass} value={bodyText} onChange={(e) => setBodyText(e.target.value)} />
           </div>
         )}
@@ -241,7 +241,7 @@ export function LetterForm({
           )}
 
           <div className="whitespace-pre-wrap text-sm leading-relaxed">
-            {bodyText || "“Letter text banao” button dabao — text yahan dikhega, print se pehle edit kar sakte ho."}
+            {bodyText || "Click \"Generate letter text\" — the text will appear here, and you can edit it before printing."}
           </div>
 
           <div className="mt-10 text-sm">

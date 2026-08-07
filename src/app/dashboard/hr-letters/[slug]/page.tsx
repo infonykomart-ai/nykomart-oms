@@ -27,8 +27,8 @@ export default async function LetterPage({ params }: { params: Promise<{ slug: s
           {template.icon} {template.title}
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Employee select karo — company letterhead automatic aa jayega. Print se pehle text neeche edit kar sakte
-          ho.
+          Select an employee — the company letterhead will be filled in automatically. You can edit the text below
+          before printing.
         </p>
       </div>
 

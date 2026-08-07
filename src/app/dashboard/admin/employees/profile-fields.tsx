@@ -79,7 +79,7 @@ export function ProfileFields({ defaults }: { defaults?: ProfileFieldDefaults })
       <div>
         <span className={labelClass}>Family Contact 1</span>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <input name="family_contact_1_name" placeholder="Naam" defaultValue={defaults?.family_contact_1_name ?? ""} className={inputClass} />
+          <input name="family_contact_1_name" placeholder="Name" defaultValue={defaults?.family_contact_1_name ?? ""} className={inputClass} />
           <input name="family_contact_1_relation" placeholder="Relation (Father/Mother/...)" defaultValue={defaults?.family_contact_1_relation ?? ""} className={inputClass} />
           <input name="family_contact_1_number" placeholder="Contact No." defaultValue={defaults?.family_contact_1_number ?? ""} className={inputClass} />
         </div>
@@ -88,7 +88,7 @@ export function ProfileFields({ defaults }: { defaults?: ProfileFieldDefaults })
       <div>
         <span className={labelClass}>Family Contact 2</span>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <input name="family_contact_2_name" placeholder="Naam" defaultValue={defaults?.family_contact_2_name ?? ""} className={inputClass} />
+          <input name="family_contact_2_name" placeholder="Name" defaultValue={defaults?.family_contact_2_name ?? ""} className={inputClass} />
           <input name="family_contact_2_relation" placeholder="Relation (Spouse/Sibling/...)" defaultValue={defaults?.family_contact_2_relation ?? ""} className={inputClass} />
           <input name="family_contact_2_number" placeholder="Contact No." defaultValue={defaults?.family_contact_2_number ?? ""} className={inputClass} />
         </div>

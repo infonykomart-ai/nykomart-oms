@@ -15,14 +15,14 @@ export async function login(_prevState: LoginState, formData: FormData): Promise
   const password = String(formData.get("password") || "");
 
   if (!email || !password) {
-    return { error: "Email aur password dono zaroori hain." };
+    return { error: "Both email and password are required." };
   }
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
-    return { error: "Login fail ho gaya — email ya password galat hai." };
+    return { error: "Login failed — incorrect email or password." };
   }
 
   redirect("/dashboard");

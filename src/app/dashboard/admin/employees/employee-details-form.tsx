@@ -35,7 +35,7 @@ export function EmployeeDetailsForm({ employee, onDone }: { employee: EmployeeDe
     <form action={formAction} className="mt-3 space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
       <input type="hidden" name="employee_id" value={employee.id} />
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
-      {state.success && <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">✓ Save ho gaya.</p>}
+      {state.success && <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">✓ Saved successfully.</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
@@ -60,7 +60,7 @@ export function EmployeeDetailsForm({ employee, onDone }: { employee: EmployeeDe
           disabled={pending}
           className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
         >
-          {pending ? "Save ho raha hai..." : "Save Karo"}
+          {pending ? "Saving..." : "Save"}
         </button>
         <button type="button" onClick={onDone} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100">
           Cancel

@@ -33,8 +33,8 @@ export default async function DocumentsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🧾 Document Entry</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Credit Note, Debit Note, Washing Entry, Internal Invoice — PO/RF/RG number se order (aur agar invoice ban chuka
-          hai to vo bhi) auto-fetch ho jata hai, taaki sab documents order se connected rahein.
+          Credit Note, Debit Note, Washing Entry, Internal Invoice — entering a PO/RF/RG number automatically fetches
+          the order (and its invoice, if one has already been generated), so all documents stay linked to the order.
         </p>
       </div>
 

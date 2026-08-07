@@ -110,7 +110,7 @@ export function OrderWhatsAppButton({
   }
 
   if (sentAt) {
-    return <span className="text-xs font-medium text-green-700">✓ WhatsApp par bheja gaya</span>;
+    return <span className="text-xs font-medium text-green-700">✓ Sent on WhatsApp</span>;
   }
 
   return (
@@ -121,7 +121,7 @@ export function OrderWhatsAppButton({
         onClick={handleShare}
         className="rounded-lg border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-800 transition hover:bg-green-100 disabled:opacity-60"
       >
-        📱 WhatsApp par bhejo
+        📱 Send on WhatsApp
       </button>
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>

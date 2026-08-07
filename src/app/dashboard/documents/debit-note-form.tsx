@@ -21,7 +21,7 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
   }
 
   if (state.success) {
-    return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Debit Note ban gaya — <strong>{state.success.docNo}</strong>.</p>;
+    return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Debit Note created — <strong>{state.success.docNo}</strong>.</p>;
   }
 
   return (
@@ -29,7 +29,7 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
 
-      <OrderLookupBox label="PO/RF/RG No. se order dhoondo (optional)" onFound={handleFound} />
+      <OrderLookupBox label="Find order by PO/RF/RG No. (optional)" onFound={handleFound} />
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -97,7 +97,7 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
         disabled={pending}
         className="w-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
       >
-        {pending ? "Save ho raha hai..." : "Debit Note Save Karo"}
+        {pending ? "Saving..." : "Save Debit Note"}
       </button>
     </form>
   );

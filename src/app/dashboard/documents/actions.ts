@@ -80,7 +80,7 @@ export async function lookupOrderForEntry(refNo: string): Promise<OrderLookup> {
   const supabase = createServiceRoleClient();
 
   const trimmed = refNo.trim();
-  if (!trimmed) return { ...EMPTY_LOOKUP, error: "PO/RF/RG number likho." };
+  if (!trimmed) return { ...EMPTY_LOOKUP, error: "Enter a PO/RF/RG number." };
 
   const { data: order } = await supabase
     .from("orders")
@@ -91,7 +91,7 @@ export async function lookupOrderForEntry(refNo: string): Promise<OrderLookup> {
     .in("company_id", employee.companyIds)
     .maybeSingle();
 
-  if (!order) return { ...EMPTY_LOOKUP, error: `"${trimmed}" — koi order nahi mila.` };
+  if (!order) return { ...EMPTY_LOOKUP, error: `No order found for "${trimmed}".` };
 
   const [{ data: invoice }, { data: debitNotes }, { data: creditNotes }] = await Promise.all([
     order.invoice_id
@@ -119,9 +119,9 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
 
   const companyId = str(formData, "company_id");
   const creditNoteDate = str(formData, "credit_note_date");
-  if (!companyId) return initialFail("Company select karo.");
-  if (!employee.companyIds.includes(companyId)) return initialFail("Is company ke liye aapko access nahi hai.");
-  if (!creditNoteDate) return initialFail("Credit Note Date zaroori hai.");
+  if (!companyId) return initialFail("Select a company.");
+  if (!employee.companyIds.includes(companyId)) return initialFail("You do not have access to this company.");
+  if (!creditNoteDate) return initialFail("Credit Note Date is required.");
 
   const { data, error } = await supabase
     .from("credit_notes")
@@ -150,7 +150,7 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
     .select("id, cn_no")
     .single();
 
-  if (error || !data) return initialFail(`Credit Note save nahi hua: ${error?.message ?? "unknown error"}`);
+  if (error || !data) return initialFail(`Failed to save Credit Note: ${error?.message ?? "unknown error"}`);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: data.id, docNo: data.cn_no ?? "" } };
 }
@@ -162,10 +162,10 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
   const companyId = str(formData, "company_id");
   const debitNoteDate = str(formData, "debit_note_date");
   const partyId = str(formData, "party_id");
-  if (!companyId) return initialFail("Company select karo.");
-  if (!employee.companyIds.includes(companyId)) return initialFail("Is company ke liye aapko access nahi hai.");
-  if (!debitNoteDate) return initialFail("Debit Note Date zaroori hai.");
-  if (!partyId) return initialFail("Party select karo.");
+  if (!companyId) return initialFail("Select a company.");
+  if (!employee.companyIds.includes(companyId)) return initialFail("You do not have access to this company.");
+  if (!debitNoteDate) return initialFail("Debit Note Date is required.");
+  if (!partyId) return initialFail("Select a party.");
 
   const { data, error } = await supabase
     .from("debit_notes")
@@ -187,7 +187,7 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     .select("id, debit_note_no")
     .single();
 
-  if (error || !data) return initialFail(`Debit Note save nahi hua: ${error?.message ?? "unknown error"}`);
+  if (error || !data) return initialFail(`Failed to save Debit Note: ${error?.message ?? "unknown error"}`);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: data.id, docNo: data.debit_note_no ?? "" } };
 }
@@ -199,10 +199,10 @@ export async function saveWashingEntry(_prev: DocFormState, formData: FormData):
   const companyId = str(formData, "company_id");
   const partyId = str(formData, "party_id");
   const chalanDate = str(formData, "chalan_date");
-  if (!companyId) return initialFail("Company select karo.");
-  if (!employee.companyIds.includes(companyId)) return initialFail("Is company ke liye aapko access nahi hai.");
-  if (!partyId) return initialFail("Party select karo.");
-  if (!chalanDate) return initialFail("Chalan Date zaroori hai.");
+  if (!companyId) return initialFail("Select a company.");
+  if (!employee.companyIds.includes(companyId)) return initialFail("You do not have access to this company.");
+  if (!partyId) return initialFail("Select a party.");
+  if (!chalanDate) return initialFail("Chalan Date is required.");
 
   const { data, error } = await supabase
     .from("washing_entries")
@@ -221,7 +221,7 @@ export async function saveWashingEntry(_prev: DocFormState, formData: FormData):
     .select("id, chalan_no")
     .single();
 
-  if (error || !data) return initialFail(`Washing Entry save nahi hua: ${error?.message ?? "unknown error"}`);
+  if (error || !data) return initialFail(`Failed to save Washing Entry: ${error?.message ?? "unknown error"}`);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: data.id, docNo: data.chalan_no ?? "" } };
 }
@@ -237,12 +237,12 @@ export async function saveInternalInvoice(_prev: DocFormState, formData: FormDat
   const qty = numOrNull(formData, "qty");
   const rate = numOrNull(formData, "rate");
 
-  if (!fromCompanyId || !toCompanyId) return initialFail("From aur To dono company select karo.");
-  if (fromCompanyId === toCompanyId) return initialFail("From aur To company alag honi chahiye.");
-  if (!employee.companyIds.includes(fromCompanyId)) return initialFail("From company ke liye aapko access nahi hai.");
-  if (!invoiceDate) return initialFail("Invoice Date zaroori hai.");
-  if (!description) return initialFail("Description zaroori hai.");
-  if (!qty || !rate) return initialFail("Qty aur Rate zaroori hain.");
+  if (!fromCompanyId || !toCompanyId) return initialFail("Select both the From and To companies.");
+  if (fromCompanyId === toCompanyId) return initialFail("The From and To companies must be different.");
+  if (!employee.companyIds.includes(fromCompanyId)) return initialFail("You do not have access to the From company.");
+  if (!invoiceDate) return initialFail("Invoice Date is required.");
+  if (!description) return initialFail("Description is required.");
+  if (!qty || !rate) return initialFail("Qty and Rate are required.");
 
   const { data, error } = await supabase
     .from("internal_invoices")
@@ -259,7 +259,7 @@ export async function saveInternalInvoice(_prev: DocFormState, formData: FormDat
     .select("id, invoice_no")
     .single();
 
-  if (error || !data) return initialFail(`Internal Invoice save nahi hua: ${error?.message ?? "unknown error"}`);
+  if (error || !data) return initialFail(`Failed to save Internal Invoice: ${error?.message ?? "unknown error"}`);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: data.id, docNo: data.invoice_no ?? "" } };
 }

@@ -68,7 +68,7 @@ function ResetPasswordInline({ employeeId, onDone }: { employeeId: string; onDon
         name="password"
         minLength={8}
         required
-        placeholder="Naya password (8+ chars)"
+        placeholder="New password (8+ characters)"
         className="w-40 rounded-lg border border-slate-300 px-2 py-1 text-xs outline-none focus:border-amber-500"
       />
       <button

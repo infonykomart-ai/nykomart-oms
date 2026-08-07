@@ -34,7 +34,7 @@ export async function toggleRoleCapability(
       .select("role_id", { count: "exact", head: true })
       .eq("capability_code", "permissions_admin");
     if ((count ?? 0) <= 1) {
-      return { error: "Ye aakhri role hai jiske paas Permissions access hai — ise hataya nahi ja sakta (lockout se bachne ke liye)." };
+      return { error: "This is the last role with Permissions access — it cannot be removed (to prevent lockout)." };
     }
   }
 

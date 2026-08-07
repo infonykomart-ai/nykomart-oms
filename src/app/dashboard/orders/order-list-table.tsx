@@ -34,7 +34,7 @@ export function OrderListTable({
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
 
   function handleDelete(orderId: string, refNo: string) {
-    if (!window.confirm(`"${refNo}" ko delete karna hai? Ye undo nahi ho sakta.`)) return;
+    if (!window.confirm(`Delete "${refNo}"? This cannot be undone.`)) return;
     setDeleteError((prev) => ({ ...prev, [orderId]: "" }));
     startTransition(async () => {
       const result = await deleteOrder(orderId);
@@ -45,7 +45,7 @@ export function OrderListTable({
   }
 
   if (orders.length === 0) {
-    return <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">Koi order nahi mila.</p>;
+    return <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">No orders found.</p>;
   }
 
   return (
@@ -72,7 +72,7 @@ export function OrderListTable({
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{o.status}</span>
                   {o.whatsapp_sent_at && (
                     <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                      ✓ WhatsApp bheja gaya
+                      ✓ Sent on WhatsApp
                     </span>
                   )}
                   {o.invoice_id && (

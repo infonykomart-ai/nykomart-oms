@@ -69,7 +69,7 @@ export function ExportBar<T>({
       <a
         className={btnClass}
         href={mailtoLink(title, buildSummaryText(title, columns, rows))}
-        onClick={() => flash("Email draft khul gaya — CSV/Excel file khud attach kar do agar bhejni ho.")}
+        onClick={() => flash("Email draft opened — attach the CSV/Excel file yourself if you need to send it.")}
       >
         ✉️ Email
       </a>

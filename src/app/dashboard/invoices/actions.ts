@@ -58,28 +58,28 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
   const buyerNameAddressOverride = strOrNull(formData, "buyer_name_address");
   const invoiceDate = str(formData, "invoice_date") || new Date().toISOString().slice(0, 10);
 
-  if (orderIds.length === 0) return { error: "Kam se kam ek order select karo.", success: null };
-  if (!shipmentTerm) return { error: "Shipment Term zaroori hai.", success: null };
-  if (csbType !== "CSB-V" && csbType !== "CSB-IV") return { error: "CSB type CSB-V ya CSB-IV honi chahiye.", success: null };
-  if (!courierCompany) return { error: "Courier Company zaroori hai.", success: null };
+  if (orderIds.length === 0) return { error: "Select at least one order.", success: null };
+  if (!shipmentTerm) return { error: "Shipment Term is required.", success: null };
+  if (csbType !== "CSB-V" && csbType !== "CSB-IV") return { error: "CSB type must be CSB-V or CSB-IV.", success: null };
+  if (!courierCompany) return { error: "Courier Company is required.", success: null };
 
   const { data: orders, error: ordersError } = await supabase
     .from("orders")
     .select("id, company_id, store_id, buyer_name_address, invoice_id")
     .in("id", orderIds);
   if (ordersError || !orders || orders.length !== orderIds.length) {
-    return { error: "Selected orders load nahi ho paaye — dobara try karo.", success: null };
+    return { error: "Failed to load selected orders — please try again.", success: null };
   }
   if (orders.some((o) => o.invoice_id)) {
-    return { error: "In me se ek ya zyada order already kisi invoice me use ho chuke hain.", success: null };
+    return { error: "One or more of these orders are already used in an invoice.", success: null };
   }
   const companyId = orders[0].company_id;
   const storeId = orders[0].store_id;
   if (orders.some((o) => o.company_id !== companyId || o.store_id !== storeId)) {
-    return { error: "Sabhi selected orders ek hi company aur store ke hone chahiye.", success: null };
+    return { error: "All selected orders must belong to the same company and store.", success: null };
   }
   if (!employee.companyIds.includes(companyId)) {
-    return { error: "Is company ke liye aapko access nahi hai.", success: null };
+    return { error: "You don't have access to this company.", success: null };
   }
 
   const [{ data: store }, { data: company }] = await Promise.all([
@@ -87,10 +87,10 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     supabase.from("companies").select("id, master_invoice_prefix").eq("id", companyId).single(),
   ]);
   if (!store?.invoice_ref_prefix) {
-    return { error: "Is store ka invoice prefix set nahi hai — Admin se set karvao (Company & Items).", success: null };
+    return { error: "This store's invoice prefix is not set — ask an Admin to set it (Company & Items).", success: null };
   }
   if (!company?.master_invoice_prefix) {
-    return { error: "Is company ka master invoice prefix set nahi hai — Admin se set karvao.", success: null };
+    return { error: "This company's master invoice prefix is not set — ask an Admin to set it.", success: null };
   }
 
   const fy = fyLabel(invoiceDate);
@@ -101,7 +101,7 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     p_use_fy: true,
     p_as_of_date: invoiceDate,
   });
-  if (numError || num == null) return { error: "Invoice number reserve nahi ho paaya — dobara try karo.", success: null };
+  if (numError || num == null) return { error: "Failed to reserve invoice number — please try again.", success: null };
 
   const { data: mnum, error: mnumError } = await supabase.rpc("reserve_next_number", {
     p_company_id: companyId,
@@ -109,7 +109,7 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     p_use_fy: true,
     p_as_of_date: invoiceDate,
   });
-  if (mnumError || mnum == null) return { error: "Master invoice number reserve nahi ho paaya — dobara try karo.", success: null };
+  if (mnumError || mnum == null) return { error: "Failed to reserve master invoice number — please try again.", success: null };
 
   const invoiceNo = formatInvoiceNo(store.invoice_ref_prefix, fy, num);
   const masterInvoiceNo = formatInvoiceNo(company.master_invoice_prefix, fy, mnum);
@@ -140,12 +140,12 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     .single();
 
   if (insertError || !invoice) {
-    return { error: `Invoice save nahi hua: ${insertError?.message ?? "unknown error"}`, success: null };
+    return { error: `Failed to save invoice: ${insertError?.message ?? "unknown error"}`, success: null };
   }
 
   const { error: linkError } = await supabase.from("orders").update({ invoice_id: invoice.id }).in("id", orderIds);
   if (linkError) {
-    return { error: `Invoice ban gaya (${invoice.invoice_no}) lekin orders link karte waqt error aayi — Admin ko batao.`, success: null };
+    return { error: `Invoice created (${invoice.invoice_no}) but an error occurred while linking the orders — please inform an Admin.`, success: null };
   }
 
   revalidatePath("/dashboard/invoices");

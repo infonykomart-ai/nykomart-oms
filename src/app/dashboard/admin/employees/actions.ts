@@ -73,13 +73,13 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   const extraCompanyIds = formData.getAll("company_access").map(String).filter(Boolean);
 
   if (!name || !email || !password || !homeCompanyId || !roleId) {
-    return { error: "Naam, email, password, company aur role — sab zaroori hain.", success: null };
+    return { error: "Name, email, password, company, and role are all required.", success: null };
   }
   if (password.length < 8) {
-    return { error: "Password kam se kam 8 characters ka hona chahiye.", success: null };
+    return { error: "Password must be at least 8 characters.", success: null };
   }
   if (!/^\S+@\S+\.\S+$/.test(email)) {
-    return { error: "Email sahi format me nahi hai.", success: null };
+    return { error: "Email is not in a valid format.", success: null };
   }
 
   const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
@@ -90,9 +90,9 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   if (authError || !authUser?.user) {
     const msg = authError?.message ?? "";
     if (msg.toLowerCase().includes("already been registered") || msg.toLowerCase().includes("already exists")) {
-      return { error: "Ye email pehle se ek login me use ho chuki hai.", success: null };
+      return { error: "This email is already in use by another login.", success: null };
     }
-    return { error: `Login create nahi ho paya: ${msg || "unknown error"}`, success: null };
+    return { error: `Could not create login: ${msg || "unknown error"}`, success: null };
   }
 
   const { data: employee, error: empError } = await supabase
@@ -115,7 +115,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   if (empError || !employee) {
     // Roll back the orphaned auth user so the email is free to retry.
     await supabase.auth.admin.deleteUser(authUser.user.id);
-    return { error: `Employee record save nahi hua: ${empError?.message ?? "unknown error"}`, success: null };
+    return { error: `Employee record could not be saved: ${empError?.message ?? "unknown error"}`, success: null };
   }
 
   const companyIds = Array.from(new Set([homeCompanyId, ...extraCompanyIds]));
@@ -150,8 +150,8 @@ export async function resetEmployeePassword(_prev: SimpleActionState, formData: 
 
   const employeeId = str(formData, "employee_id");
   const password = str(formData, "password");
-  if (!employeeId || !password) return { error: "Employee aur naya password zaroori hai.", success: false };
-  if (password.length < 8) return { error: "Password kam se kam 8 characters ka hona chahiye.", success: false };
+  if (!employeeId || !password) return { error: "Employee and new password are required.", success: false };
+  if (password.length < 8) return { error: "Password must be at least 8 characters.", success: false };
 
   const { data: employee, error: lookupError } = await supabase
     .from("employees")
@@ -159,7 +159,7 @@ export async function resetEmployeePassword(_prev: SimpleActionState, formData: 
     .eq("id", employeeId)
     .single();
   if (lookupError || !employee?.auth_user_id) {
-    return { error: "Is employee ka login nahi mila.", success: false };
+    return { error: "No login found for this employee.", success: false };
   }
 
   const { error } = await supabase.auth.admin.updateUserById(employee.auth_user_id, { password });

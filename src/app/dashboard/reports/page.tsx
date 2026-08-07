@@ -55,7 +55,7 @@ export default async function ReportsPage({
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">📈 Reports</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Orders report — filter karo, phir CSV/Excel/Word/PDF me download ya Email/WhatsApp se bhejo.
+          Orders report — apply filters, then download as CSV/Excel/Word/PDF or send via Email/WhatsApp.
         </p>
       </div>
 

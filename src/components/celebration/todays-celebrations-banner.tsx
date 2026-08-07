@@ -14,16 +14,23 @@ export function TodaysCelebrationsBanner({ celebrations }: { celebrations: Celeb
   if (celebrations.length === 0) return null;
 
   const emoji = { birthday: "🎂", anniversary: "💍", work_anniversary: "🏆" } as const;
-  const label = (c: Celebration) =>
-    c.kind === "birthday" ? "Birthday" : c.kind === "anniversary" ? "Anniversary" : `${c.years} Saal Company me`;
+  const label = (c: Celebration) => (c.kind === "birthday" ? "Birthday" : "Anniversary");
 
   return (
     <div className="mb-4 flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
       {celebrations.map((c) => (
         <div key={`${c.employeeId}-${c.kind}`} className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-amber-900">
-            {emoji[c.kind]} Aaj <strong>{c.name}</strong> {c.kind === "work_anniversary" ? "ke" : "ka"} {label(c)}{" "}
-            {c.kind === "work_anniversary" ? "poore ho gaye!" : "hai!"}
+            {emoji[c.kind]}{" "}
+            {c.kind === "work_anniversary" ? (
+              <>
+                <strong>{c.name}</strong> is celebrating {c.years} year{c.years === 1 ? "" : "s"} at the company!
+              </>
+            ) : (
+              <>
+                Today is <strong>{c.name}</strong>&apos;s {label(c)}!
+              </>
+            )}
           </p>
           <button
             type="button"

@@ -32,15 +32,15 @@ export default async function NewOrderPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Order Entry</h1>
           <p className="mt-1 text-sm text-slate-500">
-            PO/RF/RG number automatic hai — save karte hi assign hoga. Duplicate-dispatched-order aur
-            buyer-batch grouping bhi automatic check hote hain. Ek se zyada item ho to &quot;+ Add More Item&quot; use karo.
+            The PO/RF/RG number is assigned automatically as soon as you save. Duplicate dispatched
+            orders and buyer-batch grouping are also checked automatically. If there is more than one item, use &quot;+ Add More Item&quot;.
           </p>
         </div>
         <Link
           href="/dashboard/orders"
           className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
         >
-          📋 Saare Orders (Edit/Delete)
+          📋 All Orders (Edit/Delete)
         </Link>
       </div>
 
@@ -55,7 +55,7 @@ export default async function NewOrderPage() {
         </div>
 
         <div>
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Aaj ki recent entries</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">Today&apos;s recent entries</h2>
           <div className="space-y-2">
             {(recentOrders ?? []).map((o) => (
               <div
@@ -92,7 +92,7 @@ export default async function NewOrderPage() {
               </div>
             ))}
             {(recentOrders ?? []).length === 0 && (
-              <p className="text-sm text-slate-400">Abhi tak koi order entry nahi hui.</p>
+              <p className="text-sm text-slate-400">No orders entered yet.</p>
             )}
           </div>
         </div>

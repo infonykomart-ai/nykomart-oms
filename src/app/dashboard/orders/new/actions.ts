@@ -55,10 +55,10 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
   try {
     parsed = JSON.parse(raw || "[]");
   } catch {
-    return { items: null, error: "Item data corrupt hai — page reload karke dobara try karo." };
+    return { items: null, error: "Item data is corrupted — please reload the page and try again." };
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    return { items: null, error: "Kam se kam ek item zaroori hai." };
+    return { items: null, error: "At least one item is required." };
   }
 
   const items: ParsedItem[] = [];
@@ -66,12 +66,12 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
     const raw = parsed[i] as Record<string, unknown>;
     const label = parsed.length > 1 ? `Item ${i + 1}: ` : "";
     const itemCategoryId = String(raw.itemCategoryId ?? "").trim();
-    if (!itemCategoryId) return { items: null, error: `${label}Item Category zaroori hai.` };
+    if (!itemCategoryId) return { items: null, error: `${label}Item Category is required.` };
     const qty = Number(raw.qty);
-    if (!Number.isFinite(qty) || qty <= 0) return { items: null, error: `${label}Quantity 0 se zyada honi chahiye.` };
+    if (!Number.isFinite(qty) || qty <= 0) return { items: null, error: `${label}Quantity must be greater than 0.` };
     const orderValueOriginal = Number(raw.orderValueOriginal);
     if (!Number.isFinite(orderValueOriginal) || orderValueOriginal < 0) {
-      return { items: null, error: `${label}Order value sahi number honi chahiye.` };
+      return { items: null, error: `${label}Order value must be a valid number.` };
     }
     const skuLabel = String(raw.skuLabel ?? "").trim();
     const sizeLabel = String(raw.sizeLabel ?? "").trim();
@@ -122,12 +122,12 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
   const manualRefNo = strOrNull(formData, "manual_ref_no");
 
   if (!storeId || !orderDate) {
-    return { error: "Store aur order date zaroori hain.", success: null };
+    return { error: "Store and order date are required.", success: null };
   }
 
   const { items, error: itemsError } = parseItems(formData);
   if (itemsError || !items) {
-    return { error: itemsError ?? "Item details sahi nahi hain.", success: null };
+    return { error: itemsError ?? "Item details are invalid.", success: null };
   }
 
   const { data: company, error: companyError } = await supabase
@@ -136,7 +136,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     .eq("id", employee.currentCompanyId)
     .single();
   if (companyError || !company) {
-    return { error: "Company record nahi mila — Admin se contact karo.", success: null };
+    return { error: "Company record not found — please contact Admin.", success: null };
   }
 
   const thisBuyerKey = buyerMatchKey(contactNo, buyerNameAddress);
@@ -158,7 +158,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
       .maybeSingle();
     if (clash) {
       return {
-        error: `"${baseRefNo}" pehle se use ho raha hai — koi aur number likho, ya khali chhod do (isi buyer ka aaj ka order hai to auto-match ho jayega).`,
+        error: `"${baseRefNo}" is already in use — enter a different number, or leave it blank (it will auto-match if this buyer already has an order today).`,
         success: null,
       };
     }
@@ -218,7 +218,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
           p_as_of_date: orderDate,
         });
         if (reserveError || num == null) {
-          return { error: "PO/RF/RG number reserve nahi ho paya — dobara try karo.", success: null };
+          return { error: "Could not reserve a PO/RF/RG number — please try again.", success: null };
         }
         const candidate = `${company.ref_prefix}-${String(num).padStart(4, "0")}`;
         const { data: clash } = await supabase
@@ -231,7 +231,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
         if (!clash) baseRefNo = candidate;
       }
       if (!baseRefNo) {
-        return { error: "PO/RF/RG number reserve nahi ho paya (baar baar clash) — Admin ko batao.", success: null };
+        return { error: "Could not reserve a PO/RF/RG number (repeated conflicts) — please notify Admin.", success: null };
       }
     }
   }
@@ -300,7 +300,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     });
 
     if (insertError) {
-      return { error: `Save nahi ho paya: ${insertError.message}`, success: null };
+      return { error: `Save failed: ${insertError.message}`, success: null };
     }
   }
 

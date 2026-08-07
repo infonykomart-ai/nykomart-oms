@@ -43,22 +43,22 @@ export function EmployeeForm({
 
   return (
     <form ref={formRef} action={formAction} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-900">Naya Employee / Login Banao</h2>
+      <h2 className="text-sm font-semibold text-slate-900">Create New Employee / Login</h2>
 
       {state.success && (
         <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
-          Login ban gaya — <strong>{state.success.email}</strong>. Email/password employee ko de do.
+          Login created — <strong>{state.success.email}</strong>. Share the email and password with the employee.
         </p>
       )}
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label className={labelClass} htmlFor="name">Naam *</label>
+          <label className={labelClass} htmlFor="name">Name *</label>
           <input id="name" name="name" required className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="email">Email (login ke liye) *</label>
+          <label className={labelClass} htmlFor="email">Email (for login) *</label>
           <input id="email" name="email" type="email" required className={inputClass} placeholder="name@company.com" />
         </div>
         <div>
@@ -80,10 +80,10 @@ export function EmployeeForm({
               }}
               className="shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100"
             >
-              Naya
+              Generate New
             </button>
           </div>
-          <p className="mt-1 text-xs text-slate-400">Kam se kam 8 characters. Save karne se pehle copy kar lo.</p>
+          <p className="mt-1 text-xs text-slate-400">Minimum 8 characters. Copy it before saving.</p>
         </div>
         <div>
           <label className={labelClass} htmlFor="role_id">Role *</label>
@@ -118,7 +118,7 @@ export function EmployeeForm({
       </div>
 
       <div>
-        <span className={labelClass}>Extra Company Access (home company ke alawa bhi kaam karega)</span>
+        <span className={labelClass}>Extra Company Access (in addition to the home company)</span>
         <div className="flex flex-wrap gap-3">
           {companies.map((c) => (
             <label key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700">
@@ -128,12 +128,12 @@ export function EmployeeForm({
           ))}
         </div>
         <p className="mt-1 text-xs text-slate-400">
-          Home company ko yahan dobara tick karna zaroori nahi — wo hamesha included hoti hai.
+          No need to tick the home company here again — it is always included.
         </p>
       </div>
 
       <div className="border-t border-slate-100 pt-4">
-        <h3 className="mb-3 text-sm font-semibold text-slate-900">Employee Master Details (optional, baad me bhi bhar sakte ho)</h3>
+        <h3 className="mb-3 text-sm font-semibold text-slate-900">Employee Master Details (optional, can be filled in later)</h3>
         <ProfileFields />
       </div>
 
@@ -142,7 +142,7 @@ export function EmployeeForm({
         disabled={pending}
         className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
       >
-        {pending ? "Ban raha hai..." : "Login Banao"}
+        {pending ? "Creating..." : "Create Login"}
       </button>
     </form>
   );

@@ -53,14 +53,14 @@ export default async function OrdersPage({
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📋 Orders — Edit / Modify / Delete</h1>
           <p className="mt-1 text-sm text-slate-500">
-            WhatsApp par pehle se bheja hua order hara dikhega. PO/RF/RG number edit nahi hota (batch/suffix se juda hai) — baaki sab editable hai.
+            Orders already sent on WhatsApp are shown in green. The PO/RF/RG number cannot be edited (it&apos;s tied to batch/suffix logic) — everything else is editable.
           </p>
         </div>
         <Link
           href="/dashboard/orders/new"
           className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
         >
-          + Naya Order
+          + New Order
         </Link>
       </div>
 
@@ -80,7 +80,7 @@ export default async function OrdersPage({
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
           <select id="company" name="company" defaultValue={companyId} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
-            <option value="">Sabhi</option>
+            <option value="">All</option>
             {(companies ?? []).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -89,7 +89,7 @@ export default async function OrdersPage({
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="status">Status</label>
           <select id="status" name="status" defaultValue={status} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
-            <option value="">Sabhi</option>
+            <option value="">All</option>
             {STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}

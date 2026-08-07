@@ -96,7 +96,7 @@ export function InvoiceView({
         ioss_number: iossNumber || null,
         remark: remark || null,
       });
-      setSaved(result.error ? `Error: ${result.error}` : "Save ho gaya.");
+      setSaved(result.error ? `Error: ${result.error}` : "Saved successfully.");
     });
   }
 
@@ -134,7 +134,7 @@ export function InvoiceView({
           <div className="mb-1 flex items-center justify-between">
             <label className={labelClass} htmlFor="origin_decl">Origin Declaration</label>
             <button type="button" onClick={handleRefillDeclaration} className="text-xs text-amber-600 underline">
-              Country se refill karo
+              Refill from Country
             </button>
           </div>
           <textarea id="origin_decl" rows={4} className={inputClass} value={originDeclaration} onChange={(e) => setOriginDeclaration(e.target.value)} />
@@ -171,7 +171,7 @@ export function InvoiceView({
         {relatedNotes && (relatedNotes.creditNotes.length > 0 || relatedNotes.debitNotes.length > 0) && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
             <h3 className="mb-1 text-xs font-semibold text-slate-700">Related Credit/Debit Notes</h3>
-            <p className="mb-2 text-[11px] text-slate-400">Is invoice ke orders ke against pehle se bane documents (Document Entry se).</p>
+            <p className="mb-2 text-[11px] text-slate-400">Documents already created against this invoice&apos;s orders (from Document Entry).</p>
             <div className="space-y-1 text-xs text-slate-600">
               {relatedNotes.creditNotes.map((n) => (
                 <p key={n.id}>Credit Note <strong>{n.no}</strong> — ₹{n.amount} ({n.refNo})</p>
@@ -227,7 +227,7 @@ export function InvoiceView({
           <table className="mb-4 w-full border-collapse text-[11px]">
             <thead>
               <tr className="border-b border-t border-slate-400 bg-slate-50">
-                <th className="border border-slate-300 px-2 py-1 text-left">Refrance No.</th>
+                <th className="border border-slate-300 px-2 py-1 text-left">Reference No.</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">HSN</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Size</th>

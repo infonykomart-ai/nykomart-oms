@@ -26,8 +26,8 @@ export default async function EmployeesAdminPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Employees</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Naya login banao, password reset karo, ya kisi employee ko deactivate karo — sab yahin se, Supabase
-          dashboard me jaane ki zaroorat nahi.
+          Create a new login, reset a password, or deactivate an employee — all from here, no need to go into the
+          Supabase dashboard.
         </p>
       </div>
 
@@ -41,7 +41,7 @@ export default async function EmployeesAdminPage() {
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-4 py-3">Naam</th>
+                  <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Role / Company</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
@@ -75,7 +75,7 @@ export default async function EmployeesAdminPage() {
                 {(employees ?? []).length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-400">
-                      Abhi tak koi employee nahi hai.
+                      No employees yet.
                     </td>
                   </tr>
                 )}

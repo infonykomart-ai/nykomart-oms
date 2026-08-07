@@ -129,7 +129,7 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
             ))}
           </select>
           <p className="mt-1 text-xs text-slate-400">
-            Employee select karte hi ek default company aa jayegi — chaho to yahan se khud badal bhi sakte ho.
+            Selecting an employee fills in a default company — you can change it here if needed.
           </p>
         </div>
 
@@ -149,19 +149,19 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
         </div>
 
         <div>
-          <label className={labelClass} htmlFor="employee_name">Naam (certificate par jaisa chhape)</label>
+          <label className={labelClass} htmlFor="employee_name">Name (as it should appear on the certificate)</label>
           <input id="employee_name" className={inputClass} value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} />
         </div>
 
         <div>
-          <label className={labelClass} htmlFor="body_text">Certificate ka text</label>
+          <label className={labelClass} htmlFor="body_text">Certificate Text</label>
           <textarea id="body_text" rows={5} className={inputClass} value={bodyText} onChange={(e) => setBodyText(e.target.value)} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass} htmlFor="hr_name">HR Manager (signature)</label>
-            <input id="hr_name" className={inputClass} value={hrName} onChange={(e) => setHrName(e.target.value)} placeholder="Naam likho" />
+            <input id="hr_name" className={inputClass} value={hrName} onChange={(e) => setHrName(e.target.value)} placeholder="Enter name" />
           </div>
           <div>
             <label className={labelClass} htmlFor="director_name">Director / CEO</label>
@@ -182,7 +182,7 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
         >
           Print / Save as PDF
         </button>
-        {(!employeeId || !companyId) && <p className="text-xs text-slate-400">Pehle employee aur company select karo.</p>}
+        {(!employeeId || !companyId) && <p className="text-xs text-slate-400">Select an employee and company first.</p>}
       </div>
 
       <div style={{ containerType: "inline-size" }}>

@@ -17,8 +17,8 @@ export default async function HrLettersHubPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">HR Letters</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Kisi bhi letter/certificate ko print/send karne se pehle edit karne ka mauka milta hai — kabhi bhi
-          seedha &ldquo;ready to print&rdquo; nahi hota.
+          You always get a chance to edit any letter or certificate before printing or sending it — nothing goes
+          straight to &ldquo;ready to print&rdquo;.
         </p>
       </div>
 
@@ -51,7 +51,7 @@ export default async function HrLettersHubPage() {
         >
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-xl">📘</div>
           <h3 className="font-semibold text-slate-900 group-hover:text-amber-600">Company Policy Handbook</h3>
-          <p className="mt-1 text-sm text-slate-500">Har company ka apna, ek reference document.</p>
+          <p className="mt-1 text-sm text-slate-500">A separate reference document for each company.</p>
         </Link>
       </div>
     </div>

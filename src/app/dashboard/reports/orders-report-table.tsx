@@ -66,7 +66,7 @@ export function OrdersReportTable({
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
           <select id="company" name="company" defaultValue={filters.companyId} className={inputClass}>
-            <option value="">Sabhi</option>
+            <option value="">All</option>
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -75,7 +75,7 @@ export function OrdersReportTable({
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="status">Status</label>
           <select id="status" name="status" defaultValue={filters.status} className={inputClass}>
-            <option value="">Sabhi</option>
+            <option value="">All</option>
             {STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -88,7 +88,7 @@ export function OrdersReportTable({
       </form>
 
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">{rows.length} orders {rows.length === 1000 && "(1000 tak dikhta hai — date range chhota karo pura data ke liye)"}</p>
+        <p className="text-sm text-slate-500">{rows.length} orders {rows.length === 1000 && "(showing up to 1000 — narrow the date range for full data)"}</p>
         <ExportBar title="Orders Report" filenameBase="orders-report" columns={COLUMNS} rows={rows} />
       </div>
 
@@ -111,7 +111,7 @@ export function OrdersReportTable({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={COLUMNS.length} className="px-3 py-8 text-center text-slate-400">Koi order nahi mila is filter me.</td>
+                <td colSpan={COLUMNS.length} className="px-3 py-8 text-center text-slate-400">No orders found for this filter.</td>
               </tr>
             )}
           </tbody>

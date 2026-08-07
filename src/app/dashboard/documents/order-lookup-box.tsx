@@ -13,7 +13,7 @@ const inputClass =
  * any) and any existing Credit/Debit Notes. `onFound` lets the parent form
  * autofill its own fields (company, buyer, invoice values, etc.).
  */
-export function OrderLookupBox({ label = "PO/RF/RG No. se order dhoondo", onFound }: { label?: string; onFound: (result: OrderLookup) => void }) {
+export function OrderLookupBox({ label = "Look up order by PO/RF/RG No.", onFound }: { label?: string; onFound: (result: OrderLookup) => void }) {
   const [refNo, setRefNo] = useState("");
   const [result, setResult] = useState<OrderLookup | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -63,7 +63,7 @@ export function OrderLookupBox({ label = "PO/RF/RG No. se order dhoondo", onFoun
               ✓ Invoice already generated: <strong>{result.invoice.invoice_no}</strong> (Master: {result.invoice.master_invoice_no})
             </p>
           ) : (
-            <p className="text-slate-400">Abhi tak koi invoice nahi bana is order ke liye.</p>
+            <p className="text-slate-400">No invoice has been generated for this order yet.</p>
           )}
           {result.debitNotes.length > 0 && (
             <p>Debit Notes already raised: {result.debitNotes.map((d) => `${d.debit_note_no ?? "—"} (₹${d.debit_amount})`).join(", ")}</p>

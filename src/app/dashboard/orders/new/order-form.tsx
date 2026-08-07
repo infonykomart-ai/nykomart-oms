@@ -179,7 +179,7 @@ export function OrderForm({
     <form ref={formRef} action={formAction} onSubmit={handleSubmit} className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       {state.success && (
         <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
-          Order save ho gaya — <strong>{state.success.refNo}</strong>
+          Order saved — <strong>{state.success.refNo}</strong>
         </p>
       )}
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
@@ -204,11 +204,11 @@ export function OrderForm({
           </div>
           <div>
             <label className={labelClass} htmlFor="marketplace_order_no">Marketplace Order No.</label>
-            <input id="marketplace_order_no" name="marketplace_order_no" className={inputClass} placeholder="Portal ka apna order id" />
+            <input id="marketplace_order_no" name="marketplace_order_no" className={inputClass} placeholder="The order ID from the marketplace/portal" />
           </div>
           <div>
             <label className={labelClass} htmlFor="manual_ref_no">Manual PO/RF/RG No. (optional)</label>
-            <input id="manual_ref_no" name="manual_ref_no" className={inputClass} placeholder="Khaali chhodo — automatic ban jayega" />
+            <input id="manual_ref_no" name="manual_ref_no" className={inputClass} placeholder="Leave blank — will be assigned automatically" />
           </div>
           <div>
             <label className={labelClass} htmlFor="po_date">PO Date</label>
@@ -243,7 +243,7 @@ export function OrderForm({
         </button>
         {itemKeys.length > 1 && (
           <p className="text-xs text-slate-400">
-            {itemKeys.length} items — sabko ek hi PO/RF/RG number milega, suffix ke saath (jese -1/{itemKeys.length}, -2/{itemKeys.length}…).
+            {itemKeys.length} items — all will share one PO/RF/RG number, with a suffix (e.g. -1/{itemKeys.length}, -2/{itemKeys.length}…).
           </p>
         )}
       </div>

@@ -16,7 +16,7 @@ export function InternalInvoiceForm({ companies }: { companies: { id: string; na
   const [state, formAction, pending] = useActionState(saveInternalInvoice, initialState);
 
   if (state.success) {
-    return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Internal Invoice ban gaya — <strong>{state.success.docNo}</strong>.</p>;
+    return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Internal Invoice created — <strong>{state.success.docNo}</strong>.</p>;
   }
 
   return (
@@ -70,7 +70,7 @@ export function InternalInvoiceForm({ companies }: { companies: { id: string; na
         disabled={pending}
         className="w-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
       >
-        {pending ? "Save ho raha hai..." : "Internal Invoice Save Karo"}
+        {pending ? "Saving..." : "Save Internal Invoice"}
       </button>
     </form>
   );

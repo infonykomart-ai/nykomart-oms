@@ -33,7 +33,7 @@ export function CreditNoteForm({ companies, stores }: { companies: { id: string;
   }
 
   if (state.success) {
-    return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Credit Note ban gaya — <strong>{state.success.docNo}</strong>.</p>;
+    return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Credit Note created — <strong>{state.success.docNo}</strong>.</p>;
   }
 
   return (
@@ -124,7 +124,7 @@ export function CreditNoteForm({ companies, stores }: { companies: { id: string;
         </div>
         {debitNoteOptions.length > 0 && (
           <div>
-            <label className={labelClass} htmlFor="cn_debit_note">Link to Debit Note (agar ho)</label>
+            <label className={labelClass} htmlFor="cn_debit_note">Link to Debit Note (if any)</label>
             <select id="cn_debit_note" name="debit_note_id" defaultValue="" className={inputClass}>
               <option value="">—</option>
               {debitNoteOptions.map((d) => (
@@ -145,7 +145,7 @@ export function CreditNoteForm({ companies, stores }: { companies: { id: string;
         disabled={pending}
         className="w-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
       >
-        {pending ? "Save ho raha hai..." : "Credit Note Save Karo"}
+        {pending ? "Saving..." : "Save Credit Note"}
       </button>
     </form>
   );

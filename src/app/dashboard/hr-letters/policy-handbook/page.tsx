@@ -16,7 +16,7 @@ export default async function PolicyHandbookPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">📘 Company Policy Handbook</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Har company alag ho sakti hai — company select karo, neeche text edit kar sakte ho, phir print/download.
+          Each company may have its own version — select a company, edit the text below, then print or download.
         </p>
       </div>
       <PolicyHandbookViewer companies={companies ?? []} />

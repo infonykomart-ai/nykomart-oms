@@ -22,8 +22,8 @@ export function InvoiceGenerateForm({
   if (state.success) {
     return (
       <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
-        Invoice ban gaya — <strong>{state.success.invoiceNo}</strong>.{" "}
-        <Link href={`/dashboard/invoices/${state.success.invoiceId}`} className="underline">Dekho / Print karo</Link>
+        Invoice created — <strong>{state.success.invoiceNo}</strong>.{" "}
+        <Link href={`/dashboard/invoices/${state.success.invoiceId}`} className="underline">View / Print</Link>
       </p>
     );
   }
@@ -58,10 +58,10 @@ export function InvoiceGenerateForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="destination_country">Destination Country</label>
-          <input id="destination_country" name="destination_country" placeholder="Origin declaration is se auto-fill hoga" className={inputClass} />
+          <input id="destination_country" name="destination_country" placeholder="Origin declaration will be auto-filled from this" className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="ioss_number">IOSS Number (agar ho)</label>
+          <label className={labelClass} htmlFor="ioss_number">IOSS Number (if any)</label>
           <input id="ioss_number" name="ioss_number" className={inputClass} />
         </div>
       </div>
@@ -81,7 +81,7 @@ export function InvoiceGenerateForm({
         disabled={pending}
         className="w-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
       >
-        {pending ? "Generate ho raha hai..." : "Invoice Generate Karo"}
+        {pending ? "Generating..." : "Generate Invoice"}
       </button>
     </form>
   );

@@ -128,7 +128,7 @@ function RecentList({ title, rows }: { title: string; rows: { id: string; no: st
             </div>
           </div>
         ))}
-        {rows.length === 0 && <p className="text-xs text-slate-400">Abhi tak koi nahi bana.</p>}
+        {rows.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
       </div>
     </div>
   );

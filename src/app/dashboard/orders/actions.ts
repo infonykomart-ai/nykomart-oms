@@ -37,7 +37,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
 
   const { data: existing } = await supabase.from("orders").select("id, company_id, order_date").eq("id", orderId).single();
   if (!existing || !employee.companyIds.includes(existing.company_id)) {
-    return { error: "Ye order nahi mila ya is company ke liye access nahi hai.", success: false };
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
   const itemCategoryId = str(formData, "item_category_id");
@@ -46,10 +46,10 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const orderValueOriginal = Number(str(formData, "order_value_original"));
   const orderDate = str(formData, "order_date") || existing.order_date;
 
-  if (!itemCategoryId) return { error: "Item Category zaroori hai.", success: false };
-  if (!Number.isFinite(qty) || qty <= 0) return { error: "Quantity 0 se zyada honi chahiye.", success: false };
+  if (!itemCategoryId) return { error: "Item Category is required.", success: false };
+  if (!Number.isFinite(qty) || qty <= 0) return { error: "Quantity must be greater than 0.", success: false };
   if (!Number.isFinite(orderValueOriginal) || orderValueOriginal < 0) {
-    return { error: "Order value sahi number honi chahiye.", success: false };
+    return { error: "Order value must be a valid number.", success: false };
   }
 
   const conversion = await computeCurrencyConversion(supabase, orderCurrency, orderDate, orderValueOriginal);
@@ -109,10 +109,10 @@ export async function deleteOrder(orderId: string): Promise<SimpleResult> {
 
   const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id").eq("id", orderId).single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
-    return { error: "Ye order nahi mila ya is company ke liye access nahi hai.", success: false };
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
   if (order.invoice_id) {
-    return { error: "Is order ka invoice already ban chuka hai — delete nahi kar sakte. Status ko Cancelled kar do.", success: false };
+    return { error: "This order already has an invoice — it cannot be deleted. Set the status to Cancelled instead.", success: false };
   }
 
   const [dispatch, credit, debit, washing, freight, duty] = await Promise.all([
@@ -126,7 +126,7 @@ export async function deleteOrder(orderId: string): Promise<SimpleResult> {
   const blocked = [dispatch, credit, debit, washing, freight, duty].some((r) => r.data);
   if (blocked) {
     return {
-      error: "Is order se dispatch/document/bill records judhe hain — delete nahi kar sakte. Status ko Cancelled kar do.",
+      error: "This order has linked dispatch/document/bill records — it cannot be deleted. Set the status to Cancelled instead.",
       success: false,
     };
   }

@@ -45,7 +45,7 @@ export default async function DashboardHome() {
 
       {tiles.length === 0 && (
         <p className="text-sm text-slate-500">
-          Aapke role ko abhi koi capability assign nahi hui — Admin se contact karo.
+          No capabilities have been assigned to your role yet — please contact an Admin.
         </p>
       )}
     </div>

@@ -20,7 +20,7 @@ export function InvoiceBatchList({ batches }: { batches: Batch[] }) {
   const [openKey, setOpenKey] = useState<string | null>(null);
 
   if (batches.length === 0) {
-    return <p className="text-sm text-slate-400">Sab dispatched/delivered orders already invoice ho chuke hain.</p>;
+    return <p className="text-sm text-slate-400">All dispatched/delivered orders have already been invoiced.</p>;
   }
 
   return (
