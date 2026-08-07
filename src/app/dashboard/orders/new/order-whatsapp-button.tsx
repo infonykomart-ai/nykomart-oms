@@ -81,9 +81,16 @@ export function OrderWhatsAppButton({
     const text = buildMessage();
 
     // Path 1: native share sheet with the actual photo attached.
+    // 2026-08-07: fetch the photo through OUR OWN /api/order-photo-proxy
+    // instead of the photo_url directly — most photo URLs are on outside
+    // domains (vendor/marketplace image hosts) that don't send CORS
+    // headers, so a direct browser fetch silently failed and this always
+    // fell through to the text-only link below. Routing it through our own
+    // origin (which fetches the image server-to-server, unaffected by
+    // CORS) makes the real-photo share succeed for any source domain.
     if (order.photo_url && typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        const res = await fetch(order.photo_url, { mode: "cors" });
+        const res = await fetch(`/api/order-photo-proxy?url=${encodeURIComponent(order.photo_url)}`);
         if (res.ok) {
           const blob = await res.blob();
           const file = new File([blob], "product-photo.jpg", { type: blob.type || "image/jpeg" });
