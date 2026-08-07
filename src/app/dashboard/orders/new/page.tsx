@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { OrderForm } from "./order-form";
@@ -27,12 +28,20 @@ export default async function NewOrderPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Order Entry</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          PO/RF/RG number automatic hai — save karte hi assign hoga. Duplicate-dispatched-order aur
-          buyer-batch grouping bhi automatic check hote hain.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Order Entry</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            PO/RF/RG number automatic hai — save karte hi assign hoga. Duplicate-dispatched-order aur
+            buyer-batch grouping bhi automatic check hote hain. Ek se zyada item ho to &quot;+ Add More Item&quot; use karo.
+          </p>
+        </div>
+        <Link
+          href="/dashboard/orders"
+          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          📋 Saare Orders (Edit/Delete)
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -49,7 +58,12 @@ export default async function NewOrderPage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Aaj ki recent entries</h2>
           <div className="space-y-2">
             {(recentOrders ?? []).map((o) => (
-              <div key={o.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+              <div
+                key={o.id}
+                className={`rounded-lg border p-3 text-sm ${
+                  o.whatsapp_sent_at ? "border-green-200 bg-green-50" : "border-slate-200 bg-white"
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-slate-900">{o.ref_no}</span>
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{o.status}</span>
