@@ -2,6 +2,7 @@
 
 import { useActionState, useRef, useEffect } from "react";
 import { createEmployee, type EmployeeFormState } from "./actions";
+import { ProfileFields } from "./profile-fields";
 
 const initialState: EmployeeFormState = { error: null, success: null };
 
@@ -129,6 +130,11 @@ export function EmployeeForm({
         <p className="mt-1 text-xs text-slate-400">
           Home company ko yahan dobara tick karna zaroori nahi — wo hamesha included hoti hai.
         </p>
+      </div>
+
+      <div className="border-t border-slate-100 pt-4">
+        <h3 className="mb-3 text-sm font-semibold text-slate-900">Employee Master Details (optional, baad me bhi bhar sakte ho)</h3>
+        <ProfileFields />
       </div>
 
       <button
