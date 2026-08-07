@@ -29,6 +29,34 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     hsn_code: categoryMap.get(o.item_category_id)?.hsn_code ?? "",
   }));
 
+  // 2026-08-07: surface the order -> credit/debit-note connection here too
+  // (not just in Document Entry's lookup box) — see claude/document-entry-
+  // and-pending-work-notes.md follow-up. This invoice's own orders may
+  // already have refund/debit history against them.
+  const orderIds = (orders ?? []).map((o) => o.id);
+  const [{ data: relatedCreditNotes }, { data: relatedDebitNotes }] = orderIds.length
+    ? await Promise.all([
+        supabase.from("credit_notes").select("id, cn_no, refund_amount, order_id").in("order_id", orderIds),
+        supabase.from("debit_notes").select("id, debit_note_no, debit_amount, order_id").in("order_id", orderIds),
+      ])
+    : [{ data: [] }, { data: [] }];
+
+  const refNoByOrderId = new Map((orders ?? []).map((o) => [o.id, o.ref_no]));
+  const relatedNotes = {
+    creditNotes: (relatedCreditNotes ?? []).map((c) => ({
+      id: c.id,
+      no: c.cn_no ?? "—",
+      amount: Number(c.refund_amount),
+      refNo: refNoByOrderId.get(c.order_id ?? "") ?? "",
+    })),
+    debitNotes: (relatedDebitNotes ?? []).map((d) => ({
+      id: d.id,
+      no: d.debit_note_no ?? "—",
+      amount: Number(d.debit_amount),
+      refNo: refNoByOrderId.get(d.order_id ?? "") ?? "",
+    })),
+  };
+
   return (
     <InvoiceView
       invoice={invoice}
@@ -36,6 +64,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       company={company ?? null}
       profile={profile ?? null}
       storeName={store?.name ?? ""}
+      relatedNotes={relatedNotes}
     />
   );
 }
