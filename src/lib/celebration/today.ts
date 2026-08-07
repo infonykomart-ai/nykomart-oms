@@ -12,7 +12,11 @@ export type Celebration = {
   employeeId: string;
   name: string;
   photoUrl: string | null;
-  kind: "birthday" | "anniversary";
+  kind: "birthday" | "anniversary" | "work_anniversary";
+  // Only set for kind "work_anniversary" — 1st, 2nd, 3rd year at the
+  // company, etc. (2026-08-07: user's explicit ask — "kisi ko company me
+  // ek saal ho jaye 1,2,3...10 ese to uska bhi popup aana chahiye").
+  years?: number;
 };
 
 function monthDay(dateStr: string | null): string | null {
@@ -30,7 +34,7 @@ export async function getTodaysCelebrations(
 
   const { data: employees } = await supabase
     .from("employees")
-    .select("id, name, photo_url, dob, anniversary_date, marital_status, active")
+    .select("id, name, photo_url, dob, anniversary_date, marital_status, active, date_of_joining")
     .in("company_id", companyIds)
     .eq("active", true);
 
@@ -43,6 +47,15 @@ export async function getTodaysCelebrations(
     }
     if (e.marital_status === "Married" && monthDay(e.anniversary_date) === todayMonthDay) {
       celebrations.push({ employeeId: e.id, name: e.name, photoUrl: e.photo_url, kind: "anniversary" });
+    }
+    if (e.date_of_joining && monthDay(e.date_of_joining) === todayMonthDay) {
+      const joinYear = Number(e.date_of_joining.slice(0, 4));
+      const years = today.getFullYear() - joinYear;
+      // Joining-day-itself (years=0) is not a "work anniversary" yet —
+      // only 1 full year onward, any count (1..10..whatever).
+      if (years >= 1) {
+        celebrations.push({ employeeId: e.id, name: e.name, photoUrl: e.photo_url, kind: "work_anniversary", years });
+      }
     }
   }
   return celebrations;
