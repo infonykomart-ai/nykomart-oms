@@ -15,46 +15,101 @@ export default async function DocumentsPage() {
   const employee = await requireCapability("doc_entry");
   const supabase = await createClient();
 
-  const [{ data: companies }, { data: parties }, { data: stores }, { data: recentCreditNotes }, { data: recentDebitNotes }, { data: recentWashingEntries }, { data: recentInternalInvoices }] =
-    await Promise.all([
-      supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
-      supabase.from("parties").select("id, name").order("name"),
-      supabase.from("stores").select("id, name, company_id").order("name"),
-      supabase
-        .from("credit_notes")
-        .select(
-          "id, cn_no, company_id, store_id, credit_note_date, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, remark"
-        )
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabase
-        .from("debit_notes")
-        .select(
-          "id, debit_note_no, debit_note_date, company_id, party_id, against_invoice_bill_no, particulars, bill_no, bill_date, sq_ft, qty, rate, debit_amount, remark"
-        )
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabase
-        .from("washing_entries")
-        .select("id, chalan_no, chalan_date, company_id, party_id, store_id, item_size, pcs, sq_mtr_ft, rate, debit_charges, amount")
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabase
-        .from("internal_invoices")
-        .select("id, invoice_no, invoice_date, from_company_id, to_company_id, description, qty, rate, remark, total_amount")
-        .order("created_at", { ascending: false })
-        .limit(8),
-    ]);
+  const [
+    { data: companies },
+    { data: parties },
+    { data: stores },
+    { data: recentCreditNotes },
+    { data: recentDebitNotes },
+    { data: recentWashingEntries },
+    { data: recentInternalInvoices },
+    { data: recentPurchaseBills },
+    { data: recentFreightBills },
+    { data: recentDutyBills },
+  ] = await Promise.all([
+    supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
+    supabase.from("parties").select("id, name").order("name"),
+    supabase.from("stores").select("id, name, company_id").order("name"),
+    supabase
+      .from("credit_notes")
+      .select(
+        "id, cn_no, company_id, store_id, credit_note_date, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, remark"
+      )
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("debit_notes")
+      .select(
+        "id, debit_note_no, debit_note_date, company_id, party_id, against_invoice_bill_no, particulars, bill_no, bill_date, sq_ft, qty, rate, debit_amount, remark"
+      )
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("washing_entries")
+      .select("id, chalan_no, chalan_date, company_id, party_id, store_id, item_size, pcs, sq_mtr_ft, rate, debit_charges, amount")
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("internal_invoices")
+      .select("id, invoice_no, invoice_date, from_company_id, to_company_id, description, qty, rate, remark, total_amount")
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("purchase_bills")
+      .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, work_description, unit_rate, total_amount")
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("freight_bills")
+      .select("id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt")
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("duty_tax_bills")
+      .select("id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt")
+      .order("created_at", { ascending: false })
+      .limit(8),
+  ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
+
+  // Courier Bill / Duty & Tax Bill assignments + the order ref_no's they
+  // point at — fetched separately since freight_bill_awb_assignments /
+  // duty_bill_awb_assignments only hold order_id, not the human-readable
+  // PO/RF/RG number.
+  const freightBillIds = (recentFreightBills ?? []).map((b) => b.id);
+  const dutyBillIds = (recentDutyBills ?? []).map((b) => b.id);
+  const [{ data: freightAssignments }, { data: dutyAssignments }] = await Promise.all([
+    freightBillIds.length
+      ? supabase
+          .from("freight_bill_awb_assignments")
+          .select("id, freight_bill_id, order_id, bill_weight_kg, difference_amt, remark")
+          .in("freight_bill_id", freightBillIds)
+      : Promise.resolve({ data: [] }),
+    dutyBillIds.length
+      ? supabase
+          .from("duty_bill_awb_assignments")
+          .select("id, duty_tax_bill_id, order_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, remark")
+          .in("duty_tax_bill_id", dutyBillIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const assignmentOrderIds = Array.from(
+    new Set([...(freightAssignments ?? []).map((a) => a.order_id), ...(dutyAssignments ?? []).map((a) => a.order_id)])
+  );
+  const { data: assignmentOrders } = assignmentOrderIds.length
+    ? await supabase.from("orders").select("id, ref_no").in("id", assignmentOrderIds)
+    : { data: [] };
+  const orderRefNo = new Map((assignmentOrders ?? []).map((o) => [o.id, o.ref_no]));
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🧾 Document Entry</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Credit Note, Debit Note, Washing Entry, Internal Invoice — entering a PO/RF/RG number automatically fetches
-          the order (and its invoice, if one has already been generated), so all documents stay linked to the order.
+          Credit Note, Debit Note, Washing Entry, Internal Invoice, Purchase Bill, Courier Bill, Duty &amp; Tax Bill —
+          entering a PO/RF/RG (or AWB) number automatically fetches the order, so every document stays linked back to it.
         </p>
       </div>
 
@@ -95,6 +150,50 @@ export default async function DocumentsPage() {
             total_amount: Number(r.total_amount),
             fromCompanyName: companyName.get(r.from_company_id) ?? "",
             toCompanyName: companyName.get(r.to_company_id) ?? "",
+          })),
+          purchaseBills: (recentPurchaseBills ?? []).map((r) => ({
+            ...r,
+            qty: Number(r.qty),
+            sq_feet: Number(r.sq_feet),
+            unit_rate: Number(r.unit_rate),
+            total_amount: Number(r.total_amount ?? 0),
+            vendorName: partyName.get(r.vendor_party_id) ?? "",
+          })),
+          freightBills: (recentFreightBills ?? []).map((b) => ({
+            ...b,
+            freight_amt: Number(b.freight_amt),
+            fuel_amt: Number(b.fuel_amt),
+            other_charges: Number(b.other_charges),
+            total_amt: b.total_amt != null ? Number(b.total_amt) : null,
+            gst_18pct_amt: b.gst_18pct_amt != null ? Number(b.gst_18pct_amt) : null,
+            gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
+            assignments: (freightAssignments ?? [])
+              .filter((a) => a.freight_bill_id === b.id)
+              .map((a) => ({
+                id: a.id,
+                order_ref_no: orderRefNo.get(a.order_id) ?? "—",
+                bill_weight_kg: a.bill_weight_kg != null ? Number(a.bill_weight_kg) : null,
+                difference_amt: a.difference_amt != null ? Number(a.difference_amt) : null,
+                remark: a.remark,
+              })),
+          })),
+          dutyBills: (recentDutyBills ?? []).map((b) => ({
+            ...b,
+            duty_tax_amt_usd: b.duty_tax_amt_usd != null ? Number(b.duty_tax_amt_usd) : null,
+            duty_tax_amt_inr: Number(b.duty_tax_amt_inr),
+            gst_18pct_amt: Number(b.gst_18pct_amt),
+            gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
+            assignments: (dutyAssignments ?? [])
+              .filter((a) => a.duty_tax_bill_id === b.id)
+              .map((a) => ({
+                id: a.id,
+                order_ref_no: orderRefNo.get(a.order_id) ?? "—",
+                duty_tax_amt_usd: a.duty_tax_amt_usd != null ? Number(a.duty_tax_amt_usd) : null,
+                duty_tax_amt_inr: a.duty_tax_amt_inr != null ? Number(a.duty_tax_amt_inr) : null,
+                other_charge: a.other_charge != null ? Number(a.other_charge) : null,
+                gst_18pct: a.gst_18pct != null ? Number(a.gst_18pct) : null,
+                remark: a.remark,
+              })),
           })),
         }}
       />
