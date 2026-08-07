@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateInvoiceFields } from "../actions";
+import { useRouter } from "next/navigation";
+import { updateInvoiceFields, deleteInvoice } from "../actions";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 
 type Invoice = {
@@ -77,6 +78,9 @@ export function InvoiceView({
   const [remark, setRemark] = useState(invoice.remark ?? "");
   const [isSaving, startSave] = useTransition();
   const [saved, setSaved] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, startDelete] = useTransition();
+  const router = useRouter();
 
   const totalValue = items.reduce((sum, i) => sum + Number(i.order_value_original || 0), 0);
   const currency = items[0]?.order_currency ?? "";
@@ -97,6 +101,16 @@ export function InvoiceView({
         remark: remark || null,
       });
       setSaved(result.error ? `Error: ${result.error}` : "Saved successfully.");
+    });
+  }
+
+  function handleDelete() {
+    if (!window.confirm(`Delete invoice "${invoice.invoice_no}"? Its orders will become available to invoice again. This cannot be undone.`)) return;
+    setDeleteError(null);
+    startDelete(async () => {
+      const result = await deleteInvoice(invoice.id);
+      if (result.error) setDeleteError(result.error);
+      else router.push("/dashboard/invoices");
     });
   }
 
@@ -166,6 +180,18 @@ export function InvoiceView({
           >
             Print / Save as PDF
           </button>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="w-full rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+          >
+            {isDeleting ? "Deleting..." : "Delete Invoice"}
+          </button>
+          {deleteError && <p className="mt-1 text-xs text-red-600">{deleteError}</p>}
         </div>
 
         {relatedNotes && (relatedNotes.creditNotes.length > 0 || relatedNotes.debitNotes.length > 0) && (
