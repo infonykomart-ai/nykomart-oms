@@ -172,6 +172,10 @@ CREATE TYPE attendance_status AS ENUM ('Present', 'Absent', 'Week Off', 'Half Da
 
 CREATE TYPE attendance_source AS ENUM ('Web Punch', 'TeamOffice Import', 'Manual Entry');
 
+-- 2026-08-07: Employee Master expansion — see employees table below.
+CREATE TYPE employee_gender AS ENUM ('Male', 'Female');
+CREATE TYPE employee_marital_status AS ENUM ('Married', 'Unmarried');
+
 CREATE TYPE letter_type AS ENUM (
   'Joining Letter', 'Offer Letter', 'Promotion Letter', 'Increment Letter',
   'Experience Letter', 'Relieving Letter', 'Warning Letter', 'Salary Slip',
@@ -300,6 +304,25 @@ CREATE TABLE employees (
   employee_code   text,                  -- ties to the TeamOffice biometric export's "Empcode" column
   designation     text,
   date_of_joining date,
+
+  -- 2026-08-07: Employee Master expansion (full profile) + birthday/
+  -- anniversary celebration feature. anniversary_date is only meaningful
+  -- when marital_status = 'Married' — the app UI hides/shows that field
+  -- accordingly rather than the DB enforcing it, since an Unmarried row
+  -- legitimately just leaves it null forever.
+  whatsapp_no             text,
+  gender                  employee_gender,
+  marital_status          employee_marital_status,
+  dob                     date,
+  anniversary_date        date,
+  photo_url                text,      -- direct image URL (same pattern as companies.logo_url) — no upload widget built yet
+  family_contact_1_name       text,
+  family_contact_1_relation    text,
+  family_contact_1_number       text,
+  family_contact_2_name          text,
+  family_contact_2_relation       text,
+  family_contact_2_number          text,
+
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (company_id, name)              -- matches old verifyCredentials_()'s (company, name) lookup key
 );
