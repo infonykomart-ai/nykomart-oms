@@ -76,15 +76,6 @@ export function OrderWhatsAppButton({
     return lines.join("\n");
   }
 
-  function waPhone() {
-    const raw = (order.contact_no ?? "").replace(/[^\d]/g, "");
-    if (!raw) return "";
-    // Indian mobile numbers are usually saved without the country code —
-    // default to 91 (India) when it looks like a bare 10-digit number.
-    // Numbers already carrying a country code (11+ digits) pass through.
-    return raw.length === 10 ? `91${raw}` : raw;
-  }
-
   async function handleShare() {
     setError(null);
     const text = buildMessage();
@@ -111,11 +102,15 @@ export function OrderWhatsAppButton({
     }
 
     // Path 2: wa.me text-only link — always works, opens WhatsApp itself.
-    const phone = waPhone();
+    // Deliberately NEVER pre-fills order.contact_no here: that's the
+    // BUYER's number, but this message (PO/RF/RG + production specs) is
+    // for whoever is packing/dispatching, not the customer. Auto-targeting
+    // the buyer's number was the actual cause of "the number ... isn't on
+    // WhatsApp" errors — a customer's saved contact number often isn't a
+    // WhatsApp number at all. Opening a blank chat instead lets the
+    // employee pick the right person/group themselves, every time.
     const fullText = order.photo_url ? `${text}\n\n*Photo Link:* ${order.photo_url}` : text;
-    const url = phone
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(fullText)}`
-      : `https://wa.me/?text=${encodeURIComponent(fullText)}`;
+    const url = `https://wa.me/?text=${encodeURIComponent(fullText)}`;
     window.open(url, "_blank", "noopener,noreferrer");
     markSent();
   }
