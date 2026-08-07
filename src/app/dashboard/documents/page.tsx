@@ -11,7 +11,30 @@ import { DocumentEntryTabs } from "./document-entry-tabs";
 // to `sales_invoices`) through the shared PO/RF/RG lookup box, so the
 // order <-> invoice <-> credit/debit-note chain the user asked about is
 // now something you can actually see and use, not just a foreign key.
+// TEMP DEBUG (2026-08-07): production hides server-render error messages
+// behind an opaque digest, so wrap the whole page in try/catch and dump the
+// real error to the response — REVERT this wrapper once the crash on this
+// page is found and fixed.
 export default async function DocumentsPage() {
+  try {
+    return await DocumentsPageInner();
+  } catch (err) {
+    const e = err as Error;
+    return (
+      <pre style={{ whiteSpace: "pre-wrap", padding: 16, fontSize: 12 }}>
+        TEMP DEBUG ERROR{"\n"}
+        name: {e?.name}
+        {"\n"}
+        message: {e?.message}
+        {"\n\n"}
+        stack:{"\n"}
+        {e?.stack}
+      </pre>
+    );
+  }
+}
+
+async function DocumentsPageInner() {
   const employee = await requireCapability("doc_entry");
   const supabase = await createClient();
 
