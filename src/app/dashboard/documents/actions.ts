@@ -16,15 +16,21 @@
 // the moment you type a PO/RF/RG number, and the save actions below write
 // new Credit/Debit Notes / Washing Entries linked to that same order_id.
 //
-// Purchase Bill is deliberately NOT part of this module — see the
-// 2026-08-03 note (document-entry-and-pending-work-notes.md): it's a
-// vendor-side raw-material purchase log with an optional order_id already
-// (added later), not something that needs a lookup-driven entry screen.
-// Courier Bill / Duty & Tax Bill are also not part of this first round —
-// their real "connection" is the AWB assignment tables (freight_bill_awb_
-// assignments / duty_bill_awb_assignments), a materially different,
-// reconciliation-style UI from the other four types; flagged as a
-// follow-up rather than bolted on here half-built.
+// 2026-08-07 (later round): Purchase Bill / Courier Bill / Duty & Tax Bill
+// added — see the bottom of this file. Purchase Bill reuses the exact same
+// flat-form + optional-order-lookup pattern as Washing Entry. Courier Bill
+// (= `freight_bills`) and Duty & Tax Bill (= `duty_tax_bills`) are a
+// genuinely different shape: ONE bill invoice covers MANY AWBs/orders, so
+// each is a header row (freight-bill-form.tsx / duty-bill-form.tsx) plus a
+// separate "assign an AWB to this bill" step (freight_bill_awb_assignments
+// / duty_bill_awb_assignments, UNIQUE(order_id) — one AWB can only ever be
+// billed under ONE freight/duty invoice, matching the physical reality:
+// a shipment's courier charge is billed once). lookupOrderForReconciliation
+// below is the shared AWB/PO lookup for that assignment step. Note these 3
+// tables have NO company_id of their own (unlike credit/debit notes etc.)
+// — a single courier invoice can genuinely cover shipments across all 3
+// companies, so the bill header itself isn't company-scoped; only the
+// AWB lookup re-checks employee.companyIds (via the order it resolves to).
 
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
@@ -499,6 +505,329 @@ export async function deleteInternalInvoice(id: string): Promise<SimpleResult> {
   }
 
   const { error } = await supabase.from("internal_invoices").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+// =============================================================================
+// PURCHASE BILL — vendor raw-material purchase log. Same shape as Washing
+// Entry: a party (vendor) is required, an order lookup is optional (only
+// meaningful for make-to-order purchases).
+// =============================================================================
+
+export async function savePurchaseBill(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const vendorPartyId = str(formData, "vendor_party_id");
+  const vendorInvoiceNo = str(formData, "vendor_invoice_no");
+  if (!vendorPartyId) return initialFail("Select a vendor party.");
+  if (!vendorInvoiceNo) return initialFail("Vendor Invoice No. is required.");
+
+  const orderId = strOrNull(formData, "order_id");
+  if (orderId) {
+    const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
+    if (!order || !employee.companyIds.includes(order.company_id)) {
+      return initialFail("The looked-up order is not accessible — clear it and try again.");
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("purchase_bills")
+    .insert({
+      vendor_party_id: vendorPartyId,
+      vendor_invoice_no: vendorInvoiceNo,
+      vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
+      qty: numOrZero(formData, "qty") || 1,
+      sq_feet: numOrZero(formData, "sq_feet"),
+      work_description: strOrNull(formData, "work_description"),
+      unit_rate: numOrZero(formData, "unit_rate"),
+      order_id: orderId,
+    })
+    .select("id, vendor_invoice_no")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key") ? "This vendor already has a bill with that invoice number." : error?.message;
+    return initialFail(`Failed to save Purchase Bill: ${msg ?? "unknown error"}`);
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: data.id, docNo: data.vendor_invoice_no } };
+}
+
+export async function updatePurchaseBill(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing Purchase Bill.", success: false };
+  const vendorPartyId = str(formData, "vendor_party_id");
+  const vendorInvoiceNo = str(formData, "vendor_invoice_no");
+  if (!vendorPartyId) return { error: "Select a vendor party.", success: false };
+  if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", success: false };
+
+  const { error } = await supabase
+    .from("purchase_bills")
+    .update({
+      vendor_party_id: vendorPartyId,
+      vendor_invoice_no: vendorInvoiceNo,
+      vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
+      qty: numOrZero(formData, "qty") || 1,
+      sq_feet: numOrZero(formData, "sq_feet"),
+      work_description: strOrNull(formData, "work_description"),
+      unit_rate: numOrZero(formData, "unit_rate"),
+    })
+    .eq("id", id);
+
+  if (error) {
+    const msg = error.message.includes("duplicate key") ? "This vendor already has a bill with that invoice number." : error.message;
+    return { error: msg, success: false };
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("purchase_bills").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+// =============================================================================
+// COURIER BILL (freight_bills) / DUTY & TAX BILL (duty_tax_bills) —
+// invoice-level header + per-AWB assignment rows. lookupOrderForReconciliation
+// is the shared PO/RF/RG-or-AWB lookup the "assign an AWB" step uses.
+// =============================================================================
+
+export type ReconciliationLookup = {
+  error: string | null;
+  order: { id: string; ref_no: string; company_id: string } | null;
+  dispatch: {
+    awb_no: string | null;
+    courier_name: string | null;
+    buyer_country: string | null;
+    shipping_weight_kg: number | null;
+    org_sale_amt_inr: number | null;
+  } | null;
+  alreadyAssigned: boolean;
+};
+
+const EMPTY_RECON: ReconciliationLookup = { error: null, order: null, dispatch: null, alreadyAssigned: false };
+
+export async function lookupOrderForReconciliation(
+  query: string,
+  billKind: "freight" | "duty"
+): Promise<ReconciliationLookup> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const trimmed = query.trim();
+  if (!trimmed) return { ...EMPTY_RECON, error: "Enter a PO/RF/RG or AWB number." };
+
+  let orderId: string | null = null;
+  const { data: byRef } = await supabase
+    .from("orders")
+    .select("id")
+    .ilike("ref_no", trimmed)
+    .in("company_id", employee.companyIds)
+    .maybeSingle();
+  orderId = byRef?.id ?? null;
+
+  if (!orderId) {
+    const { data: byAwb } = await supabase.from("dispatch_invoices").select("order_id").ilike("awb_no", trimmed).maybeSingle();
+    if (byAwb) orderId = byAwb.order_id;
+  }
+  if (!orderId) return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
+
+  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id").eq("id", orderId).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
+  }
+
+  const { data: dispatch } = await supabase
+    .from("dispatch_invoices")
+    .select("awb_no, courier_name, buyer_country, shipping_weight_kg, org_sale_amt_inr")
+    .eq("order_id", order.id)
+    .maybeSingle();
+
+  const table = billKind === "freight" ? "freight_bill_awb_assignments" : "duty_bill_awb_assignments";
+  const { data: existing } = await supabase.from(table).select("id").eq("order_id", order.id).maybeSingle();
+
+  return { error: null, order, dispatch: dispatch ?? null, alreadyAssigned: !!existing };
+}
+
+export async function saveFreightBill(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const invoiceNo = str(formData, "invoice_no");
+  if (!invoiceNo) return initialFail("Invoice No. is required.");
+
+  const { data, error } = await supabase
+    .from("freight_bills")
+    .insert({
+      invoice_no: invoiceNo,
+      invoice_date: strOrNull(formData, "invoice_date"),
+      bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
+      freight_amt: numOrZero(formData, "freight_amt"),
+      fuel_amt: numOrZero(formData, "fuel_amt"),
+      other_charges: numOrZero(formData, "other_charges"),
+    })
+    .select("id, invoice_no")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key") ? "A Courier Bill with that Invoice No. already exists." : error?.message;
+    return initialFail(`Failed to save Courier Bill: ${msg ?? "unknown error"}`);
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: data.id, docNo: data.invoice_no } };
+}
+
+export async function deleteFreightBill(id: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: assigned } = await supabase.from("freight_bill_awb_assignments").select("id").eq("freight_bill_id", id).limit(1).maybeSingle();
+  if (assigned) return { error: "This Courier Bill has AWBs assigned to it — remove those assignments first.", success: false };
+
+  const { error } = await supabase.from("freight_bills").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function assignFreightAwb(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const freightBillId = str(formData, "freight_bill_id");
+  const orderId = str(formData, "order_id");
+  if (!freightBillId) return initialFail("Missing Courier Bill.");
+  if (!orderId) return initialFail("Look up an order by PO/RF/RG or AWB first.");
+
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return initialFail("That order is not accessible — look it up again.");
+  }
+
+  const { data, error } = await supabase
+    .from("freight_bill_awb_assignments")
+    .insert({
+      freight_bill_id: freightBillId,
+      order_id: orderId,
+      bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
+      difference_amt: numOrNull(formData, "difference_amt"),
+      remark: strOrNull(formData, "remark"),
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key")
+      ? "This order/AWB is already assigned to a Courier Bill (an AWB can only be billed once)."
+      : error?.message;
+    return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: data.id, docNo: "" } };
+}
+
+export async function deleteFreightAwbAssignment(id: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("freight_bill_awb_assignments").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function saveDutyBill(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const invoiceNo = str(formData, "invoice_no");
+  if (!invoiceNo) return initialFail("Invoice No. is required.");
+
+  const { data, error } = await supabase
+    .from("duty_tax_bills")
+    .insert({
+      invoice_no: invoiceNo,
+      invoice_date: strOrNull(formData, "invoice_date"),
+      duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
+      duty_tax_amt_inr: numOrZero(formData, "duty_tax_amt_inr"),
+      gst_18pct_amt: numOrZero(formData, "gst_18pct_amt"),
+    })
+    .select("id, invoice_no")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key") ? "A Duty & Tax Bill with that Invoice No. already exists." : error?.message;
+    return initialFail(`Failed to save Duty & Tax Bill: ${msg ?? "unknown error"}`);
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: data.id, docNo: data.invoice_no } };
+}
+
+export async function deleteDutyBill(id: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: assigned } = await supabase.from("duty_bill_awb_assignments").select("id").eq("duty_tax_bill_id", id).limit(1).maybeSingle();
+  if (assigned) return { error: "This Duty & Tax Bill has AWBs assigned to it — remove those assignments first.", success: false };
+
+  const { error } = await supabase.from("duty_tax_bills").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const dutyTaxBillId = str(formData, "duty_tax_bill_id");
+  const orderId = str(formData, "order_id");
+  if (!dutyTaxBillId) return initialFail("Missing Duty & Tax Bill.");
+  if (!orderId) return initialFail("Look up an order by PO/RF/RG or AWB first.");
+
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return initialFail("That order is not accessible — look it up again.");
+  }
+
+  const { data, error } = await supabase
+    .from("duty_bill_awb_assignments")
+    .insert({
+      duty_tax_bill_id: dutyTaxBillId,
+      order_id: orderId,
+      duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
+      duty_tax_amt_inr: numOrNull(formData, "duty_tax_amt_inr"),
+      other_charge: numOrNull(formData, "other_charge"),
+      gst_18pct: numOrNull(formData, "gst_18pct"),
+      remark: strOrNull(formData, "remark"),
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key")
+      ? "This order/AWB is already assigned to a Duty & Tax Bill (an AWB can only be billed once)."
+      : error?.message;
+    return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: data.id, docNo: "" } };
+}
+
+export async function deleteDutyAwbAssignment(id: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("duty_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
