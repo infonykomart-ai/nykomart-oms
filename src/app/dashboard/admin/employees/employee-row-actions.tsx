@@ -2,39 +2,51 @@
 
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
+import { EmployeeDetailsForm, type EmployeeDetails } from "./employee-details-form";
 
 const initialResetState: SimpleActionState = { error: null, success: false };
 
-export function EmployeeRowActions({ employeeId, active }: { employeeId: string; active: boolean }) {
+export function EmployeeRowActions({ employeeId, active, details }: { employeeId: string; active: boolean; details: EmployeeDetails }) {
   const [isPending, startTransition] = useTransition();
   const [resetOpen, setResetOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      <button
-        type="button"
-        disabled={isPending}
-        onClick={() =>
-          startTransition(async () => {
-            await setEmployeeActive(employeeId, !active);
-          })
-        }
-        className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
-          active
-            ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-            : "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
-        }`}
-      >
-        {active ? "Deactivate" : "Activate"}
-      </button>
-      <button
-        type="button"
-        onClick={() => setResetOpen((v) => !v)}
-        className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
-      >
-        Password Reset
-      </button>
+    <div>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() =>
+            startTransition(async () => {
+              await setEmployeeActive(employeeId, !active);
+            })
+          }
+          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
+            active
+              ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+              : "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+          }`}
+        >
+          {active ? "Deactivate" : "Activate"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((v) => !v)}
+          className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+        >
+          Edit Details
+        </button>
+        <button
+          type="button"
+          onClick={() => setResetOpen((v) => !v)}
+          className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+        >
+          Password Reset
+        </button>
+      </div>
       {resetOpen && <ResetPasswordInline employeeId={employeeId} onDone={() => setResetOpen(false)} />}
+      {detailsOpen && <EmployeeDetailsForm employee={details} onDone={() => setDetailsOpen(false)} />}
     </div>
   );
 }
