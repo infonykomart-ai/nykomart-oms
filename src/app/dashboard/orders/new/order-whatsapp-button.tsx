@@ -129,19 +129,25 @@ export function OrderWhatsAppButton({
     });
   }
 
-  if (sentAt) {
-    return <span className="text-xs font-medium text-green-700">✓ Sent on WhatsApp</span>;
-  }
-
+  // 2026-08-07: "whatsapp par send karne ka option regular hona chahiye,
+  // ek baar send hone ke baad dubara send nahi kar paye ese nahi, bus sent
+  // jo hoga vo green ho jaye" — sending stays available every time (e.g. to
+  // resend after a mistake, or remind the buyer); the only thing that
+  // changes after the first send is the button's own colour (and the
+  // card's green tint elsewhere, driven by the same whatsapp_sent_at).
   return (
     <div>
       <button
         type="button"
         disabled={isPending}
         onClick={handleShare}
-        className="rounded-lg border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-800 transition hover:bg-green-100 disabled:opacity-60"
+        className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
+          sentAt
+            ? "border-green-400 bg-green-100 text-green-800 hover:bg-green-200"
+            : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+        }`}
       >
-        📱 Send on WhatsApp
+        {sentAt ? "✓ Sent — Send Again" : "📱 Send on WhatsApp"}
       </button>
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
