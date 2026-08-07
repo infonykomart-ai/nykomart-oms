@@ -1,229 +1,140 @@
 "use server";
 
+// Order Entry — Edit/Delete (2026-08-07 round). "order panal me order ko
+// edit modify delet karne ka option" — the Orders hub page (page.tsx in
+// this folder) is the new "panel"; createOrder/markOrderWhatsAppSent stay
+// in ../new/actions.ts (still imported from there — the file boundary is
+// just where each action was first written, not a hard module wall).
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { buyerMatchKey } from "@/lib/orders/buyer-match";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { revalidatePath } from "next/cache";
-
-export type OrderFormState = {
-  error: string | null;
-  success: { refNo: string } | null;
-};
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
 }
-
 function strOrNull(formData: FormData, key: string): string | null {
   const v = str(formData, key);
   return v ? v : null;
 }
 
+export type OrderEditState = { error: string | null; success: boolean };
+
 /**
- * Order Entry — implements every business rule documented at the top of
- * db/schema.sql that applies to `orders`:
- *  - PO/RF/RG number reservation happens HERE, only on actual save (never
- *    when the form merely renders) — see reserve_next_number() comment.
- *  - Duplicate-dispatched-order reuse: same buyer + same marketplace order
- *    number, already Dispatched -> reuse that order's base ref_no instead
- *    of burning a fresh number.
- *  - Buyer-batch suffix: every order this buyer places today shares one
- *    base ref_no, distinguished by a "-position/total" suffix, recomputed
- *    from scratch across all of that buyer's rows today (see below).
- *  - Currency conversion computed server-side from the Exchange Rate
- *    Master (never trusted from the client).
+ * Edits a single order row in place. Deliberately does NOT touch ref_no
+ * (or which buyer-batch it belongs to) — that's assigned by createOrder's
+ * reservation/reuse/suffix logic and re-deriving it mid-edit would be its
+ * own can of worms (what happens to sibling suffixes if you re-batch an
+ * order into a different buyer's group?). Everything else about the order
+ * — item, qty, value, buyer contact details, dates, status — is editable.
  */
-export async function createOrder(_prev: OrderFormState, formData: FormData): Promise<OrderFormState> {
+export async function updateOrder(_prev: OrderEditState, formData: FormData): Promise<OrderEditState> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const storeId = str(formData, "store_id");
-  const orderDate = str(formData, "order_date");
+  const orderId = str(formData, "order_id");
+  if (!orderId) return { error: "Order missing.", success: false };
+
+  const { data: existing } = await supabase.from("orders").select("id, company_id, order_date").eq("id", orderId).single();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Ye order nahi mila ya is company ke liye access nahi hai.", success: false };
+  }
+
   const itemCategoryId = str(formData, "item_category_id");
-  const qtyRaw = str(formData, "qty");
+  const qty = Number(str(formData, "qty"));
   const orderCurrency = str(formData, "order_currency") || "USD";
-  const orderValueRaw = str(formData, "order_value_original");
-  const marketplaceOrderNo = strOrNull(formData, "marketplace_order_no");
-  const buyerNameAddress = strOrNull(formData, "buyer_name_address");
-  const contactNo = strOrNull(formData, "contact_no");
-  const manualRefNo = strOrNull(formData, "manual_ref_no");
+  const orderValueOriginal = Number(str(formData, "order_value_original"));
+  const orderDate = str(formData, "order_date") || existing.order_date;
 
-  if (!storeId || !orderDate || !itemCategoryId) {
-    return { error: "Store, order date aur item category zaroori hain.", success: null };
-  }
-  const qty = Number(qtyRaw);
-  if (!Number.isFinite(qty) || qty <= 0) {
-    return { error: "Quantity 0 se zyada honi chahiye.", success: null };
-  }
-  const orderValueOriginal = Number(orderValueRaw);
+  if (!itemCategoryId) return { error: "Item Category zaroori hai.", success: false };
+  if (!Number.isFinite(qty) || qty <= 0) return { error: "Quantity 0 se zyada honi chahiye.", success: false };
   if (!Number.isFinite(orderValueOriginal) || orderValueOriginal < 0) {
-    return { error: "Order value sahi number honi chahiye.", success: null };
-  }
-
-  const { data: company, error: companyError } = await supabase
-    .from("companies")
-    .select("id, ref_prefix")
-    .eq("id", employee.currentCompanyId)
-    .single();
-  if (companyError || !company) {
-    return { error: "Company record nahi mila — Admin se contact karo.", success: null };
-  }
-
-  const thisBuyerKey = buyerMatchKey(contactNo, buyerNameAddress);
-  let baseRefNo: string | null = manualRefNo;
-
-  if (!baseRefNo) {
-    // 1. Duplicate-dispatched-order reuse (only meaningful when we have a
-    // marketplace order number to match on — that's the whole basis of "is
-    // this really the same portal order").
-    if (marketplaceOrderNo) {
-      const { data: candidates } = await supabase
-        .from("orders")
-        .select("ref_no_base, contact_no, buyer_name_address")
-        .eq("company_id", employee.currentCompanyId)
-        .eq("status", "Dispatched")
-        .eq("marketplace_order_no", marketplaceOrderNo);
-
-      const dispatchedMatch = (candidates ?? []).find(
-        (row) => buyerMatchKey(row.contact_no, row.buyer_name_address) === thisBuyerKey
-      );
-      if (dispatchedMatch?.ref_no_base) {
-        baseRefNo = dispatchedMatch.ref_no_base;
-      }
-    }
-
-    // 2. Same buyer already has an order batch today -> reuse ITS base
-    // (that's what makes them a "batch" sharing one ref_no with suffixes).
-    if (!baseRefNo) {
-      const { data: todaysOrders } = await supabase
-        .from("orders")
-        .select("ref_no_base, contact_no, buyer_name_address")
-        .eq("company_id", employee.currentCompanyId)
-        .eq("order_date", orderDate);
-
-      const sibling = (todaysOrders ?? []).find(
-        (row) => buyerMatchKey(row.contact_no, row.buyer_name_address) === thisBuyerKey
-      );
-      if (sibling?.ref_no_base) {
-        baseRefNo = sibling.ref_no_base;
-      }
-    }
-
-    // 3. Genuinely new — reserve a fresh number now, at actual save time.
-    if (!baseRefNo) {
-      const { data: num, error: reserveError } = await supabase.rpc("reserve_next_number", {
-        p_company_id: employee.currentCompanyId,
-        p_scope: "ORDER_REF",
-        p_use_fy: false,
-        p_as_of_date: orderDate,
-      });
-      if (reserveError || num == null) {
-        return { error: "PO/RF/RG number reserve nahi ho paya — dobara try karo.", success: null };
-      }
-      baseRefNo = `${company.ref_prefix}-${String(num).padStart(4, "0")}`;
-    }
+    return { error: "Order value sahi number honi chahiye.", success: false };
   }
 
   const conversion = await computeCurrencyConversion(supabase, orderCurrency, orderDate, orderValueOriginal);
 
-  // If this base ref_no already has sibling row(s) today (batch reuse from
-  // step 2, or a same-day dispatched-duplicate reuse), the sibling's OWN
-  // ref_no is currently still bare (e.g. "PO-0001") until the recompute
-  // below runs — inserting this new row with that exact same bare ref_no
-  // would collide with the UNIQUE (company_id, ref_no) constraint. Insert
-  // with a provisional-but-valid suffix instead (matches the "-pos/total"
-  // shape so ref_no_base still resolves to baseRefNo for the recompute
-  // query below); the recompute immediately overwrites every row in the
-  // batch, including this one, with the real final suffixes.
-  const { count: existingSiblingsToday } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("company_id", employee.currentCompanyId)
-    .eq("order_date", orderDate)
-    .eq("ref_no_base", baseRefNo);
-  const provisionalTotal = (existingSiblingsToday ?? 0) + 1;
-  const provisionalRefNo =
-    provisionalTotal > 1 ? `${baseRefNo}-${provisionalTotal}/${provisionalTotal}` : baseRefNo;
-
-  const { error: insertError } = await supabase.from("orders").insert({
-    company_id: employee.currentCompanyId,
-    store_id: storeId,
-    order_date: orderDate,
-    ref_no: provisionalRefNo,
-    po_date: strOrNull(formData, "po_date"),
-    delivery_date: strOrNull(formData, "delivery_date"),
-    marketplace_order_no: marketplaceOrderNo,
-    photo_url: strOrNull(formData, "photo_url"),
-    sku_label: strOrNull(formData, "sku_label"),
-    size_label: strOrNull(formData, "size_label") ?? "",
-    qty,
-    item_category_id: itemCategoryId,
-    buyer_name_address: buyerNameAddress,
-    contact_no: contactNo,
-    email_id: strOrNull(formData, "email_id"),
-    tax_id: strOrNull(formData, "tax_id"),
-    address_type: (str(formData, "address_type") || "Residential") as "Residential" | "Commercial",
-    photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
-    colour: strOrNull(formData, "colour"),
-    remark: strOrNull(formData, "remark"),
-    tassel_fringes: formData.get("tassel_fringes") === "on",
-    entry_by_employee_id: employee.id,
-    order_currency: orderCurrency,
-    order_value_original: orderValueOriginal,
-    order_value_usd: conversion.usd,
-    order_value_inr: conversion.inr,
-    exchange_rate_source: conversion.source,
-  });
-
-  if (insertError) {
-    return { error: `Save nahi ho paya: ${insertError.message}`, success: null };
-  }
-
-  // Recompute the buyer-batch suffix across every one of this buyer's
-  // orders today, from scratch (matches the documented rule exactly) — the
-  // row we just inserted is included since it shares baseRefNo.
-  const { data: batch } = await supabase
-    .from("orders")
-    .select("id, entry_timestamp")
-    .eq("company_id", employee.currentCompanyId)
-    .eq("order_date", orderDate)
-    .eq("ref_no_base", baseRefNo)
-    .order("entry_timestamp", { ascending: true });
-
-  if (batch && batch.length > 0) {
-    const total = batch.length;
-    await Promise.all(
-      batch.map((row, index) => {
-        const newRefNo = total === 1 ? baseRefNo! : `${baseRefNo}-${index + 1}/${total}`;
-        return supabase.from("orders").update({ ref_no: newRefNo }).eq("id", row.id);
-      })
-    );
-  }
-
-  revalidatePath("/dashboard/orders/new");
-
-  const finalRefNo = batch && batch.length > 1 ? `${baseRefNo} (batch of ${batch.length})` : baseRefNo!;
-  return { error: null, success: { refNo: finalRefNo } };
-}
-
-/**
- * WhatsApp — item 5. No Business API is used; the order-entry employee
- * shares the order (photo + details) via their OWN WhatsApp using the
- * browser's Web Share API / a wa.me link (see order-whatsapp-button.tsx).
- * This action only records that the share was triggered, so the "Aaj ki
- * recent entries" list can show a status and hide the button once sent.
- */
-export async function markOrderWhatsAppSent(orderId: string): Promise<{ error: string | null }> {
-  await requireCapability("order_entry");
-  const supabase = createServiceRoleClient();
-
   const { error } = await supabase
     .from("orders")
-    .update({ whatsapp_sent_at: new Date().toISOString() })
+    .update({
+      order_date: orderDate,
+      status: str(formData, "status") as never,
+      dispatch_date: strOrNull(formData, "dispatch_date"),
+      marketplace_order_no: strOrNull(formData, "marketplace_order_no"),
+      po_date: strOrNull(formData, "po_date"),
+      delivery_date: strOrNull(formData, "delivery_date"),
+      item_category_id: itemCategoryId,
+      sku_label: strOrNull(formData, "sku_label"),
+      size_label: strOrNull(formData, "size_label") ?? "",
+      qty,
+      colour: strOrNull(formData, "colour"),
+      photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
+      photo_url: strOrNull(formData, "photo_url"),
+      tassel_fringes: formData.get("tassel_fringes") === "on",
+      buyer_name_address: strOrNull(formData, "buyer_name_address"),
+      contact_no: strOrNull(formData, "contact_no"),
+      email_id: strOrNull(formData, "email_id"),
+      tax_id: strOrNull(formData, "tax_id"),
+      address_type: (str(formData, "address_type") || "Residential") as "Residential" | "Commercial",
+      remark: strOrNull(formData, "remark"),
+      order_currency: orderCurrency,
+      order_value_original: orderValueOriginal,
+      order_value_usd: conversion.usd,
+      order_value_inr: conversion.inr,
+      exchange_rate_source: conversion.source,
+    })
     .eq("id", orderId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/orders/new");
-  return { error: null };
+  return { error: null, success: true };
+}
+
+export type SimpleResult = { error: string | null; success: boolean };
+
+/**
+ * Deletes an order — but ONLY when it's still "clean" (no dispatch/invoice/
+ * credit-debit-note/freight-duty-assignment references it yet). Once any of
+ * those exist, deleting the order would orphan real financial/customs
+ * records, so the safe move is to tell the user to set status to
+ * "Cancelled" instead (order_status already has that value — a proper
+ * soft-delete, not a workaround) rather than silently blocking with no
+ * explanation or, worse, silently cascading deletes through paperwork.
+ */
+export async function deleteOrder(orderId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id").eq("id", orderId).single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "Ye order nahi mila ya is company ke liye access nahi hai.", success: false };
+  }
+  if (order.invoice_id) {
+    return { error: "Is order ka invoice already ban chuka hai — delete nahi kar sakte. Status ko Cancelled kar do.", success: false };
+  }
+
+  const [dispatch, credit, debit, washing, freight, duty] = await Promise.all([
+    supabase.from("dispatch_invoices").select("id").eq("order_id", orderId).limit(1).maybeSingle(),
+    supabase.from("credit_notes").select("id").eq("order_id", orderId).limit(1).maybeSingle(),
+    supabase.from("debit_notes").select("id").eq("order_id", orderId).limit(1).maybeSingle(),
+    supabase.from("washing_entries").select("id").eq("order_id", orderId).limit(1).maybeSingle(),
+    supabase.from("freight_bill_awb_assignments").select("id").eq("order_id", orderId).limit(1).maybeSingle(),
+    supabase.from("duty_bill_awb_assignments").select("id").eq("order_id", orderId).limit(1).maybeSingle(),
+  ]);
+  const blocked = [dispatch, credit, debit, washing, freight, duty].some((r) => r.data);
+  if (blocked) {
+    return {
+      error: "Is order se dispatch/document/bill records judhe hain — delete nahi kar sakte. Status ko Cancelled kar do.",
+      success: false,
+    };
+  }
+
+  const { error } = await supabase.from("orders").delete().eq("id", orderId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/orders/new");
+  return { error: null, success: true };
 }
