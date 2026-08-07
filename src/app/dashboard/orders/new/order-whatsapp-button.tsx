@@ -39,20 +39,40 @@ export function OrderWhatsAppButton({
     order_value_original: number;
     order_currency: string;
     whatsapp_sent_at: string | null;
+    dispatch_date: string | null;
+    sku_label: string | null;
+    colour: string | null;
+    tassel_fringes: boolean | null;
+    photo_type: string | null;
+    remark: string | null;
+    is_amazon: boolean;
   };
 }) {
   const [sentAt, setSentAt] = useState(order.whatsapp_sent_at);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // 2026-08-07: production/packing-facing message — fixed field template
+  // given directly by the user (PO/RF/RG, QTY, Size, Dispatch Date, Photo,
+  // Colour, Tassel/Fringes, SKU, Note), all pulled straight from the order
+  // entry rather than typed by hand. Deliberately does NOT include buyer
+  // name/value — this message rides along with the product photo to
+  // whoever is packing/dispatching, not the customer. Amazon orders get a
+  // bolded "TOP PRIORITY" flag up top (store name match, see page.tsx).
   function buildMessage() {
     const lines = [
-      `Order: ${order.ref_no}`,
-      order.item_category_name ? `Item: ${order.item_category_name}${order.size_label ? ` (Size: ${order.size_label})` : ""}` : null,
-      `Qty: ${order.qty}`,
-      `Value: ${order.order_value_original} ${order.order_currency}`,
-      order.buyer_name_address ? `Buyer: ${order.buyer_name_address}` : null,
-    ].filter(Boolean);
+      order.is_amazon ? "*TOP PRIORITY*\n" : null,
+      `*PO/RF/RG:* ${order.ref_no}`,
+      `*QTY:* ${order.qty}`,
+      `*Size:* ${order.size_label || "-"}`,
+      `*Dispatch Date:* ${order.dispatch_date || "-"}`,
+      `*Photo:* ${order.photo_type || "-"}`,
+      `*Colour:* ${order.colour || "-"}`,
+      `*Tassel/ Fringes:* ${order.tassel_fringes ? "Yes" : "No"}`,
+      `*SKU:* ${order.sku_label || "-"}`,
+      "",
+      `*Note:*\n${order.remark || "-"}`,
+    ].filter((l) => l !== null);
     return lines.join("\n");
   }
 
@@ -92,7 +112,7 @@ export function OrderWhatsAppButton({
 
     // Path 2: wa.me text-only link — always works, opens WhatsApp itself.
     const phone = waPhone();
-    const fullText = order.photo_url ? `${text}\nPhoto: ${order.photo_url}` : text;
+    const fullText = order.photo_url ? `${text}\n\n*Photo Link:* ${order.photo_url}` : text;
     const url = phone
       ? `https://wa.me/${phone}?text=${encodeURIComponent(fullText)}`
       : `https://wa.me/?text=${encodeURIComponent(fullText)}`;
