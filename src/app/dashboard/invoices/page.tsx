@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { InvoiceBatchList } from "./invoice-batch-list";
+import { RecentInvoicesList } from "./recent-invoices-list";
 
 // Invoice Generation module (2026-08-06) — see
 // claude/invoice-origin-declarations-and-numbering.md for the full spec
@@ -73,26 +73,13 @@ export default async function InvoicesPage() {
 
         <div>
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Recent Invoices</h2>
-          <div className="space-y-2">
-            {(invoices ?? []).map((inv) => (
-              <Link
-                key={inv.id}
-                href={`/dashboard/invoices/${inv.id}`}
-                className="block rounded-lg border border-slate-200 bg-white p-3 text-sm transition hover:border-amber-300"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-slate-900">{inv.invoice_no}</span>
-                  <span className="text-xs text-slate-400">{inv.invoice_date}</span>
-                </div>
-                <p className="mt-1 truncate text-slate-500">{inv.buyer_name_address}</p>
-                <p className="mt-1 text-xs text-slate-400">
-                  {companyName.get(inv.company_id)} · {storeName.get(inv.store_id)} · {inv.csb_type} · {inv.courier_company}
-                </p>
-                <p className="mt-1 text-xs text-slate-400">Master No.: {inv.master_invoice_no}</p>
-              </Link>
-            ))}
-            {(invoices ?? []).length === 0 && <p className="text-sm text-slate-400">No invoices have been created yet.</p>}
-          </div>
+          <RecentInvoicesList
+            invoices={(invoices ?? []).map((inv) => ({
+              ...inv,
+              companyLabel: companyName.get(inv.company_id) ?? "",
+              storeLabel: storeName.get(inv.store_id) ?? "",
+            }))}
+          />
         </div>
       </div>
     </div>
