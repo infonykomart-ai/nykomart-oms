@@ -52,18 +52,22 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
+type RelatedNote = { id: string; no: string; amount: number; refNo: string };
+
 export function InvoiceView({
   invoice,
   items,
   company,
   profile,
   storeName,
+  relatedNotes,
 }: {
   invoice: Invoice;
   items: Item[];
   company: Company;
   profile: Profile;
   storeName: string;
+  relatedNotes?: { creditNotes: RelatedNote[]; debitNotes: RelatedNote[] };
 }) {
   const [destinationCountry, setDestinationCountry] = useState(invoice.destination_country ?? "");
   const [originDeclaration, setOriginDeclaration] = useState(invoice.origin_declaration ?? "");
@@ -163,6 +167,21 @@ export function InvoiceView({
             Print / Save as PDF
           </button>
         </div>
+
+        {relatedNotes && (relatedNotes.creditNotes.length > 0 || relatedNotes.debitNotes.length > 0) && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <h3 className="mb-1 text-xs font-semibold text-slate-700">Related Credit/Debit Notes</h3>
+            <p className="mb-2 text-[11px] text-slate-400">Is invoice ke orders ke against pehle se bane documents (Document Entry se).</p>
+            <div className="space-y-1 text-xs text-slate-600">
+              {relatedNotes.creditNotes.map((n) => (
+                <p key={n.id}>Credit Note <strong>{n.no}</strong> — ₹{n.amount} ({n.refNo})</p>
+              ))}
+              {relatedNotes.debitNotes.map((n) => (
+                <p key={n.id}>Debit Note <strong>{n.no}</strong> — ₹{n.amount} ({n.refNo})</p>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div>
