@@ -49,7 +49,14 @@ export function FireworksOverlay({ celebration, onDone }: { celebration: Celebra
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isBirthday = celebration.kind === "birthday";
+  const emoji =
+    celebration.kind === "birthday" ? "🎉🎂🎉" : celebration.kind === "anniversary" ? "🎊💍🎊" : "🎊🏆🎊";
+  const message =
+    celebration.kind === "birthday"
+      ? "Happy Birthday!"
+      : celebration.kind === "anniversary"
+        ? "Happy Anniversary!"
+        : `${celebration.years} Year${celebration.years === 1 ? "" : "s"} at the Company!`;
 
   return (
     <div
@@ -68,14 +75,12 @@ export function FireworksOverlay({ celebration, onDone }: { celebration: Celebra
             className="h-28 w-28 rounded-full border-4 border-amber-400 object-cover shadow-lg"
           />
         )}
-        <div className="text-5xl">{isBirthday ? "🎉🎂🎉" : "🎊💍🎊"}</div>
+        <div className="text-5xl">{emoji}</div>
         <h1 className="text-3xl font-bold text-white drop-shadow-lg sm:text-4xl">
           {celebration.name}
         </h1>
-        <p className="text-xl font-semibold text-amber-300 drop-shadow sm:text-2xl">
-          {isBirthday ? "Happy Birthday!" : "Happy Anniversary!"}
-        </p>
-        <p className="mt-2 text-xs text-white/60">(Band karne ke liye kahin bhi click karo)</p>
+        <p className="text-xl font-semibold text-amber-300 drop-shadow sm:text-2xl">{message}</p>
+        <p className="mt-2 text-xs text-white/60">(CLOSE)</p>
       </div>
     </div>
   );
