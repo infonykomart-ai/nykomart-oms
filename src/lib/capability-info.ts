@@ -13,8 +13,8 @@ export type CapabilityInfo = {
 };
 
 export const CAPABILITY_INFO: CapabilityInfo[] = [
-  { code: "order_entry", label: "Order Entry", icon: "📝", href: "/dashboard/orders/new",
-    description: "Enter a new order — PO/RF/RG No. assigned automatically, duplicate-dispatched-order reuse checked first." },
+  { code: "order_entry", label: "Order Entry", icon: "📝", href: "/dashboard/orders",
+    description: "View, edit, delete orders, or enter a new one — PO/RF/RG No. assigned automatically, duplicate-dispatched-order reuse checked first." },
   { code: "csv_upload", label: "CSV Upload", icon: "📤", href: "/dashboard/csv-upload",
     description: "Bulk-load rows into the back-office log sheets from a CSV file." },
   { code: "doc_entry", label: "Document Entry", icon: "🧾", href: "/dashboard/documents",
