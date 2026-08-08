@@ -50,6 +50,14 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
   if (!store || !employee.companyIds.includes(store.company_id)) {
     return fail("You do not have access to this store.");
   }
+  // 2026-08-08: store-scoping — without ad_spend_report_all, a login may
+  // only enter Budget/Spend for a store it's actually assigned to (see
+  // employee_store_access). The Store dropdown already only lists these,
+  // but the client can be tampered with, so re-check here same as every
+  // other capability guard in this codebase.
+  if (!employee.capabilities.includes("ad_spend_report_all") && !employee.storeIds.includes(storeId)) {
+    return fail("You do not have access to this store.");
+  }
 
   const { error } = await supabase
     .from("store_ad_spend")
@@ -81,6 +89,9 @@ export async function deleteAdSpendAction(id: string): Promise<SimpleResult> {
   if (!row) return { error: "Entry not found." };
   const { data: store } = await supabase.from("stores").select("company_id").eq("id", row.store_id).maybeSingle();
   if (!store || !employee.companyIds.includes(store.company_id)) {
+    return { error: "You do not have access to this entry." };
+  }
+  if (!employee.capabilities.includes("ad_spend_report_all") && !employee.storeIds.includes(row.store_id)) {
     return { error: "You do not have access to this entry." };
   }
 
