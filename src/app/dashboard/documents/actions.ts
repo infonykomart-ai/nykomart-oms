@@ -511,9 +511,12 @@ export async function deleteInternalInvoice(id: string): Promise<SimpleResult> {
 }
 
 // =============================================================================
-// PURCHASE BILL — vendor raw-material purchase log. Same shape as Washing
-// Entry: a party (vendor) is required, an order lookup is optional (only
-// meaningful for make-to-order purchases).
+// PURCHASE BILL — vendor raw-material purchase log. A party (vendor) is
+// required, AND — 2026-08-08: "YE LINK HONA CHAHIYE... SABHI CHEJE LINK
+// RAHEGI" — the order link is now REQUIRED too, not optional. Every
+// purchase must be tied to the PO/RF/RG it was bought for, so "which party
+// this order's item came from" is always answerable from the order side
+// (see the reverse lookup added to the Orders hub the same day).
 // =============================================================================
 
 export async function savePurchaseBill(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
@@ -526,11 +529,12 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
   if (!vendorInvoiceNo) return initialFail("Vendor Invoice No. is required.");
 
   const orderId = strOrNull(formData, "order_id");
-  if (orderId) {
-    const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
-    if (!order || !employee.companyIds.includes(order.company_id)) {
-      return initialFail("The looked-up order is not accessible — clear it and try again.");
-    }
+  if (!orderId) {
+    return initialFail("Look up and link the PO/RF/RG this purchase is for — every Purchase Bill must be tied to an order.");
+  }
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return initialFail("The looked-up order is not accessible — clear it and try again.");
   }
 
   const { data, error } = await supabase
