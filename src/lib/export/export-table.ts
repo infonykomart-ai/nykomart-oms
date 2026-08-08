@@ -65,6 +65,24 @@ function triggerDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// 2026-08-08 (pending item 7 — "har bulk-upload form ke liye ek downloadable
+// CSV template ho, taaki upload error na de"). Generic: any bulk-upload
+// feature (Bulk Order Entry, Bulk Tracking Update, ...) defines its own
+// column list ONCE (label + example value + required) and gets both the
+// downloadable template AND — since the parser on the server should read
+// the exact same label list — a guarantee the two can't drift apart.
+export type TemplateColumn = { label: string; example: string; required?: boolean };
+
+export function downloadCSVTemplate(filenameBase: string, columns: TemplateColumn[]) {
+  const header = columns.map((c) => (c.required ? `${c.label} *` : c.label));
+  const example = columns.map((c) => c.example);
+  const csv = [header, example]
+    .map((line) => line.map((v) => escapeDelimited(String(v ?? ""), ",")).join(","))
+    .join("\r\n");
+  // Leading BOM so Excel opens UTF-8 correctly, same as downloadCSV().
+  triggerDownload(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" }), `${filenameBase}-template.csv`);
+}
+
 export function downloadCSV<T>(filenameBase: string, columns: ExportColumn<T>[], rows: T[]) {
   const csv = toDelimitedString(columns, rows, ",");
   // Leading BOM so Excel opens UTF-8 (rupee symbols, etc.) correctly.
