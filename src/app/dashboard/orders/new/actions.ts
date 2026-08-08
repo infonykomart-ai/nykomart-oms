@@ -133,10 +133,23 @@ type ServiceClient = ReturnType<typeof createServiceRoleClient>;
  * per CSV row, instead of reimplementing any of this delicate
  * ref_no-batching behaviour independently. createOrder() is now a thin
  * FormData -> CreateOrderInput adapter around this.
+ *
+ * 2026-08-08 (later round): takes an explicit `companyId` param rather than
+ * always using `employee.currentCompanyId` — needed so bulkCreateOrders()
+ * can auto-detect each CSV row's company from its Store name (a single
+ * upload can legitimately mix rows across all 3 companies, e.g. a combined
+ * historical order-sheet export) instead of requiring the file be
+ * pre-split per company. createOrder() (manual single-order entry) still
+ * always passes employee.currentCompanyId — no behavior change there.
+ * Callers MUST verify companyId is one the employee actually has access to
+ * (employee.companyIds) before calling this — it is trusted, not re-checked
+ * here, since createOrder() already gets it from the employee's own
+ * session and bulkCreateOrders() checks it explicitly per row.
  */
 async function createOrderCore(
   employee: AuthedEmployee,
   supabase: ServiceClient,
+  companyId: string,
   input: CreateOrderInput
 ): Promise<{ error: string | null; refNo: string | null }> {
   const { storeId, orderDate, marketplaceOrderNo, buyerNameAddress, contactNo, items } = input;
@@ -151,7 +164,7 @@ async function createOrderCore(
   const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, ref_prefix")
-    .eq("id", employee.currentCompanyId)
+    .eq("id", companyId)
     .single();
   if (companyError || !company) {
     return { error: "Company record not found — please contact Admin.", refNo: null };
@@ -170,7 +183,7 @@ async function createOrderCore(
     const { data: clash } = await supabase
       .from("orders")
       .select("id")
-      .eq("company_id", employee.currentCompanyId)
+      .eq("company_id", companyId)
       .eq("ref_no_base", baseRefNo)
       .limit(1)
       .maybeSingle();
@@ -190,7 +203,7 @@ async function createOrderCore(
       const { data: candidates } = await supabase
         .from("orders")
         .select("ref_no_base, contact_no, buyer_name_address")
-        .eq("company_id", employee.currentCompanyId)
+        .eq("company_id", companyId)
         .eq("status", "Dispatched")
         .eq("marketplace_order_no", marketplaceOrderNo);
 
@@ -208,7 +221,7 @@ async function createOrderCore(
       const { data: todaysOrders } = await supabase
         .from("orders")
         .select("ref_no_base, contact_no, buyer_name_address")
-        .eq("company_id", employee.currentCompanyId)
+        .eq("company_id", companyId)
         .eq("order_date", orderDate);
 
       const sibling = (todaysOrders ?? []).find(
@@ -230,7 +243,7 @@ async function createOrderCore(
     if (!baseRefNo) {
       for (let attempt = 0; attempt < 5 && !baseRefNo; attempt++) {
         const { data: num, error: reserveError } = await supabase.rpc("reserve_next_number", {
-          p_company_id: employee.currentCompanyId,
+          p_company_id: companyId,
           p_scope: "ORDER_REF",
           p_use_fy: false,
           p_as_of_date: orderDate,
@@ -242,7 +255,7 @@ async function createOrderCore(
         const { data: clash } = await supabase
           .from("orders")
           .select("id")
-          .eq("company_id", employee.currentCompanyId)
+          .eq("company_id", companyId)
           .eq("ref_no_base", candidate)
           .limit(1)
           .maybeSingle();
@@ -270,7 +283,7 @@ async function createOrderCore(
   const { count: existingSiblingsToday } = await supabase
     .from("orders")
     .select("id", { count: "exact", head: true })
-    .eq("company_id", employee.currentCompanyId)
+    .eq("company_id", companyId)
     .eq("order_date", orderDate)
     .eq("ref_no_base", baseRefNo);
   let siblingCount = existingSiblingsToday ?? 0;
@@ -283,7 +296,7 @@ async function createOrderCore(
     const provisionalRefNo = siblingCount > 1 ? `${baseRefNo}-${siblingCount}/${siblingCount}` : baseRefNo;
 
     const { error: insertError } = await supabase.from("orders").insert({
-      company_id: employee.currentCompanyId,
+      company_id: companyId,
       store_id: storeId,
       order_date: orderDate,
       ref_no: provisionalRefNo,
@@ -323,7 +336,7 @@ async function createOrderCore(
   const { data: batch } = await supabase
     .from("orders")
     .select("id, entry_timestamp")
-    .eq("company_id", employee.currentCompanyId)
+    .eq("company_id", companyId)
     .eq("order_date", orderDate)
     .eq("ref_no_base", baseRefNo)
     .order("entry_timestamp", { ascending: true });
@@ -362,7 +375,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     return { error: itemsError ?? "Item details are invalid.", success: null };
   }
 
-  const result = await createOrderCore(employee, supabase, {
+  const result = await createOrderCore(employee, supabase, employee.currentCompanyId, {
     storeId,
     orderDate,
     marketplaceOrderNo,
@@ -432,6 +445,21 @@ const ADDRESS_TYPES = new Set(["Residential", "Commercial"]);
 const PHOTO_TYPES = new Set(["Dispatch", "Website"]);
 const MAX_BULK_ROWS = 200;
 
+// 2026-08-08: short-code aliases seen in the real historical "NYKO ALL
+// ORDER SHEET" export (Item Category column used old short codes like
+// "JUTE"/"TUFTED"/"COTTON" instead of the current item_categories.name
+// values) — tried as a fallback ONLY when the typed value doesn't match a
+// real category name exactly. "JUTE" is genuinely ambiguous (both HAND
+// BRAIDED JUTE RUG and HAND WOVEN JUTE RUG exist, and SKU prefixes don't
+// reliably disambiguate which — checked against the real data) — user's
+// 2026-08-08 decision: map it to HAND BRAIDED JUTE RUG, correct any
+// individual rows that were actually woven by hand afterward.
+const CATEGORY_ALIASES: Record<string, string> = {
+  cotton: "handmade 100% cotton rug",
+  jute: "hand braided jute rug",
+  tufted: "hand tufted wool rug",
+};
+
 function normalizeHeader(h: string): string {
   return h.replace(/\*/g, "").trim().toLowerCase();
 }
@@ -479,11 +507,18 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
   const byHeader = new Map<string, string>();
   for (const k of headerKeys) byHeader.set(normalizeHeader(k), k);
 
+  // 2026-08-08: stores fetched across EVERY company the employee has
+  // access to (not just the currently-selected one) — a single upload can
+  // legitimately mix rows from all 3 companies (e.g. a combined historical
+  // order-sheet export with "Amazon Rugara", "Etsy Casa Arra", "Amazon
+  // Arts of Jaipur" rows all in one file). Each row's company is
+  // auto-detected from its Store name below; createOrderCore is called
+  // with THAT row's company, not employee.currentCompanyId.
   const [{ data: stores }, { data: itemCategories }] = await Promise.all([
-    supabase.from("stores").select("id, name").eq("company_id", employee.currentCompanyId),
+    supabase.from("stores").select("id, name, company_id").in("company_id", employee.companyIds),
     supabase.from("item_categories").select("id, name"),
   ]);
-  const storeIdByName = new Map((stores ?? []).map((s) => [s.name.trim().toLowerCase(), s.id]));
+  const storeByName = new Map((stores ?? []).map((s) => [s.name.trim().toLowerCase(), { id: s.id, companyId: s.company_id }]));
   const categoryIdByName = new Map((itemCategories ?? []).map((c) => [c.name.trim().toLowerCase(), c.id]));
 
   const results: BulkOrderRowResult[] = [];
@@ -505,16 +540,19 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
     const valueStr = cellStr(raw, byHeader, "Order Value");
     const currency = cellStr(raw, byHeader, "Currency");
 
-    const storeId = storeIdByName.get(storeName.toLowerCase());
-    if (!storeName || !storeId) {
-      results.push({ row: rowNum, refNo: null, error: `Store "${storeName || "(blank)"}" not found for your company.` });
+    const store = storeByName.get(storeName.toLowerCase());
+    if (!storeName || !store) {
+      results.push({ row: rowNum, refNo: null, error: `Store "${storeName || "(blank)"}" not found in any of your companies.` });
       continue;
     }
+    const storeId = store.id;
     if (!orderDate) {
       results.push({ row: rowNum, refNo: null, error: "Order Date is required (YYYY-MM-DD)." });
       continue;
     }
-    const itemCategoryId = categoryIdByName.get(itemCategoryName.toLowerCase());
+    const itemCategoryId =
+      categoryIdByName.get(itemCategoryName.toLowerCase()) ??
+      categoryIdByName.get(CATEGORY_ALIASES[itemCategoryName.toLowerCase()] ?? "");
     if (!itemCategoryName || !itemCategoryId) {
       results.push({ row: rowNum, refNo: null, error: `Item Category "${itemCategoryName || "(blank)"}" not found.` });
       continue;
@@ -551,7 +589,7 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       orderValueOriginal,
     };
 
-    const result = await createOrderCore(employee, supabase, {
+    const result = await createOrderCore(employee, supabase, store.companyId, {
       storeId,
       orderDate,
       marketplaceOrderNo: cellStr(raw, byHeader, "Marketplace Order No") || null,
