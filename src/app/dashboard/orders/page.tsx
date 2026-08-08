@@ -41,7 +41,7 @@ export default async function OrdersPage({
   let query = supabase
     .from("orders")
     .select(
-      "id, ref_no, order_date, company_id, status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp"
+      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp"
     )
     .in("company_id", companyId ? [companyId] : employee.companyIds)
     .order("entry_timestamp", { ascending: false })
@@ -76,6 +76,30 @@ export default async function OrdersPage({
     });
   }
 
+  // 2026-08-08 (pending item 7's UI half — "Order section should show
+  // status: In Transit / Delivered / red alert... with a More Details
+  // click-through") — courier tracking info (AWB/courier/delivered date),
+  // filled in via Bulk Courier Tracking Update (item 8, manual for now
+  // since the live courier-API integration itself is still blocked).
+  const { data: dispatchInvoices } = orderIds.length
+    ? await supabase
+        .from("dispatch_invoices")
+        .select("order_id, awb_no, courier_name, delivered_status, delivered_date")
+        .in("order_id", orderIds)
+    : { data: [] };
+  const trackingByOrder: Record<
+    string,
+    { awbNo: string | null; courierName: string | null; deliveredStatus: string | null; deliveredDate: string | null }
+  > = {};
+  for (const di of dispatchInvoices ?? []) {
+    trackingByOrder[di.order_id] = {
+      awbNo: di.awb_no,
+      courierName: di.courier_name,
+      deliveredStatus: di.delivered_status,
+      deliveredDate: di.delivered_date,
+    };
+  }
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -86,6 +110,12 @@ export default async function OrdersPage({
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
+          <Link
+            href="/dashboard/orders/bulk-tracking-update"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🚚 Bulk Tracking Update (CSV)
+          </Link>
           <Link
             href="/dashboard/orders/bulk-upload"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
@@ -149,6 +179,7 @@ export default async function OrdersPage({
         currencies={currencies ?? []}
         statuses={STATUSES}
         purchasesByOrder={purchasesByOrder}
+        trackingByOrder={trackingByOrder}
       />
     </div>
   );
