@@ -1,4 +1,4 @@
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { DocumentEntryTabs } from "./document-entry-tabs";
 
@@ -11,26 +11,30 @@ import { DocumentEntryTabs } from "./document-entry-tabs";
 // to `sales_invoices`) through the shared PO/RF/RG lookup box, so the
 // order <-> invoice <-> credit/debit-note chain the user asked about is
 // now something you can actually see and use, not just a foreign key.
-// TEMP DEBUG (2026-08-07): production hides server-render error messages
-// behind an opaque digest, so wrap the whole page in try/catch and dump the
-// real error to the response — REVERT this wrapper once the crash on this
-// page is found and fixed.
+//
+// 2026-08-07 (later round): wrapped in try/catch — an employee without the
+// "doc_entry" capability navigating here directly (e.g. a stale/typed URL;
+// the dashboard tile itself is already hidden for them, see dashboard/
+// page.tsx's `tiles` filter) used to hit Next.js's generic opaque-digest
+// crash screen. Now they get a plain "Access Denied" message instead.
+// (2026-08-08: a prior TEMP DEBUG version of this wrapper — which dumped
+// the raw error name/message/stack trace to the page — was accidentally
+// left live in production instead of being replaced by this version; that
+// leaked internal file paths to anyone who hit the ForbiddenError path.
+// Fixed by actually shipping this clean version.)
 export default async function DocumentsPage() {
   try {
     return await DocumentsPageInner();
   } catch (err) {
-    const e = err as Error;
-    return (
-      <pre style={{ whiteSpace: "pre-wrap", padding: 16, fontSize: 12 }}>
-        TEMP DEBUG ERROR{"\n"}
-        name: {e?.name}
-        {"\n"}
-        message: {e?.message}
-        {"\n\n"}
-        stack:{"\n"}
-        {e?.stack}
-      </pre>
-    );
+    if (err instanceof ForbiddenError || err instanceof UnauthorizedError) {
+      return (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+          <p className="font-semibold">Access Denied</p>
+          <p className="mt-1">{err.message} Contact your Admin if you need access to Document Entry.</p>
+        </div>
+      );
+    }
+    throw err;
   }
 }
 
