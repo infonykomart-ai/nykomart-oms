@@ -18,6 +18,12 @@ function strOrNull(formData: FormData, key: string): string | null {
   const v = str(formData, key);
   return v ? v : null;
 }
+function numOrNull(formData: FormData, key: string): number | null {
+  const v = str(formData, key);
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
 
 // Mirrors fy_label() in db/schema.sql exactly (April = start of Indian FY)
 // — kept in sync deliberately rather than round-tripping an RPC call for
@@ -54,6 +60,15 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
   const courierCompany = str(formData, "courier_company");
   const destinationCountry = strOrNull(formData, "destination_country");
   const iossNumber = strOrNull(formData, "ioss_number");
+  // 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — typed in AT
+  // invoice time for customs declaration; deliberately a value of its own
+  // on sales_invoices, not a read of dispatch_invoices' freight-billing
+  // weight/dimensions (which are filled in separately, later, and can
+  // legitimately differ) — see schema.sql's comment on these columns.
+  const weightKg = numOrNull(formData, "weight_kg");
+  const lengthCm = numOrNull(formData, "length_cm");
+  const widthCm = numOrNull(formData, "width_cm");
+  const heightCm = numOrNull(formData, "height_cm");
   const remark = strOrNull(formData, "remark");
   const buyerNameAddressOverride = strOrNull(formData, "buyer_name_address");
   const invoiceDate = str(formData, "invoice_date") || new Date().toISOString().slice(0, 10);
@@ -132,6 +147,10 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
       destination_country: destinationCountry,
       origin_declaration: originDeclarationFor(destinationCountry),
       ioss_number: iossNumber,
+      weight_kg: weightKg,
+      length_cm: lengthCm,
+      width_cm: widthCm,
+      height_cm: heightCm,
       buyer_name_address: buyerNameAddressOverride || orders[0].buyer_name_address || "",
       remark,
       created_by_employee_id: employee.id,
@@ -233,6 +252,10 @@ export async function updateInvoiceFields(
     origin_declaration?: string | null;
     department_reference_no?: string | null;
     ioss_number?: string | null;
+    weight_kg?: number | null;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
     remark?: string | null;
   }
 ): Promise<{ error: string | null }> {
