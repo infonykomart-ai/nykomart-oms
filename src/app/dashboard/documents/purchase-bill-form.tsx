@@ -11,9 +11,11 @@ const inputClass =
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 // Purchase Bill (vendor's own bill for job-work/purchases) — same flat-form
-// + optional-order-lookup pattern as Washing Entry. The order link is
-// optional since not every purchase bill traces back to a specific
-// PO/RF/RG (e.g. general material purchases).
+// + order-lookup pattern as Washing Entry. 2026-08-08: "YE LINK HONA
+// CHAHIYE... SABHI CHEJE LINK RAHEGI" — the order link is now REQUIRED
+// (was optional before): every purchase must be tied to the PO/RF/RG it
+// was bought for, so "which party did this order's item come from" is
+// always answerable — see the reverse lookup on the Orders hub.
 export function PurchaseBillForm({ parties }: { parties: { id: string; name: string }[] }) {
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
@@ -35,7 +37,12 @@ export function PurchaseBillForm({ parties }: { parties: { id: string; name: str
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
 
-      <OrderLookupBox label="Link to an order by PO/RF/RG No. (optional)" onFound={handleFound} />
+      <OrderLookupBox label="Link to an order by PO/RF/RG No. *" onFound={handleFound} />
+      {!orderId && (
+        <p className="-mt-1 text-xs text-amber-700">
+          Required — look up the PO/RF/RG this purchase is for before saving.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div>
