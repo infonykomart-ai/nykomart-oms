@@ -10,7 +10,20 @@ type OrderRow = EditableOrder & {
   whatsapp_sent_at: string | null;
   invoice_id: string | null;
   entry_timestamp: string;
+  shipment_status: string | null;
 };
+
+type TrackingInfo = { awbNo: string | null; courierName: string | null; deliveredStatus: string | null; deliveredDate: string | null };
+
+// 2026-08-08 (pending item 7's UI half) — colour-code the shipment status
+// badge so "In Transit / Delivered / red alert on issues" is a glance, not
+// a read: green once it's actually moving/done, red for Returned/Cancelled
+// (the "issue" states), slate for everything still pre-shipment.
+function shipmentBadgeClass(status: string): string {
+  if (status === "Delivered" || status === "In Transit" || status === "Shipped") return "bg-green-100 text-green-700";
+  if (status === "Returned" || status === "Cancelled") return "bg-red-100 text-red-700";
+  return "bg-slate-100 text-slate-600";
+}
 
 // The actual "edit modify delete" panel — one row per order, expandable
 // into OrderEditForm. WhatsApp-already-sent rows get a green tint (matches
@@ -24,6 +37,7 @@ export function OrderListTable({
   currencies,
   statuses,
   purchasesByOrder,
+  trackingByOrder,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -31,6 +45,7 @@ export function OrderListTable({
   currencies: { code: string; name: string }[];
   statuses: string[];
   purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]>;
+  trackingByOrder: Record<string, TrackingInfo>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
@@ -142,6 +157,17 @@ export function OrderListTable({
                   {o.invoice_id && (
                     <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">Invoiced</span>
                   )}
+                  {/* 2026-08-08 (pending item 7's UI half) — "In Transit /
+                      Delivered / red alert on issues" at a glance. Filled
+                      in via Bulk Courier Tracking Update (item 8); only
+                      shown once something other than the default has been
+                      set, so brand-new orders don't clutter with a
+                      redundant "Order Placed" badge next to Status. */}
+                  {o.shipment_status && o.shipment_status !== "Order Placed" && (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${shipmentBadgeClass(o.shipment_status)}`}>
+                      🚚 {o.shipment_status}
+                    </span>
+                  )}
                 </div>
                 <p className="mt-1 text-sm text-slate-500">{o.buyer_name_address || "—"}</p>
                 <p className="mt-1 text-xs text-slate-400">
@@ -157,6 +183,13 @@ export function OrderListTable({
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-slate-400">No Purchase Bill linked yet.</p>
+                )}
+                {trackingByOrder[o.id] && (trackingByOrder[o.id].awbNo || trackingByOrder[o.id].courierName) && (
+                  <p className="mt-1 text-xs text-teal-700">
+                    🚚 {trackingByOrder[o.id].courierName || "Courier"}
+                    {trackingByOrder[o.id].awbNo ? ` · AWB ${trackingByOrder[o.id].awbNo}` : ""}
+                    {trackingByOrder[o.id].deliveredDate ? ` · Delivered ${trackingByOrder[o.id].deliveredDate}` : ""}
+                  </p>
                 )}
                 {deleteError[o.id] && <p className="mt-2 text-xs font-medium text-red-600">{deleteError[o.id]}</p>}
               </div>
