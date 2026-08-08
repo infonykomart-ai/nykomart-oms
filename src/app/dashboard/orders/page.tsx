@@ -85,12 +85,20 @@ export default async function OrdersPage({
             Orders already sent on WhatsApp are shown in green. The PO/RF/RG number cannot be edited (it&apos;s tied to batch/suffix logic) — everything else is editable.
           </p>
         </div>
-        <Link
-          href="/dashboard/orders/new"
-          className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
-        >
-          + New Order
-        </Link>
+        <div className="flex shrink-0 gap-2">
+          <Link
+            href="/dashboard/orders/bulk-upload"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📤 Bulk Upload (CSV)
+          </Link>
+          <Link
+            href="/dashboard/orders/new"
+            className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
+          >
+            + New Order
+          </Link>
+        </div>
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
