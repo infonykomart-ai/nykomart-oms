@@ -138,3 +138,192 @@ export async function deleteOrder(orderId: string): Promise<SimpleResult> {
   revalidatePath("/dashboard/orders/new");
   return { error: null, success: true };
 }
+
+// ============================================================================
+// Order Hold / Cancel / Refund (pending item 2, 2026-08-08) — see
+// claude/order-lifecycle-inventory-tracking-adspend-requests-2026-08-08.md.
+// Design confirmed with the user:
+//   - Hold = order fully blocked from further action (see invoices/
+//     actions.ts's generateInvoice() and page.tsx's eligible-orders query,
+//     both updated to exclude Hold/Cancelled orders) until taken off Hold
+//     again via the normal status dropdown in OrderEditForm.
+//   - Cancel is a plain status change; the Refund itself is a SEPARATE step
+//     (order-hold-cancel-actions.tsx shows the refund mini-form right after
+//     Cancel) since the refund amount is case-by-case, never auto-computed.
+//   - Refund against an order that already has an invoice (order.invoice_id
+//     set) additionally auto-generates a Credit Note for the refunded
+//     amount — the "two separate refund systems depending on dispatch
+//     state" the user described. Not-yet-invoiced orders just get the
+//     order_refunds row on its own.
+// ============================================================================
+
+/**
+ * Sets an order to Hold — buyer sent a cancel request, first step is to
+ * stop it moving further (see invoices module's exclusion of Hold orders).
+ * Does NOT touch dispatch_date/invoice_id — Hold is meant to be reversible
+ * via the normal status dropdown, not a destructive action.
+ */
+export async function holdOrder(orderId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id").eq("id", orderId).single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
+  }
+  if (order.invoice_id) {
+    return { error: "This order already has an invoice — Hold no longer applies once dispatched/invoiced.", success: false };
+  }
+
+  const { error } = await supabase.from("orders").update({ status: "Hold" }).eq("id", orderId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/orders");
+  return { error: null, success: true };
+}
+
+/** Sets an order to Cancelled — the Refund step (if any) happens separately via saveOrderRefund below. */
+export async function cancelOrder(orderId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("orders").update({ status: "Cancelled" }).eq("id", orderId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/invoices");
+  return { error: null, success: true };
+}
+
+export type OrderRefundState = { error: string | null; success: { creditNoteNo: string | null } | null };
+
+/**
+ * Records a refund against a (normally already-Cancelled) order. Amount is
+ * always manually typed — "case-by-case decide karna padta hai", no fixed
+ * refund-% rule exists to compute it from. If the order already has an
+ * invoice, this ALSO auto-generates a Credit Note for the same amount
+ * (the "dispatched+invoiced" automatic path); otherwise it's just the
+ * order_refunds row (the "not-yet-dispatched" path — its own small screen,
+ * no invoice/Credit Note to tie it to yet).
+ */
+export async function saveOrderRefund(_prev: OrderRefundState, formData: FormData): Promise<OrderRefundState> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const orderId = str(formData, "order_id");
+  const refundAmount = Number(str(formData, "refund_amount"));
+  const refundCurrency = str(formData, "refund_currency") || "USD";
+  const refundDate = str(formData, "refund_date");
+  const reason = strOrNull(formData, "reason");
+
+  if (!orderId) return { error: "Order missing.", success: null };
+  if (!Number.isFinite(refundAmount) || refundAmount < 0) return { error: "Refund amount must be a valid number.", success: null };
+  if (!refundDate) return { error: "Refund date is required.", success: null };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select(
+      "id, company_id, store_id, buyer_name_address, invoice_id, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label"
+    )
+    .eq("id", orderId)
+    .single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This order was not found, or you don't have access to this company.", success: null };
+  }
+
+  let creditNoteId: string | null = null;
+  let creditNoteNo: string | null = null;
+
+  if (order.invoice_id) {
+    const { data: invoice } = await supabase.from("sales_invoices").select("id, invoice_no").eq("id", order.invoice_id).maybeSingle();
+    const { data: creditNote, error: cnError } = await supabase
+      .from("credit_notes")
+      .insert({
+        company_id: order.company_id,
+        store_id: order.store_id,
+        credit_note_date: refundDate,
+        order_id: order.id,
+        buyer_name: order.buyer_name_address,
+        invoice_no: invoice?.invoice_no ?? null,
+        invoice_value_usd: order.order_value_usd,
+        invoice_value_inr: order.order_value_inr,
+        refund_amount: refundAmount,
+        refund_amt_usd: refundCurrency === "USD" ? refundAmount : null,
+        refund_amt_inr: refundCurrency === "INR" ? refundAmount : null,
+        refund_type: refundAmount >= Number(order.order_value_original) ? "FULL REFUND" : "PARTIAL REFUND",
+        created_by_employee_id: employee.id,
+        remark: reason,
+      })
+      .select("id, cn_no")
+      .single();
+    if (cnError || !creditNote) {
+      return { error: `Failed to auto-generate Credit Note: ${cnError?.message ?? "unknown error"}`, success: null };
+    }
+    creditNoteId = creditNote.id;
+    creditNoteNo = creditNote.cn_no;
+  }
+
+  const { error } = await supabase.from("order_refunds").insert({
+    order_id: order.id,
+    refund_amount: refundAmount,
+    refund_currency: refundCurrency,
+    refund_date: refundDate,
+    reason,
+    credit_note_id: creditNoteId,
+    entry_by_employee_id: employee.id,
+  });
+  if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
+
+  // Pending item 4 (Inventory) — "order placed -> cancelled -> refunded,
+  // but a Purchase entry was already made for it -> that stock should
+  // automatically flow into Inventory instead of sitting orphaned." Only
+  // fires when a purchase_bills row already exists against this order;
+  // the purchased qty (not the order's own qty) is what flows into stock,
+  // since that's the amount actually paid for and sitting in hand.
+  const { data: purchases } = await supabase.from("purchase_bills").select("qty").eq("order_id", order.id);
+  const purchasedQty = (purchases ?? []).reduce((sum, p) => sum + Number(p.qty || 0), 0);
+  if (purchasedQty > 0) {
+    const skuLabel = order.sku_label ?? "";
+    const sizeLabel = order.size_label ?? "";
+    const { data: existingStock } = await supabase
+      .from("finished_stock")
+      .select("id, qty")
+      .eq("item_category_id", order.item_category_id)
+      .eq("sku_label", skuLabel)
+      .eq("size_label", sizeLabel)
+      .maybeSingle();
+
+    if (existingStock) {
+      await supabase
+        .from("finished_stock")
+        .update({ qty: existingStock.qty + purchasedQty, updated_at: new Date().toISOString() })
+        .eq("id", existingStock.id);
+    } else {
+      await supabase.from("finished_stock").insert({
+        item_category_id: order.item_category_id,
+        sku_label: skuLabel,
+        size_label: sizeLabel,
+        qty: purchasedQty,
+      });
+    }
+    await supabase.from("finished_stock_movements").insert({
+      item_category_id: order.item_category_id,
+      sku_label: skuLabel,
+      size_label: sizeLabel,
+      qty_change: purchasedQty,
+      reason: "auto_restock_cancelled_order",
+      order_id: order.id,
+      entry_by_employee_id: employee.id,
+    });
+    revalidatePath("/dashboard/inventory");
+  }
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { creditNoteNo } };
+}
