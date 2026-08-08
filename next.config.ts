@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   // must NOT be webpack-bundled — its legacy Node build does its own runtime
   // conditional requires that break under bundling. Left external, Node
   // requires it natively at runtime, same as it works under plain `node`.
-  serverExternalPackages: ["pdfjs-dist"],
+  serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas"],
 };
 
 export default nextConfig;
