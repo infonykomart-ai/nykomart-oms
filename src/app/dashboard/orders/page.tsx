@@ -3,7 +3,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { OrderListTable } from "./order-list-table";
 
-const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Cancelled", "Returned"];
+const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
 
 // Orders hub (2026-08-07) — "order panal me order ko edit modify delet
 // karne ka option" + WhatsApp-sent visual status. This is the list/search/
@@ -100,6 +100,26 @@ export default async function OrdersPage({
     };
   }
 
+  // Pending item 2 (Hold/Cancel/Refund) — surface any refund(s) already
+  // entered against each order, and whether one auto-generated a Credit
+  // Note, right on the Orders hub (same "link everything" principle as
+  // purchasesByOrder/trackingByOrder above).
+  const { data: refunds } = orderIds.length
+    ? await supabase
+        .from("order_refunds")
+        .select("order_id, refund_amount, refund_currency, refund_date, credit_note_id")
+        .in("order_id", orderIds)
+    : { data: [] };
+  const refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]> = {};
+  for (const r of refunds ?? []) {
+    (refundsByOrder[r.order_id] ??= []).push({
+      amount: Number(r.refund_amount),
+      currency: r.refund_currency,
+      date: r.refund_date,
+      hasCreditNote: !!r.credit_note_id,
+    });
+  }
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -180,6 +200,7 @@ export default async function OrdersPage({
         statuses={STATUSES}
         purchasesByOrder={purchasesByOrder}
         trackingByOrder={trackingByOrder}
+        refundsByOrder={refundsByOrder}
       />
     </div>
   );
