@@ -19,6 +19,10 @@ type Invoice = {
   destination_country: string | null;
   origin_declaration: string | null;
   ioss_number: string | null;
+  weight_kg: number | null;
+  length_cm: number | null;
+  width_cm: number | null;
+  height_cm: number | null;
   buyer_name_address: string;
   remark: string | null;
 };
@@ -74,6 +78,10 @@ export function InvoiceView({
   const [originDeclaration, setOriginDeclaration] = useState(invoice.origin_declaration ?? "");
   const [departmentRefNo, setDepartmentRefNo] = useState(invoice.department_reference_no ?? "");
   const [iossNumber, setIossNumber] = useState(invoice.ioss_number ?? "");
+  const [weightKg, setWeightKg] = useState(invoice.weight_kg != null ? String(invoice.weight_kg) : "");
+  const [lengthCm, setLengthCm] = useState(invoice.length_cm != null ? String(invoice.length_cm) : "");
+  const [widthCm, setWidthCm] = useState(invoice.width_cm != null ? String(invoice.width_cm) : "");
+  const [heightCm, setHeightCm] = useState(invoice.height_cm != null ? String(invoice.height_cm) : "");
   const [buyerNameAddress, setBuyerNameAddress] = useState(invoice.buyer_name_address);
   const [remark, setRemark] = useState(invoice.remark ?? "");
   const [isSaving, startSave] = useTransition();
@@ -98,6 +106,10 @@ export function InvoiceView({
         origin_declaration: originDeclaration || null,
         department_reference_no: departmentRefNo || null,
         ioss_number: iossNumber || null,
+        weight_kg: weightKg ? Number(weightKg) : null,
+        length_cm: lengthCm ? Number(lengthCm) : null,
+        width_cm: widthCm ? Number(widthCm) : null,
+        height_cm: heightCm ? Number(heightCm) : null,
         remark: remark || null,
       });
       setSaved(result.error ? `Error: ${result.error}` : "Saved successfully.");
@@ -157,6 +169,29 @@ export function InvoiceView({
         <div>
           <label className={labelClass} htmlFor="dept_ref">Department Reference No.</label>
           <input id="dept_ref" className={inputClass} value={departmentRefNo} onChange={(e) => setDepartmentRefNo(e.target.value)} />
+        </div>
+
+        {/* 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — customs
+            declaration fields, typed in here (separate from whatever
+            Courier Bill/dispatch_invoices later records for freight
+            billing — see actions.ts's comment). */}
+        <div className="grid grid-cols-4 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="weight_kg">Weight (kg)</label>
+            <input id="weight_kg" type="number" step="0.001" className={inputClass} value={weightKg} onChange={(e) => setWeightKg(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="length_cm">Length (cm)</label>
+            <input id="length_cm" type="number" step="0.01" className={inputClass} value={lengthCm} onChange={(e) => setLengthCm(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="width_cm">Width (cm)</label>
+            <input id="width_cm" type="number" step="0.01" className={inputClass} value={widthCm} onChange={(e) => setWidthCm(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="height_cm">Height (cm)</label>
+            <input id="height_cm" type="number" step="0.01" className={inputClass} value={heightCm} onChange={(e) => setHeightCm(e.target.value)} />
+          </div>
         </div>
 
         <div>
@@ -242,6 +277,10 @@ export function InvoiceView({
               <div>{invoice.csb_type} · {invoice.courier_company}</div>
               {departmentRefNo && <div>Department Reference No.: {departmentRefNo}</div>}
               {iossNumber && <div>IOSS: {iossNumber}</div>}
+              {weightKg && <div>Weight: {weightKg} kg</div>}
+              {(lengthCm || widthCm || heightCm) && (
+                <div>Dimensions: {lengthCm || "—"} × {widthCm || "—"} × {heightCm || "—"} cm</div>
+              )}
             </div>
             <div>
               <div className="font-semibold">Buyer:</div>
