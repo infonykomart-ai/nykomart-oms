@@ -80,13 +80,19 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
 
   const { data: orders, error: ordersError } = await supabase
     .from("orders")
-    .select("id, company_id, store_id, buyer_name_address, invoice_id")
+    .select("id, company_id, store_id, buyer_name_address, invoice_id, status")
     .in("id", orderIds);
   if (ordersError || !orders || orders.length !== orderIds.length) {
     return { error: "Failed to load selected orders — please try again.", success: null };
   }
   if (orders.some((o) => o.invoice_id)) {
     return { error: "One or more of these orders are already used in an invoice.", success: null };
+  }
+  // Pending item 2 (2026-08-08) — defense in depth alongside page.tsx's
+  // query filter: a Hold order is blocked from further action, a Cancelled
+  // order should never be invoiced.
+  if (orders.some((o) => o.status === "Hold" || o.status === "Cancelled")) {
+    return { error: "One or more of these orders are on Hold or Cancelled — take them off Hold, or deselect the Cancelled order(s), first.", success: null };
   }
   const companyId = orders[0].company_id;
   const storeId = orders[0].store_id;
