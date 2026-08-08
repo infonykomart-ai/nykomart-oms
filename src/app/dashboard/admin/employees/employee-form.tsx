@@ -26,9 +26,11 @@ function generatePassword(): string {
 export function EmployeeForm({
   roles,
   companies,
+  stores,
 }: {
   roles: { id: string; name: string }[];
   companies: { id: string; name: string }[];
+  stores: { id: string; name: string; company_id: string }[];
 }) {
   const [state, formAction, pending] = useActionState(createEmployee, initialState);
   const formRef = useRef<HTMLFormElement>(null);
@@ -129,6 +131,24 @@ export function EmployeeForm({
         </div>
         <p className="mt-1 text-xs text-slate-400">
           No need to tick the home company here again — it is always included.
+        </p>
+      </div>
+
+      <div>
+        <span className={labelClass}>Store Access (only for Ad Spend entry)</span>
+        <div className="flex flex-wrap gap-3">
+          {stores.map((s) => (
+            <label key={s.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700">
+              <input type="checkbox" name="store_access" value={s.id} className="rounded border-slate-300" />
+              {s.name}
+            </label>
+          ))}
+          {stores.length === 0 && <p className="text-xs text-slate-400">No stores set up yet.</p>}
+        </div>
+        <p className="mt-1 text-xs text-slate-400">
+          Only matters for the Store Ad Spend module: without ticking a store here, a login with the &quot;ad_spend_entry&quot;
+          capability sees nothing until a store is assigned (Finance/Higher Authority/MD/Admin see every store
+          regardless and can skip this).
         </p>
       </div>
 
