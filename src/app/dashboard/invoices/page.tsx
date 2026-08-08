@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { InvoiceBatchList } from "./invoice-batch-list";
@@ -61,12 +62,20 @@ export default async function InvoicesPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">🧾 Invoices</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Dispatched/Delivered orders that haven&apos;t been invoiced yet — grouped by buyer-batch. Select a batch to
-          generate an invoice.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">🧾 Invoices</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Dispatched/Delivered orders that haven&apos;t been invoiced yet — grouped by buyer-batch. Select a batch to
+            generate an invoice.
+          </p>
+        </div>
+        <Link
+          href="/dashboard/invoices/bulk-upload"
+          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          📤 Bulk Upload (CSV)
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
