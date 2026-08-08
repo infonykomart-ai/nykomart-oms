@@ -148,7 +148,39 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     return { error: `Invoice created (${invoice.invoice_no}) but an error occurred while linking the orders — please inform an Admin.`, success: null };
   }
 
+  // 2026-08-08: "SABHI ORDER LIST INVOICE VALE SECTION ME DIKHE... JESE HI
+  // INVOICE SUBMIT KARE TO USKA AUTOMATIC DISPATCH MARK HO JAYE SABHI JAGH"
+  // — the Invoices page no longer requires an order to already be
+  // Dispatched/Delivered before it's selectable (see page.tsx), which
+  // removes the old manual "edit status first, then come invoice"
+  // two-step. In exchange, generating the invoice now marks these orders
+  // Dispatched itself, in the same request — status lives on `orders` as a
+  // single column read everywhere else (Orders hub, Late Orders filter,
+  // WhatsApp button, etc.), so updating it here is enough to reflect
+  // "sabhi jagh" without touching any other table. Already-Delivered
+  // orders are left alone (never downgraded back to Dispatched); an
+  // existing dispatch_date is preserved, only orders that never had one
+  // get it defaulted to the invoice date.
+  const { data: notYetDispatched } = await supabase
+    .from("orders")
+    .select("id, dispatch_date")
+    .in("id", orderIds)
+    .not("status", "in", "(Dispatched,Delivered)");
+
+  if (notYetDispatched && notYetDispatched.length > 0) {
+    await Promise.all(
+      notYetDispatched.map((o) =>
+        supabase
+          .from("orders")
+          .update({ status: "Dispatched", dispatch_date: o.dispatch_date ?? invoiceDate })
+          .eq("id", o.id)
+      )
+    );
+  }
+
   revalidatePath("/dashboard/invoices");
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/orders/new");
   return { error: null, success: { invoiceId: invoice.id, invoiceNo: invoice.invoice_no } };
 }
 

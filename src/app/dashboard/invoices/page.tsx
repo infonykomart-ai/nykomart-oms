@@ -14,13 +14,19 @@ export default async function InvoicesPage() {
   const supabase = await createClient();
 
   const [{ data: pendingOrders }, { data: invoices }, { data: companies }, { data: stores }] = await Promise.all([
+    // 2026-08-08: "SABHI ORDER LIST INVOICE VALE SECTION ME DIKHE NAYE
+    // PURANE" — used to only list orders already Dispatched/Delivered,
+    // forcing a manual "edit status first, then come invoice" two-step.
+    // Now every not-yet-invoiced order shows here regardless of status
+    // (Pending/Confirmed/In Production included) — pick any batch and
+    // generate; generateInvoice() below auto-marks Dispatched on submit,
+    // so there's no separate status-edit step anymore.
     supabase
       .from("orders")
       .select(
         "id, ref_no, ref_no_base, order_date, company_id, store_id, buyer_name_address, contact_no, item_category_id, size_label, qty, order_value_original, order_currency, status, dispatch_date"
       )
       .in("company_id", employee.companyIds)
-      .in("status", ["Dispatched", "Delivered"])
       .is("invoice_id", null)
       .order("ref_no_base", { ascending: false })
       .limit(500),

@@ -76,6 +76,14 @@ export function InvoiceGenerateForm({
         <input id="remark" name="remark" className={inputClass} />
       </div>
 
+      {/* 2026-08-08: "JESE HI INVOICE SUBMIT KARE TO USKA AUTOMATIC DISPATCH
+          MARK HO JAYE SABHI JAGH" — generateInvoice() sets these orders'
+          status to Dispatched on submit; no separate status-edit step. */}
+      <p className="text-xs text-slate-400">
+        Generating this will automatically mark the selected order(s) as <strong>Dispatched</strong> (already
+        Delivered orders are left as-is).
+      </p>
+
       <button
         type="submit"
         disabled={pending}
