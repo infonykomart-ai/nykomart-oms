@@ -7,7 +7,7 @@ export default async function EmployeesAdminPage() {
   await requireCapability("employee_admin");
   const supabase = await createClient();
 
-  const [{ data: employees }, { data: roles }, { data: companies }] = await Promise.all([
+  const [{ data: employees }, { data: roles }, { data: companies }, { data: stores }, { data: storeAccess }] = await Promise.all([
     supabase
       .from("employees")
       .select(
@@ -16,10 +16,19 @@ export default async function EmployeesAdminPage() {
       .order("created_at", { ascending: false }),
     supabase.from("roles").select("id, name").order("name"),
     supabase.from("companies").select("id, name").eq("active", true).order("name"),
+    // 2026-08-08: store-scoped Ad Spend — see employee-store-access-form.tsx.
+    supabase.from("stores").select("id, name, company_id").order("name"),
+    supabase.from("employee_store_access").select("employee_id, store_id"),
   ]);
 
   const roleName = new Map((roles ?? []).map((r) => [r.id, r.name]));
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const storeIdsByEmployee = new Map<string, string[]>();
+  for (const row of storeAccess ?? []) {
+    const list = storeIdsByEmployee.get(row.employee_id) ?? [];
+    list.push(row.store_id);
+    storeIdsByEmployee.set(row.employee_id, list);
+  }
 
   return (
     <div>
@@ -33,7 +42,7 @@ export default async function EmployeesAdminPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
-          <EmployeeForm roles={roles ?? []} companies={companies ?? []} />
+          <EmployeeForm roles={roles ?? []} companies={companies ?? []} stores={stores ?? []} />
         </div>
 
         <div className="lg:col-span-2">
@@ -68,7 +77,13 @@ export default async function EmployeesAdminPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <EmployeeRowActions employeeId={e.id} active={e.active} details={e} />
+                      <EmployeeRowActions
+                        employeeId={e.id}
+                        active={e.active}
+                        details={e}
+                        stores={stores ?? []}
+                        currentStoreIds={storeIdsByEmployee.get(e.id) ?? []}
+                      />
                     </td>
                   </tr>
                 ))}
