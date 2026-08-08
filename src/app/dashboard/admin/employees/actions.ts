@@ -71,6 +71,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   const employeeCode = str(formData, "employee_code") || null;
   const dateOfJoining = str(formData, "date_of_joining") || null;
   const extraCompanyIds = formData.getAll("company_access").map(String).filter(Boolean);
+  const storeAccessIds = formData.getAll("store_access").map(String).filter(Boolean);
 
   if (!name || !email || !password || !homeCompanyId || !roleId) {
     return { error: "Name, email, password, company, and role are all required.", success: null };
@@ -123,6 +124,17 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
     await supabase
       .from("employee_company_access")
       .insert(companyIds.map((company_id) => ({ employee_id: employee.id, company_id })));
+  }
+
+  // 2026-08-08: store-scoped Ad Spend — which store(s) this new login is
+  // actually assigned to work on. Optional (a role without ad_spend_entry
+  // just never uses this), and separate from ad_spend_report_all logins
+  // (Finance/MD/Admin/Higher Authority) which see every store regardless.
+  const storeIds = Array.from(new Set(storeAccessIds));
+  if (storeIds.length > 0) {
+    await supabase
+      .from("employee_store_access")
+      .insert(storeIds.map((store_id) => ({ employee_id: employee.id, store_id })));
   }
 
   revalidatePath("/dashboard/admin/employees");
@@ -197,5 +209,35 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
 
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/admin/employees");
+  return { error: null, success: true };
+}
+
+/**
+ * Replaces an existing employee's store-scoping (employee_store_access) —
+ * the "which store does this person work at" assignment behind the
+ * 2026-08-08 Ad Spend scoping ask. Simple delete-then-insert of the
+ * submitted set (never large — a handful of stores per employee at most),
+ * same pattern as every other capability/permissions grid in this app.
+ */
+export async function updateEmployeeStoreAccess(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const employeeId = str(formData, "employee_id");
+  if (!employeeId) return { error: "Employee missing.", success: false };
+  const storeIds = Array.from(new Set(formData.getAll("store_access").map(String).filter(Boolean)));
+
+  const { error: delError } = await supabase.from("employee_store_access").delete().eq("employee_id", employeeId);
+  if (delError) return { error: delError.message, success: false };
+
+  if (storeIds.length > 0) {
+    const { error: insError } = await supabase
+      .from("employee_store_access")
+      .insert(storeIds.map((store_id) => ({ employee_id: employeeId, store_id })));
+    if (insError) return { error: insError.message, success: false };
+  }
+
+  revalidatePath("/dashboard/admin/employees");
+  revalidatePath("/dashboard/ad-spend");
   return { error: null, success: true };
 }
