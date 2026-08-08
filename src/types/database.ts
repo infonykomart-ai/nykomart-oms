@@ -2769,6 +2769,10 @@ export type Database = {
           destination_country: string | null;
           origin_declaration: string | null;
           ioss_number: string | null;
+          weight_kg: number | null;
+          length_cm: number | null;
+          width_cm: number | null;
+          height_cm: number | null;
           buyer_name_address: string;
           remark: string | null;
           created_by_employee_id: string;
@@ -2788,6 +2792,10 @@ export type Database = {
           destination_country?: string | null;
           origin_declaration?: string | null;
           ioss_number?: string | null;
+          weight_kg?: number | null;
+          length_cm?: number | null;
+          width_cm?: number | null;
+          height_cm?: number | null;
           buyer_name_address: string;
           remark?: string | null;
           created_by_employee_id: string;
@@ -2807,6 +2815,10 @@ export type Database = {
           destination_country?: string | null;
           origin_declaration?: string | null;
           ioss_number?: string | null;
+          weight_kg?: number | null;
+          length_cm?: number | null;
+          width_cm?: number | null;
+          height_cm?: number | null;
           buyer_name_address?: string;
           remark?: string | null;
           created_by_employee_id?: string;
