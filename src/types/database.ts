@@ -1540,6 +1540,36 @@ export type Database = {
           },
         ];
       };
+      employee_store_access: {
+        Row: {
+          employee_id: string;
+          store_id: string;
+        };
+        Insert: {
+          employee_id: string;
+          store_id: string;
+        };
+        Update: {
+          employee_id?: string;
+          store_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_store_access_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_store_access_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       employees: {
         Row: {
           id: string;
