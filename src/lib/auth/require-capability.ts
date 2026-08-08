@@ -39,6 +39,7 @@ export type AuthedEmployee = {
   homeCompanyId: string;
   currentCompanyId: string;
   companyIds: string[];
+  storeIds: string[];
   name: string;
   roleId: string;
   roleName: string;
@@ -74,15 +75,22 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     throw new UnauthorizedError("No active employee record for this account.");
   }
 
-  const [{ data: role }, { data: caps }, { data: access }] = await Promise.all([
+  const [{ data: role }, { data: caps }, { data: access }, { data: storeAccess }] = await Promise.all([
     supabase.from("roles").select("name").eq("id", employee.role_id).single(),
     supabase.from("role_capabilities").select("capability_code").eq("role_id", employee.role_id),
     supabase.from("employee_company_access").select("company_id").eq("employee_id", employee.id),
+    // 2026-08-08: which store(s) this login is actually assigned to work on
+    // — used to scope the Ad Spend module for anyone without the separate
+    // ad_spend_report_all capability. See employee_store_access in
+    // db/schema.sql. Empty on purpose for most logins (Finance/MD/Admin/
+    // Higher Authority bypass this via ad_spend_report_all instead).
+    supabase.from("employee_store_access").select("store_id").eq("employee_id", employee.id),
   ]);
 
   const companyIds = Array.from(
     new Set([employee.company_id, ...(access ?? []).map((a) => a.company_id)])
   );
+  const storeIds = (storeAccess ?? []).map((a) => a.store_id);
 
   const cookieStore = await cookies();
   const requested = cookieStore.get(CURRENT_COMPANY_COOKIE)?.value;
@@ -93,6 +101,7 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     homeCompanyId: employee.company_id,
     currentCompanyId,
     companyIds,
+    storeIds,
     name: employee.name,
     roleId: employee.role_id,
     roleName: role?.name ?? "",
