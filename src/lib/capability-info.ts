@@ -53,6 +53,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "The Reports suite." },
   { code: "invoicing", label: "Invoices", icon: "🧾", href: "/dashboard/invoices",
     description: "Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders." },
+  { code: "ad_spend_entry", label: "Store Ad Spend", icon: "📈", href: "/dashboard/ad-spend",
+    description: "Enter daily Budget/Spend per store and view the combined Orders + Ad Spend report." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {
