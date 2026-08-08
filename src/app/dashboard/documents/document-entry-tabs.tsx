@@ -8,6 +8,7 @@ import { InternalInvoiceForm } from "./internal-invoice-form";
 import { PurchaseBillForm } from "./purchase-bill-form";
 import { FreightBillSection, type FreightBillRow } from "./freight-bill-section";
 import { DutyBillSection, type DutyBillRow } from "./duty-bill-section";
+import { CourierBillPdfSection } from "./courier-bill-pdf-section";
 import { CreditNoteEditForm, type EditableCreditNote } from "./credit-note-edit-form";
 import { DebitNoteEditForm, type EditableDebitNote } from "./debit-note-edit-form";
 import { WashingEntryEditForm, type EditableWashingEntry } from "./washing-entry-edit-form";
@@ -37,6 +38,7 @@ const TABS = [
   { key: "purchase-bill", label: "Purchase Bill" },
   { key: "courier-bill", label: "Courier Bill" },
   { key: "duty-tax-bill", label: "Duty & Tax Bill" },
+  { key: "courier-bill-pdf", label: "Courier Bill (PDF Upload)" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -82,11 +84,13 @@ export function DocumentEntryTabs({
   // freight-bill-section.tsx), so their create-form + list live together in
   // one full-width section instead of the usual "form on the left, recent
   // list on the right" split.
-  if (tab === "courier-bill" || tab === "duty-tax-bill") {
+  if (tab === "courier-bill" || tab === "duty-tax-bill" || tab === "courier-bill-pdf") {
     return (
       <div>
         {tabBar}
-        {tab === "courier-bill" ? <FreightBillSection bills={recent.freightBills} /> : <DutyBillSection bills={recent.dutyBills} />}
+        {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} />}
+        {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} />}
+        {tab === "courier-bill-pdf" && <CourierBillPdfSection />}
       </div>
     );
   }
