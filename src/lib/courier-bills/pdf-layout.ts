@@ -14,7 +14,30 @@
 // webpack doesn't try to bundle it — it's required natively at runtime,
 // same as it works under plain Node (which is how this algorithm was
 // validated against sample PDFs before being written here).
+//
+// pdfjs-dist internally tries to polyfill DOMMatrix/ImageData/Path2D (needed
+// by some PDFs' font/glyph-path handling, even for plain text extraction)
+// by `require("@napi-rs/canvas")` relative to its OWN install location. On
+// Vercel, serverExternalPackages relocates the module to a hashed path
+// (e.g. "pdfjs-dist-<hash>/legacy/build/pdf.mjs") whose require() can't
+// find @napi-rs/canvas anymore, so that internal polyfill silently fails
+// and a later unconditional `new DOMMatrix(...)` throws. Polyfilling these
+// globals ourselves — using @napi-rs/canvas directly, which is already a
+// prebuilt-binary (Vercel-safe, same pattern as the `sharp` dependency)
+// transitive dep via pdf-parse — sidesteps pdfjs-dist's fragile internal
+// resolution entirely: it checks `if (!globalThis.DOMMatrix)` before even
+// attempting its own require.
+async function ensureNodeCanvasPolyfills() {
+  const g = globalThis as unknown as { DOMMatrix?: unknown; ImageData?: unknown; Path2D?: unknown };
+  if (g.DOMMatrix && g.ImageData && g.Path2D) return;
+  const canvas = await import("@napi-rs/canvas");
+  g.DOMMatrix ??= canvas.DOMMatrix;
+  g.ImageData ??= canvas.ImageData;
+  g.Path2D ??= canvas.Path2D;
+}
+
 export async function extractLayoutText(buf: Buffer): Promise<string> {
+  await ensureNodeCanvasPolyfills();
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const doc = await getDocument({ data: new Uint8Array(buf) }).promise;
 
