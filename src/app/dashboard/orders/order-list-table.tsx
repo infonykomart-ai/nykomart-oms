@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { deleteOrder } from "./actions";
 import { OrderEditForm, type EditableOrder } from "./order-edit-form";
+import { ExportBar } from "@/components/export-bar";
+import type { ExportColumn } from "@/lib/export/export-table";
 
 type OrderRow = EditableOrder & {
   whatsapp_sent_at: string | null;
@@ -35,6 +37,55 @@ export function OrderListTable({
   const [isPending, startTransition] = useTransition();
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
 
+  // 2026-08-08 (pending item 5) — "Pending/Late/Dispatched order lists
+  // ko print/PDF me export kar sake". Reuses the same universal
+  // ExportBar/export-table.ts system built 2026-08-06 for Reports — this
+  // is its first hookup into the Orders hub itself. Whatever's currently
+  // filtered on this page (via the status/date/company filters above) is
+  // what gets exported/printed — no separate export-only query.
+  type ExportRow = {
+    ref_no: string;
+    order_date: string;
+    status: string;
+    buyer_name_address: string | null;
+    contact_no: string | null;
+    item_category_name: string;
+    size_label: string | null;
+    qty: number;
+    order_value_original: number;
+    order_currency: string;
+    dispatch_date: string | null;
+    purchased_from: string;
+  };
+  const exportRows: ExportRow[] = orders.map((o) => ({
+    ref_no: o.ref_no,
+    order_date: o.order_date,
+    status: o.status,
+    buyer_name_address: o.buyer_name_address,
+    contact_no: o.contact_no,
+    item_category_name: categoryName.get(o.item_category_id) ?? "",
+    size_label: o.size_label,
+    qty: o.qty,
+    order_value_original: o.order_value_original,
+    order_currency: o.order_currency,
+    dispatch_date: o.dispatch_date,
+    purchased_from: purchasesByOrder[o.id]?.map((p) => p.vendorName).join(", ") ?? "",
+  }));
+  const EXPORT_COLUMNS: ExportColumn<ExportRow>[] = [
+    { key: "ref_no", label: "PO/RF/RG No.", value: (r) => r.ref_no },
+    { key: "order_date", label: "Order Date", value: (r) => r.order_date },
+    { key: "status", label: "Status", value: (r) => r.status },
+    { key: "buyer_name_address", label: "Buyer", value: (r) => r.buyer_name_address },
+    { key: "contact_no", label: "Contact No.", value: (r) => r.contact_no },
+    { key: "item_category_name", label: "Item", value: (r) => r.item_category_name },
+    { key: "size_label", label: "Size", value: (r) => r.size_label },
+    { key: "qty", label: "Qty", value: (r) => r.qty },
+    { key: "order_value_original", label: "Value", value: (r) => r.order_value_original },
+    { key: "order_currency", label: "Currency", value: (r) => r.order_currency },
+    { key: "dispatch_date", label: "Dispatch Date", value: (r) => r.dispatch_date },
+    { key: "purchased_from", label: "Purchased From", value: (r) => r.purchased_from },
+  ];
+
   function handleDelete(orderId: string, refNo: string) {
     if (!window.confirm(`Delete "${refNo}"? This cannot be undone.`)) return;
     setDeleteError((prev) => ({ ...prev, [orderId]: "" }));
@@ -46,12 +97,23 @@ export function OrderListTable({
     });
   }
 
-  if (orders.length === 0) {
-    return <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">No orders found.</p>;
-  }
-
   return (
-    <div className="space-y-3">
+    <div>
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #orders-print-area, #orders-print-area * { visibility: visible; }
+          #orders-print-area { position: fixed; inset: 0; width: 100%; }
+        }
+      `}</style>
+      <div className="mb-3 flex items-center justify-between print:hidden">
+        <p className="text-sm text-slate-500">{orders.length} order{orders.length === 1 ? "" : "s"}</p>
+        <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
+      </div>
+      {orders.length === 0 ? (
+        <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">No orders found.</p>
+      ) : (
+      <div id="orders-print-area" className="space-y-3">
       {orders.map((o) => (
         <div
           key={o.id}
@@ -98,7 +160,7 @@ export function OrderListTable({
                 )}
                 {deleteError[o.id] && <p className="mt-2 text-xs font-medium text-red-600">{deleteError[o.id]}</p>}
               </div>
-              <div className="flex shrink-0 gap-2">
+              <div className="flex shrink-0 gap-2 print:hidden">
                 <button
                   type="button"
                   onClick={() => setEditingId(o.id)}
@@ -119,6 +181,8 @@ export function OrderListTable({
           )}
         </div>
       ))}
+      </div>
+      )}
     </div>
   );
 }
