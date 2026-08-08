@@ -28,6 +28,11 @@ export default async function InvoicesPage() {
       )
       .in("company_id", employee.companyIds)
       .is("invoice_id", null)
+      // Pending item 2 (2026-08-08): a Hold order is fully blocked from
+      // further action, and a Cancelled order should never be dispatched/
+      // invoiced — both excluded here even though every other status is
+      // intentionally left invoiceable (see the 2026-08-08 comment above).
+      .not("status", "in", "(Hold,Cancelled)")
       .order("ref_no_base", { ascending: false })
       .limit(500),
     supabase
