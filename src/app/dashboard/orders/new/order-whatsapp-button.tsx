@@ -80,21 +80,40 @@ export function OrderWhatsAppButton({
     setError(null);
     const text = buildMessage();
 
-    // Path 1: native share sheet with the actual photo attached.
-    // 2026-08-07: fetch the photo through OUR OWN /api/order-photo-proxy
-    // instead of the photo_url directly — most photo URLs are on outside
-    // domains (vendor/marketplace image hosts) that don't send CORS
-    // headers, so a direct browser fetch silently failed and this always
-    // fell through to the text-only link below. Routing it through our own
-    // origin (which fetches the image server-to-server, unaffected by
-    // CORS) makes the real-photo share succeed for any source domain.
+    // Path 1: native share sheet with ONE composite image (photo + all the
+    // order details baked in as a caption panel underneath it).
+    // 2026-08-08: "PHOTO OR MSG DONO ALAG ALAG KYU JA RAHE HAI EK SATH JANA
+    // CHAHIYE" — user confirmed the photo and a separate text field were
+    // arriving as 2 SEPARATE WhatsApp messages, on BOTH phone and computer.
+    // That rules out a single-platform fix: no combination of
+    // `navigator.share({files, text})` reliably makes WhatsApp combine an
+    // image + text into one message on every device — its Share Target
+    // handling just doesn't support that combo consistently anywhere. The
+    // only way to GUARANTEE one message is to make splitting structurally
+    // impossible: /api/order-whatsapp-image composes the caption directly
+    // onto the photo server-side and returns ONE image, which is shared
+    // here with no separate text/title field at all — there is nothing
+    // left for any platform to split apart.
     if (order.photo_url && typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        const res = await fetch(`/api/order-photo-proxy?url=${encodeURIComponent(order.photo_url)}`);
+        const imageParams = new URLSearchParams({
+          url: order.photo_url,
+          ref_no: order.ref_no,
+          qty: String(order.qty),
+          size: order.size_label || "-",
+          dispatch_date: order.dispatch_date || "-",
+          photo_type: order.photo_type || "-",
+          colour: order.colour || "-",
+          tassel_fringes: order.tassel_fringes ? "1" : "0",
+          sku: order.sku_label || "-",
+          note: order.remark || "-",
+          is_amazon: order.is_amazon ? "1" : "0",
+        });
+        const res = await fetch(`/api/order-whatsapp-image?${imageParams.toString()}`);
         if (res.ok) {
           const blob = await res.blob();
-          const file = new File([blob], "product-photo.jpg", { type: blob.type || "image/jpeg" });
-          const shareData = { files: [file], text, title: order.ref_no };
+          const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
+          const shareData = { files: [file] };
           if ("canShare" in navigator && navigator.canShare(shareData)) {
             await navigator.share(shareData);
             markSent();
