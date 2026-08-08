@@ -1829,6 +1829,99 @@ export type Database = {
           },
         ];
       };
+      finished_stock: {
+        Row: {
+          id: string;
+          item_category_id: string;
+          sku_label: string;
+          size_label: string;
+          qty: number;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          item_category_id: string;
+          sku_label?: string;
+          size_label?: string;
+          qty?: number;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          item_category_id?: string;
+          sku_label?: string;
+          size_label?: string;
+          qty?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "finished_stock_item_category_id_fkey";
+            columns: ["item_category_id"];
+            isOneToOne: false;
+            referencedRelation: "item_categories";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      finished_stock_movements: {
+        Row: {
+          id: string;
+          item_category_id: string;
+          sku_label: string;
+          size_label: string;
+          qty_change: number;
+          reason: string;
+          order_id: string | null;
+          entry_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          item_category_id: string;
+          sku_label?: string;
+          size_label?: string;
+          qty_change: number;
+          reason: string;
+          order_id?: string | null;
+          entry_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          item_category_id?: string;
+          sku_label?: string;
+          size_label?: string;
+          qty_change?: number;
+          reason?: string;
+          order_id?: string | null;
+          entry_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "finished_stock_movements_item_category_id_fkey";
+            columns: ["item_category_id"];
+            isOneToOne: false;
+            referencedRelation: "item_categories";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "finished_stock_movements_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "finished_stock_movements_entry_by_employee_id_fkey";
+            columns: ["entry_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       freight_bill_awb_assignments: {
         Row: {
           id: string;
@@ -2080,6 +2173,71 @@ export type Database = {
         Relationships: [
         ];
       };
+      order_refunds: {
+        Row: {
+          id: string;
+          order_id: string;
+          refund_amount: number;
+          refund_currency: string;
+          refund_date: string;
+          reason: string | null;
+          credit_note_id: string | null;
+          entry_by_employee_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          order_id: string;
+          refund_amount: number;
+          refund_currency: string;
+          refund_date: string;
+          reason?: string | null;
+          credit_note_id?: string | null;
+          entry_by_employee_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          refund_amount?: number;
+          refund_currency?: string;
+          refund_date?: string;
+          reason?: string | null;
+          credit_note_id?: string | null;
+          entry_by_employee_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "order_refunds_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_refunds_refund_currency_fkey";
+            columns: ["refund_currency"];
+            isOneToOne: false;
+            referencedRelation: "currencies";
+            referencedColumns: ["code"];
+          },
+          {
+            foreignKeyName: "order_refunds_credit_note_id_fkey";
+            columns: ["credit_note_id"];
+            isOneToOne: false;
+            referencedRelation: "credit_notes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_refunds_entry_by_employee_id_fkey";
+            columns: ["entry_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       orders: {
         Row: {
           id: string;
@@ -2092,7 +2250,7 @@ export type Database = {
           po_date: string | null;
           delivery_date: string | null;
           marketplace_order_no: string | null;
-          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned";
+          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date: string | null;
           photo_url: string | null;
           sku_id: string | null;
@@ -2139,7 +2297,7 @@ export type Database = {
           po_date?: string | null;
           delivery_date?: string | null;
           marketplace_order_no?: string | null;
-          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned";
+          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
           sku_id?: string | null;
@@ -2186,7 +2344,7 @@ export type Database = {
           po_date?: string | null;
           delivery_date?: string | null;
           marketplace_order_no?: string | null;
-          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned";
+          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
           sku_id?: string | null;
@@ -2526,7 +2684,7 @@ export type Database = {
           buyer_name: string | null;
           store_id: string | null;
           invoice_no: string | null;
-          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned" | null;
+          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned" | null;
           order_amt_usd: number | null;
           refund_amt_usd: number | null;
           refund_amt_pct: number | null;
@@ -2546,7 +2704,7 @@ export type Database = {
           buyer_name?: string | null;
           store_id?: string | null;
           invoice_no?: string | null;
-          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned" | null;
+          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned" | null;
           order_amt_usd?: number | null;
           refund_amt_usd?: number | null;
           refund_amt_pct?: number | null;
@@ -2566,7 +2724,7 @@ export type Database = {
           buyer_name?: string | null;
           store_id?: string | null;
           invoice_no?: string | null;
-          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned" | null;
+          status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned" | null;
           order_amt_usd?: number | null;
           refund_amt_usd?: number | null;
           refund_amt_pct?: number | null;
@@ -3504,7 +3662,7 @@ export type Database = {
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
       order_photo_type: "Dispatch" | "Website";
-      order_status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Cancelled" | "Returned";
+      order_status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
       payment_type: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY";
       refund_source: "DISPATCH" | "FBA" | "NO_DISPATCH";
       refund_type: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX";
