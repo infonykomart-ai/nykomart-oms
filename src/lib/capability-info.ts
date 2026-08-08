@@ -55,6 +55,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders." },
   { code: "ad_spend_entry", label: "Store Ad Spend", icon: "📈", href: "/dashboard/ad-spend",
     description: "Enter daily Budget/Spend per store and view the combined Orders + Ad Spend report." },
+  { code: "finished_stock_view", label: "Inventory", icon: "📦", href: "/dashboard/inventory",
+    description: "Finished-goods Stock — auto-restocked from cancelled+refunded+already-purchased orders." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {
