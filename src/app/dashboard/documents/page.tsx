@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { DocumentEntryTabs } from "./document-entry-tabs";
@@ -132,12 +133,21 @@ async function DocumentsPageInner() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">🧾 Document Entry</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Credit Note, Debit Note, Washing Entry, Internal Invoice, Purchase Bill, Courier Bill, Duty &amp; Tax Bill —
-          entering a PO/RF/RG (or AWB) number automatically fetches the order, so every document stays linked back to it.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">🧾 Document Entry</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Credit Note, Debit Note, Washing Entry, Internal Invoice, Purchase Bill, Courier Bill, Duty &amp; Tax
+            Bill — entering a PO/RF/RG (or AWB) number automatically fetches the order, so every document stays
+            linked back to it.
+          </p>
+        </div>
+        <Link
+          href="/dashboard/documents/bulk-upload"
+          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          📤 Bulk Upload (CSV)
+        </Link>
       </div>
 
       <DocumentEntryTabs
