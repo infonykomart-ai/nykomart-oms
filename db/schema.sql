@@ -663,6 +663,25 @@ COMMENT ON COLUMN orders.ref_no IS
   'a DB default/trigger, because both are conditional on live lookups (duplicate-dispatched-order reuse '
   'check; buyer-batch membership) that must happen before/around the INSERT, not purely from it.';
 
+-- Store-level Daily Spend tracking (pending item 3 — see db/2026-08-08-
+-- store-ad-spend.sql for the full rationale). QTY ORD/USD (order count and
+-- value) are computed live by joining `orders` here by store_id+order_date
+-- — never duplicated into this table. Only Budget/Spend (external ad-
+-- platform numbers) are stored — one row per (store, date) that has data;
+-- a day with no ad spend simply has no row.
+CREATE TABLE store_ad_spend (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id              uuid NOT NULL REFERENCES stores(id),
+  spend_date            date NOT NULL,
+  budget_usd            numeric(12,2) NOT NULL DEFAULT 0,
+  spend_usd             numeric(12,2) NOT NULL DEFAULT 0,
+  entry_by_employee_id  uuid NOT NULL REFERENCES employees(id),
+  updated_at            timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (store_id, spend_date)
+);
+CREATE INDEX idx_store_ad_spend_date  ON store_ad_spend(spend_date);
+CREATE INDEX idx_store_ad_spend_store ON store_ad_spend(store_id);
+
 
 -- =============================================================================
 -- SECTION 6 — DISPATCH & INVOICE  (old sheet: "Dispatch & Invoice", one shared tab across companies)
@@ -2071,7 +2090,8 @@ INSERT INTO capabilities (code, description) VALUES
   ('employee_admin',      'Manage the Employees roster (not yet built in the source system)'),
   ('reports',             'Access the Reports suite'),
   ('permissions_admin',   'Manage which role gets which capability — the Roles & Permissions screen itself'),
-  ('invoicing',           'Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders');
+  ('invoicing',           'Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders'),
+  ('ad_spend_entry',      'Enter daily ad Budget/Spend per store; view the combined Orders + Ad Spend report');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -2082,10 +2102,13 @@ JOIN (VALUES
   ('Finance',            'bill_payment'),('Finance', 'salary_admin'), ('Finance', 'statement_entry'),
   ('Finance',            'party_admin'),('Finance', 'exchange_rate_admin'), ('Finance', 'attendance_punch'),
   ('Finance',            'attendance_admin'), ('Finance', 'crm_dashboard'), ('Finance', 'invoicing'),
+  ('Finance',            'ad_spend_entry'), -- 2026-08-08: Store-level Daily Spend module.
   ('Higher Authority',   'approve_level1'), ('Higher Authority', 'attendance_punch'), ('Higher Authority', 'crm_dashboard'),
+  ('Higher Authority',   'ad_spend_entry'),
   ('MD',                 'approve_level2'), ('MD', 'company_item_admin'), ('MD', 'doc_entry'), ('MD', 'stock_entry'),
   ('MD',                 'statement_entry'), ('MD', 'party_admin'), ('MD', 'exchange_rate_admin'),
   ('MD',                 'attendance_punch'), ('MD', 'attendance_admin'), ('MD', 'hr_letters'), ('MD', 'crm_dashboard'),
+  ('MD',                 'ad_spend_entry'),
   ('MD',                 'employee_admin'), -- 2026-08-06: MD (the actual owner login) should be able to create new
                                              -- employee logins too, not just the separate Admin role — see pending
                                              -- item 12 ("naye user banane ka... sabhi kaam add karo").
@@ -2099,6 +2122,7 @@ JOIN (VALUES
   ('Admin',              'invoicing'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
+  ('Admin',              'ad_spend_entry'),
   -- 2026-08-05: Admin is the account the owner actually logs in as day-to-
   -- day (unlike the old system's per-department role split) — give it every
   -- remaining capability too, so it's a true superuser role rather than
