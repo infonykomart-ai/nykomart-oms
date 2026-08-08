@@ -3109,6 +3109,51 @@ export type Database = {
           },
         ];
       };
+      store_ad_spend: {
+        Row: {
+          id: string;
+          store_id: string;
+          spend_date: string;
+          budget_usd: number;
+          spend_usd: number;
+          entry_by_employee_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          store_id: string;
+          spend_date: string;
+          budget_usd?: number;
+          spend_usd?: number;
+          entry_by_employee_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          store_id?: string;
+          spend_date?: string;
+          budget_usd?: number;
+          spend_usd?: number;
+          entry_by_employee_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "store_ad_spend_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "store_ad_spend_entry_by_employee_id_fkey";
+            columns: ["entry_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       stores: {
         Row: {
           id: string;
