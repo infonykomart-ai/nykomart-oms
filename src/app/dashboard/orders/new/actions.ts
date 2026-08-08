@@ -1,6 +1,6 @@
 "use server";
 
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { buyerMatchKey } from "@/lib/orders/buyer-match";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
@@ -95,6 +95,24 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
   return { items, error: null };
 }
 
+type CreateOrderInput = {
+  storeId: string;
+  orderDate: string;
+  marketplaceOrderNo: string | null;
+  buyerNameAddress: string | null;
+  contactNo: string | null;
+  manualRefNo: string | null;
+  poDate: string | null;
+  deliveryDate: string | null;
+  emailId: string | null;
+  taxId: string | null;
+  addressType: "Residential" | "Commercial";
+  remark: string | null;
+  items: ParsedItem[];
+};
+
+type ServiceClient = ReturnType<typeof createServiceRoleClient>;
+
 /**
  * Order Entry — implements every business rule documented at the top of
  * db/schema.sql that applies to `orders`:
@@ -109,25 +127,25 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
  *  - Currency conversion computed server-side from the Exchange Rate
  *    Master (never trusted from the client).
  *  - Multi-item ("Add More Item") — see parseItems() above.
+ *
+ * 2026-08-08: extracted out of createOrder() so Bulk Order Entry via CSV
+ * (task #62, bulkCreateOrders() below) can run the EXACT same logic once
+ * per CSV row, instead of reimplementing any of this delicate
+ * ref_no-batching behaviour independently. createOrder() is now a thin
+ * FormData -> CreateOrderInput adapter around this.
  */
-export async function createOrder(_prev: OrderFormState, formData: FormData): Promise<OrderFormState> {
-  const employee = await requireCapability("order_entry");
-  const supabase = createServiceRoleClient();
-
-  const storeId = str(formData, "store_id");
-  const orderDate = str(formData, "order_date");
-  const marketplaceOrderNo = strOrNull(formData, "marketplace_order_no");
-  const buyerNameAddress = strOrNull(formData, "buyer_name_address");
-  const contactNo = strOrNull(formData, "contact_no");
-  const manualRefNo = strOrNull(formData, "manual_ref_no");
+async function createOrderCore(
+  employee: AuthedEmployee,
+  supabase: ServiceClient,
+  input: CreateOrderInput
+): Promise<{ error: string | null; refNo: string | null }> {
+  const { storeId, orderDate, marketplaceOrderNo, buyerNameAddress, contactNo, items } = input;
 
   if (!storeId || !orderDate) {
-    return { error: "Store and order date are required.", success: null };
+    return { error: "Store and order date are required.", refNo: null };
   }
-
-  const { items, error: itemsError } = parseItems(formData);
-  if (itemsError || !items) {
-    return { error: itemsError ?? "Item details are invalid.", success: null };
+  if (!items.length) {
+    return { error: "At least one item is required.", refNo: null };
   }
 
   const { data: company, error: companyError } = await supabase
@@ -136,11 +154,11 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     .eq("id", employee.currentCompanyId)
     .single();
   if (companyError || !company) {
-    return { error: "Company record not found — please contact Admin.", success: null };
+    return { error: "Company record not found — please contact Admin.", refNo: null };
   }
 
   const thisBuyerKey = buyerMatchKey(contactNo, buyerNameAddress);
-  let baseRefNo: string | null = manualRefNo;
+  let baseRefNo: string | null = input.manualRefNo;
 
   // 2026-08-07: "po,rf,rg no auto matic update ho lekin pahle data base me
   // chaek kare ki vo no use to nahi aara" — a manually-typed ref_no is
@@ -159,7 +177,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     if (clash) {
       return {
         error: `"${baseRefNo}" is already in use — enter a different number, or leave it blank (it will auto-match if this buyer already has an order today).`,
-        success: null,
+        refNo: null,
       };
     }
   }
@@ -218,7 +236,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
           p_as_of_date: orderDate,
         });
         if (reserveError || num == null) {
-          return { error: "Could not reserve a PO/RF/RG number — please try again.", success: null };
+          return { error: "Could not reserve a PO/RF/RG number — please try again.", refNo: null };
         }
         const candidate = `${company.ref_prefix}-${String(num).padStart(4, "0")}`;
         const { data: clash } = await supabase
@@ -231,7 +249,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
         if (!clash) baseRefNo = candidate;
       }
       if (!baseRefNo) {
-        return { error: "Could not reserve a PO/RF/RG number (repeated conflicts) — please notify Admin.", success: null };
+        return { error: "Could not reserve a PO/RF/RG number (repeated conflicts) — please notify Admin.", refNo: null };
       }
     }
   }
@@ -257,12 +275,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     .eq("ref_no_base", baseRefNo);
   let siblingCount = existingSiblingsToday ?? 0;
 
-  const poDate = strOrNull(formData, "po_date");
-  const deliveryDate = strOrNull(formData, "delivery_date");
-  const emailId = strOrNull(formData, "email_id");
-  const taxId = strOrNull(formData, "tax_id");
-  const addressType = (str(formData, "address_type") || "Residential") as "Residential" | "Commercial";
-  const remark = strOrNull(formData, "remark");
+  const { poDate, deliveryDate, emailId, taxId, addressType, remark } = input;
 
   for (const item of items) {
     const conversion = await computeCurrencyConversion(supabase, item.orderCurrency, orderDate, item.orderValueOriginal);
@@ -300,7 +313,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     });
 
     if (insertError) {
-      return { error: `Save failed: ${insertError.message}`, success: null };
+      return { error: `Save failed: ${insertError.message}`, refNo: null };
     }
   }
 
@@ -325,10 +338,52 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     );
   }
 
-  revalidatePath("/dashboard/orders/new");
-
   const finalRefNo = batch && batch.length > 1 ? `${baseRefNo} (batch of ${batch.length})` : baseRefNo!;
-  return { error: null, success: { refNo: finalRefNo } };
+  return { error: null, refNo: finalRefNo };
+}
+
+export async function createOrder(_prev: OrderFormState, formData: FormData): Promise<OrderFormState> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const storeId = str(formData, "store_id");
+  const orderDate = str(formData, "order_date");
+  const marketplaceOrderNo = strOrNull(formData, "marketplace_order_no");
+  const buyerNameAddress = strOrNull(formData, "buyer_name_address");
+  const contactNo = strOrNull(formData, "contact_no");
+  const manualRefNo = strOrNull(formData, "manual_ref_no");
+
+  if (!storeId || !orderDate) {
+    return { error: "Store and order date are required.", success: null };
+  }
+
+  const { items, error: itemsError } = parseItems(formData);
+  if (itemsError || !items) {
+    return { error: itemsError ?? "Item details are invalid.", success: null };
+  }
+
+  const result = await createOrderCore(employee, supabase, {
+    storeId,
+    orderDate,
+    marketplaceOrderNo,
+    buyerNameAddress,
+    contactNo,
+    manualRefNo,
+    poDate: strOrNull(formData, "po_date"),
+    deliveryDate: strOrNull(formData, "delivery_date"),
+    emailId: strOrNull(formData, "email_id"),
+    taxId: strOrNull(formData, "tax_id"),
+    addressType: (str(formData, "address_type") || "Residential") as "Residential" | "Commercial",
+    remark: strOrNull(formData, "remark"),
+    items,
+  });
+
+  if (result.error) return { error: result.error, success: null };
+
+  revalidatePath("/dashboard/orders/new");
+  revalidatePath("/dashboard/orders");
+
+  return { error: null, success: { refNo: result.refNo! } };
 }
 
 /**
@@ -350,4 +405,173 @@ export async function markOrderWhatsAppSent(orderId: string): Promise<{ error: s
   if (error) return { error: error.message };
   revalidatePath("/dashboard/orders/new");
   return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Bulk Order Entry via CSV/Excel (2026-08-08, pending item 7 — "CSV se ek
+// sath bahut sare orders enter kar sake"). Reuses createOrderCore() above
+// row-by-row: each spreadsheet row is treated exactly like one manual "New
+// Order" submission for a single item, so PO/RF/RG reservation, duplicate-
+// dispatched reuse, and buyer-batch suffixing all behave identically to
+// entering the same rows one at a time by hand. See bulk-upload/columns.ts
+// for the exact column set (also drives the downloadable template).
+// ---------------------------------------------------------------------------
+
+export type BulkOrderRowResult = {
+  row: number;
+  refNo: string | null;
+  error: string | null;
+};
+
+export type BulkOrderState = {
+  error: string | null;
+  results: BulkOrderRowResult[] | null;
+};
+
+const ADDRESS_TYPES = new Set(["Residential", "Commercial"]);
+const PHOTO_TYPES = new Set(["Dispatch", "Website"]);
+const MAX_BULK_ROWS = 200;
+
+function normalizeHeader(h: string): string {
+  return h.replace(/\*/g, "").trim().toLowerCase();
+}
+
+function cellStr(row: Record<string, unknown>, byHeader: Map<string, string>, label: string): string {
+  const key = byHeader.get(normalizeHeader(label));
+  if (!key) return "";
+  const v = row[key];
+  return v === null || v === undefined ? "" : String(v).trim();
+}
+
+export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData): Promise<BulkOrderState> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: "Choose a CSV or Excel file first.", results: null };
+  }
+
+  let rows: Record<string, unknown>[];
+  let headerKeys: string[];
+  try {
+    const XLSX = await import("xlsx");
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false }) as Record<string, unknown>[];
+    const headerRow = (XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as string[][])[0];
+    headerKeys = headerRow ?? (rows.length ? Object.keys(rows[0]) : []);
+  } catch {
+    return {
+      error: "Could not read that file — make sure it's the CSV/Excel template, unmodified in structure.",
+      results: null,
+    };
+  }
+
+  if (!rows.length) {
+    return { error: "No data rows found in the file.", results: null };
+  }
+  if (rows.length > MAX_BULK_ROWS) {
+    return { error: `${rows.length} rows — please upload ${MAX_BULK_ROWS} or fewer at a time.`, results: null };
+  }
+
+  const byHeader = new Map<string, string>();
+  for (const k of headerKeys) byHeader.set(normalizeHeader(k), k);
+
+  const [{ data: stores }, { data: itemCategories }] = await Promise.all([
+    supabase.from("stores").select("id, name").eq("company_id", employee.currentCompanyId),
+    supabase.from("item_categories").select("id, name"),
+  ]);
+  const storeIdByName = new Map((stores ?? []).map((s) => [s.name.trim().toLowerCase(), s.id]));
+  const categoryIdByName = new Map((itemCategories ?? []).map((c) => [c.name.trim().toLowerCase(), c.id]));
+
+  const results: BulkOrderRowResult[] = [];
+
+  // Sequential, NOT Promise.all/parallel — createOrderCore reads and writes
+  // the buyer-batch ref_no state (siblings today for this base ref_no) as
+  // it goes, per its own comments above, so rows for the same buyer/date
+  // must be processed one at a time, in submitted order, for the
+  // "-1/2, -2/2" suffixing (and duplicate-dispatched reuse) to come out
+  // right — exactly as if someone had typed them into the form one by one.
+  for (let i = 0; i < rows.length; i++) {
+    const raw = rows[i];
+    const rowNum = i + 2; // header is row 1 in the file
+
+    const storeName = cellStr(raw, byHeader, "Store");
+    const orderDate = cellStr(raw, byHeader, "Order Date");
+    const itemCategoryName = cellStr(raw, byHeader, "Item Category");
+    const qtyStr = cellStr(raw, byHeader, "Qty");
+    const valueStr = cellStr(raw, byHeader, "Order Value");
+    const currency = cellStr(raw, byHeader, "Currency");
+
+    const storeId = storeIdByName.get(storeName.toLowerCase());
+    if (!storeName || !storeId) {
+      results.push({ row: rowNum, refNo: null, error: `Store "${storeName || "(blank)"}" not found for your company.` });
+      continue;
+    }
+    if (!orderDate) {
+      results.push({ row: rowNum, refNo: null, error: "Order Date is required (YYYY-MM-DD)." });
+      continue;
+    }
+    const itemCategoryId = categoryIdByName.get(itemCategoryName.toLowerCase());
+    if (!itemCategoryName || !itemCategoryId) {
+      results.push({ row: rowNum, refNo: null, error: `Item Category "${itemCategoryName || "(blank)"}" not found.` });
+      continue;
+    }
+    const qty = Number(qtyStr);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      results.push({ row: rowNum, refNo: null, error: "Qty must be a number greater than 0." });
+      continue;
+    }
+    const orderValueOriginal = Number(valueStr);
+    if (!Number.isFinite(orderValueOriginal) || orderValueOriginal < 0) {
+      results.push({ row: rowNum, refNo: null, error: "Order Value must be a valid number." });
+      continue;
+    }
+    if (!currency) {
+      results.push({ row: rowNum, refNo: null, error: "Currency is required (e.g. USD, INR)." });
+      continue;
+    }
+
+    const photoTypeRaw = cellStr(raw, byHeader, "Photo Type");
+    const addressTypeRaw = cellStr(raw, byHeader, "Address Type");
+    const tasselRaw = cellStr(raw, byHeader, "Tassel/Fringes").toLowerCase();
+
+    const item: ParsedItem = {
+      itemCategoryId,
+      skuLabel: cellStr(raw, byHeader, "SKU") || null,
+      sizeLabel: cellStr(raw, byHeader, "Size"),
+      qty,
+      colour: cellStr(raw, byHeader, "Colour") || null,
+      photoType: PHOTO_TYPES.has(photoTypeRaw) ? (photoTypeRaw as "Dispatch" | "Website") : null,
+      photoUrl: cellStr(raw, byHeader, "Photo URL") || null,
+      tasselFringes: tasselRaw === "yes" || tasselRaw === "y" || tasselRaw === "true",
+      orderCurrency: currency,
+      orderValueOriginal,
+    };
+
+    const result = await createOrderCore(employee, supabase, {
+      storeId,
+      orderDate,
+      marketplaceOrderNo: cellStr(raw, byHeader, "Marketplace Order No") || null,
+      buyerNameAddress: cellStr(raw, byHeader, "Buyer Name & Address") || null,
+      contactNo: cellStr(raw, byHeader, "Contact No") || null,
+      manualRefNo: cellStr(raw, byHeader, "Manual Ref No") || null,
+      poDate: cellStr(raw, byHeader, "PO Date") || null,
+      deliveryDate: cellStr(raw, byHeader, "Delivery Date") || null,
+      emailId: cellStr(raw, byHeader, "Email") || null,
+      taxId: cellStr(raw, byHeader, "Tax ID") || null,
+      addressType: ADDRESS_TYPES.has(addressTypeRaw) ? (addressTypeRaw as "Residential" | "Commercial") : "Residential",
+      remark: cellStr(raw, byHeader, "Remark") || null,
+      items: [item],
+    });
+
+    results.push({ row: rowNum, refNo: result.refNo, error: result.error });
+  }
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/orders/new");
+
+  return { error: null, results };
 }
