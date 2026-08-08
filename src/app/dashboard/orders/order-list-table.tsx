@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { deleteOrder } from "./actions";
 import { OrderEditForm, type EditableOrder } from "./order-edit-form";
+import { OrderHoldCancelActions } from "./order-hold-cancel-actions";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 
@@ -25,6 +26,14 @@ function shipmentBadgeClass(status: string): string {
   return "bg-slate-100 text-slate-600";
 }
 
+// Pending item 2 — Hold/Cancelled get their own colours so a blocked/dead
+// order reads at a glance, same idea as shipmentBadgeClass above.
+function statusBadgeClass(status: string): string {
+  if (status === "Hold") return "bg-amber-100 text-amber-700";
+  if (status === "Cancelled") return "bg-red-100 text-red-700";
+  return "bg-slate-100 text-slate-600";
+}
+
 // The actual "edit modify delete" panel — one row per order, expandable
 // into OrderEditForm. WhatsApp-already-sent rows get a green tint (matches
 // the same convention added to the "Aaj ki recent entries" list on the
@@ -38,6 +47,7 @@ export function OrderListTable({
   statuses,
   purchasesByOrder,
   trackingByOrder,
+  refundsByOrder,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -46,6 +56,7 @@ export function OrderListTable({
   statuses: string[];
   purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]>;
   trackingByOrder: Record<string, TrackingInfo>;
+  refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
@@ -148,7 +159,7 @@ export function OrderListTable({
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-slate-900">{o.ref_no}</span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{o.status}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(o.status)}`}>{o.status}</span>
                   {o.whatsapp_sent_at && (
                     <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
                       ✓ Sent on WhatsApp
@@ -191,24 +202,39 @@ export function OrderListTable({
                     {trackingByOrder[o.id].deliveredDate ? ` · Delivered ${trackingByOrder[o.id].deliveredDate}` : ""}
                   </p>
                 )}
+                {/* Pending item 2 — any refund(s) already entered against
+                    this order, and whether one auto-generated a Credit
+                    Note (see saveOrderRefund's dispatched+invoiced path). */}
+                {(refundsByOrder[o.id] ?? []).map((r, i) => (
+                  <p key={i} className="mt-1 text-xs text-teal-700">
+                    💸 Refund: {r.amount} {r.currency} on {r.date}{r.hasCreditNote ? " · Credit Note generated" : ""}
+                  </p>
+                ))}
                 {deleteError[o.id] && <p className="mt-2 text-xs font-medium text-red-600">{deleteError[o.id]}</p>}
               </div>
-              <div className="flex shrink-0 gap-2 print:hidden">
-                <button
-                  type="button"
-                  onClick={() => setEditingId(o.id)}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => handleDelete(o.id, o.ref_no)}
-                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-                >
-                  Delete
-                </button>
+              <div className="flex shrink-0 flex-col items-end gap-2 print:hidden">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(o.id)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => handleDelete(o.id, o.ref_no)}
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
+                <OrderHoldCancelActions
+                  order={{ id: o.id, ref_no: o.ref_no, status: o.status, order_currency: o.order_currency }}
+                  hasExistingRefund={(refundsByOrder[o.id] ?? []).length > 0}
+                  currencies={currencies}
+                />
               </div>
             </div>
           )}
