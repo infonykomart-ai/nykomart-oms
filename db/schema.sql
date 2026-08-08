@@ -134,7 +134,7 @@ CREATE EXTENSION IF NOT EXISTS citext;     -- case-insensitive unique names (par
 -- no runtime "add new value" admin function in Code.gs)
 -- =============================================================================
 CREATE TYPE order_status AS ENUM
-  ('Pending', 'Confirmed', 'In Production', 'Dispatched', 'Delivered', 'Cancelled', 'Returned');
+  ('Pending', 'Confirmed', 'In Production', 'Dispatched', 'Delivered', 'Hold', 'Cancelled', 'Returned');
 
 CREATE TYPE shipment_status AS ENUM
   ('Order Placed', 'In Production', 'Ready to Ship', 'Shipped', 'In Transit', 'Delivered', 'Returned', 'Cancelled');
@@ -837,6 +837,33 @@ CREATE TABLE purchase_bills (
 );
 CREATE INDEX idx_purchase_bills_order ON purchase_bills(order_id);
 
+-- Inventory / Stock for finished goods (pending item 4, 2026-08-08) — see
+-- db/2026-08-08-inventory-finished-stock.sql for the full design. A
+-- DIFFERENT code space from the raw-material stock_items/stock_in/stock_out
+-- module below — keyed the same loose free-text way orders themselves
+-- store SKU/Size.
+CREATE TABLE finished_stock (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_category_id  uuid NOT NULL REFERENCES item_categories(id),
+  sku_label         text NOT NULL DEFAULT '',
+  size_label        text NOT NULL DEFAULT '',
+  qty               integer NOT NULL DEFAULT 0 CHECK (qty >= 0),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (item_category_id, sku_label, size_label)
+);
+CREATE TABLE finished_stock_movements (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_category_id      uuid NOT NULL REFERENCES item_categories(id),
+  sku_label             text NOT NULL DEFAULT '',
+  size_label            text NOT NULL DEFAULT '',
+  qty_change            integer NOT NULL,
+  reason                text NOT NULL,
+  order_id              uuid REFERENCES orders(id),
+  entry_by_employee_id  uuid REFERENCES employees(id),
+  created_at            timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_finished_stock_movements_order ON finished_stock_movements(order_id);
+
 
 -- =============================================================================
 -- SECTION 8 — FREIGHT & DUTY RECONCILIATION
@@ -1084,6 +1111,24 @@ BEGIN
 END; $$;
 CREATE TRIGGER credit_notes_before_insert BEFORE INSERT ON credit_notes
   FOR EACH ROW WHEN (NEW.cn_no IS NULL) EXECUTE FUNCTION trg_credit_notes_doc_no();
+
+-- Order Hold/Cancel/Refund (pending item 2, 2026-08-08) — see
+-- db/2026-08-08-order-hold-cancel-refund.sql for the full design. One row
+-- per refund entered against a cancelled order; credit_note_id is set only
+-- for the dispatched-and-invoiced path (application logic decides that,
+-- not a DB trigger).
+CREATE TABLE order_refunds (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id              uuid NOT NULL REFERENCES orders(id),
+  refund_amount         numeric(14,2) NOT NULL CHECK (refund_amount >= 0),
+  refund_currency       varchar(3) NOT NULL REFERENCES currencies(code),
+  refund_date           date NOT NULL,
+  reason                text,
+  credit_note_id        uuid REFERENCES credit_notes(id),
+  entry_by_employee_id  uuid NOT NULL REFERENCES employees(id),
+  created_at            timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_order_refunds_order ON order_refunds(order_id);
 
 -- Old sheet: Internal Invoice — one company billing another for goods/
 -- services moved between them. from_company <> to_company enforced by CHECK.
@@ -2091,24 +2136,26 @@ INSERT INTO capabilities (code, description) VALUES
   ('reports',             'Access the Reports suite'),
   ('permissions_admin',   'Manage which role gets which capability — the Roles & Permissions screen itself'),
   ('invoicing',           'Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders'),
-  ('ad_spend_entry',      'Enter daily ad Budget/Spend per store; view the combined Orders + Ad Spend report');
+  ('ad_spend_entry',      'Enter daily ad Budget/Spend per store; view the combined Orders + Ad Spend report'),
+  ('finished_stock_view', 'View finished-goods Inventory/Stock — auto-restocked from cancelled+refunded+already-purchased orders');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
 JOIN (VALUES
-  ('Order Entry',        'order_entry'), ('Order Entry', 'attendance_punch'),
-  ('Logistics',          'csv_upload'),  ('Logistics',   'attendance_punch'),
+  ('Order Entry',        'order_entry'), ('Order Entry', 'attendance_punch'), ('Order Entry', 'finished_stock_view'),
+  ('Logistics',          'csv_upload'),  ('Logistics',   'attendance_punch'), ('Logistics', 'finished_stock_view'),
   ('Finance',            'csv_upload'),  ('Finance', 'doc_entry'), ('Finance', 'stock_entry'),
   ('Finance',            'bill_payment'),('Finance', 'salary_admin'), ('Finance', 'statement_entry'),
   ('Finance',            'party_admin'),('Finance', 'exchange_rate_admin'), ('Finance', 'attendance_punch'),
   ('Finance',            'attendance_admin'), ('Finance', 'crm_dashboard'), ('Finance', 'invoicing'),
   ('Finance',            'ad_spend_entry'), -- 2026-08-08: Store-level Daily Spend module.
+  ('Finance',            'finished_stock_view'),
   ('Higher Authority',   'approve_level1'), ('Higher Authority', 'attendance_punch'), ('Higher Authority', 'crm_dashboard'),
   ('Higher Authority',   'ad_spend_entry'),
   ('MD',                 'approve_level2'), ('MD', 'company_item_admin'), ('MD', 'doc_entry'), ('MD', 'stock_entry'),
   ('MD',                 'statement_entry'), ('MD', 'party_admin'), ('MD', 'exchange_rate_admin'),
   ('MD',                 'attendance_punch'), ('MD', 'attendance_admin'), ('MD', 'hr_letters'), ('MD', 'crm_dashboard'),
-  ('MD',                 'ad_spend_entry'),
+  ('MD',                 'ad_spend_entry'), ('MD', 'finished_stock_view'),
   ('MD',                 'employee_admin'), -- 2026-08-06: MD (the actual owner login) should be able to create new
                                              -- employee logins too, not just the separate Admin role — see pending
                                              -- item 12 ("naye user banane ka... sabhi kaam add karo").
@@ -2122,7 +2169,7 @@ JOIN (VALUES
   ('Admin',              'invoicing'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
-  ('Admin',              'ad_spend_entry'),
+  ('Admin',              'ad_spend_entry'), ('Admin', 'finished_stock_view'),
   -- 2026-08-05: Admin is the account the owner actually logs in as day-to-
   -- day (unlike the old system's per-department role split) — give it every
   -- remaining capability too, so it's a true superuser role rather than
@@ -2133,7 +2180,7 @@ JOIN (VALUES
   ('Admin',              'approve_level2'),
   ('Listing',            'attendance_punch'),
   ('Photoshop/Graphics', 'attendance_punch'),
-  ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch')
+  ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch'), ('Inventory', 'finished_stock_view')
 ) AS rc(role_name, cap) ON rc.role_name = r.name;
 
 
