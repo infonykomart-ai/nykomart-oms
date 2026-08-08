@@ -1149,6 +1149,18 @@ CREATE TABLE sales_invoices (
   -- in at invoice time, only when applicable (see section 1c).
   ioss_number                                      text,
 
+  -- 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — customs
+  -- declaration needs the shipment's own weight/dimensions typed in AT
+  -- invoice time (may differ from whatever dispatch_invoices.shipping_
+  -- weight_kg/length_cm/etc. later records for freight-billing purposes —
+  -- deliberately a SEPARATE value, not a read of that table, per user's
+  -- choice among the options presented). Nullable/optional like the other
+  -- editable-afterward invoice fields above.
+  weight_kg                                          numeric(10,3),
+  length_cm                                          numeric(10,2),
+  width_cm                                           numeric(10,2),
+  height_cm                                          numeric(10,2),
+
   buyer_name_address                                 text NOT NULL,   -- copied from the order(s) at generation time, editable
   remark                                               text,
 
