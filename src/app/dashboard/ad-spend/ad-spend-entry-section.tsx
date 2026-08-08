@@ -29,7 +29,12 @@ export function AdSpendEntrySection({
   recentEntries: RecentEntry[];
 }) {
   const [state, formAction, pending] = useActionState(saveAdSpendAction, initialState);
-  const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
+  // 2026-08-08: default to a company that actually has a store this
+  // employee can enter for (relevant once ad-spend is scoped to a store-
+  // restricted login — see page.tsx's canSeeAllStores) rather than always
+  // picking companies[0], which could have zero stores in `stores` for a
+  // scoped user and leave the Store dropdown looking empty on first load.
+  const [companyId, setCompanyId] = useState(stores[0]?.company_id ?? companies[0]?.id ?? "");
   const [formKey, setFormKey] = useState(0); // bump to reset the form after a successful save
 
   const companyStores = stores.filter((s) => s.company_id === companyId);
