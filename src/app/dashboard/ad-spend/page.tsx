@@ -25,15 +25,31 @@ export default async function AdSpendPage({
   const tab = sp.tab === "report" ? "report" : "entry";
   const companyFilter = typeof sp.company === "string" && sp.company ? sp.company : "";
 
-  const [{ data: companies }, { data: stores }] = await Promise.all([
+  // 2026-08-08: "AD SPEND VALI JO ENTRY HAI VO SIRF UTNI HI ENTRY DIKHNI
+  // CHAHIYE JIS BANDE KO JIS STORE PAR KAAM KAR RAHA HAI, BAKI JISKO APN
+  // PERMISION DE USKO DIKHE COMPLEATE REPORT — ADMIN MD FINANCE KO DIKHE
+  // JISME SABHI COMPANY STORE KA DATA DEKHA JA SAKE." Anyone with the
+  // separate ad_spend_report_all capability (Finance/Higher Authority/MD/
+  // Admin) sees everything, exactly like before. Everyone else with plain
+  // ad_spend_entry is scoped down to only their own assigned store(s) — see
+  // employee_store_access (db/2026-08-08-employee-store-access.sql). No
+  // stores assigned yet means they see nothing until an Admin assigns one,
+  // not "everything" — never default-open.
+  const canSeeAllStores = employee.capabilities.includes("ad_spend_report_all");
+
+  const [{ data: companies }, { data: allStores }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("stores").select("id, name, company_id").in("company_id", employee.companyIds).order("name"),
   ]);
 
-  const storeName = new Map((stores ?? []).map((s) => [s.id, s.name]));
+  const stores = canSeeAllStores
+    ? (allStores ?? [])
+    : (allStores ?? []).filter((s) => employee.storeIds.includes(s.id));
+
+  const storeName = new Map((allStores ?? []).map((s) => [s.id, s.name]));
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
-  const storeCompanyId = new Map((stores ?? []).map((s) => [s.id, s.company_id]));
-  const relevantStoreIds = (stores ?? [])
+  const storeCompanyId = new Map((allStores ?? []).map((s) => [s.id, s.company_id]));
+  const relevantStoreIds = stores
     .filter((s) => !companyFilter || s.company_id === companyFilter)
     .map((s) => s.id);
 
@@ -155,6 +171,13 @@ export default async function AdSpendPage({
             Enter daily Budget/Spend per store. QTY ORD and USD are pulled automatically from Order Entry — no manual
             duplication.
           </p>
+          {!canSeeAllStores && (
+            <p className="mt-1 text-xs text-amber-700">
+              {stores.length > 0
+                ? "Showing your assigned store(s) only. The complete cross-company report is visible to Admin/MD/Finance."
+                : "No store is assigned to your login yet — ask an Admin to assign one under Employees → Store Access."}
+            </p>
+          )}
         </div>
         <Link
           href="/dashboard"
