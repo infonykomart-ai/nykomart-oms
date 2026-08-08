@@ -3,13 +3,27 @@
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
 import { EmployeeDetailsForm, type EmployeeDetails } from "./employee-details-form";
+import { EmployeeStoreAccessForm } from "./employee-store-access-form";
 
 const initialResetState: SimpleActionState = { error: null, success: false };
 
-export function EmployeeRowActions({ employeeId, active, details }: { employeeId: string; active: boolean; details: EmployeeDetails }) {
+export function EmployeeRowActions({
+  employeeId,
+  active,
+  details,
+  stores,
+  currentStoreIds,
+}: {
+  employeeId: string;
+  active: boolean;
+  details: EmployeeDetails;
+  stores: { id: string; name: string; company_id: string }[];
+  currentStoreIds: string[];
+}) {
   const [isPending, startTransition] = useTransition();
   const [resetOpen, setResetOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [storeAccessOpen, setStoreAccessOpen] = useState(false);
 
   return (
     <div>
@@ -39,6 +53,13 @@ export function EmployeeRowActions({ employeeId, active, details }: { employeeId
         </button>
         <button
           type="button"
+          onClick={() => setStoreAccessOpen((v) => !v)}
+          className="rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-700 hover:bg-teal-100"
+        >
+          Store Access
+        </button>
+        <button
+          type="button"
           onClick={() => setResetOpen((v) => !v)}
           className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
         >
@@ -47,6 +68,14 @@ export function EmployeeRowActions({ employeeId, active, details }: { employeeId
       </div>
       {resetOpen && <ResetPasswordInline employeeId={employeeId} onDone={() => setResetOpen(false)} />}
       {detailsOpen && <EmployeeDetailsForm employee={details} onDone={() => setDetailsOpen(false)} />}
+      {storeAccessOpen && (
+        <EmployeeStoreAccessForm
+          employeeId={employeeId}
+          stores={stores}
+          currentStoreIds={currentStoreIds}
+          onDone={() => setStoreAccessOpen(false)}
+        />
+      )}
     </div>
   );
 }
