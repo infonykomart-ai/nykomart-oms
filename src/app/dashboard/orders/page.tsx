@@ -23,6 +23,11 @@ export default async function OrdersPage({
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const fromDate = typeof sp.from === "string" ? sp.from : "";
   const toDate = typeof sp.to === "string" ? sp.to : "";
+  // 2026-08-08 (pending item 5) — "Late Order" isn't a stored status, it's
+  // a derived condition: dispatch date has passed but the order still
+  // isn't Dispatched/Delivered/Cancelled/Returned.
+  const lateOnly = sp.late === "1";
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const [{ data: companies }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: parties }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
@@ -46,6 +51,11 @@ export default async function OrdersPage({
   if (fromDate) query = query.gte("order_date", fromDate);
   if (toDate) query = query.lte("order_date", toDate);
   if (q) query = query.or(`ref_no.ilike.%${q}%,buyer_name_address.ilike.%${q}%,contact_no.ilike.%${q}%`);
+  if (lateOnly) {
+    query = query
+      .lt("dispatch_date", todayStr)
+      .not("status", "in", "(Dispatched,Delivered,Cancelled,Returned)");
+  }
 
   const { data: orders } = await query;
 
@@ -113,6 +123,10 @@ export default async function OrdersPage({
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+        </div>
+        <div className="flex items-center gap-1.5 pb-1.5">
+          <input id="late" name="late" type="checkbox" value="1" defaultChecked={lateOnly} className="h-4 w-4 rounded border-slate-300" />
+          <label htmlFor="late" className="text-xs font-medium text-red-600">⚠️ Late Orders only</label>
         </div>
         <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
           Filter
