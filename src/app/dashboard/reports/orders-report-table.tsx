@@ -54,6 +54,16 @@ export function OrdersReportTable({
 
   return (
     <div className="space-y-4">
+      {/* 2026-08-08 (pending item 5) — printAreaId wasn't wired here before,
+          so the PDF/Print button never actually appeared (ExportBar hides
+          it without one). */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #orders-report-print-area, #orders-report-print-area * { visibility: visible; }
+          #orders-report-print-area { position: fixed; inset: 0; width: 100%; }
+        }
+      `}</style>
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">From</label>
@@ -87,12 +97,12 @@ export function OrdersReportTable({
         <a href="/dashboard/reports" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between print:hidden">
         <p className="text-sm text-slate-500">{rows.length} orders {rows.length === 1000 && "(showing up to 1000 — narrow the date range for full data)"}</p>
-        <ExportBar title="Orders Report" filenameBase="orders-report" columns={COLUMNS} rows={rows} />
+        <ExportBar title="Orders Report" filenameBase="orders-report" columns={COLUMNS} rows={rows} printAreaId="orders-report-print-area" />
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <div id="orders-report-print-area" className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
