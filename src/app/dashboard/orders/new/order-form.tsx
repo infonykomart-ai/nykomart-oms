@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useRef, useEffect, useState, type FormEvent } from "react";
-import { createOrder, type OrderFormState } from "./actions";
+import { createOrder, checkFinishedStockAction, type OrderFormState } from "./actions";
 
 const initialState: OrderFormState = { error: null, success: null };
 
@@ -37,6 +37,26 @@ function ItemBlock({
   currencies: Currency[];
 }) {
   const id = (field: string) => `${field}_${itemKey}`;
+
+  // Pending item 4 (Inventory) — "stock-check popup at order entry":
+  // informational only, never a blocker. Checked on blur of whichever of
+  // Category/SKU/Size the employee just finished typing, reading the other
+  // two straight off the DOM (this form is otherwise uncontrolled/DOM-read,
+  // see handleSubmit below — matching that same pattern rather than lifting
+  // everything into state just for this).
+  const [stockQty, setStockQty] = useState<number | null>(null);
+  async function checkStock() {
+    const categoryId = (document.getElementById(id("item_category_id")) as HTMLSelectElement | null)?.value ?? "";
+    const sku = (document.getElementById(id("sku_label")) as HTMLInputElement | null)?.value ?? "";
+    const size = (document.getElementById(id("size_label")) as HTMLInputElement | null)?.value ?? "";
+    if (!categoryId) {
+      setStockQty(null);
+      return;
+    }
+    const result = await checkFinishedStockAction(categoryId, sku, size);
+    setStockQty(result.qty > 0 ? result.qty : null);
+  }
+
   return (
     <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
       <legend className="mb-1 flex w-full items-center justify-between px-1 text-sm font-semibold text-slate-900">
@@ -50,7 +70,7 @@ function ItemBlock({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClass} htmlFor={id("item_category_id")}>Item Category *</label>
-          <select id={id("item_category_id")} name={id("item_category_id")} required className={inputClass} defaultValue="">
+          <select id={id("item_category_id")} name={id("item_category_id")} required className={inputClass} defaultValue="" onBlur={checkStock}>
             <option value="" disabled>Select category</option>
             {itemCategories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -59,17 +79,22 @@ function ItemBlock({
         </div>
         <div>
           <label className={labelClass} htmlFor={id("sku_label")}>SKU</label>
-          <input id={id("sku_label")} name={id("sku_label")} className={inputClass} placeholder="SKU code" />
+          <input id={id("sku_label")} name={id("sku_label")} className={inputClass} placeholder="SKU code" onBlur={checkStock} />
         </div>
         <div>
           <label className={labelClass} htmlFor={id("size_label")}>Size</label>
-          <input id={id("size_label")} name={id("size_label")} list={`sizes-list-${itemKey}`} className={inputClass} placeholder="e.g. 5X5 ft" />
+          <input id={id("size_label")} name={id("size_label")} list={`sizes-list-${itemKey}`} className={inputClass} placeholder="e.g. 5X5 ft" onBlur={checkStock} />
           <datalist id={`sizes-list-${itemKey}`}>
             {sizes.map((s) => (
               <option key={s.id} value={s.label} />
             ))}
           </datalist>
         </div>
+        {stockQty !== null && (
+          <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800 sm:col-span-2">
+            ℹ️ {stockQty} unit{stockQty === 1 ? "" : "s"} of this SKU+Size already in Inventory.
+          </p>
+        )}
         <div>
           <label className={labelClass} htmlFor={id("qty")}>Quantity *</label>
           <input id={id("qty")} name={id("qty")} type="number" min={1} defaultValue={1} required className={inputClass} />
