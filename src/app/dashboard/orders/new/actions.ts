@@ -613,3 +613,43 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
 
   return { error: null, results };
 }
+
+// ============================================================================
+// Inventory / Stock — pending item 4 (2026-08-08). Scope confirmed with the
+// user: auto-restock (see saveOrderRefund in ../actions.ts, which writes to
+// finished_stock when a refunded order already had a Purchase entry) PLUS
+// this informational stock-check popup at order entry — no manual Stock
+// In/Out for finished goods, that's out of scope for now. See
+// db/2026-08-08-inventory-finished-stock.sql for the finished_stock table
+// (a separate code space from the existing raw-material stock_items/
+// stock_in/stock_out module, per that module's own schema comment).
+// ============================================================================
+
+export type StockCheckResult = { qty: number };
+
+/**
+ * Informational only — "agar stock me hai to popup dikhe, blocker nahi".
+ * Keyed the same way finished_stock is: item_category_id + sku_label +
+ * size_label (case-insensitive on the text fields, matching how orders
+ * themselves store these as free text — see EditableOrder's sku_label/
+ * size_label fallback pattern).
+ */
+export async function checkFinishedStockAction(
+  itemCategoryId: string,
+  skuLabel: string,
+  sizeLabel: string
+): Promise<StockCheckResult> {
+  await requireCapability("order_entry");
+  if (!itemCategoryId) return { qty: 0 };
+  const supabase = createServiceRoleClient();
+
+  const { data } = await supabase
+    .from("finished_stock")
+    .select("qty")
+    .eq("item_category_id", itemCategoryId)
+    .ilike("sku_label", skuLabel.trim())
+    .ilike("size_label", sizeLabel.trim())
+    .maybeSingle();
+
+  return { qty: data ? Number(data.qty) : 0 };
+}
