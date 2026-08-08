@@ -66,6 +66,28 @@ export function InvoiceGenerateForm({
         </div>
       </div>
 
+      {/* 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — customs
+          declaration fields. Optional here (can also be filled in later
+          from the invoice's own Edit-before-printing panel). */}
+      <div className="grid grid-cols-4 gap-3">
+        <div>
+          <label className={labelClass} htmlFor="weight_kg">Weight (kg)</label>
+          <input id="weight_kg" name="weight_kg" type="number" step="0.001" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="length_cm">Length (cm)</label>
+          <input id="length_cm" name="length_cm" type="number" step="0.01" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="width_cm">Width (cm)</label>
+          <input id="width_cm" name="width_cm" type="number" step="0.01" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="height_cm">Height (cm)</label>
+          <input id="height_cm" name="height_cm" type="number" step="0.01" className={inputClass} />
+        </div>
+      </div>
+
       <div>
         <label className={labelClass} htmlFor="buyer_name_address">Buyer Name & Address</label>
         <textarea id="buyer_name_address" name="buyer_name_address" rows={2} defaultValue={defaultBuyerNameAddress} className={inputClass} />
