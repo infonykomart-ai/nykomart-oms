@@ -21,12 +21,14 @@ export function OrderListTable({
   sizes,
   currencies,
   statuses,
+  purchasesByOrder,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
   sizes: { id: string; label: string }[];
   currencies: { code: string; name: string }[];
   statuses: string[];
+  purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
@@ -84,6 +86,16 @@ export function OrderListTable({
                   {o.order_date} · {categoryName.get(o.item_category_id) ?? "—"} {o.size_label ? `· ${o.size_label}` : ""} · Qty {o.qty} ·{" "}
                   {o.order_value_original} {o.order_currency}
                 </p>
+                {/* 2026-08-08: "YE LINK HONA CHAHIYE" — which vendor Party
+                    this order's item was purchased from, via Purchase
+                    Bill's required order_id link. */}
+                {purchasesByOrder[o.id] ? (
+                  <p className="mt-1 text-xs text-purple-700">
+                    🛒 Purchased from: {purchasesByOrder[o.id].map((p) => `${p.vendorName} (${p.vendorInvoiceNo})`).join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-400">No Purchase Bill linked yet.</p>
+                )}
                 {deleteError[o.id] && <p className="mt-2 text-xs font-medium text-red-600">{deleteError[o.id]}</p>}
               </div>
               <div className="flex shrink-0 gap-2">
