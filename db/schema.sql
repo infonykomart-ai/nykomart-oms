@@ -347,6 +347,24 @@ COMMENT ON TABLE employee_company_access IS
   'A row here for (employee, their own home company) is redundant but harmless — the app always treats '
   'the home company as accessible regardless of what is in this table.';
 
+-- 2026-08-08: "AD SPEND VALI JO ENTRY HAI VO SIRF UTNI HI ENTRY DIKHNI
+-- CHAHIYE JIS BANDE KO JIS STORE PAR KAAM KAR RAHA HAI" — which store(s) a
+-- login is actually assigned to work on, distinct from employee_company_
+-- access above (which company a login may switch into). Used to scope the
+-- Store Ad Spend module: an employee with only ad_spend_entry (no
+-- ad_spend_report_all) sees/enters only their own assigned store(s); an
+-- empty row set here means "no store assigned yet" (sees nothing, not
+-- everything — never default-open). Employees with ad_spend_report_all
+-- (Finance/Higher Authority/MD/Admin) bypass this table entirely and see
+-- every store. No self-service UI beyond the Employees admin screen's
+-- "Store Access" panel (employee_admin capability).
+CREATE TABLE employee_store_access (
+  employee_id   uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  store_id      uuid NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  PRIMARY KEY (employee_id, store_id)
+);
+CREATE INDEX idx_employee_store_access_store ON employee_store_access(store_id);
+
 
 -- =============================================================================
 -- SECTION 3 — DOCUMENT / REFERENCE-NUMBER SEQUENCING INFRASTRUCTURE
@@ -2137,6 +2155,7 @@ INSERT INTO capabilities (code, description) VALUES
   ('permissions_admin',   'Manage which role gets which capability — the Roles & Permissions screen itself'),
   ('invoicing',           'Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders'),
   ('ad_spend_entry',      'Enter daily ad Budget/Spend per store; view the combined Orders + Ad Spend report'),
+  ('ad_spend_report_all', 'View the complete Ad Spend report across ALL companies/stores (without this, ad_spend_entry is scoped to only the employee''s own assigned store(s) — see employee_store_access)'),
   ('finished_stock_view', 'View finished-goods Inventory/Stock — auto-restocked from cancelled+refunded+already-purchased orders');
 
 INSERT INTO role_capabilities (role_id, capability_code)
@@ -2149,13 +2168,14 @@ JOIN (VALUES
   ('Finance',            'party_admin'),('Finance', 'exchange_rate_admin'), ('Finance', 'attendance_punch'),
   ('Finance',            'attendance_admin'), ('Finance', 'crm_dashboard'), ('Finance', 'invoicing'),
   ('Finance',            'ad_spend_entry'), -- 2026-08-08: Store-level Daily Spend module.
+  ('Finance',            'ad_spend_report_all'), -- 2026-08-08: full cross-store report — see ad_spend_report_all comment above.
   ('Finance',            'finished_stock_view'),
   ('Higher Authority',   'approve_level1'), ('Higher Authority', 'attendance_punch'), ('Higher Authority', 'crm_dashboard'),
-  ('Higher Authority',   'ad_spend_entry'),
+  ('Higher Authority',   'ad_spend_entry'), ('Higher Authority', 'ad_spend_report_all'),
   ('MD',                 'approve_level2'), ('MD', 'company_item_admin'), ('MD', 'doc_entry'), ('MD', 'stock_entry'),
   ('MD',                 'statement_entry'), ('MD', 'party_admin'), ('MD', 'exchange_rate_admin'),
   ('MD',                 'attendance_punch'), ('MD', 'attendance_admin'), ('MD', 'hr_letters'), ('MD', 'crm_dashboard'),
-  ('MD',                 'ad_spend_entry'), ('MD', 'finished_stock_view'),
+  ('MD',                 'ad_spend_entry'), ('MD', 'ad_spend_report_all'), ('MD', 'finished_stock_view'),
   ('MD',                 'employee_admin'), -- 2026-08-06: MD (the actual owner login) should be able to create new
                                              -- employee logins too, not just the separate Admin role — see pending
                                              -- item 12 ("naye user banane ka... sabhi kaam add karo").
@@ -2169,7 +2189,7 @@ JOIN (VALUES
   ('Admin',              'invoicing'),
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
-  ('Admin',              'ad_spend_entry'), ('Admin', 'finished_stock_view'),
+  ('Admin',              'ad_spend_entry'), ('Admin', 'ad_spend_report_all'), ('Admin', 'finished_stock_view'),
   -- 2026-08-05: Admin is the account the owner actually logs in as day-to-
   -- day (unlike the old system's per-department role split) — give it every
   -- remaining capability too, so it's a true superuser role rather than
