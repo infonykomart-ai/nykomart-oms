@@ -24,12 +24,14 @@ export default async function OrdersPage({
   const fromDate = typeof sp.from === "string" ? sp.from : "";
   const toDate = typeof sp.to === "string" ? sp.to : "";
 
-  const [{ data: companies }, { data: itemCategories }, { data: sizes }, { data: currencies }] = await Promise.all([
+  const [{ data: companies }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: parties }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("item_categories").select("id, name").order("name"),
     supabase.from("sizes").select("id, label").order("label"),
     supabase.from("currencies").select("code, name").order("code"),
+    supabase.from("parties").select("id, name").order("name"),
   ]);
+  const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
   let query = supabase
     .from("orders")
@@ -46,6 +48,23 @@ export default async function OrdersPage({
   if (q) query = query.or(`ref_no.ilike.%${q}%,buyer_name_address.ilike.%${q}%,contact_no.ilike.%${q}%`);
 
   const { data: orders } = await query;
+
+  // 2026-08-08: "YE LINK HONA CHAHIYE... SABHI CHEJE LINK RAHEGI" — reverse
+  // lookup so the Orders hub itself shows which vendor Party (if any) each
+  // order's item was purchased from, via Purchase Bill's now-required
+  // order_id link (see documents/actions.ts's savePurchaseBill).
+  const orderIds = (orders ?? []).map((o) => o.id);
+  const { data: purchaseBills } = orderIds.length
+    ? await supabase.from("purchase_bills").select("order_id, vendor_party_id, vendor_invoice_no").in("order_id", orderIds)
+    : { data: [] };
+  const purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]> = {};
+  for (const pb of purchaseBills ?? []) {
+    if (!pb.order_id) continue;
+    (purchasesByOrder[pb.order_id] ??= []).push({
+      vendorName: partyName.get(pb.vendor_party_id) ?? "—",
+      vendorInvoiceNo: pb.vendor_invoice_no ?? "—",
+    });
+  }
 
   return (
     <div>
@@ -107,6 +126,7 @@ export default async function OrdersPage({
         sizes={sizes ?? []}
         currencies={currencies ?? []}
         statuses={STATUSES}
+        purchasesByOrder={purchasesByOrder}
       />
     </div>
   );
