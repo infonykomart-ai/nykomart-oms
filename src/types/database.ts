@@ -3097,6 +3097,23 @@ export type Database = {
           remark: string | null;
           created_by_employee_id: string;
           created_at: string;
+          value_percent: number | null;
+          invoice_value_usd: number | null;
+          item_cost_total: number | null;
+          insurance_total: number | null;
+          freight_total: number | null;
+          taxable_value_inr: number | null;
+          declared_value_words: string | null;
+          awb_no: string | null;
+          vessel_flight_no: string | null;
+          port_of_discharge: string | null;
+          marks_and_nos: string | null;
+          no_of_packages: number | null;
+          buyer_email: string | null;
+          buyer_phone: string | null;
+          other_than_consignee: string | null;
+          vat_number: string | null;
+          eori_number: string | null;
         };
         Insert: {
           id?: string;
@@ -3120,6 +3137,23 @@ export type Database = {
           remark?: string | null;
           created_by_employee_id: string;
           created_at?: string;
+          value_percent?: number | null;
+          invoice_value_usd?: number | null;
+          item_cost_total?: number | null;
+          insurance_total?: number | null;
+          freight_total?: number | null;
+          taxable_value_inr?: number | null;
+          declared_value_words?: string | null;
+          awb_no?: string | null;
+          vessel_flight_no?: string | null;
+          port_of_discharge?: string | null;
+          marks_and_nos?: string | null;
+          no_of_packages?: number | null;
+          buyer_email?: string | null;
+          buyer_phone?: string | null;
+          other_than_consignee?: string | null;
+          vat_number?: string | null;
+          eori_number?: string | null;
         };
         Update: {
           id?: string;
@@ -3143,6 +3177,23 @@ export type Database = {
           remark?: string | null;
           created_by_employee_id?: string;
           created_at?: string;
+          value_percent?: number | null;
+          invoice_value_usd?: number | null;
+          item_cost_total?: number | null;
+          insurance_total?: number | null;
+          freight_total?: number | null;
+          taxable_value_inr?: number | null;
+          declared_value_words?: string | null;
+          awb_no?: string | null;
+          vessel_flight_no?: string | null;
+          port_of_discharge?: string | null;
+          marks_and_nos?: string | null;
+          no_of_packages?: number | null;
+          buyer_email?: string | null;
+          buyer_phone?: string | null;
+          other_than_consignee?: string | null;
+          vat_number?: string | null;
+          eori_number?: string | null;
         };
         Relationships: [
           {
