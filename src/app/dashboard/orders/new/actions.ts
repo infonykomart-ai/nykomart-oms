@@ -146,7 +146,13 @@ type ServiceClient = ReturnType<typeof createServiceRoleClient>;
  * here, since createOrder() already gets it from the employee's own
  * session and bulkCreateOrders() checks it explicitly per row.
  */
-async function createOrderCore(
+// 2026-08-10: exported (was module-private) so the marketplace sync cron
+// job (src/app/api/cron/sync-orders/route.ts) can reuse this EXACT logic
+// for connector-created orders too — ref_no reservation, duplicate-buyer
+// detection, and currency conversion must behave identically whether a
+// human typed the order or the API fetched it. Do not duplicate this
+// logic anywhere else.
+export async function createOrderCore(
   employee: AuthedEmployee,
   supabase: ServiceClient,
   companyId: string,
