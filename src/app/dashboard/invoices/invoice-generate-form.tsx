@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { generateInvoice, type InvoiceFormState } from "./actions";
 
@@ -18,6 +18,8 @@ export function InvoiceGenerateForm({
   defaultBuyerNameAddress: string;
 }) {
   const [state, formAction, pending] = useActionState(generateInvoice, initialState);
+  const [csbType, setCsbType] = useState("");
+  const isCsbIv = csbType === "CSB-IV";
 
   if (state.success) {
     return (
@@ -46,7 +48,14 @@ export function InvoiceGenerateForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="csb_type">CSB Type *</label>
-          <select id="csb_type" name="csb_type" required defaultValue="" className={inputClass}>
+          <select
+            id="csb_type"
+            name="csb_type"
+            required
+            defaultValue=""
+            className={inputClass}
+            onChange={(e) => setCsbType(e.target.value)}
+          >
             <option value="" disabled>Select</option>
             <option value="CSB-V">CSB-V</option>
             <option value="CSB-IV">CSB-IV</option>
@@ -65,6 +74,91 @@ export function InvoiceGenerateForm({
           <input id="ioss_number" name="ioss_number" className={inputClass} />
         </div>
       </div>
+
+      {/* 2026-08-10: "agar uk & europe ki shipment hai or agar usme IOSS,
+          VAT, EORI no vagera aaya hua hai according to destination country
+          guideline" — VAT/EORI alongside the existing IOSS field above,
+          same "typed in only when applicable, always editable" pattern. */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelClass} htmlFor="vat_number">VAT Number (UK/EU, if any)</label>
+          <input id="vat_number" name="vat_number" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="eori_number">EORI Number (UK/EU, if any)</label>
+          <input id="eori_number" name="eori_number" className={inputClass} />
+        </div>
+      </div>
+
+      {/* 2026-08-10: fuller customs-invoice detail fields to match the
+          real sample format (NL1712627.pdf) — AWB/buyer email/phone
+          auto-pull from Dispatch if left blank. */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelClass} htmlFor="awb_no">AWB / Tracking No.</label>
+          <input id="awb_no" name="awb_no" placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="courier_company_vessel">Vessel/Flight No.</label>
+          <input id="courier_company_vessel" name="vessel_flight_no" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="port_of_discharge">Port of Discharge</label>
+          <input id="port_of_discharge" name="port_of_discharge" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="marks_and_nos">Marks & Nos./Container No.</label>
+          <input id="marks_and_nos" name="marks_and_nos" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="no_of_packages">No. of Packages</label>
+          <input id="no_of_packages" name="no_of_packages" type="number" min={0} defaultValue={1} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="buyer_email">Buyer Email</label>
+          <input id="buyer_email" name="buyer_email" type="email" placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="buyer_phone">Buyer Phone</label>
+          <input id="buyer_phone" name="buyer_phone" placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
+        </div>
+      </div>
+
+      <div>
+        <label className={labelClass} htmlFor="other_than_consignee">Other Than Consignee (usually blank)</label>
+        <textarea id="other_than_consignee" name="other_than_consignee" rows={2} className={inputClass} />
+      </div>
+
+      {/* 2026-08-10: "csv-4 me manual rakho value kitni rakhnai hai" — for
+          CSB-IV only, the value breakdown is typed in by hand instead of
+          the automatic 60%/80% marketplace calculation. These 4 fields
+          are ignored entirely for CSB-V (which always auto-computes them
+          server-side from order_value_usd — see actions.ts). */}
+      {isCsbIv && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="mb-2 text-xs font-semibold text-amber-800">
+            CSB-IV — value breakdown is manual (not auto-calculated from order value)
+          </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div>
+              <label className={labelClass} htmlFor="manual_invoice_value_usd">Total Value (USD)</label>
+              <input id="manual_invoice_value_usd" name="manual_invoice_value_usd" type="number" step="0.01" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="manual_item_cost_total">Item Cost (USD)</label>
+              <input id="manual_item_cost_total" name="manual_item_cost_total" type="number" step="0.01" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="manual_insurance_total">Insurance (USD)</label>
+              <input id="manual_insurance_total" name="manual_insurance_total" type="number" step="0.01" defaultValue={0.75} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="manual_freight_total">Freight (USD)</label>
+              <input id="manual_freight_total" name="manual_freight_total" type="number" step="0.01" className={inputClass} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — customs
           declaration fields. Optional here (can also be filled in later
