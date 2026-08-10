@@ -35,7 +35,7 @@ export const BULK_INVOICE_COLUMNS: BulkInvoiceColumn[] = [
   { label: "Remark", example: "", required: false },
   // 2026-08-10 additions — all optional. AWB/Buyer Email/Buyer Phone
   // auto-pull from dispatch_invoices if left blank. Value breakdown
-  // (Cost/Insurance/Freight/Total) auto-computes from the 60%/80%
+  // (Cost/Insurance/Freight/Total) auto-computes from the 60%
   // marketplace formula for CSB-V — the "Manual ..." columns are ONLY
   // read for CSB-IV rows, ignored entirely for CSB-V.
   { label: "AWB No.", example: "", required: false, help: "Leave blank to auto-pull from Dispatch (if a dispatch entry exists)." },
