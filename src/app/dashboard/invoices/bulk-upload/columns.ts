@@ -33,4 +33,23 @@ export const BULK_INVOICE_COLUMNS: BulkInvoiceColumn[] = [
   { label: "Height (cm)", example: "", required: false },
   { label: "Buyer Name & Address Override", example: "", required: false, help: "Leave blank to use the order's own buyer address." },
   { label: "Remark", example: "", required: false },
+  // 2026-08-10 additions — all optional. AWB/Buyer Email/Buyer Phone
+  // auto-pull from dispatch_invoices if left blank. Value breakdown
+  // (Cost/Insurance/Freight/Total) auto-computes from the 60%/80%
+  // marketplace formula for CSB-V — the "Manual ..." columns are ONLY
+  // read for CSB-IV rows, ignored entirely for CSB-V.
+  { label: "AWB No.", example: "", required: false, help: "Leave blank to auto-pull from Dispatch (if a dispatch entry exists)." },
+  { label: "Vessel/Flight No.", example: "", required: false },
+  { label: "Port of Discharge", example: "", required: false },
+  { label: "Marks & Nos.", example: "", required: false },
+  { label: "No. of Packages", example: "1", required: false },
+  { label: "Buyer Email", example: "", required: false, help: "Leave blank to auto-pull from Dispatch." },
+  { label: "Buyer Phone", example: "", required: false, help: "Leave blank to auto-pull from Dispatch." },
+  { label: "Other Than Consignee", example: "", required: false, help: "Second consignee block, if applicable — usually blank." },
+  { label: "VAT Number", example: "", required: false, help: "UK/EU shipments only, if applicable." },
+  { label: "EORI Number", example: "", required: false, help: "UK/EU shipments only, if applicable." },
+  { label: "Manual Invoice Value (USD, CSB-IV only)", example: "", required: false, help: "CSB-IV only — CSB-V always auto-computes this." },
+  { label: "Manual Item Cost (USD, CSB-IV only)", example: "", required: false },
+  { label: "Manual Insurance (USD, CSB-IV only)", example: "", required: false },
+  { label: "Manual Freight (USD, CSB-IV only)", example: "", required: false },
 ];
