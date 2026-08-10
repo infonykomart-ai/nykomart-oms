@@ -1250,7 +1250,7 @@ CREATE TABLE sales_invoices (
   -- breakdown.sql's header comment for the full formula (verified against
   -- a real sample invoice). value_percent/invoice_value_usd/
   -- item_cost_total/insurance_total/freight_total are auto-computed for
-  -- CSB-V (marketplace-based 60%/80%), left NULL/manual for CSB-IV.
+  -- CSB-V (marketplace-based 60%, see value-breakdown.ts), left NULL/manual for CSB-IV.
   value_percent                                          numeric(5,2),
   invoice_value_usd                                      numeric(14,2),
   item_cost_total                                        numeric(14,2),
