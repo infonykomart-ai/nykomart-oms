@@ -21,7 +21,7 @@ import { WooCommerceConnector } from "@/lib/connectors/woocommerce";
 import type { MarketplaceConnector, NormalizedOrder } from "@/lib/connectors/types";
 import type { AuthedEmployee } from "@/lib/auth/require-capability";
 
-export const maxDuration = 300; // seconds — marketplace APIs can be slow; Vercel Pro allows up to 300s for Cron
+export const maxDuration = 60; // seconds — Hobby plan's hard cap; Vercel rejects the whole deployment if this exceeds the plan limit (see vercel.json's cron-frequency note for the same class of bug)
 
 function buildConnector(
   provider: string,
