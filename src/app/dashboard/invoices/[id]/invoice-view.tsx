@@ -303,7 +303,7 @@ export function InvoiceView({
         </div>
 
         {/* 2026-08-10: value breakdown — Item Cost/Insurance/Freight/Total
-            for CSB-V is auto-computed at generation time (60%/80% of
+            for CSB-V is auto-computed at generation time (currently 60% of
             order value, see value-breakdown.ts) but stays editable here
             like everything else; for CSB-IV it was entered manually on
             the generate form and is likewise editable here. */}
