@@ -384,6 +384,40 @@ export type Database = {
           },
         ];
       };
+      courier_webhook_log: {
+        Row: {
+          id: string;
+          received_at: string;
+          courier_name: string;
+          awb_no: string | null;
+          raw_payload: Json;
+          processed: boolean;
+          processed_at: string | null;
+          error_message: string | null;
+        };
+        Insert: {
+          id?: string;
+          received_at?: string;
+          courier_name: string;
+          awb_no?: string | null;
+          raw_payload: Json;
+          processed?: boolean;
+          processed_at?: string | null;
+          error_message?: string | null;
+        };
+        Update: {
+          id?: string;
+          received_at?: string;
+          courier_name?: string;
+          awb_no?: string | null;
+          raw_payload?: Json;
+          processed?: boolean;
+          processed_at?: string | null;
+          error_message?: string | null;
+        };
+        Relationships: [
+        ];
+      };
       credit_notes: {
         Row: {
           id: string;
@@ -2203,6 +2237,104 @@ export type Database = {
         Relationships: [
         ];
       };
+      marketplace_credentials: {
+        Row: {
+          id: string;
+          store_id: string;
+          provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
+          api_key_enc: unknown;
+          api_secret_enc: unknown | null;
+          extra_config: Json;
+          is_active: boolean;
+          last_synced_at: string | null;
+          created_at: string;
+          created_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          store_id: string;
+          provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
+          api_key_enc: unknown;
+          api_secret_enc?: unknown | null;
+          extra_config?: Json;
+          is_active?: boolean;
+          last_synced_at?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          store_id?: string;
+          provider?: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
+          api_key_enc?: unknown;
+          api_secret_enc?: unknown | null;
+          extra_config?: Json;
+          is_active?: boolean;
+          last_synced_at?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "marketplace_credentials_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "marketplace_credentials_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      marketplace_sync_log: {
+        Row: {
+          id: string;
+          store_id: string;
+          started_at: string;
+          finished_at: string | null;
+          orders_fetched: number;
+          orders_created: number;
+          orders_skipped_dup: number;
+          status: string;
+          error_message: string | null;
+        };
+        Insert: {
+          id?: string;
+          store_id: string;
+          started_at?: string;
+          finished_at?: string | null;
+          orders_fetched?: number;
+          orders_created?: number;
+          orders_skipped_dup?: number;
+          status?: string;
+          error_message?: string | null;
+        };
+        Update: {
+          id?: string;
+          store_id?: string;
+          started_at?: string;
+          finished_at?: string | null;
+          orders_fetched?: number;
+          orders_created?: number;
+          orders_skipped_dup?: number;
+          status?: string;
+          error_message?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "marketplace_sync_log_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       order_refunds: {
         Row: {
           id: string;
@@ -3691,6 +3823,7 @@ export type Database = {
       employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+      marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
       order_status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
       payment_type: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY";
