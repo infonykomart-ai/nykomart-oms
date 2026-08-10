@@ -131,7 +131,7 @@ export function InvoiceGenerateForm({
 
       {/* 2026-08-10: "csv-4 me manual rakho value kitni rakhnai hai" — for
           CSB-IV only, the value breakdown is typed in by hand instead of
-          the automatic 60%/80% marketplace calculation. These 4 fields
+          the automatic 60% marketplace calculation. These 4 fields
           are ignored entirely for CSB-V (which always auto-computes them
           server-side from order_value_usd — see actions.ts). */}
       {isCsbIv && (
