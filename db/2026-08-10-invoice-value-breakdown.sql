@@ -8,7 +8,12 @@
 --
 --   Amazon orders  -> declared invoice value = 60% of the order's real
 --                     value (orders.order_value_usd).
---   Etsy/Website/eBay orders -> declared invoice value = 80%.
+--   Etsy/Website/eBay orders -> declared invoice value = 60% too — this
+--                     was originally spec'd as 80%, then corrected
+--                     2026-08-10 ("Etsy/Website/eBay → 60% kar do") to
+--                     match Amazon. See src/lib/invoices/value-
+--                     breakdown.ts's valuePercentForStore() — the single
+--                     source of truth for this percentage.
 --
 -- That declared value (called `invoice_value_usd` below, "V") is then
 -- broken into 3 customs line items that always sum EXACTLY to V:
@@ -39,15 +44,16 @@
 -- ARRA) — "sabhi company me yahi fanda rahega" — the logic lives in one
 -- shared function, not duplicated per company.
 ALTER TABLE sales_invoices
-  ADD COLUMN value_percent    numeric(5,2),   -- 60.00 or 80.00 for CSB-V (marketplace-based); NULL for CSB-IV (manual)
+  ADD COLUMN value_percent    numeric(5,2),   -- currently always 60.00 for CSB-V (marketplace-based, see value-breakdown.ts); NULL for CSB-IV (manual)
   ADD COLUMN invoice_value_usd numeric(14,2), -- "V" / "Total" — the declared invoice value in USD (see header comment)
   ADD COLUMN item_cost_total  numeric(14,2),
   ADD COLUMN insurance_total  numeric(14,2),
   ADD COLUMN freight_total    numeric(14,2);
 
 COMMENT ON COLUMN sales_invoices.value_percent IS
-  '60.00 for Amazon orders, 80.00 for Etsy/Website/eBay orders (CSB-V, auto-computed at generation time from the '
-  'store name) — NULL for CSB-IV, where value entry stays fully manual per the user''s 2026-08-10 instruction.';
+  'Currently always 60.00 for CSB-V (auto-computed at generation time — see src/lib/invoices/value-breakdown.ts''s '
+  'valuePercentForStore() for the single source of truth) — NULL for CSB-IV, where value entry stays fully manual '
+  'per the user''s 2026-08-10 instruction.';
 COMMENT ON COLUMN sales_invoices.invoice_value_usd IS
   'The declared invoice total in USD ("V") — for CSB-V this is order_value_usd (summed across the invoice''s '
   'orders) * value_percent/100; for CSB-IV it is typed in by hand. item_cost_total + insurance_total + '
