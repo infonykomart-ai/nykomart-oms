@@ -21,6 +21,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Credit Note, Debit Note, Washing Entry, Purchase Bill, Courier Bill, Duty & Tax Bill, Internal Invoice — via PO/RF/RG or AWB lookup." },
   { code: "stock_entry", label: "Stock Entry", icon: "📦", href: "/dashboard/stock",
     description: "Stock In / Stock Out for raw material — Chalan No. mandatory on every entry." },
+  { code: "shipglobal_shipment", label: "Shipglobal Shipments", icon: "🌍", href: "/dashboard/shipglobal",
+    description: "Create a real Shipglobal shipment + label for an order (DPD / UniUni / VipParcel / DHL E-Commerce / UBI)." },
   { code: "bill_payment", label: "Bill Payment", icon: "💳", href: "/dashboard/bill-payment",
     description: "Bill-payment approval workflow." },
   { code: "salary_admin", label: "Salary & Advances", icon: "💰", href: "/dashboard/salary",
