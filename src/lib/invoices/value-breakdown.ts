@@ -14,16 +14,18 @@
 export const ITEM_COST_FRACTION = 0.3; // of invoice value (V)
 export const FLAT_INSURANCE_USD = 0.75;
 
-/**
- * Amazon -> 60%, everything else (Etsy/eBay/Website/etc.) -> 80% — per the
- * user's exact wording ("amazon ka koi order... uska 60%... etsy website
- * ebay ke liye order value ka 80%"). Detected from the store name, which
- * always contains the platform name in this app's data (e.g. "Amazon Arts
- * of Jaipur", "Etsy The Rugara", "Ebay Casa Arra", "CASA ARRA (Website)")
- * — confirmed against every store row in db/schema.sql's seed data.
- */
+// Every marketplace is 60% of order value for now — Amazon was 60% from
+// the original spec; Etsy/eBay/Website were originally 80%, then
+// corrected 2026-08-10 ("Etsy/Website/eBay → 60% kar do") to match Amazon.
+// `storeName` is kept as the function's input (rather than dropping this
+// to a bare constant elsewhere in the codebase) so a future per-platform
+// split is a one-line change here, in the single place this percentage is
+// decided — see db/schema.sql's stores seed data for how store names
+// reliably contain the platform name (e.g. "Amazon Arts of Jaipur",
+// "Etsy The Rugara", "Ebay Casa Arra", "CASA ARRA (Website)").
 export function valuePercentForStore(storeName: string): number {
-  return storeName.toLowerCase().includes("amazon") ? 60 : 80;
+  void storeName;
+  return 60;
 }
 
 export type ValueBreakdown = {
