@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+        env:
+          # Dummy values so `next build` can complete — real values are only
+          # needed at runtime (Vercel env vars), not at build time, since
+          # these are only read inside Server Actions/Route Handlers.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+          SUPABASE_SERVICE_ROLE_KEY: placeholder
+
+  schema-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # NOTE: db/schema.sql is kept as the single cumulative source of
+      # truth — every db/2026-*.sql migration's changes get folded back
+      # into it once shipped (see the header of most of those files, and
+      # the project's own notes). The dated files are one-time patches
+      # meant to be run ONCE against the live Supabase DB, not replayed on
+      # top of a fresh schema.sql — doing so double-applies anything
+      # already folded in (fails with "already exists") and some older
+      # ones (2026-08-05-*) also reference Supabase's own `auth.users`
+      # table, which doesn't exist in a plain throwaway Postgres. So this
+      # check only verifies schema.sql itself applies cleanly to a fresh
+      # database — that's the meaningful regression test (can a fresh
+      # environment be stood up from schema.sql alone), not "replay every
+      # historical patch file."
+      - name: Apply schema.sql to a throwaway database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE oms_ci_test;"
+          psql -h localhost -U postgres -d oms_ci_test -f db/schema.sql
+
+      - name: Regenerate types and diff against committed version
+        env:
+          GEN_TYPES_DB_URL: postgresql://postgres:postgres@localhost:5432/oms_ci_test
+        run: |
+          node scripts/gen-types.mjs
+          git diff --exit-code src/types/database.ts || \
+            (echo "::error::src/types/database.ts is out of date — run 'node scripts/gen-types.mjs' locally and commit the result" && exit 1)
