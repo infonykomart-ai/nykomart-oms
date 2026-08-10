@@ -1,18 +1,18 @@
-// Courier POLLING cron — FedEx AND Aramex share this one job. Both are
-// request/response-only APIs (no push webhook available), unlike
-// Delhivery/UPS/Shiprocket which POST to us — see
+// Courier POLLING cron — FedEx, Aramex, AND DHL share this one job. All
+// three are request/response-only APIs (no push webhook available),
+// unlike Delhivery/UPS/Shiprocket which POST to us — see
 // src/app/api/webhooks/courier/delhivery and .../ups and .../shiprocket
 // for those.
 //
-// WHY ONE FILE FOR TWO COURIERS (important, don't split this back out
+// WHY ONE FILE FOR THREE COURIERS (important, don't split this back out
 // without reading this first): Vercel's Hobby plan hard-caps a project at
 // 2 cron jobs total in vercel.json — see the batch46 postmortem in this
 // project's own notes for the full story, but the short version is that
 // exceeding Hobby's cron limits doesn't fail loudly, it silently blocks
 // EVERY future deployment from being created at all, which is a brutal
 // thing to debug. This project already spends both cron slots
-// (sync-orders + this one), so a third courier needing polling (rather
-// than a webhook) gets folded into THIS route rather than getting its own
+// (sync-orders + this one), so every courier needing polling (rather than
+// a webhook) gets folded into THIS route rather than getting its own
 // vercel.json entry. Kept the historical filename/route path
 // (poll-fedex-tracking) rather than renaming to something more generic —
 // a rename would leave an orphaned old route file that the manual
@@ -33,9 +33,19 @@
 // shape, auth, and the (unconfirmed) status-code mapping lives in
 // src/lib/couriers/aramex-tracking.ts's header comment.
 //
-// Both couriers run independently per request — one being unconfigured or
-// erroring never blocks the other; each courier's result/error is reported
-// under its own key in the response JSON.
+// DHL: researched from DHL's own public docs (developer.dhl.com) — no
+// docs were uploaded for this one. Uses the "Unified Tracking API", which
+// DHL documents as covering all their divisions (Express, eCommerce,
+// Freight, Global Forwarding, Post & Parcel Germany, Supply Chain) behind
+// one endpoint. IMPORTANT CAVEAT specific to DHL: this API has NO batch
+// endpoint (one trackingNumber per request) and a hard rate limit (250
+// calls/day, 1 call per 5 seconds) — see src/lib/couriers/dhl-tracking.ts's
+// header comment for the full explanation and DHL_MAX_PER_RUN below for
+// how that's bounded to fit inside this route's shared 60s maxDuration.
+//
+// All three couriers run independently per request — one being
+// unconfigured or erroring never blocks the others; each courier's
+// result/error is reported under its own key in the response JSON.
 //
 // SECURITY: same bearer-token pattern as sync-orders — only callable with
 // `Authorization: Bearer $CRON_SECRET`.
@@ -55,11 +65,25 @@ import {
   bucketFromAramexDescription,
   type AramexClientInfo,
 } from "@/lib/couriers/aramex-tracking";
+import { fetchDhlTracking, getDhlApiKey, bucketFromDhlStatus } from "@/lib/couriers/dhl-tracking";
 
 export const maxDuration = 60;
 
 const FEDEX_API_BASE = process.env.FEDEX_API_BASE_URL || "https://apis.fedex.com";
 const BATCH_SIZE = 30; // FedEx Track API's documented max trackingInfo entries per request; also used as Aramex's batch size (Aramex doesn't document a max, so reusing FedEx's documented limit as a conservative default)
+
+// DHL has no batch endpoint and a hard 1-call-per-5-seconds rate limit
+// (see dhl-tracking.ts's header comment), so it can't reuse BATCH_SIZE —
+// polling is capped per cron run instead of per request. 6 * 5.5s ≈ 33s,
+// leaving comfortable headroom inside this route's shared 60s maxDuration
+// alongside FedEx + Aramex's (much faster) batch calls. Any pending DHL
+// AWBs beyond this cap simply get picked up on tomorrow's run.
+const DHL_MAX_PER_RUN = 6;
+const DHL_MIN_INTERVAL_MS = 5500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function bucketFromFedexCode(code: string): TrackingBucket {
   switch (code.toUpperCase()) {
@@ -185,6 +209,46 @@ async function fetchAramexBatchNormalized(client: AramexClientInfo, awbNos: stri
   });
 }
 
+// Only processes the first DHL_MAX_PER_RUN of whatever's passed in — see
+// the constant's comment above and dhl-tracking.ts's header comment for
+// why (no batch endpoint + 1 call/5s rate limit). Called with the FULL
+// pending-AWB list (processCourier is invoked with a huge batchSize for
+// DHL specifically, so this runs exactly once per cron invocation, not
+// once per chunk — see the GET handler below).
+async function fetchDhlBatchNormalized(apiKey: string, awbNos: string[]): Promise<PolledEvent[]> {
+  const toPoll = awbNos.slice(0, DHL_MAX_PER_RUN);
+  const events: PolledEvent[] = [];
+
+  for (let i = 0; i < toPoll.length; i++) {
+    if (i > 0) await sleep(DHL_MIN_INTERVAL_MS); // DHL's documented minimum spacing between calls
+    const awbNo = toPoll[i];
+    try {
+      const result = await fetchDhlTracking(apiKey, awbNo);
+      if (!result.statusCode) {
+        // 404 / not-yet-scanned — log it as OTHER with no status text
+        // rather than a parseError, since this is DHL telling us "nothing
+        // to report yet", not a malformed response.
+        events.push({ awbNo, bucket: "OTHER", deliveredDate: null, rawStatusText: null, logPayload: result });
+        continue;
+      }
+      const bucket = bucketFromDhlStatus(result.statusCode, result.description);
+      const deliveredDate = bucket === "DELIVERED" && result.timestamp ? result.timestamp.slice(0, 10) : null;
+      events.push({ awbNo, bucket, deliveredDate, rawStatusText: result.description, logPayload: result });
+    } catch (err) {
+      events.push({
+        awbNo,
+        bucket: "OTHER",
+        deliveredDate: null,
+        rawStatusText: null,
+        logPayload: null,
+        parseError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return events;
+}
+
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
 /**
@@ -291,6 +355,22 @@ export async function GET(req: NextRequest) {
     );
   } catch (err) {
     results.aramex = { error: err instanceof Error ? err.message : String(err) };
+  }
+
+  // DHL runs LAST and with an effectively-unbounded batchSize (so
+  // processCourier calls fetchDhlBatchNormalized exactly once with the
+  // FULL pending list, rather than once per BATCH_SIZE-sized chunk) — the
+  // per-run cap (DHL_MAX_PER_RUN) and inter-call delay are enforced
+  // inside fetchDhlBatchNormalized itself. Placed last so a slow DHL run
+  // (up to ~33s of deliberate rate-limit sleeping) never delays FedEx/
+  // Aramex, which are fast batch calls.
+  try {
+    const dhlApiKey = getDhlApiKey();
+    results.dhl = await processCourier(supabase, "DHL", "%dhl%", Number.MAX_SAFE_INTEGER, (batch) =>
+      fetchDhlBatchNormalized(dhlApiKey, batch)
+    );
+  } catch (err) {
+    results.dhl = { error: err instanceof Error ? err.message : String(err) };
   }
 
   return NextResponse.json(results);
