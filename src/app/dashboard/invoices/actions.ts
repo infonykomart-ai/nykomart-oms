@@ -4,6 +4,9 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 import { computeDepartmentReferenceNo, isFedEx } from "@/lib/invoices/department-reference";
+import { computeValueBreakdown } from "@/lib/invoices/value-breakdown";
+import { amountInWords } from "@/lib/invoices/number-to-words";
+import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { revalidatePath } from "next/cache";
 
 export type InvoiceFormState = {
@@ -58,6 +61,27 @@ type GenerateInvoiceParams = {
   remark: string | null;
   buyerNameAddressOverride: string | null;
   invoiceDate: string;
+  // 2026-08-10 additions — see db/2026-08-10-invoice-value-breakdown.sql's
+  // header comment. awbNo/buyerEmail/buyerPhone default from
+  // dispatch_invoices when left blank (auto-pull, still editable
+  // afterward, same pattern as buyer_name_address).
+  awbNo: string | null;
+  vesselFlightNo: string | null;
+  portOfDischarge: string | null;
+  marksAndNos: string | null;
+  noOfPackages: number | null;
+  buyerEmail: string | null;
+  buyerPhone: string | null;
+  otherThanConsignee: string | null;
+  vatNumber: string | null;
+  eoriNumber: string | null;
+  // CSB-IV only ("csv-4 me manual rakho value kitni rakhnai hai") — manual
+  // value-breakdown entry, ignored entirely for CSB-V (which always
+  // auto-computes these from the 60%/80% marketplace formula instead).
+  manualInvoiceValueUsd: number | null;
+  manualItemCostTotal: number | null;
+  manualInsuranceTotal: number | null;
+  manualFreightTotal: number | null;
 };
 
 /**
@@ -87,6 +111,20 @@ async function generateInvoiceCore(
     remark,
     buyerNameAddressOverride,
     invoiceDate,
+    awbNo,
+    vesselFlightNo,
+    portOfDischarge,
+    marksAndNos,
+    noOfPackages,
+    buyerEmail,
+    buyerPhone,
+    otherThanConsignee,
+    vatNumber,
+    eoriNumber,
+    manualInvoiceValueUsd,
+    manualItemCostTotal,
+    manualInsuranceTotal,
+    manualFreightTotal,
   } = params;
 
   if (orderIds.length === 0) return { error: "Select at least one order.", invoice: null };
@@ -96,7 +134,7 @@ async function generateInvoiceCore(
 
   const { data: orders, error: ordersError } = await supabase
     .from("orders")
-    .select("id, company_id, store_id, buyer_name_address, invoice_id, status")
+    .select("id, company_id, store_id, buyer_name_address, order_value_usd, invoice_id, status")
     .in("id", orderIds);
   if (ordersError || !orders || orders.length !== orderIds.length) {
     return { error: "Failed to load selected orders — please try again.", invoice: null };
@@ -120,7 +158,7 @@ async function generateInvoiceCore(
   }
 
   const [{ data: store }, { data: company }] = await Promise.all([
-    supabase.from("stores").select("id, invoice_ref_prefix").eq("id", storeId).single(),
+    supabase.from("stores").select("id, name, invoice_ref_prefix").eq("id", storeId).single(),
     supabase.from("companies").select("id, master_invoice_prefix").eq("id", companyId).single(),
   ]);
   if (!store?.invoice_ref_prefix) {
@@ -128,6 +166,59 @@ async function generateInvoiceCore(
   }
   if (!company?.master_invoice_prefix) {
     return { error: "This company's master invoice prefix is not set — ask an Admin to set it.", invoice: null };
+  }
+
+  // 2026-08-10 value breakdown — CSB-V auto-computes from the marketplace
+  // %, CSB-IV stays fully manual (see value-breakdown.ts + the SQL
+  // migration's header comment for the formula and why).
+  let valuePercent: number | null = null;
+  let invoiceValueUsd: number | null = null;
+  let itemCostTotal: number | null = null;
+  let insuranceTotal: number | null = null;
+  let freightTotal: number | null = null;
+  if (csbType === "CSB-V") {
+    const orderValueUsdSum = orders.reduce((sum, o) => sum + Number(o.order_value_usd || 0), 0);
+    const breakdown = computeValueBreakdown(orderValueUsdSum, store.name);
+    valuePercent = breakdown.valuePercent;
+    invoiceValueUsd = breakdown.invoiceValueUsd;
+    itemCostTotal = breakdown.itemCostTotal;
+    insuranceTotal = breakdown.insuranceTotal;
+    freightTotal = breakdown.freightTotal;
+  } else {
+    invoiceValueUsd = manualInvoiceValueUsd;
+    itemCostTotal = manualItemCostTotal;
+    insuranceTotal = manualInsuranceTotal;
+    freightTotal = manualFreightTotal;
+  }
+
+  let taxableValueInr: number | null = null;
+  let declaredValueWords: string | null = null;
+  if (invoiceValueUsd != null) {
+    const conversion = await computeCurrencyConversion(supabase, "USD", invoiceDate, invoiceValueUsd);
+    taxableValueInr = conversion.inr;
+    declaredValueWords = amountInWords(invoiceValueUsd, "USD");
+  }
+
+  // AWB/buyer email/phone auto-pull from dispatch_invoices when not typed
+  // in on the generate form — orders itself has no email/phone field (see
+  // db/2026-08-10-invoice-value-breakdown.sql's header comment), only
+  // dispatch_invoices does, and only once a manual dispatch entry exists
+  // for that order. Falls back to whatever was actually typed in either
+  // way — never overwrites an explicit value with a blank auto-pull.
+  let resolvedAwbNo = awbNo;
+  let resolvedBuyerEmail = buyerEmail;
+  let resolvedBuyerPhone = buyerPhone;
+  if (!resolvedAwbNo || !resolvedBuyerEmail || !resolvedBuyerPhone) {
+    const { data: dispatchRows } = await supabase
+      .from("dispatch_invoices")
+      .select("awb_no, buyer_mail, buyer_contact")
+      .in("order_id", orderIds)
+      .not("awb_no", "is", null)
+      .limit(1);
+    const d = dispatchRows?.[0];
+    resolvedAwbNo = resolvedAwbNo || d?.awb_no || null;
+    resolvedBuyerEmail = resolvedBuyerEmail || d?.buyer_mail || null;
+    resolvedBuyerPhone = resolvedBuyerPhone || d?.buyer_contact || null;
   }
 
   const fy = fyLabel(invoiceDate);
@@ -175,6 +266,23 @@ async function generateInvoiceCore(
       height_cm: heightCm,
       buyer_name_address: buyerNameAddressOverride || orders[0].buyer_name_address || "",
       remark,
+      value_percent: valuePercent,
+      invoice_value_usd: invoiceValueUsd,
+      item_cost_total: itemCostTotal,
+      insurance_total: insuranceTotal,
+      freight_total: freightTotal,
+      taxable_value_inr: taxableValueInr,
+      declared_value_words: declaredValueWords,
+      awb_no: resolvedAwbNo,
+      vessel_flight_no: vesselFlightNo,
+      port_of_discharge: portOfDischarge,
+      marks_and_nos: marksAndNos,
+      no_of_packages: noOfPackages,
+      buyer_email: resolvedBuyerEmail,
+      buyer_phone: resolvedBuyerPhone,
+      other_than_consignee: otherThanConsignee,
+      vat_number: vatNumber,
+      eori_number: eoriNumber,
       created_by_employee_id: employee.id,
     })
     .select("id, invoice_no")
@@ -253,6 +361,20 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     remark: strOrNull(formData, "remark"),
     buyerNameAddressOverride: strOrNull(formData, "buyer_name_address"),
     invoiceDate: str(formData, "invoice_date") || new Date().toISOString().slice(0, 10),
+    awbNo: strOrNull(formData, "awb_no"),
+    vesselFlightNo: strOrNull(formData, "vessel_flight_no"),
+    portOfDischarge: strOrNull(formData, "port_of_discharge"),
+    marksAndNos: strOrNull(formData, "marks_and_nos"),
+    noOfPackages: numOrNull(formData, "no_of_packages"),
+    buyerEmail: strOrNull(formData, "buyer_email"),
+    buyerPhone: strOrNull(formData, "buyer_phone"),
+    otherThanConsignee: strOrNull(formData, "other_than_consignee"),
+    vatNumber: strOrNull(formData, "vat_number"),
+    eoriNumber: strOrNull(formData, "eori_number"),
+    manualInvoiceValueUsd: numOrNull(formData, "manual_invoice_value_usd"),
+    manualItemCostTotal: numOrNull(formData, "manual_item_cost_total"),
+    manualInsuranceTotal: numOrNull(formData, "manual_insurance_total"),
+    manualFreightTotal: numOrNull(formData, "manual_freight_total"),
   });
 
   if (result.error || !result.invoice) return { error: result.error, success: null };
@@ -388,6 +510,33 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
         remark: cellStr(raw, byHeader, "Remark") || null,
         buyerNameAddressOverride: cellStr(raw, byHeader, "Buyer Name & Address Override") || null,
         invoiceDate: cellStr(raw, byHeader, "Invoice Date") || new Date().toISOString().slice(0, 10),
+        // 2026-08-10 additions — all optional columns; blank/missing in the
+        // CSV is fine (AWB/buyer email/phone auto-pull from
+        // dispatch_invoices, value breakdown auto-computes for CSB-V —
+        // see generateInvoiceCore). Existing CSV templates without these
+        // columns keep working unchanged.
+        awbNo: cellStr(raw, byHeader, "AWB No.") || null,
+        vesselFlightNo: cellStr(raw, byHeader, "Vessel/Flight No.") || null,
+        portOfDischarge: cellStr(raw, byHeader, "Port of Discharge") || null,
+        marksAndNos: cellStr(raw, byHeader, "Marks & Nos.") || null,
+        noOfPackages: cellStr(raw, byHeader, "No. of Packages") ? Number(cellStr(raw, byHeader, "No. of Packages")) : null,
+        buyerEmail: cellStr(raw, byHeader, "Buyer Email") || null,
+        buyerPhone: cellStr(raw, byHeader, "Buyer Phone") || null,
+        otherThanConsignee: cellStr(raw, byHeader, "Other Than Consignee") || null,
+        vatNumber: cellStr(raw, byHeader, "VAT Number") || null,
+        eoriNumber: cellStr(raw, byHeader, "EORI Number") || null,
+        manualInvoiceValueUsd: cellStr(raw, byHeader, "Manual Invoice Value (USD, CSB-IV only)")
+          ? Number(cellStr(raw, byHeader, "Manual Invoice Value (USD, CSB-IV only)"))
+          : null,
+        manualItemCostTotal: cellStr(raw, byHeader, "Manual Item Cost (USD, CSB-IV only)")
+          ? Number(cellStr(raw, byHeader, "Manual Item Cost (USD, CSB-IV only)"))
+          : null,
+        manualInsuranceTotal: cellStr(raw, byHeader, "Manual Insurance (USD, CSB-IV only)")
+          ? Number(cellStr(raw, byHeader, "Manual Insurance (USD, CSB-IV only)"))
+          : null,
+        manualFreightTotal: cellStr(raw, byHeader, "Manual Freight (USD, CSB-IV only)")
+          ? Number(cellStr(raw, byHeader, "Manual Freight (USD, CSB-IV only)"))
+          : null,
       },
     });
   }
@@ -484,6 +633,25 @@ export async function updateInvoiceFields(
     width_cm?: number | null;
     height_cm?: number | null;
     remark?: string | null;
+    // 2026-08-10 additions — all editable post-generation, same "generate
+    // once into an editable field, never auto-resynced" convention as
+    // everything else on this table.
+    awb_no?: string | null;
+    vessel_flight_no?: string | null;
+    port_of_discharge?: string | null;
+    marks_and_nos?: string | null;
+    no_of_packages?: number | null;
+    buyer_email?: string | null;
+    buyer_phone?: string | null;
+    other_than_consignee?: string | null;
+    vat_number?: string | null;
+    eori_number?: string | null;
+    invoice_value_usd?: number | null;
+    item_cost_total?: number | null;
+    insurance_total?: number | null;
+    freight_total?: number | null;
+    taxable_value_inr?: number | null;
+    declared_value_words?: string | null;
   }
 ): Promise<{ error: string | null }> {
   await requireCapability("invoicing");
