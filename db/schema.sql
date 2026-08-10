@@ -1246,6 +1246,32 @@ CREATE TABLE sales_invoices (
   buyer_name_address                                 text NOT NULL,   -- copied from the order(s) at generation time, editable
   remark                                               text,
 
+  -- Value breakdown (2026-08-10) — see db/2026-08-10-invoice-value-
+  -- breakdown.sql's header comment for the full formula (verified against
+  -- a real sample invoice). value_percent/invoice_value_usd/
+  -- item_cost_total/insurance_total/freight_total are auto-computed for
+  -- CSB-V (marketplace-based 60%/80%), left NULL/manual for CSB-IV.
+  value_percent                                          numeric(5,2),
+  invoice_value_usd                                      numeric(14,2),
+  item_cost_total                                        numeric(14,2),
+  insurance_total                                        numeric(14,2),
+  freight_total                                          numeric(14,2),
+  taxable_value_inr                                      numeric(14,2),
+  declared_value_words                                   text,
+
+  -- Fuller customs-invoice detail fields (2026-08-10) — see the same
+  -- migration file's header comment.
+  awb_no                                                 text,
+  vessel_flight_no                                       text,
+  port_of_discharge                                      text,
+  marks_and_nos                                          text,
+  no_of_packages                                         integer,
+  buyer_email                                            text,
+  buyer_phone                                            text,
+  other_than_consignee                                   text,
+  vat_number                                             text,
+  eori_number                                            text,
+
   created_by_employee_id                                 uuid NOT NULL REFERENCES employees(id),
   created_at                                               timestamptz NOT NULL DEFAULT now(),
 
