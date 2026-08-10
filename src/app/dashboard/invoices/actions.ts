@@ -77,7 +77,7 @@ type GenerateInvoiceParams = {
   eoriNumber: string | null;
   // CSB-IV only ("csv-4 me manual rakho value kitni rakhnai hai") — manual
   // value-breakdown entry, ignored entirely for CSB-V (which always
-  // auto-computes these from the 60%/80% marketplace formula instead).
+  // auto-computes these from the 60% marketplace formula instead).
   manualInvoiceValueUsd: number | null;
   manualItemCostTotal: number | null;
   manualInsuranceTotal: number | null;
