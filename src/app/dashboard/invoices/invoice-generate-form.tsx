@@ -147,7 +147,7 @@ export function InvoiceGenerateForm({
           <input id="broker_tel" name="broker_tel" className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="broker_contact">Broker Contact No.</label>
+          <label className={labelClass} htmlFor="broker_contact">Broker Contact Name</label>
           <input id="broker_contact" name="broker_contact" className={inputClass} />
         </div>
       </div>
