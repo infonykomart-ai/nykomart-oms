@@ -3,6 +3,12 @@
 // separate from the editable Submit Report cards above (matches the legacy
 // tool's own "My Recent Reports" panel). Server Component — no client
 // interactivity needed, it's just a log.
+//
+// 2026-08-11 (round 3): the caller (page.tsx) now pre-filters this list to
+// submitted_at IS NOT NULL only — "submit karte hi khud ke kaam me add ho
+// jaye" means a row shows here the moment it's submitted, not while it's
+// still a draft. Timestamp badge switched from updated_at (last edit) to
+// submitted_at (when it was actually finalized).
 import { formatISTTime, formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
 
 type ServerLog = {
@@ -15,6 +21,7 @@ type ServerLog = {
   timer_started_at: string | null;
   time_spent_seconds: number;
   carried_from_log_id: string | null;
+  submitted_at: string | null;
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -33,7 +40,7 @@ export function RecentReportsList({ logs }: { logs: ServerLog[] }) {
       <div className="space-y-1.5">
         {logs.map((l) => (
           <div key={l.id} className="flex flex-wrap items-center gap-2 rounded border border-slate-100 px-2.5 py-1.5 text-xs">
-            <span className="text-slate-400">{formatISTTime(l.updated_at)}</span>
+            <span className="text-slate-400">{formatISTTime(l.submitted_at ?? l.updated_at)}</span>
             <span className="font-medium text-slate-800">{l.category ?? "—"}</span>
             <span className="flex-1 truncate text-slate-600">{l.description || "—"}</span>
             {l.carried_from_log_id && <span className="rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">Carried</span>}
