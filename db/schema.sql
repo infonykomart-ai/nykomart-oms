@@ -621,7 +621,22 @@ CREATE TABLE orders (
                                        -- SCHEMA_NOTES.md open question #3 on why this wasn't split further
   contact_no               text,
   email_id                 text,
-  tax_id                   text,      -- VAT / IOSS / Tax ID
+  tax_id                   text,      -- legacy generic VAT/IOSS/Tax ID field — superseded 2026-08-11 by the 3
+                                       -- separate fields below; kept for old orders, no longer written by new UI.
+
+  -- 2026-08-11: "EORI NO, VAT No, IOSS no order entry me pahle se mojud
+  -- hota hai automatic aane chahiye lekin edit mode me rahe" — separate
+  -- fields (replacing the single generic tax_id above) so Invoice
+  -- generation can auto-pull the correct one instead of guessing.
+  -- destination_country likewise moves here from being invoice-only, since
+  -- buyer_name_address is a single free-text field and can't be reliably
+  -- parsed for country — see src/app/dashboard/invoices/actions.ts's
+  -- auto-pull logic. All usually blank; only applicable for UK/EU
+  -- shipments (destination_country obviously always applies).
+  vat_number                text,
+  eori_number                text,
+  ioss_number                text,
+  destination_country        text,
 
   address_type             address_type NOT NULL DEFAULT 'Residential',
   photo_type               order_photo_type,  -- old "WEBSITE/DISPATCH" — Dispatch photo vs. Website listing photo (2026-08-04, confirmed by user)
@@ -1252,10 +1267,18 @@ CREATE TABLE sales_invoices (
   -- item_cost_total/insurance_total/freight_total are auto-computed for
   -- CSB-V (marketplace-based 60%, see value-breakdown.ts), left NULL/manual for CSB-IV.
   value_percent                                          numeric(5,2),
+  -- 2026-08-11: despite the "_usd" suffix (kept unchanged to avoid a
+  -- disruptive rename across every consumer of this column), these 4
+  -- totals are in whatever currency invoice_currency below says — CSB-V
+  -- now follows the order's own order_currency instead of always USD (see
+  -- value-breakdown.ts). For any invoice generated before this change,
+  -- invoice_currency is NULL and these are exactly what they always were:
+  -- USD (CSB-V) or the order's own currency (CSB-IV, unchanged either way).
   invoice_value_usd                                      numeric(14,2),
   item_cost_total                                        numeric(14,2),
   insurance_total                                        numeric(14,2),
   freight_total                                          numeric(14,2),
+  invoice_currency                                       text,   -- see comment above; NULL = legacy invoice, infer as before
   taxable_value_inr                                      numeric(14,2),
   declared_value_words                                   text,
 
@@ -1271,6 +1294,21 @@ CREATE TABLE sales_invoices (
   other_than_consignee                                   text,
   vat_number                                             text,
   eori_number                                            text,
+
+  -- Broker + Duty Payable block (2026-08-11) — "if there is a designated
+  -- broker for this shipment, please provide contact information" +
+  -- "Duty & Taxes payable by () Exporter () Consignee () Other". broker_*
+  -- are plain manual entry (usually blank — most shipments have no
+  -- separate customs broker). duty_payable_by is auto-derived at
+  -- generation time from shipment_term (DDP -> Exporter, DDU/DAP ->
+  -- Consignee, else left NULL for the preparer to pick manually) — see
+  -- src/lib/invoices/duty-payable.ts — but stays freely editable
+  -- afterward like every other field on this table.
+  broker_name                                            text,
+  broker_tel                                             text,
+  broker_contact                                         text,
+  duty_payable_by                                        text CHECK (duty_payable_by IN ('Exporter', 'Consignee', 'Other')),
+  duty_payable_other_specify                             text,
 
   created_by_employee_id                                 uuid NOT NULL REFERENCES employees(id),
   created_at                                               timestamptz NOT NULL DEFAULT now(),
