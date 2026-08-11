@@ -62,6 +62,7 @@ type Item = {
   qty: number;
   item_category_name: string;
   hsn_code: string;
+  harmonized_tariff_number: string;
   order_value_original: number;
   order_currency: string;
   order_value_usd: number | null;
@@ -631,6 +632,7 @@ export function InvoiceView({
                 <th className="border border-slate-300 px-2 py-1 text-left">Reference No.</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">HSN</th>
+                <th className="border border-slate-300 px-2 py-1 text-left">Harmonized Tariff Number</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Size</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Origin</th>
                 <th className="border border-slate-300 px-2 py-1 text-right">Qty</th>
@@ -661,6 +663,7 @@ export function InvoiceView({
                       {showPid && <div className="mt-0.5 text-[9px] text-slate-500">{pidSuffixFor(i.sku_label)}</div>}
                     </td>
                     <td className="border border-slate-300 px-2 py-1">{i.hsn_code}</td>
+                    <td className="border border-slate-300 px-2 py-1">{i.harmonized_tariff_number}</td>
                     <td className="border border-slate-300 px-2 py-1">{i.size_label}</td>
                     <td className="border border-slate-300 px-2 py-1">INDIA</td>
                     <td className="border border-slate-300 px-2 py-1 text-right">{i.qty}</td>
@@ -672,19 +675,19 @@ export function InvoiceView({
             </tbody>
             <tfoot>
               <tr>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={7}>COST</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={8}>COST</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{itemCostTotal ? Number(itemCostTotal).toFixed(2) : totalValue.toFixed(2)}</td>
               </tr>
               <tr>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={7}>INSURANCE</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={8}>INSURANCE</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{insuranceTotal ? Number(insuranceTotal).toFixed(2) : "—"}</td>
               </tr>
               <tr>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={7}>FREIGHT</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={8}>FREIGHT</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{freightTotal ? Number(freightTotal).toFixed(2) : "—"}</td>
               </tr>
               <tr className="font-semibold">
-                <td className="border border-slate-300 px-2 py-1 text-right" colSpan={7}>TOTAL</td>
+                <td className="border border-slate-300 px-2 py-1 text-right" colSpan={8}>TOTAL</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">
                   {invoiceValueUsd ? Number(invoiceValueUsd).toFixed(2) : totalValue.toFixed(2)} {displayCurrency}
                 </td>
