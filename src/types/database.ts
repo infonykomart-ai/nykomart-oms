@@ -583,6 +583,7 @@ export type Database = {
           last_paused_at: string | null;
           carried_from_log_id: string | null;
           carried_forward: boolean;
+          submitted_at: string | null;
         };
         Insert: {
           id?: string;
@@ -605,6 +606,7 @@ export type Database = {
           last_paused_at?: string | null;
           carried_from_log_id?: string | null;
           carried_forward?: boolean;
+          submitted_at?: string | null;
         };
         Update: {
           id?: string;
@@ -627,6 +629,7 @@ export type Database = {
           last_paused_at?: string | null;
           carried_from_log_id?: string | null;
           carried_forward?: boolean;
+          submitted_at?: string | null;
         };
         Relationships: [
           {
