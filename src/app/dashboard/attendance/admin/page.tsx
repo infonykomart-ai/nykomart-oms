@@ -2,6 +2,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories } from "@/lib/attendance/payroll";
+import { formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
 import { HolidayForm } from "./holiday-form";
 import { WeeklyOffForm } from "./weekly-off-form";
 import { ManualAttendanceForm } from "./manual-attendance-form";
@@ -38,7 +39,18 @@ export default async function AttendanceAdminPage({
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
     supabase.from("holidays").select("id, holiday_date, name, company_id").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd).order("holiday_date"),
-    supabase.from("daily_work_logs").select("id, log_date, employee_id, category, description, work_status").eq("company_id", selectedCompanyId).gte("log_date", monthStart).lte("log_date", monthEnd).order("log_date", { ascending: false }).limit(200),
+    // 2026-08-11 (round 3): "md admin ke page par show ho jaye" — only
+    // rows that have actually been submitted show here, not drafts still
+    // being typed. See daily_work_logs.submitted_at.
+    supabase
+      .from("daily_work_logs")
+      .select("id, log_date, employee_id, category, description, work_status, submitted_at")
+      .eq("company_id", selectedCompanyId)
+      .gte("log_date", monthStart)
+      .lte("log_date", monthEnd)
+      .not("submitted_at", "is", null)
+      .order("log_date", { ascending: false })
+      .limit(200),
   ]);
 
   const employeeName = new Map((teamEmployees ?? []).map((e) => [e.id, e.name]));
@@ -63,6 +75,53 @@ export default async function AttendanceAdminPage({
     });
     return { employee: e, summary: summarizeCategories(days) };
   });
+
+  // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
+  // usko alag se kyu banaya hai" — the company-wide Task Reports view (Live
+  // Now + All Tasks) now renders directly on Attendance Admin instead of
+  // its own /dashboard/tasks/admin route, gated on task_admin (same 3
+  // roles as attendance_admin — see db/schema.sql).
+  const hasTaskAdmin = employee.capabilities.includes("task_admin");
+  let tasks: { id: string; website: string | null; category: string | null; priority: string; deadline: string | null; status: string; description: string; created_at: string; timer_started_at: string | null; time_spent_seconds: number; assigned_by_employee_id: string; assigned_to_employee_id: string }[] = [];
+  let liveNow: { id: string; description: string; timer_started_at: string | null; time_spent_seconds: number; assigned_to_employee_id: string; company_id: string }[] = [];
+
+  if (hasTaskAdmin) {
+    const [{ data: tasksData }, { data: liveNowData }] = await Promise.all([
+      supabase
+        .from("tasks")
+        .select("id, website, category, priority, deadline, status, description, created_at, timer_started_at, time_spent_seconds, assigned_by_employee_id, assigned_to_employee_id")
+        .eq("company_id", selectedCompanyId)
+        .order("created_at", { ascending: false })
+        .limit(200),
+      // Live Now — across every company this login can see, not just the
+      // selected one, so a company switch never hides someone who's mid-task.
+      supabase
+        .from("tasks")
+        .select("id, description, timer_started_at, time_spent_seconds, assigned_to_employee_id, company_id")
+        .in("company_id", employee.companyIds)
+        .not("timer_started_at", "is", null),
+    ]);
+    tasks = tasksData ?? [];
+    liveNow = liveNowData ?? [];
+
+    // assignTask() allows cross-company assignment, so an "Assigned By"
+    // name or a Live Now name can reference an employee outside
+    // selectedCompanyId entirely — fetch whatever's missing from the
+    // teamEmployees-scoped map above.
+    const missingIds = Array.from(
+      new Set([
+        ...tasks.map((t) => t.assigned_by_employee_id),
+        ...tasks.map((t) => t.assigned_to_employee_id),
+        ...liveNow.map((l) => l.assigned_to_employee_id),
+      ])
+    ).filter((id) => !employeeName.has(id));
+    if (missingIds.length) {
+      const { data: extraEmployees } = await supabase.from("employees").select("id, name").in("id", missingIds);
+      for (const e of extraEmployees ?? []) employeeName.set(e.id, e.name);
+    }
+  }
+
+  const taskNowMs = new Date().getTime();
 
   return (
     <div>
@@ -171,6 +230,69 @@ export default async function AttendanceAdminPage({
           ))}
         </div>
       </div>
+
+      {hasTaskAdmin && (
+        <div className="mt-6">
+          <div className="mb-6">
+            <h2 className="text-2xl font-semibold text-slate-900">📊 Task Reports</h2>
+            <p className="mt-1 text-sm text-slate-500">Every employee&apos;s tasks and live timers, company-wide.</p>
+          </div>
+
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-amber-800">🟢 Live Now</h3>
+            {liveNow.length === 0 && <p className="text-xs text-amber-700/70">No one is actively timing a task right now.</p>}
+            <div className="space-y-1.5">
+              {liveNow.map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-2 rounded border border-amber-100 bg-white px-2.5 py-1.5 text-xs">
+                  <span className="font-medium text-slate-800">{employeeName.get(t.assigned_to_employee_id) ?? "—"}</span>
+                  <span className="flex-1 truncate text-slate-600">{t.description}</span>
+                  <span className="font-semibold text-amber-800">
+                    {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">All Tasks — {selectedCompany?.name}</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-slate-400">
+                    <th className="py-1 pr-3">Assigned To</th>
+                    <th className="px-2">Assigned By</th>
+                    <th className="px-2">Description</th>
+                    <th className="px-2">Priority</th>
+                    <th className="px-2">Status</th>
+                    <th className="px-2">Deadline</th>
+                    <th className="px-2">Time Spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((t) => (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className="py-1.5 pr-3 font-medium text-slate-800">{employeeName.get(t.assigned_to_employee_id) ?? "—"}</td>
+                      <td className="px-2 text-slate-500">{employeeName.get(t.assigned_by_employee_id) ?? "—"}</td>
+                      <td className="max-w-xs truncate px-2 text-slate-600">{t.description}</td>
+                      <td className="px-2">{t.priority}</td>
+                      <td className="px-2">{t.status}</td>
+                      <td className="px-2 text-slate-500">{t.deadline ?? "—"}</td>
+                      <td className="px-2 text-amber-700">
+                        {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))}
+                        {t.timer_started_at && <span className="ml-1 text-green-600">●</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {tasks.length === 0 && (
+                    <tr><td colSpan={7} className="py-3 text-center text-slate-400">No tasks for this company yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
