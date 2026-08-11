@@ -9,9 +9,18 @@
 // their own task's Start/Pause timer and status — matches the legacy
 // tool's own per-person timer ownership (you can't run someone else's
 // stopwatch for them).
+//
+// 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
+// usko alag se kyu banaya hai" — this UI now renders on
+// /dashboard/attendance (My Tasks/Assign/Tasks I Assigned) and
+// /dashboard/attendance/admin (Live Now/All Tasks) instead of its own
+// standalone route, so every revalidatePath below points there. This file
+// itself (server actions) is unchanged — components importing it just
+// moved.
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { todayIST } from "@/lib/attendance/ist-date";
 
 export type SimpleActionState = { error: string | null; success: boolean };
 
@@ -58,8 +67,8 @@ export async function assignTask(_prev: SimpleActionState, formData: FormData): 
   });
   if (error) return { error: error.message, success: false };
 
-  revalidatePath("/dashboard/tasks");
-  revalidatePath("/dashboard/tasks/admin");
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
   return { error: null, success: true };
 }
 
@@ -98,8 +107,8 @@ export async function startTaskTimer(id: string): Promise<TimerActionResult> {
     .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at, status")
     .single();
   if (error || !data) return { error: error?.message ?? "Could not start timer.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null, status: null };
-  revalidatePath("/dashboard/tasks");
-  revalidatePath("/dashboard/tasks/admin");
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
   return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at, status: data.status };
 }
 
@@ -127,41 +136,73 @@ export async function pauseTaskTimer(id: string): Promise<TimerActionResult> {
     .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at, status")
     .single();
   if (error || !data) return { error: error?.message ?? "Could not pause timer.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null, status: null };
-  revalidatePath("/dashboard/tasks");
-  revalidatePath("/dashboard/tasks/admin");
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
   return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at, status: data.status };
 }
 
-/** ✔ Done button — pauses the timer if it's still running, then marks the task complete. */
+/**
+ * ✔ Done button — pauses the timer if it's still running, marks the task
+ * complete, AND (2026-08-11, round 4: "task compleate hote hi submit
+ * report me automaticly add ho jaye ki is task par itna time kaam kiya")
+ * auto-creates an already-submitted Daily Work Report row for the
+ * assignee, so the time spent on this task shows up in their own "My
+ * Recent Reports" and on the Admin/MD Team Daily Work Log without any
+ * extra typing. That report row is finalized immediately (submitted_at
+ * set) — it's a record of completed task time, not a draft to edit.
+ */
 export async function markTaskDone(id: string): Promise<TimerActionResult & { success: boolean }> {
   const employee = await requireCapability("task_management");
   const supabase = createServiceRoleClient();
   const { data: existing } = await supabase
     .from("tasks")
-    .select("timer_started_at, time_spent_seconds")
+    .select("timer_started_at, time_spent_seconds, first_started_at, company_id, category, website, description")
     .eq("id", id)
     .eq("assigned_to_employee_id", employee.id)
     .single();
   if (!existing) return { error: "Task not found.", success: false, timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null, status: null };
 
   const now = new Date();
+  const nowIso = now.toISOString();
   const timerPatch = existing.timer_started_at
     ? {
         timer_started_at: null,
         time_spent_seconds: existing.time_spent_seconds + Math.max(0, Math.floor((now.getTime() - new Date(existing.timer_started_at).getTime()) / 1000)),
-        last_paused_at: now.toISOString(),
+        last_paused_at: nowIso,
       }
     : {};
   const { data, error } = await supabase
     .from("tasks")
-    .update({ status: "Done", completed_at: now.toISOString(), ...timerPatch })
+    .update({ status: "Done", completed_at: nowIso, ...timerPatch })
     .eq("id", id)
     .eq("assigned_to_employee_id", employee.id)
     .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at, status")
     .single();
   if (error || !data) return { error: error?.message ?? "Could not complete task.", success: false, timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null, status: null };
-  revalidatePath("/dashboard/tasks");
-  revalidatePath("/dashboard/tasks/admin");
+
+  // Best-effort: a failure here shouldn't undo the task being marked
+  // Done (the task update above already committed) — log server-side and
+  // move on, same "never let a secondary effect block the real action"
+  // principle as punchOutOnLogout elsewhere in this codebase.
+  try {
+    await supabase.from("daily_work_logs").insert({
+      employee_id: employee.id,
+      company_id: existing.company_id,
+      log_date: todayIST(),
+      category: existing.category ?? "Task",
+      description: `[Task] ${existing.description}${existing.website ? ` (${existing.website})` : ""}`,
+      work_status: "Completed",
+      first_started_at: existing.first_started_at,
+      time_spent_seconds: data.time_spent_seconds,
+      last_paused_at: nowIso,
+      submitted_at: nowIso,
+    });
+  } catch (e) {
+    console.error("markTaskDone: failed to auto-create daily_work_logs row", e);
+  }
+
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
   return { error: null, success: true, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at, status: data.status };
 }
 
@@ -176,7 +217,7 @@ export async function cancelTask(id: string): Promise<SimpleActionState> {
     .eq("assigned_by_employee_id", employee.id)
     .neq("status", "Done");
   if (error) return { error: error.message, success: false };
-  revalidatePath("/dashboard/tasks");
-  revalidatePath("/dashboard/tasks/admin");
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
   return { error: null, success: true };
 }
