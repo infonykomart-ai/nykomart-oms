@@ -33,6 +33,7 @@ type Invoice = {
   item_cost_total: number | null;
   insurance_total: number | null;
   freight_total: number | null;
+  invoice_currency: string | null;
   taxable_value_inr: number | null;
   declared_value_words: string | null;
   awb_no: string | null;
@@ -45,6 +46,12 @@ type Invoice = {
   other_than_consignee: string | null;
   vat_number: string | null;
   eori_number: string | null;
+  // 2026-08-11 additions — see db/2026-08-11-invoice-broker-duty.sql.
+  broker_name: string | null;
+  broker_tel: string | null;
+  broker_contact: string | null;
+  duty_payable_by: string | null;
+  duty_payable_other_specify: string | null;
 };
 
 type Item = {
@@ -129,6 +136,11 @@ export function InvoiceView({
   const [taxableValueInr, setTaxableValueInr] = useState(invoice.taxable_value_inr != null ? String(invoice.taxable_value_inr) : "");
   const [declaredValueWords, setDeclaredValueWords] = useState(invoice.declared_value_words ?? "");
   const [remark, setRemark] = useState(invoice.remark ?? "");
+  const [brokerName, setBrokerName] = useState(invoice.broker_name ?? "");
+  const [brokerTel, setBrokerTel] = useState(invoice.broker_tel ?? "");
+  const [brokerContact, setBrokerContact] = useState(invoice.broker_contact ?? "");
+  const [dutyPayableBy, setDutyPayableBy] = useState(invoice.duty_payable_by ?? "");
+  const [dutyPayableOtherSpecify, setDutyPayableOtherSpecify] = useState(invoice.duty_payable_other_specify ?? "");
   const [isSaving, startSave] = useTransition();
   const [saved, setSaved] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -136,12 +148,15 @@ export function InvoiceView({
   const router = useRouter();
 
   const isCsbV = invoice.csb_type === "CSB-V";
-  // For CSB-V, every item row's displayed Rate/Amount is its OWN
-  // order_value_usd's 30% share of the invoice value (see
-  // value-breakdown.ts) — always USD, matching the sample's "USD" column
-  // headers. For CSB-IV (manual value), keep showing the order's own
-  // original declared value/currency, unchanged from before this feature.
-  const displayCurrency = isCsbV ? "USD" : (items[0]?.order_currency ?? "");
+  // 2026-08-11: CSB-V now follows the order's own currency instead of
+  // always USD ("Use the order's original currency") — invoice_currency is
+  // stored at generation time (see actions.ts). NULL means this invoice
+  // was generated before that change, so fall back to the old behavior
+  // exactly (USD for CSB-V) — never changes how an already-printed invoice
+  // reads. Every item row's displayed Rate/Amount is its own
+  // order_value_original's 30% share of the invoice value (value-
+  // breakdown.ts), in that same currency.
+  const displayCurrency = invoice.invoice_currency || (isCsbV ? "USD" : (items[0]?.order_currency ?? ""));
   // 2026-08-10: "sab chije according to buyer destination add honi hai" —
   // PIDs only apply to EU-destination shipments (see pid.ts's header
   // comment for the full rule + the deliberate simplification of always
@@ -151,7 +166,7 @@ export function InvoiceView({
   const showPid = isEuDestination(destinationCountry);
   const itemDisplayValue = (i: Item): number =>
     isCsbV && invoice.value_percent != null
-      ? itemCostForOrder(Number(i.order_value_usd || 0), invoice.value_percent)
+      ? itemCostForOrder(Number(i.order_value_original || 0), invoice.value_percent)
       : Number(i.order_value_original || 0);
   const totalValue = items.reduce((sum, i) => sum + itemDisplayValue(i), 0);
 
@@ -194,6 +209,11 @@ export function InvoiceView({
         taxable_value_inr: taxableValueInr ? Number(taxableValueInr) : null,
         declared_value_words: declaredValueWords || null,
         remark: remark || null,
+        broker_name: brokerName || null,
+        broker_tel: brokerTel || null,
+        broker_contact: brokerContact || null,
+        duty_payable_by: dutyPayableBy || null,
+        duty_payable_other_specify: dutyPayableOtherSpecify || null,
       });
       setSaved(result.error ? `Error: ${result.error}` : "Saved successfully.");
     });
@@ -313,19 +333,19 @@ export function InvoiceView({
           </p>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <div>
-              <label className={labelClass} htmlFor="item_cost_total">Item Cost (USD)</label>
+              <label className={labelClass} htmlFor="item_cost_total">Item Cost ({displayCurrency})</label>
               <input id="item_cost_total" type="number" step="0.01" className={inputClass} value={itemCostTotal} onChange={(e) => setItemCostTotal(e.target.value)} />
             </div>
             <div>
-              <label className={labelClass} htmlFor="insurance_total">Insurance (USD)</label>
+              <label className={labelClass} htmlFor="insurance_total">Insurance ({displayCurrency})</label>
               <input id="insurance_total" type="number" step="0.01" className={inputClass} value={insuranceTotal} onChange={(e) => setInsuranceTotal(e.target.value)} />
             </div>
             <div>
-              <label className={labelClass} htmlFor="freight_total">Freight (USD)</label>
+              <label className={labelClass} htmlFor="freight_total">Freight ({displayCurrency})</label>
               <input id="freight_total" type="number" step="0.01" className={inputClass} value={freightTotal} onChange={(e) => setFreightTotal(e.target.value)} />
             </div>
             <div>
-              <label className={labelClass} htmlFor="invoice_value_usd">Total (USD)</label>
+              <label className={labelClass} htmlFor="invoice_value_usd">Total ({displayCurrency})</label>
               <input id="invoice_value_usd" type="number" step="0.01" className={inputClass} value={invoiceValueUsd} onChange={(e) => setInvoiceValueUsd(e.target.value)} />
             </div>
           </div>
@@ -371,6 +391,58 @@ export function InvoiceView({
           <div>
             <label className={labelClass} htmlFor="height_cm">Height (cm)</label>
             <input id="height_cm" type="number" step="0.01" className={inputClass} value={heightCm} onChange={(e) => setHeightCm(e.target.value)} />
+          </div>
+        </div>
+
+        {/* 2026-08-11: "if there is a designated broker for this shipment,
+            please provide contact information" + "Duty & Taxes payable by
+            () Exporter () Consignee () Other" — dutyPayableBy defaults
+            from Shipment Term at generation (DDP -> Exporter, DDU/DAP ->
+            Consignee) but is freely correctable here. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-xs font-semibold text-slate-700">Broker &amp; Duty Payable</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelClass} htmlFor="broker_name">Name of Broker</label>
+              <input id="broker_name" className={inputClass} value={brokerName} onChange={(e) => setBrokerName(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="broker_tel">Broker Tel No.</label>
+              <input id="broker_tel" className={inputClass} value={brokerTel} onChange={(e) => setBrokerTel(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="broker_contact">Broker Contact No.</label>
+              <input id="broker_contact" className={inputClass} value={brokerContact} onChange={(e) => setBrokerContact(e.target.value)} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <label className={labelClass}>Duty &amp; Taxes Payable By</label>
+            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700">
+              {(["Exporter", "Consignee", "Other"] as const).map((opt) => (
+                <label key={opt} className="flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="duty_payable_by"
+                    checked={dutyPayableBy === opt}
+                    onChange={() => setDutyPayableBy(opt)}
+                  />
+                  {opt}
+                </label>
+              ))}
+              {dutyPayableBy && (
+                <button type="button" onClick={() => setDutyPayableBy("")} className="text-[11px] text-amber-600 underline">
+                  Clear
+                </button>
+              )}
+            </div>
+            {dutyPayableBy === "Other" && (
+              <input
+                className={`${inputClass} mt-2`}
+                placeholder="Please specify"
+                value={dutyPayableOtherSpecify}
+                onChange={(e) => setDutyPayableOtherSpecify(e.target.value)}
+              />
+            )}
           </div>
         </div>
 
@@ -514,6 +586,23 @@ export function InvoiceView({
             </div>
           </div>
 
+          {(brokerName || brokerTel || brokerContact) && (
+            <div className="mb-2 border-b border-slate-300 pb-2 text-[10px] text-slate-700">
+              <div className="font-semibold">If there is a designated broker for this shipment, please provide contact information.</div>
+              <div>Name of Broker: {brokerName || "—"} &nbsp; Tel No: {brokerTel || "—"} &nbsp; Contact No.: {brokerContact || "—"}</div>
+            </div>
+          )}
+
+          <div className="mb-2 border-b border-slate-300 pb-2 text-[10px] text-slate-700">
+            <span className="font-semibold">Duty &amp; Taxes payable by</span>{" "}
+            {(["Exporter", "Consignee", "Other"] as const).map((opt) => (
+              <span key={opt} className="mr-3">
+                ({dutyPayableBy === opt ? "X" : " "}) {opt}
+              </span>
+            ))}
+            {dutyPayableBy === "Other" && dutyPayableOtherSpecify && <span>— {dutyPayableOtherSpecify}</span>}
+          </div>
+
           {marksAndNos && <div className="mb-1 text-[10px] text-slate-600">Marks &amp; Nos./Container No.: {marksAndNos}</div>}
           <div className="mb-2 text-[10px] text-slate-600">No. of Packages: {noOfPackages || "1"}</div>
 
@@ -532,19 +621,31 @@ export function InvoiceView({
             </thead>
             <tbody>
               {items.map((i) => {
+                // 2026-08-11 fix: "agar quantity 2 hai or rate 22.75 hai to
+                // ammount iska double ho jayga na" + "aana apne fourmule ke
+                // according hi chahiye" — `value` (= this order's share of
+                // the invoice's formula-driven Item Cost, see
+                // itemDisplayValue above) is the AMOUNT and must stay
+                // exactly as computed, so the column still sums to the
+                // COST row below. Rate is derived FROM it (value / qty), so
+                // Rate * Qty = Amount always holds without breaking the
+                // formula total.
                 const value = itemDisplayValue(i);
+                const qty = i.qty || 1;
+                const rate = value / qty;
                 return (
                   <tr key={i.id}>
                     <td className="border border-slate-300 px-2 py-1">{i.ref_no}</td>
                     <td className="border border-slate-300 px-2 py-1">
                       {i.item_category_name}{i.colour ? ` (${i.colour})` : ""}
+                      {i.sku_label && <div className="mt-0.5 text-[9px] text-slate-500">SKU: {i.sku_label}</div>}
                       {showPid && <div className="mt-0.5 text-[9px] text-slate-500">{pidSuffixFor(i.sku_label)}</div>}
                     </td>
                     <td className="border border-slate-300 px-2 py-1">{i.hsn_code}</td>
                     <td className="border border-slate-300 px-2 py-1">{i.size_label}</td>
                     <td className="border border-slate-300 px-2 py-1">INDIA</td>
                     <td className="border border-slate-300 px-2 py-1 text-right">{i.qty}</td>
-                    <td className="border border-slate-300 px-2 py-1 text-right">{value.toFixed(2)}</td>
+                    <td className="border border-slate-300 px-2 py-1 text-right">{rate.toFixed(2)}</td>
                     <td className="border border-slate-300 px-2 py-1 text-right">{value.toFixed(2)}</td>
                   </tr>
                 );
