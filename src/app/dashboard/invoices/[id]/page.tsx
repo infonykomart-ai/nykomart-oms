@@ -14,7 +14,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const [{ data: orders }, { data: company }, { data: profile }, { data: store }, { data: itemCategories }] = await Promise.all([
     supabase
       .from("orders")
-      .select("id, ref_no, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, order_value_usd, colour")
+      .select("id, ref_no, ref_no_base, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, order_value_usd, colour")
       .eq("invoice_id", id),
     supabase.from("companies").select("id, name, logo_url").eq("id", invoice.company_id).single(),
     supabase.from("company_profiles").select("*").eq("company_id", invoice.company_id).single(),
