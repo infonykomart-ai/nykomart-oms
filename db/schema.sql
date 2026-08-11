@@ -2150,7 +2150,15 @@ CREATE TABLE daily_work_logs (
   -- On" row; carried_forward marks the ORIGINAL row as already copied
   -- forward so carryOverPendingDailyLogs() never double-creates it.
   carried_from_log_id  uuid REFERENCES daily_work_logs(id),
-  carried_forward       boolean NOT NULL DEFAULT false
+  carried_forward       boolean NOT NULL DEFAULT false,
+  -- 2026-08-11 (round 3): "start & pause button ko remove karo ... submit
+  -- report ka option ho, submit karte hi khud ke kaam me add ho jaye or md
+  -- admin ke page par show ho jaye" — the Time Watch is now Start once +
+  -- Submit once (no Pause toggle). NULL = still a draft (auto-saved,
+  -- refresh-safe, but not yet a "real" report); non-null = finalized —
+  -- this is what My Recent Reports and the Admin/MD Team Daily Work Log
+  -- view now filter on, so half-typed drafts never show there.
+  submitted_at         timestamptz
 );
 CREATE INDEX idx_daily_work_logs_employee_date ON daily_work_logs(employee_id, log_date DESC);
 CREATE INDEX idx_daily_work_logs_company_date ON daily_work_logs(company_id, log_date DESC);
@@ -2160,6 +2168,7 @@ CREATE INDEX idx_daily_work_logs_company_date ON daily_work_logs(company_id, log
 -- the app) instead of a duplicate "Pending" row.
 CREATE UNIQUE INDEX idx_daily_work_logs_carried_from_unique
   ON daily_work_logs(carried_from_log_id) WHERE carried_from_log_id IS NOT NULL;
+CREATE INDEX idx_daily_work_logs_submitted ON daily_work_logs(company_id, submitted_at);
 
 -- 2026-08-11 (round 2): Task Assignment — direct rebuild of the legacy
 -- "NYKO MART — Work & Performance System" Apps Script tool's Tasks sheet
