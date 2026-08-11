@@ -15,8 +15,18 @@
 //     (or newer than the server's own updated_at) is restored into the
 //     form and immediately re-saved — so a refresh mid-typing never loses
 //     text, even if the debounce hadn't fired yet before the reload.
+//
+// 2026-08-11 (round 2): "SUBMIT REPORT VALE SECTION ME ESTIMATE TIME KA
+// OPTION HAI TO USKI JAGH PAR WATCH LAGA DO KITNE BAJE START KIYA KITNE
+// BAJE WORK KHATM KIYA DONO KE LIYE SATH ME START BUTTON BHI RAKHO PAUSE KA
+// BHI RAKHO" — the old free-text Estimated Time / Time Taken fields are
+// gone; each row now has a real Start/Pause watch (see
+// src/lib/attendance/timer.ts + startReportTimer/pauseReportTimer in
+// actions.ts). A row must be saved (i.e. have a description) before the
+// timer can start, since the timer lives on the server row.
 import { useEffect, useRef, useState } from "react";
-import { upsertDailyLog, deleteDailyLog } from "./actions";
+import { upsertDailyLog, deleteDailyLog, startReportTimer, pauseReportTimer } from "./actions";
+import { liveElapsedSeconds, formatDuration, formatISTTime } from "@/lib/attendance/timer";
 
 const CATEGORIES = [
   "Technical Work", "Tracking Update & Check", "Inventory Management", "Product Photography",
@@ -24,7 +34,7 @@ const CATEGORIES = [
   "Social Media", "Order Management", "Mail & Inbox", "Accounts & Billing", "Shipping & Customs",
   "Vendor & Stock", "Admin / Communication", "Other",
 ];
-const WORK_STATUSES = ["Completed", "In Progress", "Next Day Carry On"];
+const WORK_STATUSES = ["Pending", "In Progress", "Completed", "Next Day Carry On"];
 const DRAFT_KEY = "oms_daily_report_draft_v1";
 
 type LogRow = {
@@ -36,10 +46,13 @@ type LogRow = {
   targetQty: string;
   qtyDone: string;
   workStatus: string;
-  estimatedTime: string;
-  timeTaken: string;
   remarkSku: string;
   serverUpdatedAt: string | null;
+  timerStartedAt: string | null;
+  timeSpentSeconds: number;
+  firstStartedAt: string | null;
+  lastPausedAt: string | null;
+  carriedFromLogId: string | null;
 };
 
 type ServerLog = {
@@ -50,10 +63,13 @@ type ServerLog = {
   target_qty: string | null;
   qty_done: string | null;
   work_status: string | null;
-  estimated_time: string | null;
-  time_taken: string | null;
   remark_sku: string | null;
   updated_at: string;
+  timer_started_at: string | null;
+  time_spent_seconds: number;
+  first_started_at: string | null;
+  last_paused_at: string | null;
+  carried_from_log_id: string | null;
 };
 
 function fromServer(l: ServerLog): LogRow {
@@ -66,10 +82,13 @@ function fromServer(l: ServerLog): LogRow {
     targetQty: l.target_qty ?? "",
     qtyDone: l.qty_done ?? "",
     workStatus: l.work_status ?? "In Progress",
-    estimatedTime: l.estimated_time ?? "",
-    timeTaken: l.time_taken ?? "",
     remarkSku: l.remark_sku ?? "",
     serverUpdatedAt: l.updated_at,
+    timerStartedAt: l.timer_started_at,
+    timeSpentSeconds: l.time_spent_seconds ?? 0,
+    firstStartedAt: l.first_started_at,
+    lastPausedAt: l.last_paused_at,
+    carriedFromLogId: l.carried_from_log_id,
   };
 }
 
@@ -83,10 +102,13 @@ function blankRow(today: string): LogRow {
     targetQty: "",
     qtyDone: "",
     workStatus: "In Progress",
-    estimatedTime: "",
-    timeTaken: "",
     remarkSku: "",
     serverUpdatedAt: null,
+    timerStartedAt: null,
+    timeSpentSeconds: 0,
+    firstStartedAt: null,
+    lastPausedAt: null,
+    carriedFromLogId: null,
   };
 }
 
@@ -136,6 +158,7 @@ export function DailyReportForm({
   });
 
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [timerPendingIds, setTimerPendingIds] = useState<Set<string>>(new Set());
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -152,6 +175,16 @@ export function DailyReportForm({
     persistDraftMap(map);
   }, [rows]);
 
+  // Tick every second while any row's timer is running, so the elapsed
+  // display advances live without needing a server round-trip.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const anyRunning = rows.some((r) => r.timerStartedAt);
+  useEffect(() => {
+    if (!anyRunning) return;
+    const interval = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [anyRunning]);
+
   function updateRow(clientId: string, patch: Partial<LogRow>) {
     setRows((prev) => prev.map((r) => (r.clientId === clientId ? { ...r, ...patch } : r)));
     scheduleSave(clientId);
@@ -162,9 +195,9 @@ export function DailyReportForm({
     debounceTimers.current[clientId] = setTimeout(() => saveRow(clientId), 1100);
   }
 
-  async function saveRow(clientId: string) {
+  async function saveRow(clientId: string): Promise<string | null> {
     const row = rowsRef.current.find((r) => r.clientId === clientId);
-    if (!row || !row.description.trim()) return; // nothing worth saving yet
+    if (!row || !row.description.trim()) return row?.id ?? null; // nothing worth saving yet
     if (debounceTimers.current[clientId]) {
       clearTimeout(debounceTimers.current[clientId]);
       delete debounceTimers.current[clientId];
@@ -178,8 +211,6 @@ export function DailyReportForm({
       targetQty: row.targetQty,
       qtyDone: row.qtyDone,
       workStatus: row.workStatus,
-      estimatedTime: row.estimatedTime,
-      timeTaken: row.timeTaken,
       remarkSku: row.remarkSku,
     });
     setSavingIds((prev) => {
@@ -192,6 +223,7 @@ export function DailyReportForm({
         prev.map((r) => (r.clientId === clientId ? { ...r, id: result.id, serverUpdatedAt: result.updatedAt } : r))
       );
     }
+    return result.id;
   }
 
   async function removeRow(clientId: string) {
@@ -203,12 +235,56 @@ export function DailyReportForm({
     if (row?.id) await deleteDailyLog(row.id);
   }
 
+  async function handleStart(clientId: string) {
+    let id = rowsRef.current.find((r) => r.clientId === clientId)?.id ?? null;
+    if (!id) id = await saveRow(clientId); // timer needs a saved row — save first if this is a brand-new row
+    if (!id) return; // still nothing to save (empty description) — Start is a no-op
+    setTimerPendingIds((prev) => new Set(prev).add(clientId));
+    const result = await startReportTimer(id);
+    setTimerPendingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(clientId);
+      return next;
+    });
+    if (!result.error) {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.clientId === clientId
+            ? { ...r, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, firstStartedAt: result.firstStartedAt }
+            : r
+        )
+      );
+    }
+  }
+
+  async function handlePause(clientId: string) {
+    const id = rowsRef.current.find((r) => r.clientId === clientId)?.id ?? null;
+    if (!id) return;
+    setTimerPendingIds((prev) => new Set(prev).add(clientId));
+    const result = await pauseReportTimer(id);
+    setTimerPendingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(clientId);
+      return next;
+    });
+    if (!result.error) {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.clientId === clientId
+            ? { ...r, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, lastPausedAt: result.lastPausedAt }
+            : r
+        )
+      );
+    }
+  }
+
   return (
     <div className="space-y-3">
       {rows.map((row) => (
         <div key={row.clientId} className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs text-slate-400">
+              {row.carriedFromLogId && <span className="mr-2 rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">Carried from yesterday</span>}
               {savingIds.has(row.clientId) ? "Saving..." : row.id ? "Saved" : "Not saved yet — start typing"}
             </span>
             <button type="button" onClick={() => removeRow(row.clientId)} className="text-xs text-rose-600 hover:underline">
@@ -258,24 +334,6 @@ export function DailyReportForm({
                 ))}
               </select>
             </Field>
-            <Field label="Estimated Time">
-              <input
-                value={row.estimatedTime}
-                onChange={(e) => updateRow(row.clientId, { estimatedTime: e.target.value })}
-                onBlur={() => saveRow(row.clientId)}
-                className={inputClass}
-                placeholder="e.g. 1 Hr"
-              />
-            </Field>
-            <Field label="Time Taken">
-              <input
-                value={row.timeTaken}
-                onChange={(e) => updateRow(row.clientId, { timeTaken: e.target.value })}
-                onBlur={() => saveRow(row.clientId)}
-                className={inputClass}
-                placeholder="e.g. 1.5 Hr"
-              />
-            </Field>
             <Field label="Remark / SKU">
               <input
                 value={row.remarkSku}
@@ -286,6 +344,47 @@ export function DailyReportForm({
               />
             </Field>
           </div>
+
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="mb-1.5 text-xs font-medium text-amber-800">⏱ Time Watch</div>
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <div>
+                <div className="text-slate-400">Started At</div>
+                <div className="font-medium text-slate-900">{formatISTTime(row.firstStartedAt)}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">Ended At</div>
+                <div className="font-medium text-slate-900">
+                  {row.timerStartedAt ? "Running…" : formatISTTime(row.lastPausedAt)}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-400">Total Time</div>
+                <div className="font-semibold text-amber-800">
+                  {formatDuration(liveElapsedSeconds({ timeSpentSeconds: row.timeSpentSeconds, timerStartedAt: row.timerStartedAt }, nowMs))}
+                </div>
+              </div>
+              <div className="ml-auto flex gap-2">
+                <button
+                  type="button"
+                  disabled={!!row.timerStartedAt || timerPendingIds.has(row.clientId)}
+                  onClick={() => handleStart(row.clientId)}
+                  className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ▶ Start
+                </button>
+                <button
+                  type="button"
+                  disabled={!row.timerStartedAt || timerPendingIds.has(row.clientId)}
+                  onClick={() => handlePause(row.clientId)}
+                  className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ⏸ Pause
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="mt-3">
             <Field label="Description">
               <textarea
