@@ -37,7 +37,13 @@ export const BULK_ORDER_COLUMNS: BulkOrderColumn[] = [
   { label: "PO Date", example: "", required: false },
   { label: "Delivery Date", example: "", required: false },
   { label: "Email", example: "", required: false },
-  { label: "Tax ID", example: "", required: false },
+  { label: "Tax ID", example: "", required: false, help: "Legacy generic field — prefer VAT/EORI/IOSS Number below." },
   { label: "Address Type", example: "Residential", required: false, help: "Residential or Commercial" },
+  // 2026-08-11 additions — usually blank, only applicable for UK/EU
+  // shipments. Auto-pulled onto the invoice at generation time.
+  { label: "VAT Number", example: "", required: false },
+  { label: "EORI Number", example: "", required: false },
+  { label: "IOSS Number", example: "", required: false },
+  { label: "Destination Country", example: "", required: false },
   { label: "Remark", example: "", required: false },
 ];
