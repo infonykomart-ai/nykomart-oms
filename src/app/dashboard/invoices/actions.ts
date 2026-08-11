@@ -145,7 +145,7 @@ async function generateInvoiceCore(
   const { data: orders, error: ordersError } = await supabase
     .from("orders")
     .select(
-      "id, company_id, store_id, buyer_name_address, order_value_usd, order_value_original, order_currency, invoice_id, status, vat_number, eori_number, ioss_number, destination_country"
+      "id, company_id, store_id, buyer_name_address, order_value_usd, order_value_original, order_currency, invoice_id, status, vat_number, eori_number, ioss_number, destination_country, contact_no, email_id"
     )
     .in("id", orderIds);
   if (ordersError || !orders || orders.length !== orderIds.length) {
@@ -236,15 +236,20 @@ async function generateInvoiceCore(
     declaredValueWords = amountInWords(invoiceValueUsd, invoiceCurrency ?? "USD");
   }
 
-  // AWB/buyer email/phone auto-pull from dispatch_invoices when not typed
-  // in on the generate form — orders itself has no email/phone field (see
-  // db/2026-08-10-invoice-value-breakdown.sql's header comment), only
-  // dispatch_invoices does, and only once a manual dispatch entry exists
-  // for that order. Falls back to whatever was actually typed in either
-  // way — never overwrites an explicit value with a blank auto-pull.
+  // 2026-08-11 fix: "buyer ki email contact no ... kyu nahi aara" — this
+  // previously ONLY checked dispatch_invoices (a comment here incorrectly
+  // claimed "orders itself has no email/phone field" — it does:
+  // orders.email_id/orders.contact_no, filled in right at order entry, see
+  // order-form.tsx). Since a dispatch_invoices row often doesn't exist yet
+  // at invoice time (dispatch is a separate later step), the auto-pull was
+  // silently failing for most orders. Now tries the order's own fields
+  // FIRST (earliest, most reliably filled in), then dispatch_invoices as a
+  // supplementary fallback, then AWB from dispatch (orders has no AWB
+  // field — that genuinely is dispatch/logistics-only data). Never
+  // overwrites an explicit value typed on the generate form.
   let resolvedAwbNo = awbNo;
-  let resolvedBuyerEmail = buyerEmail;
-  let resolvedBuyerPhone = buyerPhone;
+  let resolvedBuyerEmail = buyerEmail || orders[0].email_id || null;
+  let resolvedBuyerPhone = buyerPhone || orders[0].contact_no || null;
   if (!resolvedAwbNo || !resolvedBuyerEmail || !resolvedBuyerPhone) {
     const { data: dispatchRows } = await supabase
       .from("dispatch_invoices")
