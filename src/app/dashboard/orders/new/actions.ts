@@ -109,6 +109,11 @@ type CreateOrderInput = {
   addressType: "Residential" | "Commercial";
   remark: string | null;
   items: ParsedItem[];
+  // 2026-08-11 additions — see db/2026-08-11-order-tax-destination-fields.sql
+  vatNumber: string | null;
+  eoriNumber: string | null;
+  iossNumber: string | null;
+  destinationCountry: string | null;
 };
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -294,7 +299,7 @@ export async function createOrderCore(
     .eq("ref_no_base", baseRefNo);
   let siblingCount = existingSiblingsToday ?? 0;
 
-  const { poDate, deliveryDate, emailId, taxId, addressType, remark } = input;
+  const { poDate, deliveryDate, emailId, taxId, addressType, remark, vatNumber, eoriNumber, iossNumber, destinationCountry } = input;
 
   for (const item of items) {
     const conversion = await computeCurrencyConversion(supabase, item.orderCurrency, orderDate, item.orderValueOriginal);
@@ -319,6 +324,10 @@ export async function createOrderCore(
       email_id: emailId,
       tax_id: taxId,
       address_type: addressType,
+      vat_number: vatNumber,
+      eori_number: eoriNumber,
+      ioss_number: iossNumber,
+      destination_country: destinationCountry,
       photo_type: item.photoType,
       colour: item.colour,
       remark,
@@ -395,6 +404,10 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     addressType: (str(formData, "address_type") || "Residential") as "Residential" | "Commercial",
     remark: strOrNull(formData, "remark"),
     items,
+    vatNumber: strOrNull(formData, "vat_number"),
+    eoriNumber: strOrNull(formData, "eori_number"),
+    iossNumber: strOrNull(formData, "ioss_number"),
+    destinationCountry: strOrNull(formData, "destination_country"),
   });
 
   if (result.error) return { error: result.error, success: null };
@@ -608,6 +621,10 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       taxId: cellStr(raw, byHeader, "Tax ID") || null,
       addressType: ADDRESS_TYPES.has(addressTypeRaw) ? (addressTypeRaw as "Residential" | "Commercial") : "Residential",
       remark: cellStr(raw, byHeader, "Remark") || null,
+      vatNumber: cellStr(raw, byHeader, "VAT Number") || null,
+      eoriNumber: cellStr(raw, byHeader, "EORI Number") || null,
+      iossNumber: cellStr(raw, byHeader, "IOSS Number") || null,
+      destinationCountry: cellStr(raw, byHeader, "Destination Country") || null,
       items: [item],
     });
 
