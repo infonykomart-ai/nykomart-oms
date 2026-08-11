@@ -67,26 +67,29 @@ export function InvoiceGenerateForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="destination_country">Destination Country</label>
-          <input id="destination_country" name="destination_country" placeholder="Origin declaration will be auto-filled from this" className={inputClass} />
+          <input id="destination_country" name="destination_country" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="ioss_number">IOSS Number (if any)</label>
-          <input id="ioss_number" name="ioss_number" className={inputClass} />
+          <input id="ioss_number" name="ioss_number" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
       </div>
 
-      {/* 2026-08-10: "agar uk & europe ki shipment hai or agar usme IOSS,
-          VAT, EORI no vagera aaya hua hai according to destination country
-          guideline" — VAT/EORI alongside the existing IOSS field above,
-          same "typed in only when applicable, always editable" pattern. */}
+      {/* 2026-08-10/11: "agar uk & europe ki shipment hai or agar usme
+          IOSS, VAT, EORI no vagera aaya hua hai according to destination
+          country guideline" — VAT/EORI alongside the existing IOSS field
+          above. 2026-08-11: now auto-pull from the order's own vat_number/
+          eori_number/destination_country when left blank here (see
+          actions.ts) — these inputs are just an override, same pattern as
+          AWB/buyer email/phone below. */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass} htmlFor="vat_number">VAT Number (UK/EU, if any)</label>
-          <input id="vat_number" name="vat_number" className={inputClass} />
+          <input id="vat_number" name="vat_number" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="eori_number">EORI Number (UK/EU, if any)</label>
-          <input id="eori_number" name="eori_number" className={inputClass} />
+          <input id="eori_number" name="eori_number" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
       </div>
 
@@ -127,6 +130,26 @@ export function InvoiceGenerateForm({
       <div>
         <label className={labelClass} htmlFor="other_than_consignee">Other Than Consignee (usually blank)</label>
         <textarea id="other_than_consignee" name="other_than_consignee" rows={2} className={inputClass} />
+      </div>
+
+      {/* 2026-08-11: "if there is a designated broker for this shipment,
+          please provide contact information" — usually blank. Duty &
+          Taxes Payable By is NOT asked here — it auto-fills from
+          Shipment Term above (DDP -> Exporter, DDU/DAP -> Consignee) and
+          can be corrected afterward on the invoice's own Edit panel. */}
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className={labelClass} htmlFor="broker_name">Name of Broker (if any)</label>
+          <input id="broker_name" name="broker_name" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="broker_tel">Broker Tel No.</label>
+          <input id="broker_tel" name="broker_tel" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="broker_contact">Broker Contact No.</label>
+          <input id="broker_contact" name="broker_contact" className={inputClass} />
+        </div>
       </div>
 
       {/* 2026-08-10: "csv-4 me manual rakho value kitni rakhnai hai" — for
