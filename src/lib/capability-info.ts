@@ -37,10 +37,11 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Punch In / Punch Out." },
   { code: "attendance_admin", label: "Attendance Admin", icon: "🗓️", href: "/dashboard/attendance/admin",
     description: "Import the TeamOffice attendance report, review mismatches." },
-  { code: "task_management", label: "Tasks", icon: "📋", href: "/dashboard/tasks",
-    description: "Assign a task to any teammate, work your own assigned tasks with a live Start/Pause timer." },
-  { code: "task_admin", label: "Task Reports", icon: "📊", href: "/dashboard/tasks/admin",
-    description: "See every employee's tasks and their live timers, company-wide." },
+  // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
+  // usko alag se kyu banaya hai" — Tasks / Task Reports no longer have
+  // their own sidebar tile or standalone route; the Task Assignment UI now
+  // renders directly on Attendance / Attendance Admin (see those pages),
+  // gated on the same task_management/task_admin capabilities as before.
   { code: "crm_dashboard", label: "CRM Overview", icon: "📊", href: "/dashboard/crm",
     description: "Company-wide CRM / overview dashboard, including the P&L Dashboard." },
   { code: "approve_level1", label: "Approvals (L1)", icon: "✅", href: "/dashboard/approvals/l1",
