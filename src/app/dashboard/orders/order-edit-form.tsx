@@ -34,6 +34,11 @@ export type EditableOrder = {
   remark: string | null;
   order_currency: string;
   order_value_original: number;
+  // 2026-08-11 additions — see db/2026-08-11-order-tax-destination-fields.sql
+  vat_number: string | null;
+  eori_number: string | null;
+  ioss_number: string | null;
+  destination_country: string | null;
 };
 
 // Inline edit panel for one order row (order-list-table.tsx renders this in
@@ -162,15 +167,31 @@ export function OrderEditForm({
           <input id={`email_id-${order.id}`} name="email_id" type="email" defaultValue={order.email_id ?? ""} className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor={`tax_id-${order.id}`}>Tax ID</label>
-          <input id={`tax_id-${order.id}`} name="tax_id" defaultValue={order.tax_id ?? ""} className={inputClass} />
-        </div>
-        <div>
           <label className={labelClass} htmlFor={`address_type-${order.id}`}>Address Type</label>
           <select id={`address_type-${order.id}`} name="address_type" defaultValue={order.address_type} className={inputClass}>
             <option value="Residential">Residential</option>
             <option value="Commercial">Commercial</option>
           </select>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor={`destination_country-${order.id}`}>Destination Country</label>
+          <input id={`destination_country-${order.id}`} name="destination_country" defaultValue={order.destination_country ?? ""} className={inputClass} />
+        </div>
+        {/* 2026-08-11: replaces the old single generic Tax ID field (still
+            in the DB for old orders, just no longer edited here) with 3
+            separate fields so Invoice generation can auto-pull the right
+            one — usually blank, only applicable for UK/EU shipments. */}
+        <div>
+          <label className={labelClass} htmlFor={`vat_number-${order.id}`}>VAT Number</label>
+          <input id={`vat_number-${order.id}`} name="vat_number" defaultValue={order.vat_number ?? ""} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor={`eori_number-${order.id}`}>EORI Number</label>
+          <input id={`eori_number-${order.id}`} name="eori_number" defaultValue={order.eori_number ?? ""} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor={`ioss_number-${order.id}`}>IOSS Number</label>
+          <input id={`ioss_number-${order.id}`} name="ioss_number" defaultValue={order.ioss_number ?? ""} className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor={`order_currency-${order.id}`}>Currency</label>
