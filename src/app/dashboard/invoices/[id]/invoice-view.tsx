@@ -62,6 +62,7 @@ type Invoice = {
 type Item = {
   id: string;
   ref_no: string;
+  ref_no_base: string | null;
   sku_label: string | null;
   size_label: string | null;
   qty: number;
@@ -563,7 +564,20 @@ export function InvoiceView({
             </div>
             <div>
               <div className="font-semibold">Buyer&apos;s Order No. &amp; Date</div>
-              <div>{items[0]?.ref_no ?? "—"} &middot; {invoice.invoice_date}</div>
+              {/* 2026-08-11: an invoice can now cover orders from more than
+                  one PO/RF/RG batch (see invoice-po-selector.tsx's
+                  multi-select) — e.g. two orders from the same buyer placed
+                  4 days apart, shipped together on the buyer's request. List
+                  every distinct PO/RF/RG BASE number involved (ref_no_base
+                  — e.g. "PO24-25-014"), not each line's own suffixed
+                  ref_no (e.g. "PO24-25-014-1/2") — otherwise even an
+                  ordinary single-PO invoice with 2+ line items would show
+                  every suffixed sub-ref instead of just the one PO number,
+                  same regression this comment is here to prevent. Falls
+                  back to ref_no for any pre-existing order row that
+                  predates ref_no_base (shouldn't happen going forward, but
+                  keeps old invoices rendering instead of showing "—"). */}
+              <div>{Array.from(new Set(items.map((i) => i.ref_no_base || i.ref_no))).join(", ") || "—"} &middot; {invoice.invoice_date}</div>
             </div>
           </div>
 
