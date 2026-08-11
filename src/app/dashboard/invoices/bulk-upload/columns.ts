@@ -58,5 +58,5 @@ export const BULK_INVOICE_COLUMNS: BulkInvoiceColumn[] = [
   // Consignee), editable afterward on the invoice itself.
   { label: "Broker Name", example: "", required: false, help: "Designated customs broker for this shipment, if any — usually blank." },
   { label: "Broker Tel No.", example: "", required: false },
-  { label: "Broker Contact No.", example: "", required: false },
+  { label: "Broker Contact Name", example: "", required: false },
 ];
