@@ -289,15 +289,36 @@ export function OrderForm({
             <input id="email_id" name="email_id" type="email" className={inputClass} />
           </div>
           <div>
-            <label className={labelClass} htmlFor="tax_id">Tax ID (VAT / IOSS)</label>
-            <input id="tax_id" name="tax_id" className={inputClass} />
-          </div>
-          <div>
             <label className={labelClass} htmlFor="address_type">Address Type</label>
             <select id="address_type" name="address_type" className={inputClass} defaultValue="Residential">
               <option value="Residential">Residential</option>
               <option value="Commercial">Commercial</option>
             </select>
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="destination_country">Destination Country</label>
+            <input id="destination_country" name="destination_country" placeholder="USA / United Kingdom / Germany / ..." className={inputClass} />
+          </div>
+        </div>
+
+        {/* 2026-08-11: "EORI NO, VAT No, IOSS no order entry me pahle se
+            mojud hota hai automatic aane chahiye lekin edit mode me rahe" —
+            replaces the old single generic "Tax ID (VAT/IOSS)" field with 3
+            separate fields, so Invoice generation can auto-pull the right
+            one instead of guessing. Usually blank — only applicable for
+            UK/EU shipments. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <label className={labelClass} htmlFor="vat_number">VAT Number (UK/EU, if any)</label>
+            <input id="vat_number" name="vat_number" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="eori_number">EORI Number (UK/EU, if any)</label>
+            <input id="eori_number" name="eori_number" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="ioss_number">IOSS Number (if any)</label>
+            <input id="ioss_number" name="ioss_number" className={inputClass} />
           </div>
         </div>
       </fieldset>
