@@ -123,6 +123,13 @@ export async function GET(req: NextRequest) {
           emailId: o.emailId,
           taxId: null,
           addressType: o.addressType,
+          // 2026-08-11 additions — no reliable source from most marketplace
+          // sync APIs either; left null, same as taxId above. Fillable
+          // later via the order edit panel if needed.
+          vatNumber: null,
+          eoriNumber: null,
+          iossNumber: null,
+          destinationCountry: null,
           remark: "Auto-imported by marketplace sync",
           items: [
             {
