@@ -577,6 +577,12 @@ export type Database = {
           remark_sku: string | null;
           created_at: string;
           updated_at: string;
+          timer_started_at: string | null;
+          time_spent_seconds: number;
+          first_started_at: string | null;
+          last_paused_at: string | null;
+          carried_from_log_id: string | null;
+          carried_forward: boolean;
         };
         Insert: {
           id?: string;
@@ -593,6 +599,12 @@ export type Database = {
           remark_sku?: string | null;
           created_at?: string;
           updated_at?: string;
+          timer_started_at?: string | null;
+          time_spent_seconds?: number;
+          first_started_at?: string | null;
+          last_paused_at?: string | null;
+          carried_from_log_id?: string | null;
+          carried_forward?: boolean;
         };
         Update: {
           id?: string;
@@ -609,6 +621,12 @@ export type Database = {
           remark_sku?: string | null;
           created_at?: string;
           updated_at?: string;
+          timer_started_at?: string | null;
+          time_spent_seconds?: number;
+          first_started_at?: string | null;
+          last_paused_at?: string | null;
+          carried_from_log_id?: string | null;
+          carried_forward?: boolean;
         };
         Relationships: [
           {
@@ -623,6 +641,13 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_work_logs_carried_from_log_id_fkey";
+            columns: ["carried_from_log_id"];
+            isOneToOne: false;
+            referencedRelation: "daily_work_logs";
             referencedColumns: ["id"];
           },
         ];
@@ -3960,6 +3985,85 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      tasks: {
+        Row: {
+          id: string;
+          company_id: string;
+          assigned_by_employee_id: string;
+          assigned_to_employee_id: string;
+          website: string | null;
+          category: string | null;
+          priority: string;
+          deadline: string | null;
+          status: string;
+          description: string;
+          created_at: string;
+          completed_at: string | null;
+          timer_started_at: string | null;
+          time_spent_seconds: number;
+          first_started_at: string | null;
+          last_paused_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          assigned_by_employee_id: string;
+          assigned_to_employee_id: string;
+          website?: string | null;
+          category?: string | null;
+          priority?: string;
+          deadline?: string | null;
+          status?: string;
+          description?: string;
+          created_at?: string;
+          completed_at?: string | null;
+          timer_started_at?: string | null;
+          time_spent_seconds?: number;
+          first_started_at?: string | null;
+          last_paused_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          assigned_by_employee_id?: string;
+          assigned_to_employee_id?: string;
+          website?: string | null;
+          category?: string | null;
+          priority?: string;
+          deadline?: string | null;
+          status?: string;
+          description?: string;
+          created_at?: string;
+          completed_at?: string | null;
+          timer_started_at?: string | null;
+          time_spent_seconds?: number;
+          first_started_at?: string | null;
+          last_paused_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "tasks_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tasks_assigned_by_employee_id_fkey";
+            columns: ["assigned_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tasks_assigned_to_employee_id_fkey";
+            columns: ["assigned_to_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
