@@ -411,7 +411,7 @@ export function InvoiceView({
               <input id="broker_tel" className={inputClass} value={brokerTel} onChange={(e) => setBrokerTel(e.target.value)} />
             </div>
             <div>
-              <label className={labelClass} htmlFor="broker_contact">Broker Contact No.</label>
+              <label className={labelClass} htmlFor="broker_contact">Broker Contact Name</label>
               <input id="broker_contact" className={inputClass} value={brokerContact} onChange={(e) => setBrokerContact(e.target.value)} />
             </div>
           </div>
@@ -586,22 +586,41 @@ export function InvoiceView({
             </div>
           </div>
 
-          {(brokerName || brokerTel || brokerContact) && (
-            <div className="mb-2 border-b border-slate-300 pb-2 text-[10px] text-slate-700">
-              <div className="font-semibold">If there is a designated broker for this shipment, please provide contact information.</div>
-              <div>Name of Broker: {brokerName || "—"} &nbsp; Tel No: {brokerTel || "—"} &nbsp; Contact No.: {brokerContact || "—"}</div>
-            </div>
-          )}
-
-          <div className="mb-2 border-b border-slate-300 pb-2 text-[10px] text-slate-700">
-            <span className="font-semibold">Duty &amp; Taxes payable by</span>{" "}
-            {(["Exporter", "Consignee", "Other"] as const).map((opt) => (
-              <span key={opt} className="mr-3">
-                ({dutyPayableBy === opt ? "X" : " "}) {opt}
-              </span>
-            ))}
-            {dutyPayableBy === "Other" && dutyPayableOtherSpecify && <span>— {dutyPayableOtherSpecify}</span>}
-          </div>
+          {/* 2026-08-11 fix: "dikh kyu nahi raha" — this was previously
+              hidden entirely whenever broker fields were blank (the usual
+              case), so it almost never printed. A real broker/duty-payable
+              block ALWAYS appears on the form (blank lines when there's no
+              broker), same as the reference sample shared — rebuilt as a
+              bordered table matching that reference exactly, not
+              conditional divs. */}
+          <table className="mb-2 w-full border-collapse text-[10px]">
+            <tbody>
+              <tr>
+                <td colSpan={3} className="border border-slate-300 px-2 py-1 font-semibold">
+                  If there is a designated broker for this shipment, please provide contact information.
+                </td>
+              </tr>
+              <tr>
+                <td className="border border-slate-300 px-2 py-1">Name of Broker: {brokerName}</td>
+                <td className="border border-slate-300 px-2 py-1">Tel. No.: {brokerTel}</td>
+                <td className="border border-slate-300 px-2 py-1">Contact Name: {brokerContact}</td>
+              </tr>
+              <tr>
+                <td colSpan={3} className="border border-slate-300 px-2 py-1">
+                  <span className="font-semibold">Duties and Taxes Payable by</span>{" "}
+                  {(["Exporter", "Consignee", "Other"] as const).map((opt) => (
+                    <span key={opt} className="mr-4">
+                      <span className="mr-1 inline-block h-3 w-3 border border-slate-500 text-center align-middle leading-3">
+                        {dutyPayableBy === opt ? "X" : ""}
+                      </span>
+                      {opt}
+                    </span>
+                  ))}
+                  <span>&nbsp;&nbsp;If Other, please specify {dutyPayableBy === "Other" ? dutyPayableOtherSpecify : ""}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
 
           {marksAndNos && <div className="mb-1 text-[10px] text-slate-600">Marks &amp; Nos./Container No.: {marksAndNos}</div>}
           <div className="mb-2 text-[10px] text-slate-600">No. of Packages: {noOfPackages || "1"}</div>
