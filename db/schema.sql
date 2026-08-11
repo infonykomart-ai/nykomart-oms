@@ -168,7 +168,12 @@ CREATE TYPE refund_type AS ENUM ('PARTIAL REFUND', 'FULL REFUND', 'A TO Z CLAIM'
 -- a REASON field — both nullable on the unified table).
 CREATE TYPE refund_source AS ENUM ('DISPATCH', 'FBA', 'NO_DISPATCH');
 
-CREATE TYPE attendance_status AS ENUM ('Present', 'Absent', 'Week Off', 'Half Day', 'Leave', 'Late');
+-- 2026-08-11: 'Holiday' added (a specific calendar date, e.g. Diwali —
+-- varies year to year) alongside the pre-existing 'Week Off' (the
+-- recurring weekly-off day, see companies.weekly_off_days below) — kept
+-- distinct rather than merged into one bucket, though the payroll report
+-- treats both identically (never Absent, never deducted).
+CREATE TYPE attendance_status AS ENUM ('Present', 'Absent', 'Week Off', 'Half Day', 'Leave', 'Late', 'Holiday');
 
 CREATE TYPE attendance_source AS ENUM ('Web Punch', 'TeamOffice Import', 'Manual Entry');
 
@@ -202,6 +207,12 @@ CREATE TABLE companies (
   -- (PO/RF/RG, which is per-ORDER not per-invoice) and from
   -- stores.invoice_ref_prefix (which is per-STORE/marketplace, not company).
   master_invoice_prefix text,
+  -- 2026-08-11: recurring weekly-off day(s) for attendance/payroll, e.g.
+  -- every Sunday off. 0=Sunday..6=Saturday (matches both JS Date.getDay()
+  -- and Postgres EXTRACT(DOW FROM date)). See holidays table (SECTION 16)
+  -- for one-off calendar-date holidays, which this is deliberately kept
+  -- separate from.
+  weekly_off_days int[] NOT NULL DEFAULT '{0}',
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE companies IS
@@ -2065,6 +2076,67 @@ BEGIN
 END; $$;
 CREATE TRIGGER hr_letters_before_insert BEFORE INSERT ON hr_letters
   FOR EACH ROW WHEN (NEW.ref_no IS NULL) EXECUTE FUNCTION trg_hr_letters_ref_no();
+
+-- 2026-08-11: Holiday calendar — specific calendar dates. NULL company_id
+-- = applies to every company (a national holiday); a company_id set = that
+-- one company only. Did not exist in the old system at all — genuinely
+-- new. See companies.weekly_off_days above for the separate recurring
+-- weekly-off pattern.
+CREATE TABLE holidays (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              uuid REFERENCES companies(id),   -- NULL = all companies
+  holiday_date            date NOT NULL,
+  name                    text NOT NULL,
+  created_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_holidays_date ON holidays(holiday_date);
+
+-- 2026-08-11: monthly salary per employee — versioned by effective_from so
+-- a raise doesn't rewrite payroll history for earlier months (the payroll
+-- report on /dashboard/salary always looks up the row effective as of the
+-- month being calculated). Absent-day deduction convention: per-day rate =
+-- monthly_salary / days in that calendar month; days absent beyond
+-- allowed_leaves_per_month are deducted at that per-day rate — a
+-- common/standard Indian payroll convention, NOT a verified copy of this
+-- company's actual written policy (flagged in the UI too).
+CREATE TABLE employee_salary (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id               uuid NOT NULL REFERENCES employees(id),
+  monthly_salary            numeric(12,2) NOT NULL,
+  allowed_leaves_per_month  numeric(4,1) NOT NULL DEFAULT 1,
+  effective_from            date NOT NULL,
+  entered_by_employee_id    uuid REFERENCES employees(id),
+  created_at                timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_salary_employee ON employee_salary(employee_id, effective_from DESC);
+
+-- 2026-08-11: Daily Work Report — direct equivalent of the standalone
+-- "NYKO MART Work & Performance" Apps Script tool's DailyLogs sheet (given
+-- as a reference this round), rebuilt against Postgres. One row per work
+-- item logged for a given day. Auto-saved from the UI as the employee
+-- types (debounced, see attendance/daily-report-form.tsx) rather than one
+-- "submit the whole day" button — updated_at is what the browser compares
+-- its own localStorage draft against on page load, to decide whether an
+-- unsaved draft is newer than what's already saved (refresh-safe).
+CREATE TABLE daily_work_logs (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id     uuid NOT NULL REFERENCES employees(id),
+  company_id      uuid NOT NULL REFERENCES companies(id),
+  log_date        date NOT NULL DEFAULT CURRENT_DATE,
+  category        text,
+  description     text NOT NULL DEFAULT '',
+  target_qty      text,
+  qty_done        text,
+  work_status     text,   -- 'Completed' / 'In Progress' / 'Next Day Carry On'
+  estimated_time  text,
+  time_taken      text,
+  remark_sku      text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_daily_work_logs_employee_date ON daily_work_logs(employee_id, log_date DESC);
+CREATE INDEX idx_daily_work_logs_company_date ON daily_work_logs(company_id, log_date DESC);
 
 
 -- =============================================================================
