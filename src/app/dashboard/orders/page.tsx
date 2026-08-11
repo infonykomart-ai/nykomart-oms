@@ -41,7 +41,7 @@ export default async function OrdersPage({
   let query = supabase
     .from("orders")
     .select(
-      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp"
+      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country"
     )
     .in("company_id", companyId ? [companyId] : employee.companyIds)
     .order("entry_timestamp", { ascending: false })
