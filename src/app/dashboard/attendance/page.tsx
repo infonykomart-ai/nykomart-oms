@@ -1,9 +1,11 @@
 import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
+import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
 import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
+import { RecentReportsList } from "./recent-reports-list";
 
 const CATEGORY_BADGE: Record<DayCategory, string> = {
   Present: "bg-green-100 text-green-700",
@@ -29,6 +31,12 @@ export default async function AttendancePage() {
   const [year, month] = today.split("-").map(Number);
   const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
 
+  // "AGAR KOI KAAM NEXT DAY KE LIYE MARK KIYA HAI TO VO AGALE DIN
+  // AUTOMATIC PENDING ME DIKH JAYE" — copy forward any still-pending
+  // "Next Day Carry On" rows from before today, BEFORE reading today's
+  // logs below, so a freshly carried-over row shows up immediately.
+  await carryOverPendingDailyLogs(createServiceRoleClient(), employee.id, today);
+
   const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }] =
     await Promise.all([
       supabase.from("attendance").select("*").eq("employee_id", employee.id).eq("attendance_date", today).maybeSingle(),
@@ -48,7 +56,7 @@ export default async function AttendancePage() {
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
       supabase
         .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, estimated_time, time_taken, remark_sku, updated_at")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, carried_from_log_id")
         .eq("employee_id", employee.id)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
@@ -138,6 +146,10 @@ export default async function AttendancePage() {
         </p>
       </div>
       <DailyReportForm todayLogs={todaysLogs} recentLogs={recentLogs ?? []} today={today} />
+
+      <div className="mt-6">
+        <RecentReportsList logs={todaysLogs} />
+      </div>
     </div>
   );
 }
