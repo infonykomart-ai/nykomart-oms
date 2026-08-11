@@ -11,14 +11,15 @@
 //   1. Merchant Product ID — the seller's own SKU/item code.
 //   2. Non-Standardised Manufacturer Product ID — a manufacturer/supplier
 //      code, no such data tracked in this app.
-//   3. Standardised Product ID (GTIN/EAN/ISBN) — only if one exists.
+//   3. Standardised Manufacturer Product ID (GTIN/EAN/ISBN) — only if one
+//      exists (exact label per the guide's own column headers).
 //
 // User-approved defaults (2026-08-10, since none of this app's products
 // have a separate manufacturer code or GTIN tracked anywhere):
 //   Merchant Product ID = the order's own sku_label.
 //   Non-Standardised Manufacturer Product ID = same sku_label (reused,
 //     not a distinct value — there's nowhere else to get one from).
-//   Standardised Product ID = "NO" (no GTIN/EAN/ISBN tracked).
+//   Standardised Manufacturer Product ID = "NO" (no GTIN/EAN/ISBN tracked).
 //
 // €150 threshold — deliberately NOT converted/checked precisely: this
 // app's order values are tracked in USD, not EUR, and a fragile currency-
@@ -33,11 +34,14 @@
 // shipments where PIDs are explicitly not required), revisit with an
 // actual EUR conversion at that point.
 //
-// This is EU-customs-union-specific — deliberately a NARROWER list than
-// origin-declaration.ts's EU_GROUP (which also includes non-EU countries
-// like Switzerland/Norway/UK/Balkan states for GSP-declaration purposes).
-// PIDs only apply to the actual 27 EU member states.
-const EU_27 = [
+// This is EU-customs-union-specific — deliberately narrower than a general
+// "Europe" list (excludes non-EU countries like Switzerland/Norway/UK/
+// Balkan states, which are outside the EU customs union PIDs apply to).
+// PIDs only apply to the actual 27 EU member states. Exported so
+// origin-declaration.ts can share the SAME "is this the EU" check — "sabhi
+// chije according to buyer destination map hojaye" (2026-08-10) — instead
+// of maintaining two slightly different European country lists.
+export const EU_27 = [
   "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czech Republic", "Denmark", "Estonia",
   "Finland", "France", "Germany", "Greece", "Hungary", "Ireland", "Italy", "Latvia", "Lithuania",
   "Luxembourg", "Malta", "Netherlands", "Poland", "Portugal", "Romania", "Slovakia", "Slovenia",
@@ -50,12 +54,24 @@ export function isEuDestination(destinationCountry: string | null | undefined): 
   return EU_27.some((n) => n.toLowerCase() === c);
 }
 
-/**
- * Formats the 3 PIDs as suggested by FedEx's own guide ("Ensure PIDs are
- * included in the item description field, following the suggested
- * order..."), appended after the item's own description text.
- */
-export function pidSuffixFor(skuLabel: string | null | undefined): string {
-  const merchantId = (skuLabel ?? "").trim() || "N/A";
-  return `Merchant Product ID ${merchantId} Non-Standardised Manufacturer Product ID ${merchantId} Standardised Product ID NO`;
+// 2026-08-11: user corrected the label to match the source guide's own
+// column headers exactly — "Standardised Manufacturer Product ID", not
+// "Standardised Product ID". Also switched from a single suffix string
+// appended under the item description to 3 SEPARATE COLUMNS in the item
+// table ("...COLLOM IN INVOICE") — see invoice-view.tsx's item table,
+// gated on isEuDestination like everything else PID-related.
+export function merchantProductId(skuLabel: string | null | undefined): string {
+  return (skuLabel ?? "").trim() || "N/A";
+}
+
+export function nonStandardisedManufacturerProductId(skuLabel: string | null | undefined): string {
+  // Reused from the SKU — there's no separate manufacturer/supplier code
+  // tracked anywhere in this app, same 2026-08-10 user-approved default.
+  return merchantProductId(skuLabel);
+}
+
+export function standardisedManufacturerProductId(): string {
+  // No GTIN/EAN/ISBN tracked anywhere in this app — "NO" is the guide's
+  // own documented fallback text for "not having the 3rd PID".
+  return "NO";
 }
