@@ -3,9 +3,27 @@
 // value in words at the bottom, standard practice on export customs
 // invoices. No existing number-to-words helper anywhere in this codebase
 // (checked), so this is a small standalone implementation — English only,
-// dollars-and-cents shaped (this app's invoices are always USD-denominated
-// per the sample's "USD" column headers), good up to 999,999,999.99 which
-// is far beyond any realistic single shipment's value.
+// good up to 999,999,999.99 which is far beyond any realistic single
+// shipment's value.
+//
+// 2026-08-11: originally USD-only (invoices always showed USD). Now that
+// CSB-V invoices can follow the order's own currency ("Use the order's
+// original currency" — see value-breakdown.ts), this needs real major/minor
+// unit names per currency, not just "<code> ... Dollars ... Cents" for
+// everything. Covers every code in the `currencies` table (db/schema.sql).
+
+const CURRENCY_WORDS: Record<string, { major: string; minor: string | null }> = {
+  USD: { major: "Dollars", minor: "Cents" },
+  EUR: { major: "Euros", minor: "Cents" },
+  GBP: { major: "Pounds", minor: "Pence" },
+  CAD: { major: "Canadian Dollars", minor: "Cents" },
+  AUD: { major: "Australian Dollars", minor: "Cents" },
+  AED: { major: "Dirhams", minor: "Fils" },
+  JPY: { major: "Yen", minor: null }, // no minor subdivision in practice
+  CHF: { major: "Swiss Francs", minor: "Rappen" },
+  SGD: { major: "Singapore Dollars", minor: "Cents" },
+  INR: { major: "Rupees", minor: "Paise" },
+};
 
 const ONES = [
   "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
@@ -53,17 +71,18 @@ function integerToWords(n: number): string {
 /**
  * amountInWords(138.60, "USD") -> "USD One Hundred Thirty Eight Dollars
  * and Sixty Cents Only"
+ * amountInWords(120, "EUR") -> "EUR One Hundred Twenty Euros Only"
  */
 export function amountInWords(amount: number, currencyCode: string = "USD"): string {
-  const currencyName = currencyCode === "USD" ? "Dollars" : currencyCode;
+  const words = CURRENCY_WORDS[currencyCode] ?? { major: currencyCode, minor: "Cents" };
   const rounded = Math.round(Math.abs(amount) * 100) / 100;
   const wholePart = Math.floor(rounded);
   const centsPart = Math.round((rounded - wholePart) * 100);
 
-  const wholeWords = `${integerToWords(wholePart)} ${currencyName}`;
-  if (centsPart === 0) {
+  const wholeWords = `${integerToWords(wholePart)} ${words.major}`;
+  if (words.minor === null || centsPart === 0) {
     return `${currencyCode} ${wholeWords} Only`;
   }
-  const centsWords = `${integerToWords(centsPart)} Cents`;
+  const centsWords = `${integerToWords(centsPart)} ${words.minor}`;
   return `${currencyCode} ${wholeWords} and ${centsWords} Only`;
 }
