@@ -2128,15 +2128,69 @@ CREATE TABLE daily_work_logs (
   description     text NOT NULL DEFAULT '',
   target_qty      text,
   qty_done        text,
-  work_status     text,   -- 'Completed' / 'In Progress' / 'Next Day Carry On'
-  estimated_time  text,
-  time_taken      text,
+  work_status     text,   -- 'Pending' / 'In Progress' / 'Completed' / 'Next Day Carry On'
+  estimated_time  text,   -- legacy free-text field, kept for old rows; superseded by the timer columns below
+  time_taken      text,   -- legacy free-text field, kept for old rows; superseded by the timer columns below
   remark_sku      text,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  updated_at      timestamptz NOT NULL DEFAULT now()
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  -- 2026-08-11 (round 2): "SUBMIT REPORT VALE SECTION ME ESTIMATE TIME KA
+  -- OPTION HAI TO USKI JAGH PAR WATCH LAGA DO" — a real Start/Pause watch
+  -- replacing the free-text Estimated Time field. timer_started_at
+  -- non-null = currently running; time_spent_seconds accumulates every
+  -- past Start->Pause interval; first_started_at/last_paused_at are the
+  -- "kitne baje start kiya / kitne baje khatm kiya" display fields.
+  timer_started_at    timestamptz,
+  time_spent_seconds  int NOT NULL DEFAULT 0,
+  first_started_at    timestamptz,
+  last_paused_at       timestamptz,
+  -- Next-day auto-carry-over: "agar koi kaam next day ke liye mark kiya hai
+  -- to vo agle din automatic Pending me dikh jaye". carried_from_log_id
+  -- marks a row as the auto-created copy of a prior day's "Next Day Carry
+  -- On" row; carried_forward marks the ORIGINAL row as already copied
+  -- forward so carryOverPendingDailyLogs() never double-creates it.
+  carried_from_log_id  uuid REFERENCES daily_work_logs(id),
+  carried_forward       boolean NOT NULL DEFAULT false
 );
 CREATE INDEX idx_daily_work_logs_employee_date ON daily_work_logs(employee_id, log_date DESC);
 CREATE INDEX idx_daily_work_logs_company_date ON daily_work_logs(company_id, log_date DESC);
+-- Race safety: carryOverPendingDailyLogs() does a select-then-insert (not
+-- atomic) — this turns a concurrent double-carry-over into a harmless
+-- no-op (second INSERT for the same source row fails unique, caught by
+-- the app) instead of a duplicate "Pending" row.
+CREATE UNIQUE INDEX idx_daily_work_logs_carried_from_unique
+  ON daily_work_logs(carried_from_log_id) WHERE carried_from_log_id IS NOT NULL;
+
+-- 2026-08-11 (round 2): Task Assignment — direct rebuild of the legacy
+-- "NYKO MART — Work & Performance System" Apps Script tool's Tasks sheet
+-- (id/from/to/website/category/priority/deadline/status/description/
+-- timeSpentSec/timerStartedAt), matching the screenshots given this round.
+-- "TASK KOI BHI KISI KO ASSIGN KAR DE" — any employee can assign a task to
+-- any other employee they share company access with (see task_management
+-- capability below, granted to every role). company_id is the ASSIGNEE's
+-- company (whose team/report this task counts under), not the assigner's.
+CREATE TABLE tasks (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                uuid NOT NULL REFERENCES companies(id),
+  assigned_by_employee_id   uuid NOT NULL REFERENCES employees(id),
+  assigned_to_employee_id   uuid NOT NULL REFERENCES employees(id),
+  website                   text,             -- free text, e.g. store/marketplace name (mirrors legacy "Website" column)
+  category                  text,
+  priority                  text NOT NULL DEFAULT 'Medium',   -- Low / Medium / High / Urgent
+  deadline                  date,
+  status                    text NOT NULL DEFAULT 'Pending',  -- Pending / In Progress / Done
+  description                text NOT NULL DEFAULT '',
+  created_at                 timestamptz NOT NULL DEFAULT now(),
+  completed_at                timestamptz,
+  -- Live per-task timer — same Start/Pause shape as daily_work_logs above.
+  timer_started_at          timestamptz,
+  time_spent_seconds        int NOT NULL DEFAULT 0,
+  first_started_at          timestamptz,
+  last_paused_at            timestamptz
+);
+CREATE INDEX idx_tasks_assigned_to ON tasks(assigned_to_employee_id, status);
+CREATE INDEX idx_tasks_assigned_by ON tasks(assigned_by_employee_id);
+CREATE INDEX idx_tasks_company ON tasks(company_id, status);
 
 
 -- =============================================================================
@@ -2300,13 +2354,17 @@ INSERT INTO capabilities (code, description) VALUES
   ('invoicing',           'Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders'),
   ('ad_spend_entry',      'Enter daily ad Budget/Spend per store; view the combined Orders + Ad Spend report'),
   ('ad_spend_report_all', 'View the complete Ad Spend report across ALL companies/stores (without this, ad_spend_entry is scoped to only the employee''s own assigned store(s) — see employee_store_access)'),
-  ('finished_stock_view', 'View finished-goods Inventory/Stock — auto-restocked from cancelled+refunded+already-purchased orders');
+  ('finished_stock_view', 'View finished-goods Inventory/Stock — auto-restocked from cancelled+refunded+already-purchased orders'),
+  ('task_management',    'Assign tasks to any teammate, work your own assigned tasks with a Start/Pause timer'),
+  ('task_admin',         'View every employee''s tasks and daily reports company-wide (the RD Lohra / Admin / MD view)');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
 JOIN (VALUES
   ('Order Entry',        'order_entry'), ('Order Entry', 'attendance_punch'), ('Order Entry', 'finished_stock_view'),
+  ('Order Entry',        'task_management'),
   ('Logistics',          'csv_upload'),  ('Logistics',   'attendance_punch'), ('Logistics', 'finished_stock_view'),
+  ('Logistics',          'task_management'),
   ('Finance',            'csv_upload'),  ('Finance', 'doc_entry'), ('Finance', 'stock_entry'),
   ('Finance',            'bill_payment'),('Finance', 'salary_admin'), ('Finance', 'statement_entry'),
   ('Finance',            'party_admin'),('Finance', 'exchange_rate_admin'), ('Finance', 'attendance_punch'),
@@ -2314,12 +2372,15 @@ JOIN (VALUES
   ('Finance',            'ad_spend_entry'), -- 2026-08-08: Store-level Daily Spend module.
   ('Finance',            'ad_spend_report_all'), -- 2026-08-08: full cross-store report — see ad_spend_report_all comment above.
   ('Finance',            'finished_stock_view'),
+  ('Finance',            'task_management'), ('Finance', 'task_admin'), -- 2026-08-11 (round 2): same set as attendance_punch/attendance_admin.
   ('Higher Authority',   'approve_level1'), ('Higher Authority', 'attendance_punch'), ('Higher Authority', 'crm_dashboard'),
   ('Higher Authority',   'ad_spend_entry'), ('Higher Authority', 'ad_spend_report_all'),
+  ('Higher Authority',   'task_management'),
   ('MD',                 'approve_level2'), ('MD', 'company_item_admin'), ('MD', 'doc_entry'), ('MD', 'stock_entry'),
   ('MD',                 'statement_entry'), ('MD', 'party_admin'), ('MD', 'exchange_rate_admin'),
   ('MD',                 'attendance_punch'), ('MD', 'attendance_admin'), ('MD', 'hr_letters'), ('MD', 'crm_dashboard'),
   ('MD',                 'ad_spend_entry'), ('MD', 'ad_spend_report_all'), ('MD', 'finished_stock_view'),
+  ('MD',                 'task_management'), ('MD', 'task_admin'), -- 2026-08-11 (round 2): "SABHI LOGO KI REPORT MD KE PASS DIKHE".
   ('MD',                 'employee_admin'), -- 2026-08-06: MD (the actual owner login) should be able to create new
                                              -- employee logins too, not just the separate Admin role — see pending
                                              -- item 12 ("naye user banane ka... sabhi kaam add karo").
@@ -2334,6 +2395,7 @@ JOIN (VALUES
   ('Admin',              'stock_entry'), ('Admin', 'party_admin'), ('Admin', 'exchange_rate_admin'),
   ('Admin',              'attendance_punch'), ('Admin', 'attendance_admin'), ('Admin', 'hr_letters'), ('Admin', 'crm_dashboard'),
   ('Admin',              'ad_spend_entry'), ('Admin', 'ad_spend_report_all'), ('Admin', 'finished_stock_view'),
+  ('Admin',              'task_management'), ('Admin', 'task_admin'), -- 2026-08-11 (round 2): "REPORT PURI RD LOHRA KO OR ADMIN KO DIKHE" — RD Lohra's login is this role.
   -- 2026-08-05: Admin is the account the owner actually logs in as day-to-
   -- day (unlike the old system's per-department role split) — give it every
   -- remaining capability too, so it's a true superuser role rather than
@@ -2342,9 +2404,10 @@ JOIN (VALUES
   ('Admin',              'order_entry'), ('Admin', 'csv_upload'), ('Admin', 'bill_payment'),
   ('Admin',              'salary_admin'), ('Admin', 'statement_entry'), ('Admin', 'approve_level1'),
   ('Admin',              'approve_level2'),
-  ('Listing',            'attendance_punch'),
-  ('Photoshop/Graphics', 'attendance_punch'),
-  ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch'), ('Inventory', 'finished_stock_view')
+  ('Listing',            'attendance_punch'), ('Listing', 'task_management'),
+  ('Photoshop/Graphics', 'attendance_punch'), ('Photoshop/Graphics', 'task_management'),
+  ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch'), ('Inventory', 'finished_stock_view'),
+  ('Inventory',          'task_management')
 ) AS rc(role_name, cap) ON rc.role_name = r.name;
 
 
