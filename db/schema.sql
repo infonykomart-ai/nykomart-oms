@@ -488,10 +488,18 @@ COMMENT ON FUNCTION trg_assign_document_no() IS
 -- have confirmed codes for 3 of 9 real categories so far; invoice generation
 -- must not silently print a blank/wrong HSN — validate it's set before
 -- allowing an invoice to be created for that category.
+-- 2026-08-11: harmonized_tariff_number added — "HSN code ke sath ek coloum
+-- Harmonized Tariff Number" (a column alongside HSN code). HSN is the
+-- universal 6-digit code; several destination countries extend it with
+-- their own longer national tariff schedule (e.g. USA's 10-digit HTS —
+-- see https://hts.usitc.gov/). Same nullable/manual-entry pattern as
+-- hsn_code above (no per-country lookup — the business enters whichever
+-- code applies for their typical destination, same as HSN).
 CREATE TABLE item_categories (
-  id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name      citext NOT NULL UNIQUE,
-  hsn_code  text
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                      citext NOT NULL UNIQUE,
+  hsn_code                  text,
+  harmonized_tariff_number  text
 );
 
 -- Old: Lists!T ("Sizes", ~280 messy real-world values), extended at runtime
