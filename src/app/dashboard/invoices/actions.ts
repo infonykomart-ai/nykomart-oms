@@ -6,6 +6,7 @@ import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 import { computeDepartmentReferenceNo, isFedEx } from "@/lib/invoices/department-reference";
 import { computeValueBreakdown } from "@/lib/invoices/value-breakdown";
 import { amountInWords } from "@/lib/invoices/number-to-words";
+import { dutyPayableByForShipmentTerm } from "@/lib/invoices/duty-payable";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { revalidatePath } from "next/cache";
 
@@ -82,6 +83,12 @@ type GenerateInvoiceParams = {
   manualItemCostTotal: number | null;
   manualInsuranceTotal: number | null;
   manualFreightTotal: number | null;
+  // 2026-08-11 additions — see db/2026-08-11-invoice-broker-duty.sql.
+  // duty_payable_by is NOT a form input here — it's always auto-derived
+  // from shipmentTerm inside generateInvoiceCore, then editable afterward.
+  brokerName: string | null;
+  brokerTel: string | null;
+  brokerContact: string | null;
 };
 
 /**
@@ -125,6 +132,9 @@ async function generateInvoiceCore(
     manualItemCostTotal,
     manualInsuranceTotal,
     manualFreightTotal,
+    brokerName,
+    brokerTel,
+    brokerContact,
   } = params;
 
   if (orderIds.length === 0) return { error: "Select at least one order.", invoice: null };
@@ -134,7 +144,9 @@ async function generateInvoiceCore(
 
   const { data: orders, error: ordersError } = await supabase
     .from("orders")
-    .select("id, company_id, store_id, buyer_name_address, order_value_usd, invoice_id, status")
+    .select(
+      "id, company_id, store_id, buyer_name_address, order_value_usd, order_value_original, order_currency, invoice_id, status, vat_number, eori_number, ioss_number, destination_country"
+    )
     .in("id", orderIds);
   if (ordersError || !orders || orders.length !== orderIds.length) {
     return { error: "Failed to load selected orders — please try again.", invoice: null };
@@ -156,6 +168,15 @@ async function generateInvoiceCore(
   if (!employee.companyIds.includes(companyId)) {
     return { error: "You don't have access to this company.", invoice: null };
   }
+  // 2026-08-11: CSB-V's value breakdown sums order_value_original across
+  // the batch and treats the result as being IN that shared currency (see
+  // value-breakdown.ts) — mixing currencies in one sum would be
+  // nonsensical, so require them to match, same principle as the
+  // company/store check above.
+  const orderCurrency = orders[0].order_currency;
+  if (csbType === "CSB-V" && orders.some((o) => o.order_currency !== orderCurrency)) {
+    return { error: "All orders in this invoice must be in the same currency to compute a single value breakdown.", invoice: null };
+  }
 
   const [{ data: store }, { data: company }] = await Promise.all([
     supabase.from("stores").select("id, name, invoice_ref_prefix").eq("id", storeId).single(),
@@ -171,32 +192,48 @@ async function generateInvoiceCore(
   // 2026-08-10 value breakdown — CSB-V auto-computes from the marketplace
   // %, CSB-IV stays fully manual (see value-breakdown.ts + the SQL
   // migration's header comment for the formula and why).
+  // 2026-08-11: CSB-V now sums order_value_original (the order's OWN
+  // currency), not order_value_usd — "Use the order's original currency"
+  // — so invoiceCurrency below is that shared currency, not always "USD".
+  // For a USD order this is a no-op (order_value_original ===
+  // order_value_usd), so every previously-verified USD invoice is
+  // unaffected.
   let valuePercent: number | null = null;
   let invoiceValueUsd: number | null = null;
   let itemCostTotal: number | null = null;
   let insuranceTotal: number | null = null;
   let freightTotal: number | null = null;
+  let invoiceCurrency: string | null = null;
   if (csbType === "CSB-V") {
-    const orderValueUsdSum = orders.reduce((sum, o) => sum + Number(o.order_value_usd || 0), 0);
-    const breakdown = computeValueBreakdown(orderValueUsdSum, store.name);
+    const orderValueSum = orders.reduce((sum, o) => sum + Number(o.order_value_original || 0), 0);
+    const breakdown = computeValueBreakdown(orderValueSum, store.name);
     valuePercent = breakdown.valuePercent;
     invoiceValueUsd = breakdown.invoiceValueUsd;
     itemCostTotal = breakdown.itemCostTotal;
     insuranceTotal = breakdown.insuranceTotal;
     freightTotal = breakdown.freightTotal;
+    invoiceCurrency = orderCurrency;
   } else {
+    // CSB-IV manual entry is explicitly labeled "(USD)" on the generate
+    // form (see invoice-generate-form.tsx) — unaffected by the CSB-V
+    // currency-follow change above, still always USD.
     invoiceValueUsd = manualInvoiceValueUsd;
     itemCostTotal = manualItemCostTotal;
     insuranceTotal = manualInsuranceTotal;
     freightTotal = manualFreightTotal;
+    invoiceCurrency = "USD";
   }
 
   let taxableValueInr: number | null = null;
   let declaredValueWords: string | null = null;
   if (invoiceValueUsd != null) {
-    const conversion = await computeCurrencyConversion(supabase, "USD", invoiceDate, invoiceValueUsd);
+    // 2026-08-11: convert from invoiceCurrency (the order's own currency
+    // for CSB-V, USD for CSB-IV) instead of always assuming USD — "taxable
+    // value kis value se conversation kar rahi hai jis bhi courancy me
+    // invoice ho uske according dikhaye".
+    const conversion = await computeCurrencyConversion(supabase, invoiceCurrency ?? "USD", invoiceDate, invoiceValueUsd);
     taxableValueInr = conversion.inr;
-    declaredValueWords = amountInWords(invoiceValueUsd, "USD");
+    declaredValueWords = amountInWords(invoiceValueUsd, invoiceCurrency ?? "USD");
   }
 
   // AWB/buyer email/phone auto-pull from dispatch_invoices when not typed
@@ -220,6 +257,21 @@ async function generateInvoiceCore(
     resolvedBuyerEmail = resolvedBuyerEmail || d?.buyer_mail || null;
     resolvedBuyerPhone = resolvedBuyerPhone || d?.buyer_contact || null;
   }
+
+  // 2026-08-11: "EORI NO, VAT No, IOSS no order entry me pahle se mojud
+  // hota hai automatic aane chahiye lekin edit mode me rahe" + "destination
+  // country bhi buyer addresh me hoti hai fill kyu karva rahe" — auto-pull
+  // from the order(s) (orders[0], same "first row wins" convention as
+  // buyer_name_address below) when not explicitly typed on the generate
+  // form. Never overwrites an explicit value with a blank auto-pull.
+  const resolvedDestinationCountry = destinationCountry || orders[0].destination_country || null;
+  const resolvedIossNumber = iossNumber || orders[0].ioss_number || null;
+  const resolvedVatNumber = vatNumber || orders[0].vat_number || null;
+  const resolvedEoriNumber = eoriNumber || orders[0].eori_number || null;
+
+  // 2026-08-11: "ddp karenge to exporter vala checkbox automatic mark ho
+  // jayega, ddu karenge to consignee vala" — see duty-payable.ts.
+  const dutyPayableBy = dutyPayableByForShipmentTerm(shipmentTerm);
 
   const fy = fyLabel(invoiceDate);
 
@@ -257,9 +309,9 @@ async function generateInvoiceCore(
       csb_type: csbType,
       courier_company: courierCompany,
       department_reference_no: departmentReferenceNo,
-      destination_country: destinationCountry,
-      origin_declaration: originDeclarationFor(destinationCountry),
-      ioss_number: iossNumber,
+      destination_country: resolvedDestinationCountry,
+      origin_declaration: originDeclarationFor(resolvedDestinationCountry),
+      ioss_number: resolvedIossNumber,
       weight_kg: weightKg,
       length_cm: lengthCm,
       width_cm: widthCm,
@@ -271,6 +323,7 @@ async function generateInvoiceCore(
       item_cost_total: itemCostTotal,
       insurance_total: insuranceTotal,
       freight_total: freightTotal,
+      invoice_currency: invoiceCurrency,
       taxable_value_inr: taxableValueInr,
       declared_value_words: declaredValueWords,
       awb_no: resolvedAwbNo,
@@ -281,8 +334,12 @@ async function generateInvoiceCore(
       buyer_email: resolvedBuyerEmail,
       buyer_phone: resolvedBuyerPhone,
       other_than_consignee: otherThanConsignee,
-      vat_number: vatNumber,
-      eori_number: eoriNumber,
+      vat_number: resolvedVatNumber,
+      eori_number: resolvedEoriNumber,
+      broker_name: brokerName,
+      broker_tel: brokerTel,
+      broker_contact: brokerContact,
+      duty_payable_by: dutyPayableBy,
       created_by_employee_id: employee.id,
     })
     .select("id, invoice_no")
@@ -375,6 +432,9 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     manualItemCostTotal: numOrNull(formData, "manual_item_cost_total"),
     manualInsuranceTotal: numOrNull(formData, "manual_insurance_total"),
     manualFreightTotal: numOrNull(formData, "manual_freight_total"),
+    brokerName: strOrNull(formData, "broker_name"),
+    brokerTel: strOrNull(formData, "broker_tel"),
+    brokerContact: strOrNull(formData, "broker_contact"),
   });
 
   if (result.error || !result.invoice) return { error: result.error, success: null };
@@ -537,6 +597,9 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
         manualFreightTotal: cellStr(raw, byHeader, "Manual Freight (USD, CSB-IV only)")
           ? Number(cellStr(raw, byHeader, "Manual Freight (USD, CSB-IV only)"))
           : null,
+        brokerName: cellStr(raw, byHeader, "Broker Name") || null,
+        brokerTel: cellStr(raw, byHeader, "Broker Tel No.") || null,
+        brokerContact: cellStr(raw, byHeader, "Broker Contact No.") || null,
       },
     });
   }
@@ -650,8 +713,15 @@ export async function updateInvoiceFields(
     item_cost_total?: number | null;
     insurance_total?: number | null;
     freight_total?: number | null;
+    invoice_currency?: string | null;
     taxable_value_inr?: number | null;
     declared_value_words?: string | null;
+    // 2026-08-11 additions — see db/2026-08-11-invoice-broker-duty.sql.
+    broker_name?: string | null;
+    broker_tel?: string | null;
+    broker_contact?: string | null;
+    duty_payable_by?: string | null;
+    duty_payable_other_specify?: string | null;
   }
 ): Promise<{ error: string | null }> {
   await requireCapability("invoicing");
