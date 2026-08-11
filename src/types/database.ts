@@ -2447,6 +2447,10 @@ export type Database = {
           exchange_rate_source: string | null;
           created_at: string;
           invoice_id: string | null;
+          vat_number: string | null;
+          eori_number: string | null;
+          ioss_number: string | null;
+          destination_country: string | null;
         };
         Insert: {
           id?: string;
@@ -2494,6 +2498,10 @@ export type Database = {
           exchange_rate_source?: string | null;
           created_at?: string;
           invoice_id?: string | null;
+          vat_number?: string | null;
+          eori_number?: string | null;
+          ioss_number?: string | null;
+          destination_country?: string | null;
         };
         Update: {
           id?: string;
@@ -2541,6 +2549,10 @@ export type Database = {
           exchange_rate_source?: string | null;
           created_at?: string;
           invoice_id?: string | null;
+          vat_number?: string | null;
+          eori_number?: string | null;
+          ioss_number?: string | null;
+          destination_country?: string | null;
         };
         Relationships: [
           {
@@ -3114,6 +3126,12 @@ export type Database = {
           other_than_consignee: string | null;
           vat_number: string | null;
           eori_number: string | null;
+          broker_name: string | null;
+          broker_tel: string | null;
+          broker_contact: string | null;
+          duty_payable_by: string | null;
+          duty_payable_other_specify: string | null;
+          invoice_currency: string | null;
         };
         Insert: {
           id?: string;
@@ -3154,6 +3172,12 @@ export type Database = {
           other_than_consignee?: string | null;
           vat_number?: string | null;
           eori_number?: string | null;
+          broker_name?: string | null;
+          broker_tel?: string | null;
+          broker_contact?: string | null;
+          duty_payable_by?: string | null;
+          duty_payable_other_specify?: string | null;
+          invoice_currency?: string | null;
         };
         Update: {
           id?: string;
@@ -3194,6 +3218,12 @@ export type Database = {
           other_than_consignee?: string | null;
           vat_number?: string | null;
           eori_number?: string | null;
+          broker_name?: string | null;
+          broker_tel?: string | null;
+          broker_contact?: string | null;
+          duty_payable_by?: string | null;
+          duty_payable_other_specify?: string | null;
+          invoice_currency?: string | null;
         };
         Relationships: [
           {
