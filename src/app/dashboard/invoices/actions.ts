@@ -599,7 +599,7 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
           : null,
         brokerName: cellStr(raw, byHeader, "Broker Name") || null,
         brokerTel: cellStr(raw, byHeader, "Broker Tel No.") || null,
-        brokerContact: cellStr(raw, byHeader, "Broker Contact No.") || null,
+        brokerContact: cellStr(raw, byHeader, "Broker Contact Name") || null,
       },
     });
   }
