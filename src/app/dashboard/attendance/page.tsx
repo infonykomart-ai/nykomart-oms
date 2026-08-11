@@ -6,6 +6,9 @@ import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
 import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
+import { AssignTaskForm } from "../tasks/assign-task-form";
+import { TaskList, type TaskRow } from "../tasks/task-list";
+import { AssignedByMeList, type AssignedTaskRow } from "../tasks/assigned-by-me-list";
 
 const CATEGORY_BADGE: Record<DayCategory, string> = {
   Present: "bg-green-100 text-green-700",
@@ -56,7 +59,7 @@ export default async function AttendancePage() {
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
       supabase
         .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, carried_from_log_id")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, carried_from_log_id, submitted_at")
         .eq("employee_id", employee.id)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
@@ -78,6 +81,88 @@ export default async function AttendancePage() {
   const holidayNameByDate = new Map((holidays ?? []).map((h) => [h.holiday_date, h.name]));
 
   const todaysLogs = (recentLogs ?? []).filter((l) => l.log_date === today);
+  // 2026-08-11 (round 3): "submit karte hi khud ke kaam me add ho jaye" —
+  // My Recent Reports only lists rows that were actually submitted, not
+  // half-typed drafts. DailyReportForm below still gets the full
+  // todaysLogs (drafts + submitted) so it can render both card types.
+  const submittedTodaysLogs = todaysLogs.filter((l) => l.submitted_at !== null);
+
+  // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
+  // usko alag se kyu banaya hai" — Task Assignment now renders directly on
+  // this page instead of its own /dashboard/tasks route, gated on the same
+  // task_management capability every role already has (see
+  // db/schema.sql). Fetch is skipped entirely for anyone without it.
+  const hasTaskManagement = employee.capabilities.includes("task_management");
+  let myTaskRows: TaskRow[] = [];
+  let assignedByMeRows: AssignedTaskRow[] = [];
+  let taskEmployees: { id: string; name: string }[] = [];
+  let taskWebsites: string[] = [];
+
+  if (hasTaskManagement) {
+    const [{ data: taskEmployeesData }, { data: stores }, { data: myTasks }, { data: assignedByMe }] = await Promise.all([
+      supabase.from("employees").select("id, name, company_id").in("company_id", employee.companyIds).eq("active", true).order("name"),
+      supabase.from("stores").select("name").in("company_id", employee.companyIds).eq("active", true).order("name"),
+      supabase
+        .from("tasks")
+        .select("id, website, category, priority, deadline, status, description, created_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, assigned_by_employee_id")
+        .eq("assigned_to_employee_id", employee.id)
+        .order("status", { ascending: true })
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("tasks")
+        .select("id, category, priority, status, description, deadline, time_spent_seconds, timer_started_at, assigned_to_employee_id")
+        .eq("assigned_by_employee_id", employee.id)
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
+
+    const employeeName = new Map((taskEmployeesData ?? []).map((e) => [e.id, e.name]));
+    taskEmployees = (taskEmployeesData ?? []).filter((e) => e.id !== employee.id);
+    taskWebsites = Array.from(new Set((stores ?? []).map((s) => s.name)));
+
+    // assignTask() allows cross-company assignment (the assigner just needs
+    // access to the ASSIGNEE's company, not membership in it), so fetch any
+    // referenced employee id that isn't already covered — same pattern as
+    // the old standalone /dashboard/tasks page.
+    const missingIds = Array.from(
+      new Set([
+        ...(myTasks ?? []).map((t) => t.assigned_by_employee_id),
+        ...(assignedByMe ?? []).map((t) => t.assigned_to_employee_id),
+      ])
+    ).filter((id) => !employeeName.has(id));
+    if (missingIds.length) {
+      const { data: extraEmployees } = await supabase.from("employees").select("id, name").in("id", missingIds);
+      for (const e of extraEmployees ?? []) employeeName.set(e.id, e.name);
+    }
+
+    myTaskRows = (myTasks ?? []).map((t) => ({
+      id: t.id,
+      website: t.website,
+      category: t.category,
+      priority: t.priority,
+      deadline: t.deadline,
+      status: t.status,
+      description: t.description,
+      created_at: t.created_at,
+      assignedByName: employeeName.get(t.assigned_by_employee_id) ?? "—",
+      timerStartedAt: t.timer_started_at,
+      timeSpentSeconds: t.time_spent_seconds,
+      firstStartedAt: t.first_started_at,
+      lastPausedAt: t.last_paused_at,
+    }));
+
+    assignedByMeRows = (assignedByMe ?? []).map((t) => ({
+      id: t.id,
+      category: t.category,
+      priority: t.priority,
+      status: t.status,
+      description: t.description,
+      deadline: t.deadline,
+      assignedToName: employeeName.get(t.assigned_to_employee_id) ?? "—",
+      timeSpentSeconds: t.time_spent_seconds,
+      timerStartedAt: t.timer_started_at,
+    }));
+  }
 
   return (
     <div>
@@ -148,8 +233,32 @@ export default async function AttendancePage() {
       <DailyReportForm todayLogs={todaysLogs} recentLogs={recentLogs ?? []} today={today} />
 
       <div className="mt-6">
-        <RecentReportsList logs={todaysLogs} />
+        <RecentReportsList logs={submittedTodaysLogs} />
       </div>
+
+      {hasTaskManagement && (
+        <div className="mt-6">
+          <div className="mb-3">
+            <h2 className="text-sm font-semibold text-slate-700">📋 Tasks</h2>
+            <p className="mt-1 text-xs text-slate-500">Assign work to anyone, and track your own tasks with a live timer.</p>
+          </div>
+
+          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Assign a Task</h3>
+            <AssignTaskForm employees={taskEmployees} websites={taskWebsites} />
+          </div>
+
+          <div className="mb-6">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">My Tasks</h3>
+            <TaskList tasks={myTaskRows} />
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Tasks I Assigned</h3>
+            <AssignedByMeList tasks={assignedByMeRows} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
