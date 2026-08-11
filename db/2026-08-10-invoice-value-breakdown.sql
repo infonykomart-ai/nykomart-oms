@@ -37,7 +37,7 @@
 -- default for a CSB-IV invoice — no auto-calculation happens, the
 -- generate form leaves them as plain editable number inputs the preparer
 -- fills in by hand, same structural columns, no automatic marketplace-%
--- logic. Only CSB-V gets the automatic 60%/80% + 30%/flat-0.75/remainder
+-- logic. Only CSB-V gets the automatic 60% + 30%/flat-0.75/remainder
 -- computation at generation time (src/app/dashboard/invoices/actions.ts).
 --
 -- Applies identically across all 3 companies (Nyko Mart / Rugara / CASA
