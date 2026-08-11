@@ -14,6 +14,23 @@
 // so it can never accidentally re-invoice an order that already has one
 // (actions.ts's generateInvoiceCore also independently rejects that
 // server-side — this is just the UI staying consistent with it).
+//
+// 2026-08-11 (round 2): "agar koi buyer ka order 4 din pahle aata hai
+// phir 4 din baad ek or order aata hai ... dono ke po rf rg no alag alag
+// hai to select karne ka option aana chahiye ... ek se jyada select kare
+// to ho jaye" — MULTI-select across batches, so 2+ separate PO/RF/RG
+// numbers (e.g. two orders from the same buyer, placed days apart, that
+// the buyer wants shipped/invoiced together) can be combined into ONE
+// invoice. generateInvoiceCore (actions.ts) already accepted an arbitrary
+// orderIds[] and already loops/sums across them — the "one batch only"
+// restriction was purely this component's own UI, not a server rule. What
+// IS still enforced server-side (and mirrored here client-side, so a
+// mismatched pick is caught before submitting instead of after): every
+// selected order must share the same company + store, and for CSB-V, the
+// same currency (a single value-breakdown sum wouldn't make sense mixing
+// currencies). Buyer name is NOT hard-enforced to match (it's a freeform
+// text field, minor formatting differences are common) — a mismatch just
+// shows a warning banner, doesn't block.
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { InvoiceGenerateForm } from "./invoice-generate-form";
@@ -22,6 +39,8 @@ type OrderRow = {
   id: string;
   ref_no: string;
   ref_no_base: string | null;
+  company_id: string;
+  store_id: string;
   buyer_name_address: string | null;
   contact_no: string | null;
   sku_label: string | null;
@@ -45,6 +64,10 @@ function batchStatus(orders: OrderRow[]): BatchStatus {
   return "partial";
 }
 
+function normalizeBuyer(s: string | null): string {
+  return (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 const STATUS_BADGE: Record<BatchStatus, string> = {
   invoiced: "bg-green-100 text-green-700",
   partial: "bg-amber-100 text-amber-700",
@@ -64,7 +87,7 @@ export function InvoicePoSelector({
   itemCategoryName: Record<string, string>;
 }) {
   const [query, setQuery] = useState("");
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -81,18 +104,48 @@ export function InvoicePoSelector({
     });
   }, [batches, query]);
 
-  const selected = batches.find((b) => b.key === selectedKey) ?? null;
+  const selected = useMemo(() => batches.filter((b) => selectedKeys.includes(b.key)), [batches, selectedKeys]);
+
+  // Once at least one batch is picked, further picks are constrained to
+  // the same company + store — matches generateInvoiceCore's own hard
+  // check, caught here instead of after submitting.
+  const lockCompanyId = selected[0]?.orders[0].company_id ?? null;
+  const lockStoreId = selected[0]?.orders[0].store_id ?? null;
+
+  function toggleBatch(batch: Batch) {
+    setSelectedKeys((prev) => {
+      if (prev.includes(batch.key)) return prev.filter((k) => k !== batch.key);
+      return [...prev, batch.key];
+    });
+  }
 
   if (batches.length === 0) {
     return <p className="text-sm text-slate-400">No orders yet.</p>;
   }
 
+  // Union of every still-pending order across every selected batch — this
+  // is exactly the orderIds[] a combined invoice will cover.
+  const pendingOrders = selected.flatMap((b) => b.orders.filter((o) => !o.invoice_id));
+  const allBuyerNamesMatch = new Set(pendingOrders.map((o) => normalizeBuyer(o.buyer_name_address))).size <= 1;
+  const refNoBases = Array.from(new Set(selected.map((b) => b.orders[0].ref_no_base).filter(Boolean)));
+  // Only show "already fully invoiced" state when EVERY selected batch is
+  // fully invoiced (there's nothing left to combine into a new invoice).
+  const allSelectedInvoiced = selected.length > 0 && selected.every((b) => batchStatus(b.orders) === "invoiced");
+  const invoiceIds = Array.from(
+    new Set(selected.flatMap((b) => b.orders.map((o) => o.invoice_id)).filter((x): x is string => !!x))
+  );
+
   return (
     <div className="space-y-4">
       <div>
-        <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="po_search">
-          Select PO / RF / RG Number
-        </label>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="block text-xs font-medium text-slate-500" htmlFor="po_search">
+            Select PO / RF / RG Number(s)
+          </label>
+          {selectedKeys.length > 1 && (
+            <span className="text-xs font-medium text-amber-700">{selectedKeys.length} selected — will combine into one invoice</span>
+          )}
+        </div>
         <input
           id="po_search"
           type="text"
@@ -101,21 +154,35 @@ export function InvoicePoSelector({
           placeholder="Search PO/RF/RG, buyer, company, store..."
           className="mb-2 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
         />
+        <p className="mb-2 text-xs text-slate-400">
+          Tick more than one to combine multiple PO/RF/RG numbers into a single invoice (e.g. two orders from the
+          same buyer, placed days apart, shipped together).
+        </p>
         <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white">
           {filtered.length === 0 && <p className="p-3 text-sm text-slate-400">No matches.</p>}
           {filtered.map((b) => {
             const status = batchStatus(b.orders);
-            const isSelected = b.key === selectedKey;
+            const isSelected = selectedKeys.includes(b.key);
+            const mismatchedScope =
+              !isSelected &&
+              lockCompanyId != null &&
+              (b.orders[0].company_id !== lockCompanyId || b.orders[0].store_id !== lockStoreId);
+            // A fully-invoiced batch has nothing pending left to combine —
+            // still shown (so its status is visible) but not selectable.
+            const disabled = !isSelected && (status === "invoiced" || mismatchedScope);
             return (
               <button
                 key={b.key}
                 type="button"
-                onClick={() => setSelectedKey(isSelected ? null : b.key)}
-                className={`flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50 ${
+                disabled={disabled}
+                onClick={() => toggleBatch(b)}
+                title={mismatchedScope ? "Different company/store — can't combine with the current selection" : undefined}
+                className={`flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white ${
                   isSelected ? "bg-amber-50" : ""
                 }`}
               >
-                <div className="min-w-0">
+                <input type="checkbox" checked={isSelected} disabled={disabled} readOnly className="shrink-0 accent-amber-500" />
+                <div className="min-w-0 flex-1">
                   <span className="font-medium text-slate-900">{b.orders[0].ref_no_base}</span>
                   <span className="ml-2 text-xs text-slate-400">
                     {b.companyName} · {b.storeName} · {b.orders.length} item{b.orders.length > 1 ? "s" : ""}
@@ -131,89 +198,94 @@ export function InvoicePoSelector({
         </div>
       </div>
 
-      {selected &&
-        (() => {
-          const status = batchStatus(selected.orders);
-          const pendingOrders = selected.orders.filter((o) => !o.invoice_id);
-          // Fully/partially invoiced batch: distinct invoice ids among these orders
-          // (normally exactly one, unless a previous split invoice used more than one).
-          const invoiceIds = Array.from(
-            new Set(selected.orders.map((o) => o.invoice_id).filter((x): x is string => !!x))
-          );
-
-          return (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <h3 className="mb-2 text-sm font-semibold text-slate-700">
-                  Order Detail — {selected.orders[0].ref_no_base}
-                </h3>
-                <p className="mb-2 text-xs text-slate-500">
-                  {selected.companyName} · {selected.storeName}
-                </p>
-                <p className="mb-3 whitespace-pre-line text-xs text-slate-600">{selected.orders[0].buyer_name_address}</p>
-                <div className="space-y-1.5">
-                  {selected.orders.map((o) => (
-                    <div
-                      key={o.id}
-                      className="flex items-center justify-between rounded border border-slate-100 px-2 py-1.5 text-xs text-slate-600"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-medium text-slate-800">{o.ref_no}</span>
-                        <span className="ml-2 text-slate-400">
-                          {itemCategoryName[o.item_category_id ?? ""] ?? ""}
-                          {o.size_label ? ` · ${o.size_label}` : ""} · Qty {o.qty}
-                        </span>
-                        <p className="text-slate-400">
-                          {o.order_value_original} {o.order_currency}
-                        </p>
+      {selected.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <h3 className="mb-2 text-sm font-semibold text-slate-700">Order Detail — {refNoBases.join(", ")}</h3>
+            <p className="mb-2 text-xs text-slate-500">
+              {selected[0].companyName} · {selected[0].storeName}
+            </p>
+            {!allBuyerNamesMatch && (
+              <p className="mb-2 rounded-lg bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                ⚠ These orders don&apos;t all show the same buyer name/address — double-check before combining into
+                one invoice.
+              </p>
+            )}
+            <div className="space-y-3">
+              {selected.map((b) => (
+                <div key={b.key}>
+                  <p className="mb-1 text-xs font-semibold text-slate-500">{b.orders[0].ref_no_base}</p>
+                  <div className="space-y-1.5">
+                    {b.orders.map((o) => (
+                      <div
+                        key={o.id}
+                        className="flex items-center justify-between rounded border border-slate-100 px-2 py-1.5 text-xs text-slate-600"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-medium text-slate-800">{o.ref_no}</span>
+                          <span className="ml-2 text-slate-400">
+                            {itemCategoryName[o.item_category_id ?? ""] ?? ""}
+                            {o.size_label ? ` · ${o.size_label}` : ""} · Qty {o.qty}
+                          </span>
+                          <p className="text-slate-400">
+                            {o.order_value_original} {o.order_currency}
+                          </p>
+                        </div>
+                        {o.invoice_id ? (
+                          <Link
+                            href={`/dashboard/invoices/${o.invoice_id}`}
+                            className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-200"
+                          >
+                            Invoiced
+                          </Link>
+                        ) : (
+                          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                            Pending
+                          </span>
+                        )}
                       </div>
-                      {o.invoice_id ? (
-                        <Link
-                          href={`/dashboard/invoices/${o.invoice_id}`}
-                          className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-200"
-                        >
-                          Invoiced
-                        </Link>
-                      ) : (
-                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-                          Pending
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                {status === "invoiced" ? (
-                  <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                    <p className="mb-2 font-medium">This PO/RF/RG is already fully invoiced.</p>
-                    {invoiceIds.map((id) => (
-                      <Link key={id} href={`/dashboard/invoices/${id}`} className="block underline">
-                        View / Print Invoice
-                      </Link>
                     ))}
                   </div>
-                ) : (
-                  <>
-                    {status === "partial" && (
-                      <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                        {selected.orders.length - pendingOrders.length} of {selected.orders.length} order(s) in this PO
-                        are already invoiced (see left, green &ldquo;Invoiced&rdquo; tag links to that invoice) — this
-                        form will generate a new invoice for the remaining {pendingOrders.length} pending order(s) only.
-                      </p>
-                    )}
-                    <h3 className="mb-2 text-sm font-semibold text-slate-700">Generate Invoice</h3>
-                    <InvoiceGenerateForm
-                      orderIds={pendingOrders.map((o) => o.id)}
-                      defaultBuyerNameAddress={selected.orders[0].buyer_name_address ?? ""}
-                    />
-                  </>
-                )}
-              </div>
+                </div>
+              ))}
             </div>
-          );
-        })()}
+          </div>
+
+          <div>
+            {allSelectedInvoiced ? (
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                <p className="mb-2 font-medium">Every selected PO/RF/RG is already fully invoiced.</p>
+                {invoiceIds.map((id) => (
+                  <Link key={id} href={`/dashboard/invoices/${id}`} className="block underline">
+                    View / Print Invoice
+                  </Link>
+                ))}
+              </div>
+            ) : pendingOrders.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                Nothing pending to invoice in this selection.
+              </p>
+            ) : (
+              <>
+                {pendingOrders.length < selected.reduce((n, b) => n + b.orders.length, 0) && (
+                  <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Some order(s) in this selection are already invoiced (see left, green &ldquo;Invoiced&rdquo; tags
+                    link to those invoices) — this form will generate a new invoice for the remaining{" "}
+                    {pendingOrders.length} pending order(s) only.
+                  </p>
+                )}
+                <h3 className="mb-2 text-sm font-semibold text-slate-700">
+                  Generate {selected.length > 1 ? "Combined " : ""}Invoice
+                </h3>
+                <InvoiceGenerateForm
+                  orderIds={pendingOrders.map((o) => o.id)}
+                  defaultBuyerNameAddress={pendingOrders[0]?.buyer_name_address ?? ""}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
