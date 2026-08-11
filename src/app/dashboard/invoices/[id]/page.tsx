@@ -19,7 +19,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     supabase.from("companies").select("id, name, logo_url").eq("id", invoice.company_id).single(),
     supabase.from("company_profiles").select("*").eq("company_id", invoice.company_id).single(),
     supabase.from("stores").select("id, name").eq("id", invoice.store_id).single(),
-    supabase.from("item_categories").select("id, name, hsn_code"),
+    supabase.from("item_categories").select("id, name, hsn_code, harmonized_tariff_number"),
   ]);
 
   const categoryMap = new Map((itemCategories ?? []).map((c) => [c.id, c]));
@@ -27,6 +27,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     ...o,
     item_category_name: categoryMap.get(o.item_category_id)?.name ?? "",
     hsn_code: categoryMap.get(o.item_category_id)?.hsn_code ?? "",
+    harmonized_tariff_number: categoryMap.get(o.item_category_id)?.harmonized_tariff_number ?? "",
   }));
 
   // 2026-08-07: surface the order -> credit/debit-note connection here too
