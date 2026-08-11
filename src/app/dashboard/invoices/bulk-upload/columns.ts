@@ -25,8 +25,8 @@ export const BULK_INVOICE_COLUMNS: BulkInvoiceColumn[] = [
   { label: "Shipment Term", example: "DAP", required: true },
   { label: "CSB Type", example: "CSB-V", required: true, help: "CSB-V or CSB-IV" },
   { label: "Courier Company", example: "FedEx", required: true },
-  { label: "Destination Country", example: "USA", required: false },
-  { label: "IOSS Number", example: "", required: false },
+  { label: "Destination Country", example: "USA", required: false, help: "Leave blank to auto-pull from the order." },
+  { label: "IOSS Number", example: "", required: false, help: "Leave blank to auto-pull from the order." },
   { label: "Weight (kg)", example: "1.5", required: false },
   { label: "Length (cm)", example: "", required: false },
   { label: "Width (cm)", example: "", required: false },
@@ -46,10 +46,17 @@ export const BULK_INVOICE_COLUMNS: BulkInvoiceColumn[] = [
   { label: "Buyer Email", example: "", required: false, help: "Leave blank to auto-pull from Dispatch." },
   { label: "Buyer Phone", example: "", required: false, help: "Leave blank to auto-pull from Dispatch." },
   { label: "Other Than Consignee", example: "", required: false, help: "Second consignee block, if applicable — usually blank." },
-  { label: "VAT Number", example: "", required: false, help: "UK/EU shipments only, if applicable." },
-  { label: "EORI Number", example: "", required: false, help: "UK/EU shipments only, if applicable." },
+  { label: "VAT Number", example: "", required: false, help: "UK/EU shipments only. Leave blank to auto-pull from the order." },
+  { label: "EORI Number", example: "", required: false, help: "UK/EU shipments only. Leave blank to auto-pull from the order." },
   { label: "Manual Invoice Value (USD, CSB-IV only)", example: "", required: false, help: "CSB-IV only — CSB-V always auto-computes this." },
   { label: "Manual Item Cost (USD, CSB-IV only)", example: "", required: false },
   { label: "Manual Insurance (USD, CSB-IV only)", example: "", required: false },
   { label: "Manual Freight (USD, CSB-IV only)", example: "", required: false },
+  // 2026-08-11 additions — designated customs broker, if any (usually
+  // blank). Duty & Taxes Payable By is NOT a CSV column — it always
+  // auto-derives from Shipment Term (DDP -> Exporter, DDU/DAP ->
+  // Consignee), editable afterward on the invoice itself.
+  { label: "Broker Name", example: "", required: false, help: "Designated customs broker for this shipment, if any — usually blank." },
+  { label: "Broker Tel No.", example: "", required: false },
+  { label: "Broker Contact No.", example: "", required: false },
 ];
