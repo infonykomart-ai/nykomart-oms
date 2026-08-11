@@ -76,6 +76,11 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       email_id: strOrNull(formData, "email_id"),
       tax_id: strOrNull(formData, "tax_id"),
       address_type: (str(formData, "address_type") || "Residential") as "Residential" | "Commercial",
+      // 2026-08-11 additions — see db/2026-08-11-order-tax-destination-fields.sql
+      vat_number: strOrNull(formData, "vat_number"),
+      eori_number: strOrNull(formData, "eori_number"),
+      ioss_number: strOrNull(formData, "ioss_number"),
+      destination_country: strOrNull(formData, "destination_country"),
       remark: strOrNull(formData, "remark"),
       order_currency: orderCurrency,
       order_value_original: orderValueOriginal,
