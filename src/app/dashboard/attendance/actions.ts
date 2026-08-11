@@ -62,8 +62,6 @@ export type DailyLogInput = {
   targetQty: string;
   qtyDone: string;
   workStatus: string;
-  estimatedTime: string;
-  timeTaken: string;
   remarkSku: string;
 };
 
@@ -88,8 +86,6 @@ export async function upsertDailyLog(input: DailyLogInput): Promise<{ error: str
     target_qty: input.targetQty || null,
     qty_done: input.qtyDone || null,
     work_status: input.workStatus || null,
-    estimated_time: input.estimatedTime || null,
-    time_taken: input.timeTaken || null,
     remark_sku: input.remarkSku || null,
     updated_at: new Date().toISOString(),
   };
@@ -119,4 +115,76 @@ export async function deleteDailyLog(id: string): Promise<SimpleActionState> {
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/attendance");
   return { error: null, success: true };
+}
+
+// ============================================================================
+// 2026-08-11 (round 2): "SUBMIT REPORT VALE SECTION ME ESTIMATE TIME KA
+// OPTION HAI TO USKI JAGH PAR WATCH LAGA DO KITNE BAJE START KIYA KITNE
+// BAJE WORK KHATM KIYA DONO KE LIYE SATH ME START BUTTON BHI RAKHO PAUSE KA
+// BHI RAKHO" — a real Start/Pause watch on each Daily Work Report row,
+// replacing the old free-text Estimated Time field. Same accumulate-on-
+// pause shape as the Task timer below (see src/lib/attendance/timer.ts).
+// ============================================================================
+
+type TimerActionResult = {
+  error: string | null;
+  timerStartedAt: string | null;
+  timeSpentSeconds: number;
+  firstStartedAt: string | null;
+  lastPausedAt: string | null;
+};
+
+export async function startReportTimer(id: string): Promise<TimerActionResult> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("daily_work_logs")
+    .select("first_started_at, time_spent_seconds, timer_started_at")
+    .eq("id", id)
+    .eq("employee_id", employee.id)
+    .single();
+  if (fetchError || !existing) return { error: fetchError?.message ?? "Report not found.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null };
+  if (existing.timer_started_at) {
+    // Already running — nothing to do, just report current state.
+    return { error: null, timerStartedAt: existing.timer_started_at, timeSpentSeconds: existing.time_spent_seconds, firstStartedAt: existing.first_started_at, lastPausedAt: null };
+  }
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("daily_work_logs")
+    .update({ timer_started_at: now, first_started_at: existing.first_started_at ?? now })
+    .eq("id", id)
+    .eq("employee_id", employee.id)
+    .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at")
+    .single();
+  if (error || !data) return { error: error?.message ?? "Could not start timer.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null };
+  revalidatePath("/dashboard/attendance");
+  return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at };
+}
+
+export async function pauseReportTimer(id: string): Promise<TimerActionResult> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  const { data: existing, error: fetchError } = await supabase
+    .from("daily_work_logs")
+    .select("timer_started_at, time_spent_seconds, first_started_at")
+    .eq("id", id)
+    .eq("employee_id", employee.id)
+    .single();
+  if (fetchError || !existing) return { error: fetchError?.message ?? "Report not found.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null };
+  if (!existing.timer_started_at) {
+    return { error: null, timerStartedAt: null, timeSpentSeconds: existing.time_spent_seconds, firstStartedAt: existing.first_started_at, lastPausedAt: null };
+  }
+  const now = new Date();
+  const elapsed = Math.max(0, Math.floor((now.getTime() - new Date(existing.timer_started_at).getTime()) / 1000));
+  const nowIso = now.toISOString();
+  const { data, error } = await supabase
+    .from("daily_work_logs")
+    .update({ timer_started_at: null, time_spent_seconds: existing.time_spent_seconds + elapsed, last_paused_at: nowIso })
+    .eq("id", id)
+    .eq("employee_id", employee.id)
+    .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at")
+    .single();
+  if (error || !data) return { error: error?.message ?? "Could not pause timer.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null };
+  revalidatePath("/dashboard/attendance");
+  return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at };
 }
