@@ -22,9 +22,9 @@ export type Database = {
           punch_in: string | null;
           punch_out: string | null;
           work_hours: number | null;
-          status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | null;
+          status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-          device_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | null;
+          device_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           device_punch_in: string | null;
           device_punch_out: string | null;
           match_flag: string | null;
@@ -41,9 +41,9 @@ export type Database = {
           punch_in?: string | null;
           punch_out?: string | null;
           work_hours?: number | null;
-          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | null;
+          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | null;
+          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           device_punch_in?: string | null;
           device_punch_out?: string | null;
           match_flag?: string | null;
@@ -60,9 +60,9 @@ export type Database = {
           punch_in?: string | null;
           punch_out?: string | null;
           work_hours?: number | null;
-          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | null;
+          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           source?: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | null;
+          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           device_punch_in?: string | null;
           device_punch_out?: string | null;
           match_flag?: string | null;
@@ -307,6 +307,7 @@ export type Database = {
           logo_url: string | null;
           master_invoice_prefix: string | null;
           created_at: string;
+          weekly_off_days: unknown[];
         };
         Insert: {
           id?: string;
@@ -317,6 +318,7 @@ export type Database = {
           logo_url?: string | null;
           master_invoice_prefix?: string | null;
           created_at?: string;
+          weekly_off_days?: unknown[];
         };
         Update: {
           id?: string;
@@ -327,6 +329,7 @@ export type Database = {
           logo_url?: string | null;
           master_invoice_prefix?: string | null;
           created_at?: string;
+          weekly_off_days?: unknown[];
         };
         Relationships: [
         ];
@@ -556,6 +559,72 @@ export type Database = {
           name?: string;
         };
         Relationships: [
+        ];
+      };
+      daily_work_logs: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          log_date: string;
+          category: string | null;
+          description: string;
+          target_qty: string | null;
+          qty_done: string | null;
+          work_status: string | null;
+          estimated_time: string | null;
+          time_taken: string | null;
+          remark_sku: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          log_date?: string;
+          category?: string | null;
+          description?: string;
+          target_qty?: string | null;
+          qty_done?: string | null;
+          work_status?: string | null;
+          estimated_time?: string | null;
+          time_taken?: string | null;
+          remark_sku?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          log_date?: string;
+          category?: string | null;
+          description?: string;
+          target_qty?: string | null;
+          qty_done?: string | null;
+          work_status?: string | null;
+          estimated_time?: string | null;
+          time_taken?: string | null;
+          remark_sku?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "daily_work_logs_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_work_logs_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
         ];
       };
       debit_notes: {
@@ -1574,6 +1643,51 @@ export type Database = {
           },
         ];
       };
+      employee_salary: {
+        Row: {
+          id: string;
+          employee_id: string;
+          monthly_salary: number;
+          allowed_leaves_per_month: number;
+          effective_from: string;
+          entered_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          monthly_salary: number;
+          allowed_leaves_per_month?: number;
+          effective_from: string;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          monthly_salary?: number;
+          allowed_leaves_per_month?: number;
+          effective_from?: string;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_salary_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_salary_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       employee_store_access: {
         Row: {
           employee_id: string;
@@ -2069,6 +2183,48 @@ export type Database = {
           created_at?: string;
         };
         Relationships: [
+        ];
+      };
+      holidays: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          holiday_date: string;
+          name: string;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          holiday_date: string;
+          name: string;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          holiday_date?: string;
+          name?: string;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "holidays_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "holidays_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
         ];
       };
       hr_letters: {
@@ -4117,7 +4273,7 @@ export type Database = {
     Enums: {
       address_type: "Residential" | "Commercial";
       attendance_source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-      attendance_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late";
+      attendance_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday";
       bank_status: "Pending" | "Realized" | "Partially Realized";
       delivered_status: "Delivered" | "NOT Delivered";
       duty_tax_mode: "CSB-IV" | "CSB-V";
