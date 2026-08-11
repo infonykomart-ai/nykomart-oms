@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { updateInvoiceFields, deleteInvoice } from "../actions";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 import { itemCostForOrder } from "@/lib/invoices/value-breakdown";
-import { isEuDestination, pidSuffixFor } from "@/lib/invoices/pid";
+import {
+  isEuDestination,
+  merchantProductId,
+  nonStandardisedManufacturerProductId,
+  standardisedManufacturerProductId,
+} from "@/lib/invoices/pid";
 
 type Invoice = {
   id: string;
@@ -165,6 +170,20 @@ export function InvoiceView({
   // Driven by the live destinationCountry state so it updates immediately
   // if the destination is edited before printing.
   const showPid = isEuDestination(destinationCountry);
+  // 2026-08-11: "UK EORI NO VAT NO IOSS NO MANDETRY AS PER RULE" / "EUROPE
+  // EORI NO VAT NO IOSS NO MANDETRY AS PER RULE" — surfaced as a visible
+  // reminder rather than a hard block on generating/saving the invoice
+  // (these numbers often aren't known yet at generation time, and every
+  // field on this page stays editable afterward anyway — blocking would
+  // just get in the way of that existing workflow).
+  const destLower = destinationCountry.trim().toLowerCase();
+  const isUkDestination = destLower === "uk" || destLower === "united kingdom";
+  const needsUkEuCustomsIds = (isUkDestination || showPid) && !iossNumber && !vatNumber && !eoriNumber;
+  // 2026-08-11: item table has 9 columns normally, +3 when the PID columns
+  // are shown (EU only) — footer rows (COST/INSURANCE/FREIGHT/TOTAL) span
+  // every column except the last one, so this has to track the real count
+  // rather than a hardcoded colSpan.
+  const itemTableColCount = 9 + (showPid ? 3 : 0);
   const itemDisplayValue = (i: Item): number =>
     isCsbV && invoice.value_percent != null
       ? itemCostForOrder(Number(i.order_value_original || 0), invoice.value_percent)
@@ -279,6 +298,11 @@ export function InvoiceView({
         {/* 2026-08-10: "agar uk & europe ki shipment hai or agar usme
             IOSS, VAT, EORI no vagera aaya hua hai according to destination
             country guideline" — typed in manually, same as IOSS. */}
+        {needsUkEuCustomsIds && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+            UK/EU shipments require VAT, EORI, and/or IOSS numbers per customs rules — none are filled in below.
+          </p>
+        )}
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className={labelClass} htmlFor="ioss">IOSS Number</label>
@@ -635,6 +659,13 @@ export function InvoiceView({
                 <th className="border border-slate-300 px-2 py-1 text-left">Harmonized Tariff Number</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Size</th>
                 <th className="border border-slate-300 px-2 py-1 text-left">Origin</th>
+                {showPid && (
+                  <>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Merchant Product ID</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Non-Standardised Manufacturer Product ID</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Standardised Manufacturer Product ID</th>
+                  </>
+                )}
                 <th className="border border-slate-300 px-2 py-1 text-right">Qty</th>
                 <th className="border border-slate-300 px-2 py-1 text-right">Rate ({displayCurrency})</th>
                 <th className="border border-slate-300 px-2 py-1 text-right">Amount ({displayCurrency})</th>
@@ -660,12 +691,23 @@ export function InvoiceView({
                     <td className="border border-slate-300 px-2 py-1">
                       {i.item_category_name}{i.colour ? ` (${i.colour})` : ""}
                       {i.sku_label && <div className="mt-0.5 text-[9px] text-slate-500">SKU: {i.sku_label}</div>}
-                      {showPid && <div className="mt-0.5 text-[9px] text-slate-500">{pidSuffixFor(i.sku_label)}</div>}
                     </td>
                     <td className="border border-slate-300 px-2 py-1">{i.hsn_code}</td>
                     <td className="border border-slate-300 px-2 py-1">{i.harmonized_tariff_number}</td>
                     <td className="border border-slate-300 px-2 py-1">{i.size_label}</td>
                     <td className="border border-slate-300 px-2 py-1">INDIA</td>
+                    {/* 2026-08-11: "Merchant Product ID Non-Standardised
+                        Manufacturer Product ID Standardised Manufacturer
+                        Product ID COLLOM IN INVOICE" — as their own
+                        columns (was previously a text suffix under the
+                        item description), EU destinations only. */}
+                    {showPid && (
+                      <>
+                        <td className="border border-slate-300 px-2 py-1">{merchantProductId(i.sku_label)}</td>
+                        <td className="border border-slate-300 px-2 py-1">{nonStandardisedManufacturerProductId(i.sku_label)}</td>
+                        <td className="border border-slate-300 px-2 py-1">{standardisedManufacturerProductId()}</td>
+                      </>
+                    )}
                     <td className="border border-slate-300 px-2 py-1 text-right">{i.qty}</td>
                     <td className="border border-slate-300 px-2 py-1 text-right">{rate.toFixed(2)}</td>
                     <td className="border border-slate-300 px-2 py-1 text-right">{value.toFixed(2)}</td>
@@ -675,19 +717,19 @@ export function InvoiceView({
             </tbody>
             <tfoot>
               <tr>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={8}>COST</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={itemTableColCount - 1}>COST</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{itemCostTotal ? Number(itemCostTotal).toFixed(2) : totalValue.toFixed(2)}</td>
               </tr>
               <tr>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={8}>INSURANCE</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={itemTableColCount - 1}>INSURANCE</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{insuranceTotal ? Number(insuranceTotal).toFixed(2) : "—"}</td>
               </tr>
               <tr>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={8}>FREIGHT</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold" colSpan={itemTableColCount - 1}>FREIGHT</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{freightTotal ? Number(freightTotal).toFixed(2) : "—"}</td>
               </tr>
               <tr className="font-semibold">
-                <td className="border border-slate-300 px-2 py-1 text-right" colSpan={8}>TOTAL</td>
+                <td className="border border-slate-300 px-2 py-1 text-right" colSpan={itemTableColCount - 1}>TOTAL</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">
                   {invoiceValueUsd ? Number(invoiceValueUsd).toFixed(2) : totalValue.toFixed(2)} {displayCurrency}
                 </td>
