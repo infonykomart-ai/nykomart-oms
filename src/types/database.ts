@@ -2223,16 +2223,19 @@ export type Database = {
           id: string;
           name: string;
           hsn_code: string | null;
+          harmonized_tariff_number: string | null;
         };
         Insert: {
           id?: string;
           name: string;
           hsn_code?: string | null;
+          harmonized_tariff_number?: string | null;
         };
         Update: {
           id?: string;
           name?: string;
           hsn_code?: string | null;
+          harmonized_tariff_number?: string | null;
         };
         Relationships: [
         ];
