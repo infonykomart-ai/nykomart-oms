@@ -68,10 +68,18 @@ export async function giveAdvance(_prev: FinanceActionState, formData: FormData)
   const amount = Number(formData.get("amount"));
   const dateGiven = String(formData.get("date_given") || "").trim();
   const reason = String(formData.get("reason") || "").trim() || null;
+  // 2026-08-12 (round 9): "10000 advance, 10 mahine me recover karna hai
+  // to har mahine 1000 kate jaye" — optional; NULL keeps the original
+  // fully-manual-amount-each-month behavior.
+  const recoveryMonthsRaw = String(formData.get("recovery_months") || "").trim();
+  const recoveryMonths = recoveryMonthsRaw ? Number(recoveryMonthsRaw) : null;
 
   if (!employeeId) return { error: "Employee is required.", success: false };
   if (!amount || amount <= 0) return { error: "Amount must be a positive number.", success: false };
   if (!dateGiven) return { error: "Date is required.", success: false };
+  if (recoveryMonths !== null && (!Number.isInteger(recoveryMonths) || recoveryMonths <= 0)) {
+    return { error: "Recover Over (months) must be a positive whole number.", success: false };
+  }
 
   // company_id is always derived from the employee row itself, never
   // trusted from the client — matches every other action in this app.
@@ -91,6 +99,7 @@ export async function giveAdvance(_prev: FinanceActionState, formData: FormData)
       amount,
       date_given: dateGiven,
       reason,
+      recovery_months: recoveryMonths,
       given_by_employee_id: admin.id,
     })
     .select("id")
@@ -120,7 +129,8 @@ export async function giveAdvance(_prev: FinanceActionState, formData: FormData)
 
   revalidatePath("/dashboard/salary");
   revalidatePath("/dashboard/admin/employees");
-  return { error: null, success: true, message: `Advance of ₹${amount} recorded for ${emp.name}.` };
+  const scheduleNote = recoveryMonths ? ` — ₹${Math.round((amount / recoveryMonths) * 100) / 100}/month over ${recoveryMonths} months` : "";
+  return { error: null, success: true, message: `Advance of ₹${amount} recorded for ${emp.name}.${scheduleNote}` };
 }
 
 /**

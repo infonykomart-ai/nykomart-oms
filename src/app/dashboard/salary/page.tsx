@@ -68,7 +68,11 @@ export default async function SalaryPage({
     // reference someone since deactivated, and should still show a real
     // name rather than "—".
     supabase.from("employees").select("id, name").eq("company_id", selectedCompanyId),
-    finSupabase.from("employee_advances").select("id, employee_id, amount, date_given, reason, recovered_amount, outstanding_amount").eq("company_id", selectedCompanyId).order("date_given", { ascending: false }),
+    finSupabase
+      .from("employee_advances")
+      .select("id, employee_id, amount, date_given, reason, recovered_amount, outstanding_amount, recovery_months, monthly_installment")
+      .eq("company_id", selectedCompanyId)
+      .order("date_given", { ascending: false }),
     finSupabase.from("salary_payments").select("employee_id, net_paid_amount, payment_date, advance_deduction_amount").eq("company_id", selectedCompanyId).eq("pay_month", monthStart),
     finSupabase
       .from("bill_pass_register")
@@ -137,6 +141,8 @@ export default async function SalaryPage({
     reason: a.reason,
     recovered_amount: Number(a.recovered_amount),
     outstanding_amount: Number(a.outstanding_amount),
+    recovery_months: a.recovery_months,
+    monthly_installment: a.monthly_installment === null ? null : Number(a.monthly_installment),
   }));
 
   // Outstanding advance total PER EMPLOYEE — used for the company-wide
@@ -151,6 +157,13 @@ export default async function SalaryPage({
   // sum as the max let the form accept more than the server would ever
   // actually recover in one payment.
   const oldestOutstandingByEmployee = new Map<string, number>();
+  // 2026-08-12 (round 9): "10 mahine me recover karna hai to har mahine
+  // 1000 kate jaye" — the SAME oldest-outstanding advance's own
+  // monthly_installment (when a recovery schedule was set on it), clamped
+  // to what's actually still outstanding, fed into PayrollRow as the
+  // pre-filled "Deduct from Advance" suggestion. null = no schedule on
+  // that advance, field stays blank/manual exactly as before.
+  const recommendedDeductionByEmployee = new Map<string, number | null>();
   const oldestDateSeenByEmployee = new Map<string, string>();
   for (const a of advanceRowsRaw ?? []) {
     const outstanding = Number(a.outstanding_amount);
@@ -162,6 +175,8 @@ export default async function SalaryPage({
     if (!prevOldestDate || a.date_given < prevOldestDate) {
       oldestDateSeenByEmployee.set(a.employee_id, a.date_given);
       oldestOutstandingByEmployee.set(a.employee_id, outstanding);
+      const installment = a.monthly_installment === null ? null : Number(a.monthly_installment);
+      recommendedDeductionByEmployee.set(a.employee_id, installment === null ? null : Math.min(installment, outstanding));
     }
   }
 
@@ -270,6 +285,7 @@ export default async function SalaryPage({
                   hasSalarySet={!!(salary && deduction)}
                   alreadyPaid={paidByEmployee.get(e.id) ?? null}
                   outstandingAdvance={oldestOutstandingByEmployee.get(e.id) ?? 0}
+                  recommendedAdvanceDeduction={recommendedDeductionByEmployee.get(e.id) ?? null}
                 />
               ))}
               {payroll.length === 0 && (

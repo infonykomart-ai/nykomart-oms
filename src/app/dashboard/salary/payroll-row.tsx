@@ -29,6 +29,7 @@ export function PayrollRow({
   hasSalarySet,
   alreadyPaid,
   outstandingAdvance,
+  recommendedAdvanceDeduction,
 }: {
   employeeId: string;
   employeeName: string;
@@ -45,14 +46,22 @@ export function PayrollRow({
   hasSalarySet: boolean;
   alreadyPaid: { net_paid_amount: number; payment_date: string; advance_deduction_amount: number } | null;
   outstandingAdvance: number;
+  // 2026-08-12 (round 9): "10000 advance, 10 mahine me recover karna hai
+  // to har mahine 1000 kate jaye" — the oldest outstanding advance's own
+  // scheduled monthly installment (clamped to what's left), or null if
+  // that advance has no fixed schedule (fully manual, as before).
+  recommendedAdvanceDeduction: number | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [state, formAction, pending] = useActionState(submitSalaryPayment, initialState);
   // "Confirm Pay ₹X" used to always show the full pre-deduction netPay,
   // never reflecting whatever the admin actually typed into "Deduct from
   // Advance" — this tracks that input live so the button caption matches
-  // what submitSalaryPayment will really pay out.
-  const [advanceInput, setAdvanceInput] = useState(0);
+  // what submitSalaryPayment will really pay out. Pre-seeded with the
+  // recommended scheduled installment (if any), matching the input's own
+  // defaultValue below, so the caption is right even before the admin
+  // touches the field.
+  const [advanceInput, setAdvanceInput] = useState(recommendedAdvanceDeduction ?? 0);
   const previewAdvanceDeduction = Math.min(Math.max(advanceInput, 0), outstandingAdvance);
   const previewNetPay = netPay != null ? Math.max(0, netPay - previewAdvanceDeduction) : null;
 
@@ -112,6 +121,9 @@ export function PayrollRow({
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-500">
                     Deduct from Advance (oldest outstanding advance: ₹{outstandingAdvance})
+                    {recommendedAdvanceDeduction != null && (
+                      <span className="ml-1 text-purple-600">— scheduled installment, editable</span>
+                    )}
                   </label>
                   <input
                     type="number"
@@ -119,6 +131,7 @@ export function PayrollRow({
                     min={0}
                     max={outstandingAdvance}
                     name="advance_deduction_amount"
+                    defaultValue={recommendedAdvanceDeduction ?? undefined}
                     placeholder="0"
                     onChange={(e) => setAdvanceInput(Number(e.target.value) || 0)}
                     className={fieldClass}

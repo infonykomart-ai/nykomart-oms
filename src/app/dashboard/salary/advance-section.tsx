@@ -24,6 +24,8 @@ export type AdvanceRow = {
   reason: string | null;
   recovered_amount: number;
   outstanding_amount: number;
+  recovery_months: number | null;
+  monthly_installment: number | null;
 };
 
 export function AdvanceSection({
@@ -64,6 +66,17 @@ export function AdvanceSection({
             </div>
           </div>
           <div>
+            <label className={labelClass}>Recover Over (months)</label>
+            <input
+              name="recovery_months"
+              type="number"
+              step="1"
+              min="1"
+              placeholder="optional — e.g. 10 for ₹1000/month on a ₹10,000 advance"
+              className={inputClass}
+            />
+          </div>
+          <div>
             <label className={labelClass}>Reason</label>
             <input name="reason" placeholder="optional" className={inputClass} />
           </div>
@@ -98,6 +111,12 @@ export function AdvanceSection({
                   {a.outstanding_amount > 0 ? `₹${a.outstanding_amount} outstanding` : "Cleared"}
                 </span>
               </div>
+              {a.recovery_months != null && a.monthly_installment != null && (
+                <p className="mt-0.5 text-purple-600">
+                  ₹{a.monthly_installment}/month over {a.recovery_months} months
+                  {a.outstanding_amount > 0 && ` — ~${Math.ceil(a.outstanding_amount / a.monthly_installment)} left`}
+                </p>
+              )}
               {a.reason && <p className="mt-0.5 text-slate-500">{a.reason}</p>}
             </div>
           ))}
