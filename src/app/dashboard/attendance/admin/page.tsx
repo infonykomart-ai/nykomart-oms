@@ -1,6 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
-import { todayIST, addDaysToDateStr } from "@/lib/attendance/ist-date";
+import { todayIST, addDaysToDateStr, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories } from "@/lib/attendance/payroll";
 import { formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
 import { EXPECTED_WORK_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected } from "@/lib/attendance/work-hours";
@@ -42,7 +42,12 @@ export default async function AttendanceAdminPage({
   const monthParam = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : today.slice(0, 7);
   const [year, month] = monthParam.split("-").map(Number);
   const monthStart = `${monthParam}-01`;
-  const monthEnd = `${monthParam}-31`;
+  // `${monthParam}-31` is an invalid Postgres date for 5 of 12 months (Apr/
+  // Jun/Sep/Nov have 30 days, Feb has 28/29) — a .lte(..., that invalid
+  // string) silently errors and Supabase returns no rows, quietly making
+  // the team summary/daily-log queries look empty for those months. Same
+  // bug found and fixed this round in salary/actions.ts + salary/page.tsx.
+  const monthEnd = `${monthParam}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
 
   const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }] = await Promise.all([
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
