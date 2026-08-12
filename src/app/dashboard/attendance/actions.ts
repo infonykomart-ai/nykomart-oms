@@ -175,12 +175,20 @@ export async function submitDailyLog(id: string): Promise<SubmitActionResult> {
   const supabase = createServiceRoleClient();
   const { data: existing, error: fetchError } = await supabase
     .from("daily_work_logs")
-    .select("submitted_at")
+    .select("submitted_at, work_status")
     .eq("id", id)
     .eq("employee_id", employee.id)
     .single();
   if (fetchError || !existing) return { error: fetchError?.message ?? "Report not found.", submittedAt: null };
   if (existing.submitted_at) return { error: "This report has already been submitted.", submittedAt: existing.submitted_at };
+  // 2026-08-12 (round 6): "agar report pending hai to update ka option ho,
+  // compleate hai to direct submit" — a final, locking Submit is only
+  // valid once the work itself is marked Completed. Anything else should
+  // go through the (non-finalizing) Update path in upsertDailyLog instead
+  // — enforced server-side, not just by which button the form shows.
+  if (existing.work_status !== "Completed") {
+    return { error: "Mark Work Status as Completed before submitting.", submittedAt: null };
+  }
 
   const nowIso = new Date().toISOString();
   const { data, error } = await supabase
