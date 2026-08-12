@@ -2140,10 +2140,21 @@ CREATE TABLE daily_work_logs (
   -- non-null = currently running; time_spent_seconds accumulates every
   -- past Start->Pause interval; first_started_at/last_paused_at are the
   -- "kitne baje start kiya / kitne baje khatm kiya" display fields.
+  --
+  -- 2026-08-11 (round 4): "daily work vale section se bhi start button ko
+  -- hatane ko bola tha, yaha manual entry ka option rakhna tha" — the
+  -- Start/live-timer UI for THIS table is gone (Tasks keeps its own
+  -- separate timer, unaffected). timer_started_at/first_started_at/
+  -- last_paused_at are left in place but unused going forward.
+  -- time_spent_seconds is now "Time Consumed", entered manually as
+  -- hours*3600 + minutes*60 instead of clocked.
   timer_started_at    timestamptz,
   time_spent_seconds  int NOT NULL DEFAULT 0,
   first_started_at    timestamptz,
   last_paused_at       timestamptz,
+  -- "ESTIMATE TIME ME HOUR OR MINUT KA COLOM HO KITNA ESTIMATE TIME
+  -- LAGGA" — manually entered, stored as total minutes (hours*60 + mins).
+  estimated_time_minutes int,
   -- Next-day auto-carry-over: "agar koi kaam next day ke liye mark kiya hai
   -- to vo agle din automatic Pending me dikh jaye". carried_from_log_id
   -- marks a row as the auto-created copy of a prior day's "Next Day Carry
