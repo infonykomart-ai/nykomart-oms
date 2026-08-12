@@ -1680,6 +1680,8 @@ export type Database = {
           given_by_employee_id: string | null;
           recovered_amount: number;
           outstanding_amount: number | null;
+          recovery_months: number | null;
+          monthly_installment: number | null;
           remark: string | null;
           created_at: string;
         };
@@ -1693,6 +1695,8 @@ export type Database = {
           given_by_employee_id?: string | null;
           recovered_amount?: number;
           outstanding_amount?: number | null;
+          recovery_months?: number | null;
+          monthly_installment?: number | null;
           remark?: string | null;
           created_at?: string;
         };
@@ -1706,6 +1710,8 @@ export type Database = {
           given_by_employee_id?: string | null;
           recovered_amount?: number;
           outstanding_amount?: number | null;
+          recovery_months?: number | null;
+          monthly_installment?: number | null;
           remark?: string | null;
           created_at?: string;
         };
