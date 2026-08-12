@@ -37,6 +37,10 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Punch In / Punch Out." },
   { code: "attendance_admin", label: "Attendance Admin", icon: "🗓️", href: "/dashboard/attendance/admin",
     description: "Import the TeamOffice attendance report, review mismatches." },
+  { code: "leave_management", label: "Leave", icon: "🏖️", href: "/dashboard/leave",
+    description: "Apply for leave with an application, and track its approval status." },
+  { code: "leave_admin", label: "Leave Approvals", icon: "✋", href: "/dashboard/leave/admin",
+    description: "Approve/reject leave requests and assign who covers the absent employee's store work." },
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
   // usko alag se kyu banaya hai" — Tasks / Task Reports no longer have
   // their own sidebar tile or standalone route; the Task Assignment UI now
