@@ -175,11 +175,20 @@ export function DailyReportForm({
     for (const key of Object.keys(draftMap)) {
       const draft = draftMap[key];
       if (draft.logDate !== today || draft.submittedAt) continue;
-      const serverRow = merged.get(draft.id ?? draft.clientId);
+      // A row's clientId is "new_xxx" only until its FIRST save — once it
+      // has a server id, fromServer() re-keys it by that id (see below),
+      // but the localStorage entry for it is still sitting under the old
+      // "new_xxx" key. Resolve to the row's real identity (server id once
+      // it has one, else its own clientId) and both read AND write under
+      // that same resolved key — otherwise a draft saved once, then
+      // refreshed, gets added as a SECOND card sharing one server id
+      // instead of replacing the original.
+      const mapKey = draft.id ?? draft.clientId;
+      const serverRow = merged.get(mapKey);
       if (serverRow?.submittedAt) continue;
       const draftIsNewer = !serverRow || (!serverRow.serverUpdatedAt || draft.savedLocallyAt > new Date(serverRow.serverUpdatedAt).getTime());
       if (draftIsNewer) {
-        merged.set(draft.clientId, { ...draft });
+        merged.set(mapKey, { ...draft, clientId: mapKey });
       }
     }
     const result = Array.from(merged.values());
@@ -417,14 +426,31 @@ export function DailyReportForm({
                   onChangeMinutes={(v) => updateRow(row.clientId, { consumedMinutes: v })}
                   onBlur={() => saveRow(row.clientId)}
                 />
-                <button
-                  type="button"
-                  disabled={submitPendingIds.has(row.clientId) || !row.description.trim()}
-                  onClick={() => handleSubmit(row.clientId)}
-                  className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  ✔ Submit Report
-                </button>
+                {/* 2026-08-12 (round 6): "agar report pending hai to update
+                    ka option karne ka option aaye, compleate hai to direct
+                    submit" — a finalizing "Submit Report" (locks the row)
+                    only once Work Status is Completed; otherwise a plain
+                    "Update" that just saves, same as auto-save but on
+                    demand and with visible confirmation. */}
+                {row.workStatus === "Completed" ? (
+                  <button
+                    type="button"
+                    disabled={submitPendingIds.has(row.clientId) || !row.description.trim()}
+                    onClick={() => handleSubmit(row.clientId)}
+                    className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    ✔ Submit Report
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={savingIds.has(row.clientId) || !row.description.trim()}
+                    onClick={() => saveRow(row.clientId)}
+                    className="ml-auto rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    💾 {savingIds.has(row.clientId) ? "Updating..." : "Update"}
+                  </button>
+                )}
               </div>
             </div>
 
