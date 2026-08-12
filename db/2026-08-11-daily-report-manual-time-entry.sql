@@ -1,0 +1,20 @@
+-- 2026-08-11 (round 4): "DAILY WORK VALE SECTION SE BHI START BUTTON KO
+-- HATANE KO BOLA THA YAHA MANUAL ENTRY KA OPTION RAKHNA THA ESTIMATE TIME
+-- ME HOUR OR MINUT KA COLOM HO KITNA ESTIMATE TIME LAGGA DUSRA OPTION
+-- RAKHNA THA KI KITNA TIME CONSUME KIYA HOUR & MINUT" — the Daily Work
+-- Report's Time Watch (▶ Start button + live running timer) is removed
+-- entirely. Replaced with two manual entry fields, both Hours + Minutes:
+--   - Estimated Time — how long the task is expected to take.
+--   - Time Consumed — how long it actually took.
+-- No more automatic clock for this table at all.
+--
+-- estimated_time_minutes is new. "Time Consumed" reuses the existing
+-- time_spent_seconds column — previously computed by the Start/Submit
+-- timer, now entered directly as hours*3600 + minutes*60 — so no schema
+-- change is needed for that half.
+--
+-- timer_started_at / first_started_at / last_paused_at are left in place
+-- on daily_work_logs (harmless, unused going forward for this table) —
+-- the Tasks table has its own separate Start/Pause/Done timer columns
+-- and is completely unaffected by this change.
+ALTER TABLE daily_work_logs ADD COLUMN IF NOT EXISTS estimated_time_minutes int;
