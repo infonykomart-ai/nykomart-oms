@@ -9,7 +9,13 @@
 // jaye" means a row shows here the moment it's submitted, not while it's
 // still a draft. Timestamp badge switched from updated_at (last edit) to
 // submitted_at (when it was actually finalized).
-import { formatISTTime, formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
+//
+// 2026-08-11 (round 4): "estimate time me hour or minut ka colom ho ...
+// kitna time consume kiya hour & minut" — the Start/Pause timer for this
+// table is gone entirely, so the "Time" badge here is now a plain
+// formatDuration(time_spent_seconds) (manually entered "Time Consumed"),
+// no more live-elapsed timer math.
+import { formatISTTime, formatDuration } from "@/lib/attendance/timer";
 
 type ServerLog = {
   id: string;
@@ -18,7 +24,6 @@ type ServerLog = {
   description: string | null;
   work_status: string | null;
   updated_at: string;
-  timer_started_at: string | null;
   time_spent_seconds: number;
   carried_from_log_id: string | null;
   submitted_at: string | null;
@@ -32,7 +37,6 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export function RecentReportsList({ logs }: { logs: ServerLog[] }) {
-  const nowMs = new Date().getTime();
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <h2 className="mb-3 text-sm font-semibold text-slate-700">📋 My Recent Reports — Today</h2>
@@ -44,9 +48,7 @@ export function RecentReportsList({ logs }: { logs: ServerLog[] }) {
             <span className="font-medium text-slate-800">{l.category ?? "—"}</span>
             <span className="flex-1 truncate text-slate-600">{l.description || "—"}</span>
             {l.carried_from_log_id && <span className="rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">Carried</span>}
-            <span className="text-slate-400">
-              {formatDuration(liveElapsedSeconds({ timeSpentSeconds: l.time_spent_seconds, timerStartedAt: l.timer_started_at }, nowMs))}
-            </span>
+            <span className="text-slate-400">{formatDuration(l.time_spent_seconds)}</span>
             <span className={`rounded-full px-2 py-0.5 font-medium ${STATUS_BADGE[l.work_status ?? ""] ?? "bg-slate-100 text-slate-500"}`}>
               {l.work_status ?? "—"}
             </span>
