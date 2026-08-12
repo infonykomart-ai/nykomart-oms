@@ -2184,6 +2184,18 @@ CREATE TABLE employee_advances (
   -- transactionally alongside each salary payment that recovers part of it.
   recovered_amount      numeric(14,2) NOT NULL DEFAULT 0,
   outstanding_amount    numeric(14,2) GENERATED ALWAYS AS (amount - recovered_amount) STORED,
+  -- 2026-08-12 (round 9): optional recovery schedule — "10000 advance,
+  -- 10 mahine me recover karna hai to har mahine 1000 kate jaye". NULL =
+  -- no schedule, fully manual amount typed each month (the original
+  -- behavior). monthly_installment is GENERATED so it can never drift
+  -- from amount/recovery_months.
+  recovery_months       int CHECK (recovery_months IS NULL OR recovery_months > 0),
+  monthly_installment   numeric(14,2) GENERATED ALWAYS AS (
+                           CASE WHEN recovery_months IS NOT NULL AND recovery_months > 0
+                             THEN ROUND(amount / recovery_months, 2)
+                             ELSE NULL
+                           END
+                         ) STORED,
   remark                text,
   created_at            timestamptz NOT NULL DEFAULT now()
 );
