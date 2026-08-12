@@ -8,7 +8,8 @@
 // real roles/capabilities/role_capabilities join — see db/schema.sql — so
 // granting a role a new capability is a data change, not a redeploy.
 import { cookies } from "next/headers";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { todayIST } from "@/lib/attendance/ist-date";
 
 export class UnauthorizedError extends Error {
   constructor(message = "Not signed in.") {
@@ -75,7 +76,22 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     throw new UnauthorizedError("No active employee record for this account.");
   }
 
-  const [{ data: role }, { data: caps }, { data: access }, { data: storeAccess }] = await Promise.all([
+  const today = todayIST();
+  // 2026-08-12 (round 8): "MD ADMIN KE APPROVE KARTE HI HO JAYE" — a Leave
+  // Coverage assignment (leave_coverage_assignments — see
+  // db/2026-08-12-leave-requests-coverage.sql) grants the covering
+  // employee TEMPORARY access to a store, computed fresh on every request
+  // rather than by writing/deleting rows elsewhere: any row here where
+  // today falls within [from_date, to_date] is active right now. This is
+  // what makes the grant start the instant MD/Admin saves the assignment
+  // and end automatically after to_date, with no cleanup job. Read via the
+  // service-role client — same RLS-vs-service-role reasoning as every
+  // other brand-new table this project (this query runs on literally every
+  // page load, so it must never silently return empty because of a
+  // missing RLS policy on a table that legitimately has rows).
+  const finSupabase = createServiceRoleClient();
+
+  const [{ data: role }, { data: caps }, { data: access }, { data: storeAccess }, { data: coverage }] = await Promise.all([
     supabase.from("roles").select("name").eq("id", employee.role_id).single(),
     supabase.from("role_capabilities").select("capability_code").eq("role_id", employee.role_id),
     supabase.from("employee_company_access").select("company_id").eq("employee_id", employee.id),
@@ -85,12 +101,31 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     // db/schema.sql. Empty on purpose for most logins (Finance/MD/Admin/
     // Higher Authority bypass this via ad_spend_report_all instead).
     supabase.from("employee_store_access").select("store_id").eq("employee_id", employee.id),
+    finSupabase
+      .from("leave_coverage_assignments")
+      .select("store_id")
+      .eq("covering_employee_id", employee.id)
+      .lte("from_date", today)
+      .gte("to_date", today),
   ]);
 
+  const coverageStoreIds = Array.from(new Set((coverage ?? []).map((c) => c.store_id)));
+  // The store list (ad-spend/page.tsx) is fetched `.in("company_id",
+  // employee.companyIds)` BEFORE it's ever filtered down to storeIds — so a
+  // covering employee also needs the covered store's own COMPANY unioned
+  // in for the duration, or the store would never even appear to filter
+  // down to. Only one extra query, and only when there's active coverage.
+  const coverageCompanyIds =
+    coverageStoreIds.length > 0
+      ? ((await finSupabase.from("stores").select("company_id").in("id", coverageStoreIds)).data ?? []).map(
+          (s) => s.company_id
+        )
+      : [];
+
   const companyIds = Array.from(
-    new Set([employee.company_id, ...(access ?? []).map((a) => a.company_id)])
+    new Set([employee.company_id, ...(access ?? []).map((a) => a.company_id), ...coverageCompanyIds])
   );
-  const storeIds = (storeAccess ?? []).map((a) => a.store_id);
+  const storeIds = Array.from(new Set([...(storeAccess ?? []).map((a) => a.store_id), ...coverageStoreIds]));
 
   const cookieStore = await cookies();
   const requested = cookieStore.get(CURRENT_COMPANY_COOKIE)?.value;
