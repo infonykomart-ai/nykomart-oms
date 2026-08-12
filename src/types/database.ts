@@ -2525,6 +2525,141 @@ export type Database = {
         Relationships: [
         ];
       };
+      leave_coverage_assignments: {
+        Row: {
+          id: string;
+          leave_request_id: string;
+          covering_employee_id: string;
+          store_id: string;
+          from_date: string;
+          to_date: string;
+          assigned_by_employee_id: string;
+          assigned_at: string;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          leave_request_id: string;
+          covering_employee_id: string;
+          store_id: string;
+          from_date: string;
+          to_date: string;
+          assigned_by_employee_id: string;
+          assigned_at?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          leave_request_id?: string;
+          covering_employee_id?: string;
+          store_id?: string;
+          from_date?: string;
+          to_date?: string;
+          assigned_by_employee_id?: string;
+          assigned_at?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_coverage_assignments_leave_request_id_fkey";
+            columns: ["leave_request_id"];
+            isOneToOne: false;
+            referencedRelation: "leave_requests";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_coverage_assignments_covering_employee_id_fkey";
+            columns: ["covering_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_coverage_assignments_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_coverage_assignments_assigned_by_employee_id_fkey";
+            columns: ["assigned_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      leave_requests: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          from_date: string;
+          to_date: string;
+          reason: string;
+          status: "Pending" | "Approved" | "Rejected";
+          requested_at: string;
+          decided_by_employee_id: string | null;
+          decided_at: string | null;
+          decision_remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          from_date: string;
+          to_date: string;
+          reason: string;
+          status?: "Pending" | "Approved" | "Rejected";
+          requested_at?: string;
+          decided_by_employee_id?: string | null;
+          decided_at?: string | null;
+          decision_remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          from_date?: string;
+          to_date?: string;
+          reason?: string;
+          status?: "Pending" | "Approved" | "Rejected";
+          requested_at?: string;
+          decided_by_employee_id?: string | null;
+          decided_at?: string | null;
+          decision_remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_requests_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_decided_by_employee_id_fkey";
+            columns: ["decided_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       marketplace_credentials: {
         Row: {
           id: string;
@@ -2920,6 +3055,10 @@ export type Database = {
           email: string | null;
           gst: string | null;
           remark: string | null;
+          bank_name: string | null;
+          account_no: string | null;
+          ifsc_code: string | null;
+          account_holder_name: string | null;
           created_at: string;
         };
         Insert: {
@@ -2933,6 +3072,10 @@ export type Database = {
           email?: string | null;
           gst?: string | null;
           remark?: string | null;
+          bank_name?: string | null;
+          account_no?: string | null;
+          ifsc_code?: string | null;
+          account_holder_name?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2946,6 +3089,10 @@ export type Database = {
           email?: string | null;
           gst?: string | null;
           remark?: string | null;
+          bank_name?: string | null;
+          account_no?: string | null;
+          ifsc_code?: string | null;
+          account_holder_name?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -4572,6 +4719,7 @@ export type Database = {
       employee_gender: "Male" | "Female";
       employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
+      leave_request_status: "Pending" | "Approved" | "Rejected";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
