@@ -5,10 +5,18 @@
 // matching the screenshots given this round. "TASK KOI BHI KISI KO ASSIGN
 // KAR DE" — any employee with task_management (every role — see
 // db/schema.sql's role_capabilities seed) can assign a task to any other
-// employee they share company access with. Only the ASSIGNEE controls
-// their own task's Start/Pause timer and status — matches the legacy
-// tool's own per-person timer ownership (you can't run someone else's
-// stopwatch for them).
+// active employee. Only the ASSIGNEE controls their own task's
+// Start/Pause timer and status — matches the legacy tool's own
+// per-person timer ownership (you can't run someone else's stopwatch for
+// them).
+//
+// 2026-08-11 (round 4): "ORDER ENTRY VALA ADMIN KO BHI ASSIGN KAR SAKTA
+// HAI MD KO BHI FINANCE KO BHI, MATLAB KOI BHI KISI KO ASSIGN KAR SAKTA
+// HAI PHIR COMPANY CHAHE KOI BHI HO" — removed the earlier
+// company-access restriction entirely (both the assign form's employee
+// dropdown and this server-side re-check). Any employee, in any of the 3
+// companies, can now assign a task to any other active employee,
+// regardless of which company either of them belongs to.
 //
 // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
 // usko alag se kyu banaya hai" — this UI now renders on
@@ -42,17 +50,20 @@ export async function assignTask(_prev: SimpleActionState, formData: FormData): 
   if (!assignedToEmployeeId) return { error: "Choose who this task is for.", success: false };
   if (!description) return { error: "Description is required.", success: false };
 
-  // Server re-check: the target employee must actually be someone this
-  // login can see (same company-access scope as the assign form's own
-  // dropdown) — never trust a client-supplied employee id blindly.
+  // 2026-08-11 (round 4): "KOI BHI KISI KO ASSIGN KAR SAKTA HAI PHIR
+  // COMPANY CHAHE KOI BHI HO" — task assignment is explicitly NOT scoped
+  // to the assigner's own company access. Order Entry can assign to
+  // Admin, MD, Finance — anyone, in any of the 3 companies. The only
+  // real check left is that the target is a real, active employee — never
+  // trust a client-supplied employee id blindly, but don't gate it on
+  // company access anymore (that was the old, too-narrow behavior).
   const { data: target } = await supabase
     .from("employees")
     .select("id, company_id")
     .eq("id", assignedToEmployeeId)
-    .in("company_id", employee.companyIds)
     .eq("active", true)
     .maybeSingle();
-  if (!target) return { error: "That employee isn't in a company you have access to.", success: false };
+  if (!target) return { error: "That employee wasn't found or isn't active.", success: false };
 
   const deadline = String(formData.get("deadline") || "");
   const { error } = await supabase.from("tasks").insert({
