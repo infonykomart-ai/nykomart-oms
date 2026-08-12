@@ -63,6 +63,12 @@ export type DailyLogInput = {
   qtyDone: string;
   workStatus: string;
   remarkSku: string;
+  // 2026-08-11 (round 4): "estimate time me hour or minut ka colom ho
+  // kitna estimate time laga, dusra option rakhna tha ki kitna time
+  // consume kiya hour & minut" — both manually entered as total minutes
+  // (the form combines its Hour + Minute inputs before calling this).
+  estimatedTimeMinutes: string; // "" = not set
+  timeSpentMinutes: string; // "" = 0
 };
 
 /**
@@ -87,6 +93,8 @@ export async function upsertDailyLog(input: DailyLogInput): Promise<{ error: str
     qty_done: input.qtyDone || null,
     work_status: input.workStatus || null,
     remark_sku: input.remarkSku || null,
+    estimated_time_minutes: input.estimatedTimeMinutes ? Math.max(0, parseInt(input.estimatedTimeMinutes, 10) || 0) : null,
+    time_spent_seconds: input.timeSpentMinutes ? Math.max(0, parseInt(input.timeSpentMinutes, 10) || 0) * 60 : 0,
     updated_at: new Date().toISOString(),
   };
 
@@ -137,105 +145,54 @@ export async function deleteDailyLog(id: string): Promise<SimpleActionState> {
 // replacing the old free-text Estimated Time field.
 //
 // 2026-08-11 (round 3): "start & pause button ko remove karo or sirf
-// start time ka option ho kitne baje compleate hua ka option ho submit
-// report ka option ho subit karte hi khud ke kaam me add ho jaye or md
-// admin ke page par show ho jaye" — simplified from Start/Pause toggling
-// into Start once + Submit once. startReportTimer is unchanged; the old
-// pauseReportTimer is replaced by submitDailyLog, which does the same
-// stop-the-clock elapsed-time math AND marks the row `submitted_at` —
-// the moment a row actually counts as a real report (My Recent Reports
-// and the Admin/MD Team Daily Work Log view both filter on this).
+// start time ka option ho ... submit report ka option ho" — simplified
+// from Start/Pause toggling into Start once + Submit once.
+//
+// 2026-08-11 (round 4): "daily work vale section se bhi start button ko
+// hatane ko bola tha yaha manual entry ka option rakhna tha" — the Start
+// button (and the live timer entirely) is now gone for this table.
+// startReportTimer no longer exists. submitDailyLog is now just a plain
+// finalize step (Estimated Time / Time Consumed are both saved by
+// upsertDailyLog like any other field, since they're manual inputs, not
+// a clock) — it only sets `submitted_at`.
 // ============================================================================
 
-type TimerActionResult = {
-  error: string | null;
-  timerStartedAt: string | null;
-  timeSpentSeconds: number;
-  firstStartedAt: string | null;
-  lastPausedAt: string | null;
-};
-
-type SubmitActionResult = TimerActionResult & { submittedAt: string | null };
-
-export async function startReportTimer(id: string): Promise<TimerActionResult> {
-  const employee = await getAuthedEmployee();
-  const supabase = createServiceRoleClient();
-  const { data: existing, error: fetchError } = await supabase
-    .from("daily_work_logs")
-    .select("first_started_at, time_spent_seconds, timer_started_at, submitted_at")
-    .eq("id", id)
-    .eq("employee_id", employee.id)
-    .single();
-  if (fetchError || !existing) return { error: fetchError?.message ?? "Report not found.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null };
-  // 2026-08-11 (round 3 review fix): a submitted row is finalized — never
-  // let its timer be restarted (same guard upsertDailyLog/deleteDailyLog
-  // already have). Without this, a stale tab open on an already-submitted
-  // row could silently set timer_started_at on a "done" report.
-  if (existing.submitted_at) return { error: "This report has already been submitted and can't be edited.", timerStartedAt: null, timeSpentSeconds: existing.time_spent_seconds, firstStartedAt: existing.first_started_at, lastPausedAt: null };
-  if (existing.timer_started_at) {
-    // Already running — nothing to do, just report current state.
-    return { error: null, timerStartedAt: existing.timer_started_at, timeSpentSeconds: existing.time_spent_seconds, firstStartedAt: existing.first_started_at, lastPausedAt: null };
-  }
-  const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("daily_work_logs")
-    .update({ timer_started_at: now, first_started_at: existing.first_started_at ?? now })
-    .eq("id", id)
-    .eq("employee_id", employee.id)
-    .is("submitted_at", null)
-    .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at")
-    .single();
-  if (error || !data) return { error: error?.message ?? "This report has already been submitted and can't be edited.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null };
-  revalidatePath("/dashboard/attendance");
-  return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at };
-}
+type SubmitActionResult = { error: string | null; submittedAt: string | null };
 
 /**
- * ✔ Submit Report — stops the clock (same elapsed-time math the old Pause
- * did) and marks the row `submitted_at`, finalizing it. This is the
- * moment a row becomes a real report: it starts showing in "My Recent
+ * ✔ Submit Report — marks the row `submitted_at`, finalizing it. This is
+ * the moment a row becomes a real report: it starts showing in "My Recent
  * Reports" and on the Admin/MD Team Daily Work Log view (both filter on
  * submitted_at IS NOT NULL), and the form renders it read-only afterward
  * — same "server re-check, only touch your own rows" scoping as every
- * other action in this file.
+ * other action in this file. Idempotency guard: a stale tab, a
+ * double-click, or a race with another submit for the same row must
+ * never silently re-finalize (and re-timestamp) an already-submitted
+ * report.
  */
 export async function submitDailyLog(id: string): Promise<SubmitActionResult> {
   const employee = await getAuthedEmployee();
   const supabase = createServiceRoleClient();
   const { data: existing, error: fetchError } = await supabase
     .from("daily_work_logs")
-    .select("timer_started_at, time_spent_seconds, first_started_at, submitted_at")
+    .select("submitted_at")
     .eq("id", id)
     .eq("employee_id", employee.id)
     .single();
-  if (fetchError || !existing) return { error: fetchError?.message ?? "Report not found.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null, submittedAt: null };
-  // 2026-08-11 (round 3 review fix): idempotency / no-double-submit guard —
-  // a stale tab, a double-click, or a race with another submit for the
-  // same row must never silently re-finalize (and re-timestamp) an
-  // already-submitted report.
-  if (existing.submitted_at) return { error: "This report has already been submitted.", timerStartedAt: null, timeSpentSeconds: existing.time_spent_seconds, firstStartedAt: existing.first_started_at, lastPausedAt: null, submittedAt: existing.submitted_at };
+  if (fetchError || !existing) return { error: fetchError?.message ?? "Report not found.", submittedAt: null };
+  if (existing.submitted_at) return { error: "This report has already been submitted.", submittedAt: existing.submitted_at };
 
-  const now = new Date();
-  const nowIso = now.toISOString();
-  const elapsed = existing.timer_started_at
-    ? Math.max(0, Math.floor((now.getTime() - new Date(existing.timer_started_at).getTime()) / 1000))
-    : 0;
-
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from("daily_work_logs")
-    .update({
-      timer_started_at: null,
-      time_spent_seconds: existing.time_spent_seconds + elapsed,
-      last_paused_at: nowIso, // doubles as "Completed At" now that Pause/Resume no longer exists
-      submitted_at: nowIso,
-    })
+    .update({ submitted_at: nowIso })
     .eq("id", id)
     .eq("employee_id", employee.id)
     .is("submitted_at", null) // defense in depth against a concurrent double-submit racing the check above
-    .select("timer_started_at, time_spent_seconds, first_started_at, last_paused_at, submitted_at")
+    .select("submitted_at")
     .single();
-  if (error || !data) return { error: error?.message ?? "This report has already been submitted.", timerStartedAt: null, timeSpentSeconds: 0, firstStartedAt: null, lastPausedAt: null, submittedAt: null };
+  if (error || !data) return { error: error?.message ?? "This report has already been submitted.", submittedAt: null };
   revalidatePath("/dashboard/attendance");
   revalidatePath("/dashboard/attendance/admin");
-  return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at, submittedAt: data.submitted_at };
+  return { error: null, submittedAt: data.submitted_at };
 }
