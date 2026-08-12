@@ -1,5 +1,5 @@
 import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories } from "@/lib/attendance/payroll";
 import { formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
@@ -86,8 +86,14 @@ export default async function AttendanceAdminPage({
   let liveNow: { id: string; description: string; timer_started_at: string | null; time_spent_seconds: number; assigned_to_employee_id: string; company_id: string }[] = [];
 
   if (hasTaskAdmin) {
+    // 2026-08-11 (round 5): same root cause as attendance/page.tsx — reads
+    // against `tasks` must use the service-role client, not the anon
+    // session client, because RLS may not have a working policy on this
+    // (newer) table yet. Safe here too: already gated on hasTaskAdmin,
+    // and each query keeps its own explicit company scoping.
+    const taskSupabase = createServiceRoleClient();
     const [{ data: tasksData }, { data: liveNowData }] = await Promise.all([
-      supabase
+      taskSupabase
         .from("tasks")
         .select("id, website, category, priority, deadline, status, description, created_at, timer_started_at, time_spent_seconds, assigned_by_employee_id, assigned_to_employee_id")
         .eq("company_id", selectedCompanyId)
@@ -95,7 +101,7 @@ export default async function AttendanceAdminPage({
         .limit(200),
       // Live Now — across every company this login can see, not just the
       // selected one, so a company switch never hides someone who's mid-task.
-      supabase
+      taskSupabase
         .from("tasks")
         .select("id, description, timer_started_at, time_spent_seconds, assigned_to_employee_id, company_id")
         .in("company_id", employee.companyIds)
