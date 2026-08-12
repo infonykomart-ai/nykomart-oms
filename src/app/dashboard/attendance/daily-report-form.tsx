@@ -22,19 +22,20 @@
 // free-text Estimated Time field.
 //
 // 2026-08-11 (round 3): "start & pause button ko remove karo or sirf
-// start time ka option ho kitne baje compleate hua ka option ho submit
-// report ka option ho subit karte hi khud ke kaam me add ho jaye or md
-// admin ke page par show ho jaye" — Start/Pause toggling is gone. Now:
-// ▶ Start (once, optional) + ✔ Submit Report (once, records the
-// completion time AND finalizes the row in the same click). A row is a
-// DRAFT (still auto-saving/refresh-safe as before, editable) until
-// submitted; after that it renders read-only here and starts showing in
-// "My Recent Reports" and the Admin/MD Team Daily Work Log — both now
-// filter on submitted_at IS NOT NULL (see recent-reports-list.tsx and
-// attendance/admin/page.tsx).
+// start time ka option ho ... submit report ka option ho" — Start/Pause
+// toggling replaced with Start once + Submit once.
+//
+// 2026-08-11 (round 4): "daily work vale section se bhi start button ko
+// hatane ko bola tha yaha manual entry ka option rakhna tha, estimate
+// time me hour or minut ka colom ho kitna estimate time laga, dusra
+// option rakhna tha ki kitna time consume kiya hour & minut" — the
+// automatic Start button + live timer is gone entirely for this table.
+// Replaced with two manual Hours + Minutes entry pairs: Estimated Time
+// (how long the work is expected to take) and Time Consumed (how long it
+// actually took). ✔ Submit Report still finalizes the row the same way.
 import { useEffect, useRef, useState } from "react";
-import { upsertDailyLog, deleteDailyLog, startReportTimer, submitDailyLog } from "./actions";
-import { liveElapsedSeconds, formatDuration, formatISTTime } from "@/lib/attendance/timer";
+import { upsertDailyLog, deleteDailyLog, submitDailyLog } from "./actions";
+import { formatDuration, formatISTTime } from "@/lib/attendance/timer";
 
 const CATEGORIES = [
   "Technical Work", "Tracking Update & Check", "Inventory Management", "Product Photography",
@@ -56,10 +57,12 @@ type LogRow = {
   workStatus: string;
   remarkSku: string;
   serverUpdatedAt: string | null;
-  timerStartedAt: string | null;
-  timeSpentSeconds: number;
-  firstStartedAt: string | null;
-  lastPausedAt: string | null;
+  // Manual Hour/Minute entry pairs — kept as separate string fields so an
+  // empty box doesn't get coerced to "0" while the person is still typing.
+  estimatedHours: string;
+  estimatedMinutes: string;
+  consumedHours: string;
+  consumedMinutes: string;
   carriedFromLogId: string | null;
   submittedAt: string | null;
 };
@@ -74,15 +77,21 @@ type ServerLog = {
   work_status: string | null;
   remark_sku: string | null;
   updated_at: string;
-  timer_started_at: string | null;
   time_spent_seconds: number;
-  first_started_at: string | null;
-  last_paused_at: string | null;
+  estimated_time_minutes: number | null;
   carried_from_log_id: string | null;
   submitted_at: string | null;
 };
 
+function splitHM(totalMinutes: number): { h: string; m: string } {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return { h: h ? String(h) : "", m: m ? String(m) : "" };
+}
+
 function fromServer(l: ServerLog): LogRow {
+  const consumed = splitHM(Math.round((l.time_spent_seconds ?? 0) / 60));
+  const estimated = splitHM(l.estimated_time_minutes ?? 0);
   return {
     clientId: l.id,
     id: l.id,
@@ -94,10 +103,10 @@ function fromServer(l: ServerLog): LogRow {
     workStatus: l.work_status ?? "In Progress",
     remarkSku: l.remark_sku ?? "",
     serverUpdatedAt: l.updated_at,
-    timerStartedAt: l.timer_started_at,
-    timeSpentSeconds: l.time_spent_seconds ?? 0,
-    firstStartedAt: l.first_started_at,
-    lastPausedAt: l.last_paused_at,
+    estimatedHours: estimated.h,
+    estimatedMinutes: estimated.m,
+    consumedHours: consumed.h,
+    consumedMinutes: consumed.m,
     carriedFromLogId: l.carried_from_log_id,
     submittedAt: l.submitted_at,
   };
@@ -115,13 +124,17 @@ function blankRow(today: string): LogRow {
     workStatus: "In Progress",
     remarkSku: "",
     serverUpdatedAt: null,
-    timerStartedAt: null,
-    timeSpentSeconds: 0,
-    firstStartedAt: null,
-    lastPausedAt: null,
+    estimatedHours: "",
+    estimatedMinutes: "",
+    consumedHours: "",
+    consumedMinutes: "",
     carriedFromLogId: null,
     submittedAt: null,
   };
+}
+
+function hmToMinutes(h: string, m: string): number {
+  return Math.max(0, parseInt(h, 10) || 0) * 60 + Math.max(0, Math.min(59, parseInt(m, 10) || 0));
 }
 
 function loadDraftMap(): Record<string, LogRow & { savedLocallyAt: number }> {
@@ -174,10 +187,10 @@ export function DailyReportForm({
   });
 
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
-  const [timerPendingIds, setTimerPendingIds] = useState<Set<string>>(new Set());
-  // 2026-08-11 (round 3 review fix): surface a failed save/start/submit
-  // instead of silently discarding it — e.g. a save that lost a race
-  // against submitDailyLog and got rejected by the server-side
+  const [submitPendingIds, setSubmitPendingIds] = useState<Set<string>>(new Set());
+  // 2026-08-11 (round 3 review fix): surface a failed save/submit instead
+  // of silently discarding it — e.g. a save that lost a race against
+  // submitDailyLog and got rejected by the server-side
   // .is("submitted_at", null) guard.
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -197,16 +210,6 @@ export function DailyReportForm({
     persistDraftMap(map);
   }, [rows]);
 
-  // Tick every second while any DRAFT row's timer is running, so the
-  // elapsed display advances live without needing a server round-trip.
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const anyRunning = rows.some((r) => r.timerStartedAt && !r.submittedAt);
-  useEffect(() => {
-    if (!anyRunning) return;
-    const interval = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, [anyRunning]);
-
   function updateRow(clientId: string, patch: Partial<LogRow>) {
     setRows((prev) => prev.map((r) => (r.clientId === clientId ? { ...r, ...patch } : r)));
     scheduleSave(clientId);
@@ -225,6 +228,8 @@ export function DailyReportForm({
       delete debounceTimers.current[clientId];
     }
     setSavingIds((prev) => new Set(prev).add(clientId));
+    const estimatedTotal = hmToMinutes(row.estimatedHours, row.estimatedMinutes);
+    const consumedTotal = hmToMinutes(row.consumedHours, row.consumedMinutes);
     const result = await upsertDailyLog({
       id: row.id ?? undefined,
       logDate: row.logDate,
@@ -234,6 +239,8 @@ export function DailyReportForm({
       qtyDone: row.qtyDone,
       workStatus: row.workStatus,
       remarkSku: row.remarkSku,
+      estimatedTimeMinutes: estimatedTotal ? String(estimatedTotal) : "",
+      timeSpentMinutes: consumedTotal ? String(consumedTotal) : "",
     });
     setSavingIds((prev) => {
       const next = new Set(prev);
@@ -266,36 +273,6 @@ export function DailyReportForm({
     if (row?.id) await deleteDailyLog(row.id);
   }
 
-  async function handleStart(clientId: string) {
-    let id = rowsRef.current.find((r) => r.clientId === clientId)?.id ?? null;
-    if (!id) id = await saveRow(clientId); // timer needs a saved row — save first if this is a brand-new row
-    if (!id) return; // still nothing to save (empty description) — Start is a no-op
-    setTimerPendingIds((prev) => new Set(prev).add(clientId));
-    const result = await startReportTimer(id);
-    setTimerPendingIds((prev) => {
-      const next = new Set(prev);
-      next.delete(clientId);
-      return next;
-    });
-    if (!result.error) {
-      setRows((prev) =>
-        prev.map((r) =>
-          r.clientId === clientId
-            ? { ...r, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, firstStartedAt: result.firstStartedAt }
-            : r
-        )
-      );
-      setRowErrors((prev) => {
-        if (!(clientId in prev)) return prev;
-        const next = { ...prev };
-        delete next[clientId];
-        return next;
-      });
-    } else {
-      setRowErrors((prev) => ({ ...prev, [clientId]: result.error as string }));
-    }
-  }
-
   async function handleSubmit(clientId: string) {
     // 2026-08-11 (round 3 review fix): always flush any pending
     // (debounced or blur-triggered) edit first, whether or not this row
@@ -304,26 +281,16 @@ export function DailyReportForm({
     // with a stale value.
     const id = await saveRow(clientId);
     if (!id) return; // nothing to submit yet (empty description)
-    setTimerPendingIds((prev) => new Set(prev).add(clientId));
+    setSubmitPendingIds((prev) => new Set(prev).add(clientId));
     const result = await submitDailyLog(id);
-    setTimerPendingIds((prev) => {
+    setSubmitPendingIds((prev) => {
       const next = new Set(prev);
       next.delete(clientId);
       return next;
     });
     if (!result.error) {
       setRows((prev) =>
-        prev.map((r) =>
-          r.clientId === clientId
-            ? {
-                ...r,
-                timerStartedAt: result.timerStartedAt,
-                timeSpentSeconds: result.timeSpentSeconds,
-                lastPausedAt: result.lastPausedAt,
-                submittedAt: result.submittedAt,
-              }
-            : r
-        )
+        prev.map((r) => (r.clientId === clientId ? { ...r, submittedAt: result.submittedAt } : r))
       );
       setRowErrors((prev) => {
         if (!(clientId in prev)) return prev;
@@ -355,9 +322,8 @@ export function DailyReportForm({
               <div><span className="text-slate-400">Qty Done:</span> {row.qtyDone || "—"}</div>
               <div><span className="text-slate-400">Status:</span> {row.workStatus}</div>
               <div><span className="text-slate-400">Remark/SKU:</span> {row.remarkSku || "—"}</div>
-              <div><span className="text-slate-400">Started At:</span> {formatISTTime(row.firstStartedAt)}</div>
-              <div><span className="text-slate-400">Completed At:</span> {formatISTTime(row.lastPausedAt)}</div>
-              <div><span className="text-slate-400">Total Time:</span> {formatDuration(row.timeSpentSeconds)}</div>
+              <div><span className="text-slate-400">Estimated Time:</span> {formatDuration(hmToMinutes(row.estimatedHours, row.estimatedMinutes) * 60)}</div>
+              <div><span className="text-slate-400">Time Consumed:</span> {formatDuration(hmToMinutes(row.consumedHours, row.consumedMinutes) * 60)}</div>
             </div>
             <p className="mt-2 whitespace-pre-line text-xs text-slate-700">{row.description}</p>
           </div>
@@ -429,43 +395,36 @@ export function DailyReportForm({
               </Field>
             </div>
 
+            {/* 2026-08-11 (round 4): manual Hour+Minute entry replacing the
+                old automatic Start button + live timer, for THIS table
+                only (Tasks keeps its own separate Start/Pause/Done timer). */}
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <div className="mb-1.5 text-xs font-medium text-amber-800">⏱ Time Watch</div>
-              <div className="flex flex-wrap items-center gap-4 text-xs">
-                <div>
-                  <div className="text-slate-400">Start Time</div>
-                  <div className="font-medium text-slate-900">{formatISTTime(row.firstStartedAt)}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400">Completed At</div>
-                  <div className="font-medium text-slate-900">
-                    {row.timerStartedAt ? "Running…" : formatISTTime(row.lastPausedAt)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-400">Total Time</div>
-                  <div className="font-semibold text-amber-800">
-                    {formatDuration(liveElapsedSeconds({ timeSpentSeconds: row.timeSpentSeconds, timerStartedAt: row.timerStartedAt }, nowMs))}
-                  </div>
-                </div>
-                <div className="ml-auto flex gap-2">
-                  <button
-                    type="button"
-                    disabled={!!row.timerStartedAt || timerPendingIds.has(row.clientId)}
-                    onClick={() => handleStart(row.clientId)}
-                    className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    ▶ Start
-                  </button>
-                  <button
-                    type="button"
-                    disabled={timerPendingIds.has(row.clientId) || !row.description.trim()}
-                    onClick={() => handleSubmit(row.clientId)}
-                    className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    ✔ Submit Report
-                  </button>
-                </div>
+              <div className="mb-1.5 text-xs font-medium text-amber-800">⏱ Time</div>
+              <div className="flex flex-wrap items-end gap-4 text-xs">
+                <HourMinuteField
+                  label="Estimated Time"
+                  hours={row.estimatedHours}
+                  minutes={row.estimatedMinutes}
+                  onChangeHours={(v) => updateRow(row.clientId, { estimatedHours: v })}
+                  onChangeMinutes={(v) => updateRow(row.clientId, { estimatedMinutes: v })}
+                  onBlur={() => saveRow(row.clientId)}
+                />
+                <HourMinuteField
+                  label="Time Consumed"
+                  hours={row.consumedHours}
+                  minutes={row.consumedMinutes}
+                  onChangeHours={(v) => updateRow(row.clientId, { consumedHours: v })}
+                  onChangeMinutes={(v) => updateRow(row.clientId, { consumedMinutes: v })}
+                  onBlur={() => saveRow(row.clientId)}
+                />
+                <button
+                  type="button"
+                  disabled={submitPendingIds.has(row.clientId) || !row.description.trim()}
+                  onClick={() => handleSubmit(row.clientId)}
+                  className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ✔ Submit Report
+                </button>
               </div>
             </div>
 
@@ -498,12 +457,61 @@ export function DailyReportForm({
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const selectClass = inputClass;
+const hmInputClass =
+  "w-14 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <label className="mb-1 block text-xs font-medium text-slate-500">{label}</label>
       {children}
+    </div>
+  );
+}
+
+function HourMinuteField({
+  label,
+  hours,
+  minutes,
+  onChangeHours,
+  onChangeMinutes,
+  onBlur,
+}: {
+  label: string;
+  hours: string;
+  minutes: string;
+  onChangeHours: (v: string) => void;
+  onChangeMinutes: (v: string) => void;
+  onBlur: () => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1 text-slate-400">{label}</div>
+      <div className="flex items-center gap-1">
+        <input
+          type="number"
+          min={0}
+          inputMode="numeric"
+          value={hours}
+          onChange={(e) => onChangeHours(e.target.value)}
+          onBlur={onBlur}
+          className={hmInputClass}
+          placeholder="0"
+        />
+        <span className="text-slate-400">h</span>
+        <input
+          type="number"
+          min={0}
+          max={59}
+          inputMode="numeric"
+          value={minutes}
+          onChange={(e) => onChangeMinutes(e.target.value)}
+          onBlur={onBlur}
+          className={hmInputClass}
+          placeholder="0"
+        />
+        <span className="text-slate-400">m</span>
+      </div>
     </div>
   );
 }
