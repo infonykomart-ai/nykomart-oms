@@ -552,6 +552,15 @@ CREATE TABLE parties (
   email         text,
   gst           text,
   remark        text,
+  -- 2026-08-12 (round 8): a vendor's own bank details, so a Bill Pass
+  -- Register payment can be made without hunting the physical bill for
+  -- account info. Same shape as company_profiles' own bank_name/
+  -- account_no/ifsc_code. account_holder_name is only set when it
+  -- genuinely differs from the party's own name.
+  bank_name             text,
+  account_no            text,
+  ifsc_code             text,
+  account_holder_name   text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
@@ -2329,6 +2338,66 @@ CREATE TABLE tasks (
 CREATE INDEX idx_tasks_assigned_to ON tasks(assigned_to_employee_id, status);
 CREATE INDEX idx_tasks_assigned_by ON tasks(assigned_by_employee_id);
 CREATE INDEX idx_tasks_company ON tasks(company_id, status);
+
+-- =============================================================================
+-- 2026-08-12 (round 8): Leave Request -> MD/Admin Approval -> Coverage
+-- Assignment. An employee applies (with an application/reason text) for a
+-- date range; MD/Admin approves or rejects; once approved, MD/Admin can
+-- assign another employee to cover the absent employee's store work,
+-- which auto-grants that covering employee access to the store for
+-- exactly the assigned dates (see leave_coverage_assignments below and
+-- getAuthedEmployee() in src/lib/auth/require-capability.ts).
+-- =============================================================================
+CREATE TYPE leave_request_status AS ENUM ('Pending', 'Approved', 'Rejected');
+
+CREATE TABLE leave_requests (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id             uuid NOT NULL REFERENCES employees(id),
+  company_id              uuid NOT NULL REFERENCES companies(id),
+  from_date               date NOT NULL,
+  to_date                 date NOT NULL,
+  reason                  text NOT NULL,   -- the "application" text the employee writes
+  status                  leave_request_status NOT NULL DEFAULT 'Pending',
+  requested_at            timestamptz NOT NULL DEFAULT now(),
+  decided_by_employee_id  uuid REFERENCES employees(id),
+  decided_at              timestamptz,
+  decision_remark         text,
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  CHECK (to_date >= from_date)
+);
+CREATE INDEX idx_leave_requests_employee ON leave_requests(employee_id, from_date DESC);
+CREATE INDEX idx_leave_requests_company_status ON leave_requests(company_id, status);
+COMMENT ON TABLE leave_requests IS
+  'Real leave application + MD/Admin approval workflow. status starts Pending; once decided (Approved/'
+  'Rejected) it is never re-decided — decided_by/decided_at/decision_remark are all set together.';
+
+-- Who covers an absent (on-approved-leave) employee's store work, and for
+-- exactly which dates. This row IS the access grant — getAuthedEmployee()
+-- unions any store with an active (today BETWEEN from_date AND to_date)
+-- row here into that employee's storeIds/companyIds for the duration,
+-- automatically, no separate toggle. Deliberately a SEPARATE table from
+-- employee_store_access (permanent Ad Spend store scoping) rather than
+-- inserting into it directly — that table's own admin panel does a
+-- delete-then-insert of the FULL set on every edit, so mixing a temporary
+-- grant into it risks either getting silently wiped out or wiping out a
+-- real permanent grant.
+CREATE TABLE leave_coverage_assignments (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  leave_request_id          uuid NOT NULL REFERENCES leave_requests(id) ON DELETE CASCADE,
+  covering_employee_id      uuid NOT NULL REFERENCES employees(id),
+  store_id                  uuid NOT NULL REFERENCES stores(id),
+  from_date                 date NOT NULL,
+  to_date                   date NOT NULL,
+  assigned_by_employee_id   uuid NOT NULL REFERENCES employees(id),
+  assigned_at               timestamptz NOT NULL DEFAULT now(),
+  remark                    text,
+  created_at                timestamptz NOT NULL DEFAULT now(),
+  CHECK (to_date >= from_date)
+);
+CREATE INDEX idx_leave_coverage_leave_request ON leave_coverage_assignments(leave_request_id);
+CREATE INDEX idx_leave_coverage_covering_employee ON leave_coverage_assignments(covering_employee_id, from_date, to_date);
+COMMENT ON TABLE leave_coverage_assignments IS
+  'Not unique per leave_request — MD/Admin can split coverage across multiple people/stores for one leave.';
 
 
 -- =============================================================================
