@@ -163,7 +163,7 @@ export type Database = {
           company_id: string;
           invoice_no: string | null;
           vendor_invoice_no: string | null;
-          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | null;
+          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
           credit_note_id: string | null;
           invoice_date: string | null;
           invoice_recv_date: string | null;
@@ -182,6 +182,9 @@ export type Database = {
           passed_by_employee_id: string | null;
           payment_by_employee_id: string | null;
           remark: string | null;
+          employee_id: string | null;
+          source: string | null;
+          source_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -189,7 +192,7 @@ export type Database = {
           company_id: string;
           invoice_no?: string | null;
           vendor_invoice_no?: string | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
           credit_note_id?: string | null;
           invoice_date?: string | null;
           invoice_recv_date?: string | null;
@@ -208,6 +211,9 @@ export type Database = {
           passed_by_employee_id?: string | null;
           payment_by_employee_id?: string | null;
           remark?: string | null;
+          employee_id?: string | null;
+          source?: string | null;
+          source_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -215,7 +221,7 @@ export type Database = {
           company_id?: string;
           invoice_no?: string | null;
           vendor_invoice_no?: string | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
           credit_note_id?: string | null;
           invoice_date?: string | null;
           invoice_recv_date?: string | null;
@@ -234,6 +240,9 @@ export type Database = {
           passed_by_employee_id?: string | null;
           payment_by_employee_id?: string | null;
           remark?: string | null;
+          employee_id?: string | null;
+          source?: string | null;
+          source_id?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -279,6 +288,13 @@ export type Database = {
             referencedRelation: "employees";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "bill_pass_register_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
         ];
       };
       capabilities: {
@@ -306,8 +322,8 @@ export type Database = {
           active: boolean;
           logo_url: string | null;
           master_invoice_prefix: string | null;
-          created_at: string;
           weekly_off_days: unknown[];
+          created_at: string;
         };
         Insert: {
           id?: string;
@@ -317,8 +333,8 @@ export type Database = {
           active?: boolean;
           logo_url?: string | null;
           master_invoice_prefix?: string | null;
-          created_at?: string;
           weekly_off_days?: unknown[];
+          created_at?: string;
         };
         Update: {
           id?: string;
@@ -328,8 +344,8 @@ export type Database = {
           active?: boolean;
           logo_url?: string | null;
           master_invoice_prefix?: string | null;
-          created_at?: string;
           weekly_off_days?: unknown[];
+          created_at?: string;
         };
         Relationships: [
         ];
@@ -581,10 +597,10 @@ export type Database = {
           time_spent_seconds: number;
           first_started_at: string | null;
           last_paused_at: string | null;
+          estimated_time_minutes: number | null;
           carried_from_log_id: string | null;
           carried_forward: boolean;
           submitted_at: string | null;
-          estimated_time_minutes: number | null;
         };
         Insert: {
           id?: string;
@@ -605,10 +621,10 @@ export type Database = {
           time_spent_seconds?: number;
           first_started_at?: string | null;
           last_paused_at?: string | null;
+          estimated_time_minutes?: number | null;
           carried_from_log_id?: string | null;
           carried_forward?: boolean;
           submitted_at?: string | null;
-          estimated_time_minutes?: number | null;
         };
         Update: {
           id?: string;
@@ -629,10 +645,10 @@ export type Database = {
           time_spent_seconds?: number;
           first_started_at?: string | null;
           last_paused_at?: string | null;
+          estimated_time_minutes?: number | null;
           carried_from_log_id?: string | null;
           carried_forward?: boolean;
           submitted_at?: string | null;
-          estimated_time_minutes?: number | null;
         };
         Relationships: [
           {
@@ -947,6 +963,9 @@ export type Database = {
           duty_tax_amt_inr: number;
           gst_18pct_amt: number;
           gross_total_amt: number | null;
+          credit_note_no: string | null;
+          credit_note_date: string | null;
+          credit_note_amt: number;
           created_at: string;
         };
         Insert: {
@@ -957,6 +976,9 @@ export type Database = {
           duty_tax_amt_inr?: number;
           gst_18pct_amt?: number;
           gross_total_amt?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number;
           created_at?: string;
         };
         Update: {
@@ -967,6 +989,9 @@ export type Database = {
           duty_tax_amt_inr?: number;
           gst_18pct_amt?: number;
           gross_total_amt?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number;
           created_at?: string;
         };
         Relationships: [
@@ -1644,6 +1669,70 @@ export type Database = {
           },
         ];
       };
+      employee_advances: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          amount: number;
+          date_given: string;
+          reason: string | null;
+          given_by_employee_id: string | null;
+          recovered_amount: number;
+          outstanding_amount: number | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          amount: number;
+          date_given: string;
+          reason?: string | null;
+          given_by_employee_id?: string | null;
+          recovered_amount?: number;
+          outstanding_amount?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          amount?: number;
+          date_given?: string;
+          reason?: string | null;
+          given_by_employee_id?: string | null;
+          recovered_amount?: number;
+          outstanding_amount?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_advances_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_advances_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_advances_given_by_employee_id_fkey";
+            columns: ["given_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       employee_company_access: {
         Row: {
           employee_id: string;
@@ -2185,6 +2274,9 @@ export type Database = {
           total_amt: number | null;
           gst_18pct_amt: number | null;
           gross_total_amt: number | null;
+          credit_note_no: string | null;
+          credit_note_date: string | null;
+          credit_note_amt: number;
           created_at: string;
         };
         Insert: {
@@ -2198,6 +2290,9 @@ export type Database = {
           total_amt?: number | null;
           gst_18pct_amt?: number | null;
           gross_total_amt?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number;
           created_at?: string;
         };
         Update: {
@@ -2211,6 +2306,9 @@ export type Database = {
           total_amt?: number | null;
           gst_18pct_amt?: number | null;
           gross_total_amt?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number;
           created_at?: string;
         };
         Relationships: [
@@ -2620,6 +2718,10 @@ export type Database = {
           contact_no: string | null;
           email_id: string | null;
           tax_id: string | null;
+          vat_number: string | null;
+          eori_number: string | null;
+          ioss_number: string | null;
+          destination_country: string | null;
           address_type: "Residential" | "Commercial";
           photo_type: "Dispatch" | "Website" | null;
           colour: string | null;
@@ -2637,10 +2739,6 @@ export type Database = {
           exchange_rate_source: string | null;
           created_at: string;
           invoice_id: string | null;
-          vat_number: string | null;
-          eori_number: string | null;
-          ioss_number: string | null;
-          destination_country: string | null;
         };
         Insert: {
           id?: string;
@@ -2671,6 +2769,10 @@ export type Database = {
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
+          vat_number?: string | null;
+          eori_number?: string | null;
+          ioss_number?: string | null;
+          destination_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
           colour?: string | null;
@@ -2688,10 +2790,6 @@ export type Database = {
           exchange_rate_source?: string | null;
           created_at?: string;
           invoice_id?: string | null;
-          vat_number?: string | null;
-          eori_number?: string | null;
-          ioss_number?: string | null;
-          destination_country?: string | null;
         };
         Update: {
           id?: string;
@@ -2722,6 +2820,10 @@ export type Database = {
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
+          vat_number?: string | null;
+          eori_number?: string | null;
+          ioss_number?: string | null;
+          destination_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
           colour?: string | null;
@@ -2739,10 +2841,6 @@ export type Database = {
           exchange_rate_source?: string | null;
           created_at?: string;
           invoice_id?: string | null;
-          vat_number?: string | null;
-          eori_number?: string | null;
-          ioss_number?: string | null;
-          destination_country?: string | null;
         };
         Relationships: [
           {
@@ -2816,7 +2914,7 @@ export type Database = {
           name: string;
           party_type: string | null;
           payment_type: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY" | null;
-          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | null;
+          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
           address: string | null;
           contact_no: string | null;
           email: string | null;
@@ -2829,7 +2927,7 @@ export type Database = {
           name: string;
           party_type?: string | null;
           payment_type?: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY" | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
           address?: string | null;
           contact_no?: string | null;
           email?: string | null;
@@ -2842,7 +2940,7 @@ export type Database = {
           name?: string;
           party_type?: string | null;
           payment_type?: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY" | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
           address?: string | null;
           contact_no?: string | null;
           email?: string | null;
@@ -3169,6 +3267,83 @@ export type Database = {
         Relationships: [
         ];
       };
+      salary_payments: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          pay_month: string;
+          gross_salary: number;
+          attendance_deduction_amount: number;
+          advance_deduction_amount: number;
+          advance_id: string | null;
+          net_paid_amount: number | null;
+          payment_date: string;
+          paid_by_employee_id: string | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          pay_month: string;
+          gross_salary: number;
+          attendance_deduction_amount?: number;
+          advance_deduction_amount?: number;
+          advance_id?: string | null;
+          net_paid_amount?: number | null;
+          payment_date: string;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          pay_month?: string;
+          gross_salary?: number;
+          attendance_deduction_amount?: number;
+          advance_deduction_amount?: number;
+          advance_id?: string | null;
+          net_paid_amount?: number | null;
+          payment_date?: string;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "salary_payments_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "salary_payments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "salary_payments_advance_id_fkey";
+            columns: ["advance_id"];
+            isOneToOne: false;
+            referencedRelation: "employee_advances";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "salary_payments_paid_by_employee_id_fkey";
+            columns: ["paid_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       sale_profit_ledger: {
         Row: {
           id: string;
@@ -3297,13 +3472,12 @@ export type Database = {
           height_cm: number | null;
           buyer_name_address: string;
           remark: string | null;
-          created_by_employee_id: string;
-          created_at: string;
           value_percent: number | null;
           invoice_value_usd: number | null;
           item_cost_total: number | null;
           insurance_total: number | null;
           freight_total: number | null;
+          invoice_currency: string | null;
           taxable_value_inr: number | null;
           declared_value_words: string | null;
           awb_no: string | null;
@@ -3321,7 +3495,8 @@ export type Database = {
           broker_contact: string | null;
           duty_payable_by: string | null;
           duty_payable_other_specify: string | null;
-          invoice_currency: string | null;
+          created_by_employee_id: string;
+          created_at: string;
         };
         Insert: {
           id?: string;
@@ -3343,13 +3518,12 @@ export type Database = {
           height_cm?: number | null;
           buyer_name_address: string;
           remark?: string | null;
-          created_by_employee_id: string;
-          created_at?: string;
           value_percent?: number | null;
           invoice_value_usd?: number | null;
           item_cost_total?: number | null;
           insurance_total?: number | null;
           freight_total?: number | null;
+          invoice_currency?: string | null;
           taxable_value_inr?: number | null;
           declared_value_words?: string | null;
           awb_no?: string | null;
@@ -3367,7 +3541,8 @@ export type Database = {
           broker_contact?: string | null;
           duty_payable_by?: string | null;
           duty_payable_other_specify?: string | null;
-          invoice_currency?: string | null;
+          created_by_employee_id: string;
+          created_at?: string;
         };
         Update: {
           id?: string;
@@ -3389,13 +3564,12 @@ export type Database = {
           height_cm?: number | null;
           buyer_name_address?: string;
           remark?: string | null;
-          created_by_employee_id?: string;
-          created_at?: string;
           value_percent?: number | null;
           invoice_value_usd?: number | null;
           item_cost_total?: number | null;
           insurance_total?: number | null;
           freight_total?: number | null;
+          invoice_currency?: string | null;
           taxable_value_inr?: number | null;
           declared_value_words?: string | null;
           awb_no?: string | null;
@@ -3413,7 +3587,8 @@ export type Database = {
           broker_contact?: string | null;
           duty_payable_by?: string | null;
           duty_payable_other_specify?: string | null;
-          invoice_currency?: string | null;
+          created_by_employee_id?: string;
+          created_at?: string;
         };
         Relationships: [
           {
@@ -4370,6 +4545,13 @@ export type Database = {
           effective_from: string | null;
         }[];
       };
+      recover_employee_advance: {
+        Args: {
+          p_advance_id: string;
+          p_amount: number;
+        };
+        Returns: number;
+      };
       reserve_next_number: {
         Args: {
           p_company_id: string;
@@ -4389,7 +4571,7 @@ export type Database = {
       duty_tax_mode: "CSB-IV" | "CSB-V";
       employee_gender: "Male" | "Female";
       employee_marital_status: "Married" | "Unmarried";
-      invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK";
+      invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
