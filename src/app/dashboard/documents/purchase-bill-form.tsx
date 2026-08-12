@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useActionState } from "react";
 import { savePurchaseBill, type DocFormState, type OrderLookup } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
+import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -16,9 +17,10 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 // (was optional before): every purchase must be tied to the PO/RF/RG it
 // was bought for, so "which party did this order's item come from" is
 // always answerable — see the reverse lookup on the Orders hub.
-export function PurchaseBillForm({ parties }: { parties: { id: string; name: string }[] }) {
+export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
+  const partyGroups = groupPartyOptions(parties);
 
   function handleFound(r: OrderLookup) {
     setOrderId(r.order?.id ?? "");
@@ -49,8 +51,12 @@ export function PurchaseBillForm({ parties }: { parties: { id: string; name: str
           <label className={labelClass} htmlFor="pb_party">Vendor Party *</label>
           <select id="pb_party" name="vendor_party_id" required defaultValue="" className={inputClass}>
             <option value="" disabled>Select vendor</option>
-            {parties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+            {partyGroups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.parties.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>

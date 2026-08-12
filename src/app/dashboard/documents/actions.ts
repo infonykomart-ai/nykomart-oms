@@ -34,6 +34,7 @@
 
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { parseSizeToSqFt } from "@/lib/size-parser";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -684,13 +685,43 @@ async function savePurchaseBillCore(
       unit_rate: p.unitRate,
       order_id: p.orderId,
     })
-    .select("id, vendor_invoice_no")
+    .select("id, vendor_invoice_no, total_amount")
     .single();
 
   if (error || !data) {
-    const msg = error?.message.includes("duplicate key") ? "This vendor already has a bill with that invoice number." : error?.message;
+    const msg = error?.message.includes("duplicate key")
+      ? "This order already has a Purchase Bill under that vendor invoice number."
+      : error?.message;
     return { error: `Failed to save Purchase Bill: ${msg ?? "unknown error"}`, id: null, docNo: null };
   }
+
+  // 2026-08-12 (round 10): auto-mirror into the Finance ledger, same as
+  // Salary/Advance — "koi pata nahi chal raha ki bill pass register mein
+  // ye chala gaya ya nahi" was a real gap (a stale comment elsewhere
+  // claimed Purchase Bill already did this; it never actually did).
+  // Unlike Freight/Duty bills, a Purchase Bill's company is unambiguous
+  // (always the linked order's own company), so this can post immediately
+  // with no review step.
+  const { error: bprError } = await supabase.from("bill_pass_register").insert({
+    company_id: order.company_id,
+    invoice_type: "Purchase",
+    vendor_invoice_no: p.vendorInvoiceNo,
+    invoice_date: p.vendorInvoiceDate,
+    invoice_recv_date: p.vendorInvoiceDate,
+    total_amt: Number(data.total_amount ?? 0),
+    party_id: p.vendorPartyId,
+    party_type: "Purchase",
+    source: "purchase_bill",
+    source_id: data.id,
+  });
+  if (bprError) {
+    return {
+      error: null,
+      id: data.id,
+      docNo: `${data.vendor_invoice_no} (saved, but Finance ledger entry failed: ${bprError.message} — add it manually)`,
+    };
+  }
+
   return { error: null, id: data.id, docNo: data.vendor_invoice_no };
 }
 
@@ -712,6 +743,122 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+// =============================================================================
+// PURCHASE BILL — MULTI-PO SELECT. 2026-08-12 (round 10): "JIS JIS PO RF
+// RG NO KO SELECT KARE UNKE LIYE JO PARTY INVOICE DALE VO SABHI ME UPDATE
+// HO JAYE... ORDER ME PATA CHAL RHA HAI KI KITNE SQ FT MAAL HUA" — one
+// vendor invoice commonly covers several orders; instead of retyping the
+// same vendor/invoice/rate once per order, an admin now searches/adds
+// several orders, enters the shared vendor + invoice + rate ONCE, and gets
+// one purchase_bills row per order (qty/sq_feet still per-order — sq_feet
+// defaults from the order's own Size field via src/lib/size-parser.ts,
+// editable). Reuses savePurchaseBillCore per row — same validation,
+// same Finance-ledger mirror — nothing duplicated.
+// =============================================================================
+
+export type PurchaseOrderPickResult = {
+  error: string | null;
+  order: {
+    id: string;
+    ref_no: string;
+    company_id: string;
+    size_label: string | null;
+    qty: number;
+    item_category_name: string | null;
+    suggested_sq_feet: number | null;
+  } | null;
+  existingBillCount: number;
+};
+
+/** Lookup used by the Purchase Bill multi-PO picker — adds size/category/qty (not needed by the single-PO form's own OrderLookupBox) and a suggested sq ft parsed from the order's Size field. */
+export async function lookupOrderForPurchaseBill(refNo: string): Promise<PurchaseOrderPickResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const trimmed = refNo.trim();
+  if (!trimmed) return { error: "Enter a PO/RF/RG number.", order: null, existingBillCount: 0 };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, ref_no, company_id, size_label, qty, item_categories(name)")
+    .ilike("ref_no", trimmed)
+    .in("company_id", employee.companyIds)
+    .maybeSingle();
+
+  if (!order) return { error: `No order found for "${trimmed}".`, order: null, existingBillCount: 0 };
+
+  const { count } = await supabase
+    .from("purchase_bills")
+    .select("id", { count: "exact", head: true })
+    .eq("order_id", order.id);
+
+  const category = order.item_categories as unknown as { name: string } | { name: string }[] | null;
+  const categoryName = Array.isArray(category) ? category[0]?.name ?? null : category?.name ?? null;
+  const { sqFt } = parseSizeToSqFt(order.size_label);
+
+  return {
+    error: null,
+    order: {
+      id: order.id,
+      ref_no: order.ref_no,
+      company_id: order.company_id,
+      size_label: order.size_label,
+      qty: order.qty,
+      item_category_name: categoryName,
+      suggested_sq_feet: sqFt,
+    },
+    existingBillCount: count ?? 0,
+  };
+}
+
+export type PurchaseBillMultiLine = { orderId: string; qty: number; sqFeet: number };
+export type PurchaseBillMultiState = {
+  error: string | null;
+  results: { orderId: string; ok: boolean; docNo: string | null; error: string | null }[] | null;
+};
+
+export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formData: FormData): Promise<PurchaseBillMultiState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const vendorPartyId = str(formData, "vendor_party_id");
+  const vendorInvoiceNo = str(formData, "vendor_invoice_no");
+  const vendorInvoiceDate = strOrNull(formData, "vendor_invoice_date");
+  const workDescription = strOrNull(formData, "work_description");
+  const unitRate = numOrZero(formData, "unit_rate");
+  const linesRaw = str(formData, "lines_json");
+
+  if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
+  if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", results: null };
+  if (!linesRaw) return { error: "Add at least one PO/RF/RG order.", results: null };
+
+  let lines: PurchaseBillMultiLine[];
+  try {
+    lines = JSON.parse(linesRaw);
+  } catch {
+    return { error: "Could not read the selected orders — try re-adding them.", results: null };
+  }
+  if (!Array.isArray(lines) || lines.length === 0) return { error: "Add at least one PO/RF/RG order.", results: null };
+
+  const results: PurchaseBillMultiState["results"] = [];
+  for (const line of lines) {
+    const result = await savePurchaseBillCore(employee, supabase, {
+      vendorPartyId,
+      vendorInvoiceNo,
+      vendorInvoiceDate,
+      qty: line.qty || 1,
+      sqFeet: line.sqFeet || 0,
+      workDescription,
+      unitRate,
+      orderId: line.orderId,
+    });
+    results!.push({ orderId: line.orderId, ok: !result.error, docNo: result.docNo, error: result.error });
+  }
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, results };
 }
 
 export async function updatePurchaseBill(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
@@ -889,6 +1036,8 @@ export async function deleteFreightBill(id: string): Promise<SimpleResult> {
 
   const { data: assigned } = await supabase.from("freight_bill_awb_assignments").select("id").eq("freight_bill_id", id).limit(1).maybeSingle();
   if (assigned) return { error: "This Courier Bill has AWBs assigned to it — remove those assignments first.", success: false };
+  const { data: inFinance } = await supabase.from("bill_pass_register").select("id").eq("source", "freight_bill").eq("source_id", id).limit(1).maybeSingle();
+  if (inFinance) return { error: "This Courier Bill is already in the Finance ledger (Bill Pass Register) — remove that entry first.", success: false };
 
   const { error } = await supabase.from("freight_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
@@ -916,6 +1065,7 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
       freight_bill_id: freightBillId,
       order_id: orderId,
       bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
+      dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
       difference_amt: numOrNull(formData, "difference_amt"),
       remark: strOrNull(formData, "remark"),
     })
@@ -941,6 +1091,145 @@ export async function deleteFreightAwbAssignment(id: string): Promise<SimpleResu
   return { error: null, success: true };
 }
 
+// =============================================================================
+// COURIER BILL — BULK AWB ASSIGN + AWB-LEVEL NOTES + FINANCE HAND-OFF.
+// 2026-08-12 (round 10): "SUPOSE KARO PICHLE MAHINE 200 SHIPMENT GAYI...
+// AWB TRACKING NO KO SELECT KARNE KA OPTION HO PHIR UNKE AGAINST ME DETAIL
+// DALNE KA OPTION HO" — assigning AWBs to a bill one at a time (the
+// existing AssignAwbForm) doesn't scale to a real month's shipment count;
+// bulkAssignFreightAwbs takes a list of PO/RF/RG-or-AWB queries + per-row
+// figures and assigns them all in one submit, tolerating individual
+// failures (a typo'd number in a list of 50 shouldn't block the other 49).
+// =============================================================================
+
+export type BulkAwbRow = {
+  query: string; // whatever the admin typed — PO/RF/RG or AWB
+  billWeightKg: number | null;
+  dimensionalWeightKg: number | null;
+  differenceAmt: number | null;
+  remark: string | null;
+};
+export type BulkAwbResult = { query: string; ok: boolean; refNo: string | null; error: string | null };
+
+export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwbRow[]): Promise<{ error: string | null; results: BulkAwbResult[] }> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!freightBillId) return { error: "Missing Courier Bill.", results: [] };
+
+  const results: BulkAwbResult[] = [];
+  for (const row of rows) {
+    const lookup = await lookupOrderForReconciliation(row.query, "freight");
+    if (lookup.error || !lookup.order) {
+      results.push({ query: row.query, ok: false, refNo: null, error: lookup.error ?? "Not found." });
+      continue;
+    }
+    if (!employee.companyIds.includes(lookup.order.company_id)) {
+      results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: "Not accessible." });
+      continue;
+    }
+    const { error } = await supabase.from("freight_bill_awb_assignments").insert({
+      freight_bill_id: freightBillId,
+      order_id: lookup.order.id,
+      bill_weight_kg: row.billWeightKg,
+      dimensional_weight_kg: row.dimensionalWeightKg,
+      difference_amt: row.differenceAmt,
+      remark: row.remark,
+    });
+    if (error) {
+      const msg = error.message.includes("duplicate key") ? "Already assigned to a Courier Bill." : error.message;
+      results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
+    } else {
+      results.push({ query: row.query, ok: true, refNo: lookup.order.ref_no, error: null });
+    }
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, results };
+}
+
+/** Attach a credit/debit note to one already-assigned AWB — "TRACKING NUMBER KE AGAINST ME AAYEGA", entered whenever the note actually arrives, not necessarily at assignment time. */
+export async function updateFreightAwbAssignmentNotes(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing assignment.", success: false };
+
+  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  if (!assignment) return { error: "Assignment not found.", success: false };
+  const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "That AWB is not accessible.", success: false };
+  }
+
+  const { error } = await supabase
+    .from("freight_bill_awb_assignments")
+    .update({
+      credit_note_no: strOrNull(formData, "credit_note_no"),
+      credit_note_date: strOrNull(formData, "credit_note_date"),
+      credit_note_amt: numOrNull(formData, "credit_note_amt"),
+      debit_note_no: strOrNull(formData, "debit_note_no"),
+      debit_note_date: strOrNull(formData, "debit_note_date"),
+      debit_note_amt: numOrNull(formData, "debit_note_amt"),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+/**
+ * "Send to Bill Pass Register" — explicit, reviewed hand-off to Finance.
+ * NOT automatic on save: freight_bills has no company_id of its own (one
+ * invoice can span AWBs across all 3 companies with no stored split — see
+ * schema.sql's comment on bill_pass_register), so an admin picks the
+ * company and reviews the amount here rather than the app guessing a
+ * split. Idempotent — a second submit for the same bill is blocked once
+ * one Finance entry already exists for it.
+ */
+export async function sendFreightBillToFinance(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const freightBillId = str(formData, "freight_bill_id");
+  const companyId = str(formData, "company_id");
+  const totalAmt = numOrZero(formData, "total_amt");
+  if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
+  if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: false };
+  if (!totalAmt || totalAmt <= 0) return { error: "Amount must be a positive number.", success: false };
+
+  const { data: existing } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "freight_bill")
+    .eq("source_id", freightBillId)
+    .limit(1)
+    .maybeSingle();
+  if (existing) return { error: "This Courier Bill has already been sent to the Finance ledger.", success: false };
+
+  const { data: bill } = await supabase.from("freight_bills").select("invoice_no, invoice_date").eq("id", freightBillId).maybeSingle();
+
+  const { error } = await supabase.from("bill_pass_register").insert({
+    company_id: companyId,
+    invoice_type: "FREIGHT INVOICE",
+    vendor_invoice_no: bill?.invoice_no ?? null,
+    invoice_date: bill?.invoice_date ?? null,
+    invoice_recv_date: bill?.invoice_date ?? null,
+    total_amt: totalAmt,
+    party_type: "Courier",
+    source: "freight_bill",
+    source_id: freightBillId,
+    remark: strOrNull(formData, "remark"),
+  });
+  if (error) {
+    // Backstopped by uq_bill_pass_register_source — the check above has a
+    // race window (two submits landing between check and insert); this
+    // catches that instead of surfacing a raw constraint-violation error.
+    if (error.message.includes("duplicate key")) return { error: "This Courier Bill has already been sent to the Finance ledger.", success: false };
+    return { error: error.message, success: false };
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
 type DutyBillParams = {
   invoiceNo: string;
   invoiceDate: string | null;
@@ -951,6 +1240,11 @@ type DutyBillParams = {
   creditNoteNo?: string | null;
   creditNoteDate?: string | null;
   creditNoteAmt?: number;
+  // 2026-08-12 (round 10): manual bottom-summary fields off the real Duty
+  // Tax Bill document — see schema.sql's comment on these columns.
+  disbursementFee?: number;
+  courierDutyChargesAdj?: number;
+  totalPayableAmt?: number | null;
 };
 
 async function saveDutyBillCore(
@@ -970,6 +1264,9 @@ async function saveDutyBillCore(
       credit_note_no: p.creditNoteNo ?? null,
       credit_note_date: p.creditNoteDate ?? null,
       credit_note_amt: p.creditNoteAmt ?? 0,
+      disbursement_fee: p.disbursementFee ?? 0,
+      courier_duty_charges_adj: p.courierDutyChargesAdj ?? 0,
+      total_payable_amt: p.totalPayableAmt ?? null,
     })
     .select("id, invoice_no")
     .single();
@@ -994,6 +1291,9 @@ export async function saveDutyBill(_prev: DocFormState, formData: FormData): Pro
     creditNoteNo: strOrNull(formData, "credit_note_no"),
     creditNoteDate: strOrNull(formData, "credit_note_date"),
     creditNoteAmt: numOrZero(formData, "credit_note_amt"),
+    disbursementFee: numOrZero(formData, "disbursement_fee"),
+    courierDutyChargesAdj: numOrZero(formData, "courier_duty_charges_adj"),
+    totalPayableAmt: numOrNull(formData, "total_payable_amt"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -1007,6 +1307,8 @@ export async function deleteDutyBill(id: string): Promise<SimpleResult> {
 
   const { data: assigned } = await supabase.from("duty_bill_awb_assignments").select("id").eq("duty_tax_bill_id", id).limit(1).maybeSingle();
   if (assigned) return { error: "This Duty & Tax Bill has AWBs assigned to it — remove those assignments first.", success: false };
+  const { data: inFinance } = await supabase.from("bill_pass_register").select("id").eq("source", "duty_tax_bill").eq("source_id", id).limit(1).maybeSingle();
+  if (inFinance) return { error: "This Duty & Tax Bill is already in the Finance ledger (Bill Pass Register) — remove that entry first.", success: false };
 
   const { error } = await supabase.from("duty_tax_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
@@ -1057,6 +1359,127 @@ export async function deleteDutyAwbAssignment(id: string): Promise<SimpleResult>
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("duty_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+// =============================================================================
+// DUTY & TAX BILL — BULK AWB ASSIGN + AWB-LEVEL NOTES + FINANCE HAND-OFF.
+// Same shapes/reasoning as the Courier Bill trio above.
+// =============================================================================
+
+export type BulkDutyAwbRow = {
+  query: string;
+  dutyTaxAmtUsd: number | null;
+  dutyTaxAmtInr: number | null;
+  otherCharge: number | null;
+  gst18pct: number | null;
+  remark: string | null;
+};
+
+export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAwbRow[]): Promise<{ error: string | null; results: BulkAwbResult[] }> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", results: [] };
+
+  const results: BulkAwbResult[] = [];
+  for (const row of rows) {
+    const lookup = await lookupOrderForReconciliation(row.query, "duty");
+    if (lookup.error || !lookup.order) {
+      results.push({ query: row.query, ok: false, refNo: null, error: lookup.error ?? "Not found." });
+      continue;
+    }
+    if (!employee.companyIds.includes(lookup.order.company_id)) {
+      results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: "Not accessible." });
+      continue;
+    }
+    const { error } = await supabase.from("duty_bill_awb_assignments").insert({
+      duty_tax_bill_id: dutyTaxBillId,
+      order_id: lookup.order.id,
+      duty_tax_amt_usd: row.dutyTaxAmtUsd,
+      duty_tax_amt_inr: row.dutyTaxAmtInr,
+      other_charge: row.otherCharge,
+      gst_18pct: row.gst18pct,
+      remark: row.remark,
+    });
+    if (error) {
+      const msg = error.message.includes("duplicate key") ? "Already assigned to a Duty & Tax Bill." : error.message;
+      results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
+    } else {
+      results.push({ query: row.query, ok: true, refNo: lookup.order.ref_no, error: null });
+    }
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, results };
+}
+
+export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing assignment.", success: false };
+
+  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  if (!assignment) return { error: "Assignment not found.", success: false };
+  const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "That AWB is not accessible.", success: false };
+  }
+
+  const { error } = await supabase
+    .from("duty_bill_awb_assignments")
+    .update({
+      credit_note_no: strOrNull(formData, "credit_note_no"),
+      credit_note_date: strOrNull(formData, "credit_note_date"),
+      credit_note_amt: numOrNull(formData, "credit_note_amt"),
+      debit_note_no: strOrNull(formData, "debit_note_no"),
+      debit_note_date: strOrNull(formData, "debit_note_date"),
+      debit_note_amt: numOrNull(formData, "debit_note_amt"),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const dutyTaxBillId = str(formData, "duty_tax_bill_id");
+  const companyId = str(formData, "company_id");
+  const totalAmt = numOrZero(formData, "total_amt");
+  if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
+  if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: false };
+  if (!totalAmt || totalAmt <= 0) return { error: "Amount must be a positive number.", success: false };
+
+  const { data: existing } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "duty_tax_bill")
+    .eq("source_id", dutyTaxBillId)
+    .limit(1)
+    .maybeSingle();
+  if (existing) return { error: "This Duty & Tax Bill has already been sent to the Finance ledger.", success: false };
+
+  const { data: bill } = await supabase.from("duty_tax_bills").select("invoice_no, invoice_date").eq("id", dutyTaxBillId).maybeSingle();
+
+  const { error } = await supabase.from("bill_pass_register").insert({
+    company_id: companyId,
+    invoice_type: "DUTY TAX",
+    vendor_invoice_no: bill?.invoice_no ?? null,
+    invoice_date: bill?.invoice_date ?? null,
+    invoice_recv_date: bill?.invoice_date ?? null,
+    total_amt: totalAmt,
+    party_type: "Courier",
+    source: "duty_tax_bill",
+    source_id: dutyTaxBillId,
+    remark: strOrNull(formData, "remark"),
+  });
+  if (error) {
+    if (error.message.includes("duplicate key")) return { error: "This Duty & Tax Bill has already been sent to the Finance ledger.", success: false };
+    return { error: error.message, success: false };
+  }
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }

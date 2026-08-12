@@ -14,10 +14,13 @@ import { DebitNoteEditForm, type EditableDebitNote } from "./debit-note-edit-for
 import { WashingEntryEditForm, type EditableWashingEntry } from "./washing-entry-edit-form";
 import { InternalInvoiceEditForm, type EditableInternalInvoice } from "./internal-invoice-edit-form";
 import { PurchaseBillEditForm, type EditablePurchaseBill } from "./purchase-bill-edit-form";
+import { PurchaseBillMultiForm } from "./purchase-bill-multi-form";
 import { deleteCreditNote, deleteDebitNote, deleteWashingEntry, deleteInternalInvoice, deletePurchaseBill, type SimpleResult } from "./actions";
+import type { PartyOption } from "./party-options";
+import { PrintArea, PrintButton } from "@/components/print-view";
 
 type Company = { id: string; name: string };
-type Party = { id: string; name: string };
+type Party = PartyOption;
 type Store = { id: string; name: string; company_id: string };
 
 type Recent = {
@@ -61,6 +64,11 @@ export function DocumentEntryTabs({
   recent: Recent;
 }) {
   const [tab, setTab] = useState<TabKey>("credit-note");
+  // 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
+  // JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — Purchase Bill now
+  // has 2 modes: the original single-order form, and a new multi-order
+  // picker for one vendor invoice covering several POs at once.
+  const [pbMode, setPbMode] = useState<"single" | "multi">("single");
 
   const tabBar = (
     <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
@@ -88,8 +96,8 @@ export function DocumentEntryTabs({
     return (
       <div>
         {tabBar}
-        {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} />}
-        {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} />}
+        {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} companies={companies} />}
+        {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} companies={companies} />}
         {tab === "courier-bill-pdf" && <CourierBillPdfSection />}
       </div>
     );
@@ -105,11 +113,46 @@ export function DocumentEntryTabs({
           {tab === "debit-note" && <DebitNoteForm companies={companies} parties={parties} />}
           {tab === "washing-entry" && <WashingEntryForm companies={companies} parties={parties} stores={stores} />}
           {tab === "internal-invoice" && <InternalInvoiceForm companies={companies} />}
-          {tab === "purchase-bill" && <PurchaseBillForm parties={parties} />}
+          {tab === "purchase-bill" && (
+            <div>
+              <div className="mb-3 flex gap-2 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setPbMode("single")}
+                  className={`rounded-full px-3 py-1 ${pbMode === "single" ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"}`}
+                >
+                  Single Order
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPbMode("multi")}
+                  className={`rounded-full px-3 py-1 ${pbMode === "multi" ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"}`}
+                >
+                  Multiple Orders, One Invoice
+                </button>
+              </div>
+              {pbMode === "single" ? <PurchaseBillForm parties={parties} /> : <PurchaseBillMultiForm parties={parties} />}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="space-y-6">
+        {/* 2026-08-12 (round 10): "JITNI FILE BAN RAHI HAI SABKI PDF FILE
+            UNKE SAME DOWNLOAD KARNE KA OPTION HONA CHAHIYE" — Credit Note /
+            Debit Note / Washing Entry / Internal Invoice / Purchase Bill
+            don't have individual detail pages (only this list), so "PDF
+            download" here means the same window.print() pattern applied
+            to the whole recent-documents list, same as Orders' and Ad
+            Spend's own list-print buttons. Courier Bill / Duty & Tax Bill
+            get their own dedicated printable report page instead (see
+            freight-bill-section.tsx / duty-bill-section.tsx's "Report /
+            PDF" link) since those need the invoice+AWB-table layout, not
+            a flat list. */}
+        <div className="flex justify-end print:hidden">
+          <PrintButton label="🖨 Print / Download this list" />
+        </div>
+        <PrintArea id="doc-lists-print-area">
         <DocList
           title="Recent Credit Notes"
           rows={recent.creditNotes.map((r) => ({
@@ -179,6 +222,7 @@ export function DocumentEntryTabs({
           onDelete={deletePurchaseBill}
           renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
         />
+        </PrintArea>
       </div>
     </div>
   );

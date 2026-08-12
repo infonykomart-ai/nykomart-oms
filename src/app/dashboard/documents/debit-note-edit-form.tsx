@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import { updateDebitNote, type DocEditState } from "./actions";
+import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -30,10 +31,11 @@ export function DebitNoteEditForm({
   onDone,
 }: {
   note: EditableDebitNote;
-  parties: { id: string; name: string }[];
+  parties: PartyOption[];
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updateDebitNote, initialState);
+  const partyGroups = groupPartyOptions(parties);
 
   useEffect(() => {
     if (state.success) onDone();
@@ -53,8 +55,12 @@ export function DebitNoteEditForm({
         <div>
           <label className={labelClass} htmlFor={`dn_party_${note.id}`}>Party (Vendor) *</label>
           <select id={`dn_party_${note.id}`} name="party_id" required defaultValue={note.party_id} className={inputClass}>
-            {parties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+            {partyGroups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.parties.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>

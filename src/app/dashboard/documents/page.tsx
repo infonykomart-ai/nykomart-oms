@@ -56,7 +56,14 @@ async function DocumentsPageInner() {
     { data: recentDutyBills },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
-    supabase.from("parties").select("id, name").order("name"),
+    // 2026-08-12 (round 10): invoice_type/party_type added so the party
+    // dropdown can group "Purchase" vendors separately from "Courier"
+    // parties — see documents/party-options.ts. The list itself was
+    // already unfiltered (every form gets every party); the ask was
+    // findability, not access ("DEBIT NOTE ME PARTY SELECTION ME ONLY
+    // PURCHASE PARTY AARI HAI" turned out to mean "hard to find the
+    // courier in a long flat list", not an actual code filter).
+    supabase.from("parties").select("id, name, invoice_type, party_type").order("name"),
     supabase.from("stores").select("id, name, company_id").order("name"),
     supabase
       .from("credit_notes")
@@ -94,7 +101,9 @@ async function DocumentsPageInner() {
       .limit(8),
     supabase
       .from("duty_tax_bills")
-      .select("id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt")
+      .select(
+        "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt"
+      )
       .order("created_at", { ascending: false })
       .limit(8),
   ]);
@@ -108,20 +117,36 @@ async function DocumentsPageInner() {
   // PO/RF/RG number.
   const freightBillIds = (recentFreightBills ?? []).map((b) => b.id);
   const dutyBillIds = (recentDutyBills ?? []).map((b) => b.id);
-  const [{ data: freightAssignments }, { data: dutyAssignments }] = await Promise.all([
+  const [{ data: freightAssignments }, { data: dutyAssignments }, { data: financeLinks }] = await Promise.all([
     freightBillIds.length
       ? supabase
           .from("freight_bill_awb_assignments")
-          .select("id, freight_bill_id, order_id, bill_weight_kg, difference_amt, remark")
+          .select(
+            "id, freight_bill_id, order_id, bill_weight_kg, dimensional_weight_kg, difference_amt, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
+          )
           .in("freight_bill_id", freightBillIds)
       : Promise.resolve({ data: [] }),
     dutyBillIds.length
       ? supabase
           .from("duty_bill_awb_assignments")
-          .select("id, duty_tax_bill_id, order_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, remark")
+          .select(
+            "id, duty_tax_bill_id, order_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
+          )
           .in("duty_tax_bill_id", dutyBillIds)
       : Promise.resolve({ data: [] }),
+    // 2026-08-12 (round 10): which of these bills already have a "Send to
+    // Bill Pass Register" entry, so the button can hide/grey out instead
+    // of allowing a double-post.
+    freightBillIds.length || dutyBillIds.length
+      ? supabase
+          .from("bill_pass_register")
+          .select("source, source_id")
+          .in("source", ["freight_bill", "duty_tax_bill"])
+          .in("source_id", [...freightBillIds, ...dutyBillIds])
+      : Promise.resolve({ data: [] }),
   ]);
+  const sentFreightBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => f.source_id));
+  const sentDutyBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => f.source_id));
 
   const assignmentOrderIds = Array.from(
     new Set([...(freightAssignments ?? []).map((a) => a.order_id), ...(dutyAssignments ?? []).map((a) => a.order_id)])
@@ -205,13 +230,21 @@ async function DocumentsPageInner() {
             gst_18pct_amt: b.gst_18pct_amt != null ? Number(b.gst_18pct_amt) : null,
             gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
             credit_note_amt: Number(b.credit_note_amt ?? 0),
+            sentToFinance: sentFreightBillIds.has(b.id),
             assignments: (freightAssignments ?? [])
               .filter((a) => a.freight_bill_id === b.id)
               .map((a) => ({
                 id: a.id,
                 order_ref_no: orderRefNo.get(a.order_id) ?? "—",
                 bill_weight_kg: a.bill_weight_kg != null ? Number(a.bill_weight_kg) : null,
+                dimensional_weight_kg: a.dimensional_weight_kg != null ? Number(a.dimensional_weight_kg) : null,
                 difference_amt: a.difference_amt != null ? Number(a.difference_amt) : null,
+                credit_note_no: a.credit_note_no,
+                credit_note_date: a.credit_note_date,
+                credit_note_amt: a.credit_note_amt != null ? Number(a.credit_note_amt) : null,
+                debit_note_no: a.debit_note_no,
+                debit_note_date: a.debit_note_date,
+                debit_note_amt: a.debit_note_amt != null ? Number(a.debit_note_amt) : null,
                 remark: a.remark,
               })),
           })),
@@ -222,6 +255,10 @@ async function DocumentsPageInner() {
             gst_18pct_amt: Number(b.gst_18pct_amt),
             gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
             credit_note_amt: Number(b.credit_note_amt ?? 0),
+            disbursement_fee: Number(b.disbursement_fee ?? 0),
+            courier_duty_charges_adj: Number(b.courier_duty_charges_adj ?? 0),
+            total_payable_amt: b.total_payable_amt != null ? Number(b.total_payable_amt) : null,
+            sentToFinance: sentDutyBillIds.has(b.id),
             assignments: (dutyAssignments ?? [])
               .filter((a) => a.duty_tax_bill_id === b.id)
               .map((a) => ({
@@ -231,6 +268,12 @@ async function DocumentsPageInner() {
                 duty_tax_amt_inr: a.duty_tax_amt_inr != null ? Number(a.duty_tax_amt_inr) : null,
                 other_charge: a.other_charge != null ? Number(a.other_charge) : null,
                 gst_18pct: a.gst_18pct != null ? Number(a.gst_18pct) : null,
+                credit_note_no: a.credit_note_no,
+                credit_note_date: a.credit_note_date,
+                credit_note_amt: a.credit_note_amt != null ? Number(a.credit_note_amt) : null,
+                debit_note_no: a.debit_note_no,
+                debit_note_date: a.debit_note_date,
+                debit_note_amt: a.debit_note_amt != null ? Number(a.debit_note_amt) : null,
                 remark: a.remark,
               })),
           })),

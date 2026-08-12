@@ -1,17 +1,24 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import {
   saveDutyBill,
   deleteDutyBill,
   assignDutyAwb,
   deleteDutyAwbAssignment,
   lookupOrderForReconciliation,
+  bulkAssignDutyAwbs,
+  updateDutyAwbAssignmentNotes,
   type DocFormState,
   type ReconciliationLookup,
+  type SimpleResult,
+  type BulkAwbResult,
 } from "./actions";
+import { SendToFinanceForm } from "./freight-bill-section";
 
 const initialFormState: DocFormState = { error: null, success: null };
+const initialSimple: SimpleResult = { error: null, success: false };
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
@@ -23,6 +30,12 @@ export type DutyBillAssignment = {
   duty_tax_amt_inr: number | null;
   other_charge: number | null;
   gst_18pct: number | null;
+  credit_note_no: string | null;
+  credit_note_date: string | null;
+  credit_note_amt: number | null;
+  debit_note_no: string | null;
+  debit_note_date: string | null;
+  debit_note_amt: number | null;
   remark: string | null;
 };
 
@@ -37,14 +50,18 @@ export type DutyBillRow = {
   credit_note_no: string | null;
   credit_note_date: string | null;
   credit_note_amt: number;
+  disbursement_fee: number;
+  courier_duty_charges_adj: number;
+  total_payable_amt: number | null;
   assignments: DutyBillAssignment[];
+  sentToFinance: boolean;
 };
 
 // Duty & Tax Bill (duty_tax_bills) — exact mirror of Courier Bill's shape:
 // invoice-level header covering many AWBs/orders, header create + delete
 // only (no edit), assignments create + delete only. See
 // freight-bill-section.tsx and actions.ts's header comment for the "why".
-export function DutyBillSection({ bills }: { bills: DutyBillRow[] }) {
+export function DutyBillSection({ bills, companies }: { bills: DutyBillRow[]; companies: { id: string; name: string }[] }) {
   const [state, formAction, pending] = useActionState(saveDutyBill, initialFormState);
 
   return (
@@ -84,7 +101,7 @@ export function DutyBillSection({ bills }: { bills: DutyBillRow[] }) {
             aagya" — optional, only fill in if the courier actually issued
             one against this invoice. */}
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any)</div>
+          <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any) — whole-invoice level</div>
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelClass} htmlFor="db_cn_no">Credit Note No.</label>
@@ -100,6 +117,28 @@ export function DutyBillSection({ bills }: { bills: DutyBillRow[] }) {
             </div>
           </div>
         </div>
+
+        {/* 2026-08-12 (round 10): bottom-summary block off the real Duty
+            Tax Bill document — manual, matches what the physical bill
+            says, not a computed formula (see schema.sql's comment). */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-1.5 text-xs font-medium text-slate-600">Bottom Summary (off the physical bill)</div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelClass} htmlFor="db_disb">Disbursement Fee</label>
+              <input id="db_disb" name="disbursement_fee" type="number" step="0.01" className={inputClass} placeholder="0" />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="db_adj">Courier Duty Charges (adj.)</label>
+              <input id="db_adj" name="courier_duty_charges_adj" type="number" step="0.01" className={inputClass} placeholder="0, can be negative" />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="db_total">Total Payable Amt</label>
+              <input id="db_total" name="total_payable_amt" type="number" step="0.01" className={inputClass} placeholder="off the bill" />
+            </div>
+          </div>
+        </div>
+
         <button
           type="submit"
           disabled={pending}
@@ -112,7 +151,7 @@ export function DutyBillSection({ bills }: { bills: DutyBillRow[] }) {
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-slate-700">Recent Duty &amp; Tax Bills</h3>
         {bills.map((b) => (
-          <DutyBillCard key={b.id} bill={b} />
+          <DutyBillCard key={b.id} bill={b} companies={companies} />
         ))}
         {bills.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
       </div>
@@ -120,8 +159,10 @@ export function DutyBillSection({ bills }: { bills: DutyBillRow[] }) {
   );
 }
 
-function DutyBillCard({ bill }: { bill: DutyBillRow }) {
+function DutyBillCard({ bill, companies }: { bill: DutyBillRow; companies: { id: string; name: string }[] }) {
   const [expanded, setExpanded] = useState(false);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [financeMode, setFinanceMode] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -141,10 +182,11 @@ function DutyBillCard({ bill }: { bill: DutyBillRow }) {
           <div className="font-medium text-slate-900">{bill.invoice_no}</div>
           <div className="text-slate-400">
             {bill.invoice_date ?? "—"} · {bill.assignments.length} AWB(s) assigned
+            {bill.sentToFinance && <span className="ml-1 text-green-700">· ✓ in Bill Pass Register</span>}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-slate-700">₹{bill.gross_total_amt ?? bill.duty_tax_amt_inr}</div>
+          <div className="text-slate-700">₹{bill.total_payable_amt ?? bill.gross_total_amt ?? bill.duty_tax_amt_inr}</div>
           <div className="text-slate-400">
             Duty ₹{bill.duty_tax_amt_inr} + GST ₹{bill.gst_18pct_amt}
             {bill.duty_tax_amt_usd ? ` (≈ $${bill.duty_tax_amt_usd})` : ""}
@@ -156,9 +198,15 @@ function DutyBillCard({ bill }: { bill: DutyBillRow }) {
           )}
         </div>
       </div>
-      <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
         <p className="text-red-600">{deleteError}</p>
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex shrink-0 flex-wrap gap-1.5">
+          <Link
+            href={`/dashboard/documents/duty-bills/${bill.id}/report`}
+            className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📄 Report / PDF
+          </Link>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -166,6 +214,15 @@ function DutyBillCard({ bill }: { bill: DutyBillRow }) {
           >
             {expanded ? "Hide AWBs" : "Assign / View AWBs"}
           </button>
+          {!bill.sentToFinance && (
+            <button
+              type="button"
+              onClick={() => setFinanceMode((v) => !v)}
+              className="rounded border border-green-200 bg-green-50 px-2 py-0.5 font-medium text-green-700 hover:bg-green-100"
+            >
+              💰 Send to Bill Pass Register
+            </button>
+          )}
           <button
             type="button"
             disabled={isPending}
@@ -177,9 +234,35 @@ function DutyBillCard({ bill }: { bill: DutyBillRow }) {
         </div>
       </div>
 
+      {financeMode && (
+        <SendToFinanceForm
+          billId={bill.id}
+          kind="duty"
+          companies={companies}
+          defaultAmt={Number(bill.total_payable_amt ?? bill.gross_total_amt ?? bill.duty_tax_amt_inr ?? 0) - Number(bill.credit_note_amt ?? 0)}
+          onDone={() => setFinanceMode(false)}
+        />
+      )}
+
       {expanded && (
-        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
-          <AssignAwbForm dutyTaxBillId={bill.id} />
+        <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkMode(false)}
+              className={`rounded-full px-2.5 py-1 font-medium ${!bulkMode ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"}`}
+            >
+              One at a time
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkMode(true)}
+              className={`rounded-full px-2.5 py-1 font-medium ${bulkMode ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"}`}
+            >
+              Bulk (many AWBs at once)
+            </button>
+          </div>
+          {bulkMode ? <BulkAssignAwbForm dutyTaxBillId={bill.id} /> : <AssignAwbForm dutyTaxBillId={bill.id} />}
           <div className="space-y-1.5">
             {bill.assignments.map((a) => (
               <AssignmentRow key={a.id} assignment={a} />
@@ -293,9 +376,107 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
   );
 }
 
+function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
+  const [raw, setRaw] = useState("");
+  const [rows, setRows] = useState<
+    { query: string; dutyTaxAmtUsd: string; dutyTaxAmtInr: string; otherCharge: string; gst18pct: string; remark: string }[]
+  >([]);
+  const [results, setResults] = useState<BulkAwbResult[] | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleParse() {
+    const queries = raw
+      .split(/\r?\n|,/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setRows(queries.map((q) => ({ query: q, dutyTaxAmtUsd: "", dutyTaxAmtInr: "", otherCharge: "", gst18pct: "", remark: "" })));
+    setResults(null);
+  }
+
+  function updateRow(i: number, patch: Partial<(typeof rows)[number]>) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  function handleAssignAll() {
+    startTransition(async () => {
+      const r = await bulkAssignDutyAwbs(
+        dutyTaxBillId,
+        rows.map((r) => ({
+          query: r.query,
+          dutyTaxAmtUsd: r.dutyTaxAmtUsd ? Number(r.dutyTaxAmtUsd) : null,
+          dutyTaxAmtInr: r.dutyTaxAmtInr ? Number(r.dutyTaxAmtInr) : null,
+          otherCharge: r.otherCharge ? Number(r.otherCharge) : null,
+          gst18pct: r.gst18pct ? Number(r.gst18pct) : null,
+          remark: r.remark || null,
+        }))
+      );
+      setResults(r.results);
+      // Match by position, not by query text — see the identical comment
+      // in freight-bill-section.tsx's handleAssignAll for why.
+      setRows((prev) => prev.filter((_, i) => !r.results[i]?.ok));
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <label className={labelClass}>Paste PO/RF/RG or AWB numbers — one per line (or comma-separated)</label>
+      <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={3} className={inputClass} placeholder={"PO-0001\nPO-0002\nAWB123456"} />
+      <button
+        type="button"
+        onClick={handleParse}
+        className="mt-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+      >
+        Look Up All
+      </button>
+
+      {results && (
+        <div className="mt-2 space-y-1">
+          {results.map((r, i) => (
+            <p key={i} className={r.ok ? "text-green-700" : "text-red-700"}>
+              {r.ok ? "✓" : "✗"} {r.refNo ?? r.query} — {r.ok ? "assigned" : r.error}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {rows.map((r, i) => (
+            <div key={r.query + i} className="grid grid-cols-6 items-end gap-1.5 rounded border border-slate-200 bg-white p-1.5">
+              <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
+              <input value={r.dutyTaxAmtUsd} onChange={(e) => updateRow(i, { dutyTaxAmtUsd: e.target.value })} placeholder="USD" className={inputClass} />
+              <input value={r.dutyTaxAmtInr} onChange={(e) => updateRow(i, { dutyTaxAmtInr: e.target.value })} placeholder="INR" className={inputClass} />
+              <input value={r.otherCharge} onChange={(e) => updateRow(i, { otherCharge: e.target.value })} placeholder="Other" className={inputClass} />
+              <input value={r.gst18pct} onChange={(e) => updateRow(i, { gst18pct: e.target.value })} placeholder="GST" className={inputClass} />
+              <input value={r.remark} onChange={(e) => updateRow(i, { remark: e.target.value })} placeholder="Remark" className={inputClass} />
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={handleAssignAll}
+            className="w-full rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+          >
+            {isPending ? "Assigning..." : `Assign All (${rows.length})`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
   const [deleteError, setDeleteError] = useState("");
+  const [noteMode, setNoteMode] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [noteState, noteAction, notePending] = useActionState(updateDutyAwbAssignmentNotes, initialSimple);
+
+  useEffect(() => {
+    if (noteState.success) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setNoteMode(false);
+    }
+  }, [noteState.success]);
 
   function handleDelete() {
     if (!window.confirm(`Remove AWB "${assignment.order_ref_no}" from this bill?`)) return;
@@ -307,27 +488,58 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
   }
 
   return (
-    <div className="flex items-center justify-between rounded border border-slate-100 bg-slate-50 px-2 py-1.5">
-      <div>
-        <span className="font-medium text-slate-900">{assignment.order_ref_no}</span>
-        <span className="ml-2 text-slate-400">
-          ₹{assignment.duty_tax_amt_inr ?? 0}
-          {assignment.duty_tax_amt_usd ? ` ($${assignment.duty_tax_amt_usd})` : ""} · GST ₹{assignment.gst_18pct ?? 0} · Other ₹
-          {assignment.other_charge ?? 0}
-        </span>
-        {assignment.remark && <span className="ml-2 text-slate-400">· {assignment.remark}</span>}
+    <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1.5">
+      <div className="flex items-center justify-between">
+        <div>
+          <span className="font-medium text-slate-900">{assignment.order_ref_no}</span>
+          <span className="ml-2 text-slate-400">
+            ₹{assignment.duty_tax_amt_inr ?? 0}
+            {assignment.duty_tax_amt_usd ? ` ($${assignment.duty_tax_amt_usd})` : ""} · GST ₹{assignment.gst_18pct ?? 0} · Other ₹
+            {assignment.other_charge ?? 0}
+          </span>
+          {assignment.remark && <span className="ml-2 text-slate-400">· {assignment.remark}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <p className="text-red-600">{deleteError}</p>
+          <button type="button" onClick={() => setNoteMode((v) => !v)} className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50">
+            {noteMode ? "Cancel" : "+ Note"}
+          </button>
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={handleDelete}
+            className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+          >
+            Remove
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        <p className="text-red-600">{deleteError}</p>
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={handleDelete}
-          className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-        >
-          Remove
-        </button>
-      </div>
+      {(assignment.credit_note_no || assignment.debit_note_no) && (
+        <div className="mt-1 space-x-3 text-purple-700">
+          {assignment.credit_note_no && <span>CN {assignment.credit_note_no} · −₹{assignment.credit_note_amt ?? 0}</span>}
+          {assignment.debit_note_no && <span>DN {assignment.debit_note_no} · +₹{assignment.debit_note_amt ?? 0}</span>}
+        </div>
+      )}
+      {noteMode && (
+        <form action={noteAction} className="mt-2 space-y-1.5 rounded border border-purple-200 bg-purple-50 p-2">
+          <input type="hidden" name="id" value={assignment.id} />
+          {noteState.error && <p className="rounded bg-red-50 px-2 py-1 text-red-800">{noteState.error}</p>}
+          <p className="font-medium text-purple-800">Credit / Debit Note — against this AWB specifically</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            <input name="credit_note_no" defaultValue={assignment.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+            <input name="credit_note_date" type="date" defaultValue={assignment.credit_note_date ?? ""} className={inputClass} />
+            <input name="credit_note_amt" type="number" step="0.01" defaultValue={assignment.credit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <input name="debit_note_no" defaultValue={assignment.debit_note_no ?? ""} placeholder="Debit Note No." className={inputClass} />
+            <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
+            <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
+          </div>
+          <button type="submit" disabled={notePending} className="rounded bg-purple-600 px-2 py-1 font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
+            {notePending ? "Saving..." : "Save Note"}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

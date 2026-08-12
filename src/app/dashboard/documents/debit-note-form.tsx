@@ -3,13 +3,15 @@
 import { useActionState, useState } from "react";
 import { saveDebitNote, type DocFormState, type OrderLookup } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
+import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
-export function DebitNoteForm({ companies, parties }: { companies: { id: string; name: string }[]; parties: { id: string; name: string }[] }) {
+export function DebitNoteForm({ companies, parties }: { companies: { id: string; name: string }[]; parties: PartyOption[] }) {
+  const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(saveDebitNote, initialState);
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
   const [orderId, setOrderId] = useState("");
@@ -44,8 +46,12 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
           <label className={labelClass} htmlFor="dn_party">Party (Vendor) *</label>
           <select id="dn_party" name="party_id" required defaultValue="" className={inputClass}>
             <option value="" disabled>Select party</option>
-            {parties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+            {partyGroups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.parties.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>

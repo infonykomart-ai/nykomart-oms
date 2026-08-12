@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import { updatePurchaseBill, type DocEditState } from "./actions";
+import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -25,10 +26,11 @@ export function PurchaseBillEditForm({
   onDone,
 }: {
   bill: EditablePurchaseBill;
-  parties: { id: string; name: string }[];
+  parties: PartyOption[];
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updatePurchaseBill, initialState);
+  const partyGroups = groupPartyOptions(parties);
 
   useEffect(() => {
     if (state.success) onDone();
@@ -48,8 +50,12 @@ export function PurchaseBillEditForm({
         <div>
           <label className={labelClass} htmlFor={`pb_party_${bill.id}`}>Vendor Party *</label>
           <select id={`pb_party_${bill.id}`} name="vendor_party_id" required defaultValue={bill.vendor_party_id} className={inputClass}>
-            {parties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+            {partyGroups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.parties.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>
