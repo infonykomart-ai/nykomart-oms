@@ -863,6 +863,14 @@ CREATE TABLE duty_tax_bills (
   credit_note_no            text,
   credit_note_date           date,
   credit_note_amt             numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-08-12 (round 10): manual bottom-summary fields off the real Duty
+  -- Tax Bill document (DISBURSEMENT FEE / COURIER DUTY CHARGES / TOTAL
+  -- PAYABLE AMT) — same "manual, matches the physical bill" convention as
+  -- gst_18pct_amt above; total_payable_amt is NOT a generated formula
+  -- because the real bills seen don't reconcile to one cleanly.
+  disbursement_fee            numeric(14,2) NOT NULL DEFAULT 0,
+  courier_duty_charges_adj      numeric(14,2) NOT NULL DEFAULT 0,
+  total_payable_amt               numeric(14,2),
   created_at                timestamptz NOT NULL DEFAULT now()
 );
 
@@ -909,7 +917,14 @@ CREATE TABLE purchase_bills (
   total_amount                     numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet * unit_rate) STORED,
   g_total_plus_gst                  numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet * unit_rate * 1.05) STORED,
   created_at                          timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (vendor_party_id, vendor_invoice_no)
+  -- 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
+  -- JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — one vendor invoice
+  -- legitimately covers many orders now (Purchase Bill multi-PO select),
+  -- so the same (vendor, invoice_no) pair appears on several rows, one per
+  -- order. Widened from UNIQUE(vendor_party_id, vendor_invoice_no) to also
+  -- key on order_id — a true duplicate is now "same vendor, same invoice,
+  -- same order", not "same vendor, same invoice" alone.
+  UNIQUE (vendor_party_id, vendor_invoice_no, order_id)
 );
 CREATE INDEX idx_purchase_bills_order ON purchase_bills(order_id);
 
@@ -963,6 +978,20 @@ CREATE TABLE freight_bill_awb_assignments (
   order_id           uuid NOT NULL REFERENCES orders(id),   -- via dispatch_invoices.order_id (1 row = 1 AWB = 1 order)
   bill_weight_kg       numeric(10,3),    -- off the physical courier bill — not derivable from anything on file
   difference_amt         numeric(14,2), -- MANUAL — see comment on freight_bills.gross_total_amt / original author's note
+  -- 2026-08-12 (round 10): "Dimensional weight" — present on the real
+  -- Freight Bill Excel, no package-dimension data exists anywhere else in
+  -- this schema to derive it from, so it's a manual entry alongside
+  -- bill_weight_kg. Per-AWB credit/debit note — "COURIOR KA CREDIT NOTE YA
+  -- DEBIT NOTE... TRACKING NUMBER KE AGAINST ME AAYEGA" — for when a note
+  -- applies to one specific shipment rather than the whole invoice (the
+  -- whole-bill-level credit note fields stay on freight_bills itself).
+  dimensional_weight_kg    numeric(10,3),
+  credit_note_no             text,
+  credit_note_date            date,
+  credit_note_amt               numeric(14,2),
+  debit_note_no                   text,
+  debit_note_date                  date,
+  debit_note_amt                     numeric(14,2),
   remark                  text,
   UNIQUE (order_id)   -- one AWB (= one order/shipment) is billed under exactly one freight invoice
 );
@@ -976,6 +1005,14 @@ CREATE TABLE duty_bill_awb_assignments (
   duty_tax_amt_inr        numeric(14,2),
   other_charge              numeric(14,2),
   gst_18pct                  numeric(14,2),
+  -- 2026-08-12 (round 10): same per-AWB credit/debit note capture as
+  -- freight_bill_awb_assignments above.
+  credit_note_no               text,
+  credit_note_date               date,
+  credit_note_amt                  numeric(14,2),
+  debit_note_no                      text,
+  debit_note_date                     date,
+  debit_note_amt                        numeric(14,2),
   remark                      text,
   UNIQUE (order_id)
 );
@@ -1495,6 +1532,20 @@ CREATE TABLE bill_pass_register (
 CREATE INDEX idx_bill_pass_company  ON bill_pass_register(company_id);
 CREATE INDEX idx_bill_pass_party    ON bill_pass_register(party_id);
 CREATE INDEX idx_bill_pass_employee ON bill_pass_register(employee_id);
+-- 2026-08-12 (round 10): also auto-inserted for purchase_bills (source=
+-- 'purchase_bill', unambiguous — order_id always resolves one company) and,
+-- via an explicit reviewed "Send to Bill Pass Register" action, for
+-- freight_bills/duty_tax_bills (source='freight_bill'/'duty_tax_bill') —
+-- those two stay a manual confirm step because one invoice can span AWBs
+-- across multiple companies with no stored split, so the company can't be
+-- inferred safely; see actions.ts. UNIQUE (not a plain index) so a second
+-- insert for the same (source, source_id) — e.g. a raced double-submit of
+-- "Send to Bill Pass Register" — fails at the DB level instead of silently
+-- double-posting; the app's own check-then-insert is only the first line
+-- of defense, this is the real backstop.
+CREATE UNIQUE INDEX uq_bill_pass_register_source
+  ON bill_pass_register(source, source_id)
+  WHERE source IS NOT NULL AND source_id IS NOT NULL;
 COMMENT ON TABLE bill_pass_register IS
   'Old sheets: "RUG ARA-ALL BILLS" / "NYKO MART-ALL BILLS" master bill-pass ledgers, unified into one table '
   'with company_id replacing "one workbook per company". Deliberately NOT strictly FK''d to freight_bills / '
@@ -1504,9 +1555,10 @@ COMMENT ON TABLE bill_pass_register IS
   'NULL) alongside every vendor/courier bill (party_id set, employee_id NULL) — see salary_payments / '
   'employee_advances below.';
 COMMENT ON COLUMN bill_pass_register.source IS
-  'NULL = manually entered (vendor/courier bill, typed in directly). ''salary_payment'' / ''employee_advance'' '
-  '= auto-inserted the moment money actually moves, so every real debit from a company account shows up here '
-  'regardless of WHY it went out.';
+  'NULL = manually entered (vendor/courier bill, typed in directly). ''salary_payment'' / ''employee_advance'' / '
+  '''purchase_bill'' = auto-inserted the moment the source row is saved (company unambiguous in all 3 cases). '
+  '''freight_bill'' / ''duty_tax_bill'' = inserted via an explicit reviewed "Send to Bill Pass Register" action '
+  '(2026-08-12, round 10) since those two invoices can span multiple companies with no stored split.';
 
 
 -- =============================================================================
