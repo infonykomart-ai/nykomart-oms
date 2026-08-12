@@ -59,7 +59,7 @@ export default async function AttendancePage() {
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
       supabase
         .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, carried_from_log_id, submitted_at")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at")
         .eq("employee_id", employee.id)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
@@ -95,12 +95,19 @@ export default async function AttendancePage() {
   const hasTaskManagement = employee.capabilities.includes("task_management");
   let myTaskRows: TaskRow[] = [];
   let assignedByMeRows: AssignedTaskRow[] = [];
-  let taskEmployees: { id: string; name: string }[] = [];
+  let taskEmployees: { id: string; name: string; companyName: string }[] = [];
   let taskWebsites: string[] = [];
 
   if (hasTaskManagement) {
-    const [{ data: taskEmployeesData }, { data: stores }, { data: myTasks }, { data: assignedByMe }] = await Promise.all([
-      supabase.from("employees").select("id, name, company_id").in("company_id", employee.companyIds).eq("active", true).order("name"),
+    // 2026-08-11 (round 4): "KOI BHI KISI KO ASSIGN KAR SAKTA HAI PHIR
+    // COMPANY CHAHE KOI BHI HO" — the Assign-To dropdown is explicitly NOT
+    // scoped to employee.companyIds anymore: every active employee across
+    // ALL 3 companies is selectable, regardless of which company(s) the
+    // assigner themselves has access to. assignTask()'s own server-side
+    // check was relaxed to match (see tasks/actions.ts).
+    const [{ data: taskEmployeesData }, { data: allCompanies }, { data: stores }, { data: myTasks }, { data: assignedByMe }] = await Promise.all([
+      supabase.from("employees").select("id, name, company_id").eq("active", true).order("name"),
+      supabase.from("companies").select("id, name"),
       supabase.from("stores").select("name").in("company_id", employee.companyIds).eq("active", true).order("name"),
       supabase
         .from("tasks")
@@ -117,13 +124,18 @@ export default async function AttendancePage() {
     ]);
 
     const employeeName = new Map((taskEmployeesData ?? []).map((e) => [e.id, e.name]));
-    taskEmployees = (taskEmployeesData ?? []).filter((e) => e.id !== employee.id);
+    const companyName = new Map((allCompanies ?? []).map((c) => [c.id, c.name]));
+    taskEmployees = (taskEmployeesData ?? [])
+      .filter((e) => e.id !== employee.id)
+      .map((e) => ({ id: e.id, name: e.name, companyName: companyName.get(e.company_id) ?? "—" }));
     taskWebsites = Array.from(new Set((stores ?? []).map((s) => s.name)));
 
-    // assignTask() allows cross-company assignment (the assigner just needs
-    // access to the ASSIGNEE's company, not membership in it), so fetch any
+    // assignTask() allows cross-company assignment, so fetch any
     // referenced employee id that isn't already covered — same pattern as
-    // the old standalone /dashboard/tasks page.
+    // the old standalone /dashboard/tasks page. (Now largely redundant
+    // since taskEmployeesData above already covers every active employee
+    // company-wide, but kept as a defensive fallback for an inactive or
+    // since-deleted employee that a task still references.)
     const missingIds = Array.from(
       new Set([
         ...(myTasks ?? []).map((t) => t.assigned_by_employee_id),
