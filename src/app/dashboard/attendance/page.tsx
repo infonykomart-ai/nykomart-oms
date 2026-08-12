@@ -1,276 +1,311 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
-import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
-import { PunchButtons } from "./punch-buttons";
-import { DailyReportForm } from "./daily-report-form";
-import { RecentReportsList } from "./recent-reports-list";
-import { AssignTaskForm } from "../tasks/assign-task-form";
-import { TaskList, type TaskRow } from "../tasks/task-list";
-import { AssignedByMeList, type AssignedTaskRow } from "../tasks/assigned-by-me-list";
+import { categorizeMonth, summarizeCategories } from "@/lib/attendance/payroll";
+import { formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
+import { HolidayForm } from "./holiday-form";
+import { WeeklyOffForm } from "./weekly-off-form";
+import { ManualAttendanceForm } from "./manual-attendance-form";
+import { RemoveHolidayButton } from "./remove-holiday-button";
 
-const CATEGORY_BADGE: Record<DayCategory, string> = {
-  Present: "bg-green-100 text-green-700",
-  Late: "bg-amber-100 text-amber-700",
-  "Half Day": "bg-amber-100 text-amber-700",
-  Leave: "bg-sky-100 text-sky-700",
-  Absent: "bg-red-100 text-red-700",
-  Holiday: "bg-purple-100 text-purple-700",
-  "Week Off": "bg-slate-100 text-slate-500",
-  Future: "bg-slate-50 text-slate-300",
-};
-
-// 2026-08-11: "PERSENT/APSENT SELLERY STRACTURE HOLYDAY ... LOGIN KARTE HI
-// PERSENT LAG JAYE ... EK REPORT KA SYSTEM BHI BANANA HAI". Attendance is
-// auto-punched at login/logout (see src/lib/attendance/punch.ts + the login
-// action + LogoutButton) — this page is the employee's own view: today's
-// status with a manual backup button, this month's day-by-day record, and
-// the Daily Work Report (auto-sync as you type, see daily-report-form.tsx).
-export default async function AttendancePage() {
-  const employee = await requireCapability("attendance_punch");
+// 2026-08-11: Attendance Admin — holiday calendar + weekly-off pattern per
+// company, a team-wide monthly Present/Absent/Late/Leave/Holiday/Week Off
+// summary (derived, no nightly job needed — see categorizeMonth), a manual
+// correction form (missed punch, approved leave, one-off half day), and
+// the team-wide Daily Work Report log. Company/store access itself (who
+// can see which company at all) is unrelated existing infrastructure
+// (employee_company_access) — this page only adds holiday/weekly-off
+// config on top of it.
+export default async function AttendanceAdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const employee = await requireCapability("attendance_admin");
   const supabase = await createClient();
+  const sp = await searchParams;
+
+  const { data: companies } = await supabase.from("companies").select("id, name, weekly_off_days").in("id", employee.companyIds);
+  const selectedCompanyId = (typeof sp.company === "string" && employee.companyIds.includes(sp.company)) ? sp.company : employee.currentCompanyId;
+  const selectedCompany = (companies ?? []).find((c) => c.id === selectedCompanyId) ?? companies?.[0];
+
   const today = todayIST();
-  const [year, month] = today.split("-").map(Number);
-  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const monthParam = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : today.slice(0, 7);
+  const [year, month] = monthParam.split("-").map(Number);
+  const monthStart = `${monthParam}-01`;
+  const monthEnd = `${monthParam}-31`;
 
-  // "AGAR KOI KAAM NEXT DAY KE LIYE MARK KIYA HAI TO VO AGALE DIN
-  // AUTOMATIC PENDING ME DIKH JAYE" — copy forward any still-pending
-  // "Next Day Carry On" rows from before today, BEFORE reading today's
-  // logs below, so a freshly carried-over row shows up immediately.
-  await carryOverPendingDailyLogs(createServiceRoleClient(), employee.id, today);
+  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }] = await Promise.all([
+    supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
+    supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
+    supabase.from("holidays").select("id, holiday_date, name, company_id").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd).order("holiday_date"),
+    // 2026-08-11 (round 3): "md admin ke page par show ho jaye" — only
+    // rows that have actually been submitted show here, not drafts still
+    // being typed. See daily_work_logs.submitted_at.
+    supabase
+      .from("daily_work_logs")
+      .select("id, log_date, employee_id, category, description, work_status, submitted_at, time_spent_seconds, estimated_time_minutes")
+      .eq("company_id", selectedCompanyId)
+      .gte("log_date", monthStart)
+      .lte("log_date", monthEnd)
+      .not("submitted_at", "is", null)
+      .order("log_date", { ascending: false })
+      .limit(200),
+  ]);
 
-  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }] =
-    await Promise.all([
-      supabase.from("attendance").select("*").eq("employee_id", employee.id).eq("attendance_date", today).maybeSingle(),
-      supabase
-        .from("attendance")
-        .select("attendance_date, status")
-        .eq("employee_id", employee.id)
-        .gte("attendance_date", monthStart)
-        .lte("attendance_date", today),
-      supabase.from("companies").select("weekly_off_days").eq("id", employee.currentCompanyId).single(),
-      supabase
-        .from("holidays")
-        .select("holiday_date, name")
-        .or(`company_id.eq.${employee.currentCompanyId},company_id.is.null`)
-        .gte("holiday_date", monthStart)
-        .lte("holiday_date", `${year}-${String(month).padStart(2, "0")}-31`),
-      supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
-      supabase
-        .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at")
-        .eq("employee_id", employee.id)
-        .order("log_date", { ascending: false })
-        .order("updated_at", { ascending: false })
-        .limit(30),
-    ]);
-
-  const attendanceByDate = new Map((monthRows ?? []).map((r) => [r.attendance_date, { status: r.status }]));
+  const employeeName = new Map((teamEmployees ?? []).map((e) => [e.id, e.name]));
   const holidayDates = new Set((holidays ?? []).map((h) => h.holiday_date));
-  const days = categorizeMonth({
-    year,
-    month,
-    weeklyOffDays: (company?.weekly_off_days as number[] | undefined) ?? [0],
-    holidayDates,
-    attendanceByDate,
-    todayStr: today,
-    joinDate: emp?.date_of_joining ?? null,
-  });
-  const summary = summarizeCategories(days);
-  const holidayNameByDate = new Map((holidays ?? []).map((h) => [h.holiday_date, h.name]));
+  const weeklyOffDays = (selectedCompany?.weekly_off_days as number[] | undefined) ?? [0];
 
-  const todaysLogs = (recentLogs ?? []).filter((l) => l.log_date === today);
-  // 2026-08-11 (round 3): "submit karte hi khud ke kaam me add ho jaye" —
-  // My Recent Reports only lists rows that were actually submitted, not
-  // half-typed drafts. DailyReportForm below still gets the full
-  // todaysLogs (drafts + submitted) so it can render both card types.
-  const submittedTodaysLogs = todaysLogs.filter((l) => l.submitted_at !== null);
+  const rowsByEmployee = new Map<string, Map<string, { status: string | null }>>();
+  for (const r of attendanceRows ?? []) {
+    if (!rowsByEmployee.has(r.employee_id)) rowsByEmployee.set(r.employee_id, new Map());
+    rowsByEmployee.get(r.employee_id)!.set(r.attendance_date, { status: r.status });
+  }
+
+  const teamSummary = (teamEmployees ?? []).map((e) => {
+    const days = categorizeMonth({
+      year,
+      month,
+      weeklyOffDays,
+      holidayDates,
+      attendanceByDate: rowsByEmployee.get(e.id) ?? new Map(),
+      todayStr: today,
+      joinDate: e.date_of_joining,
+    });
+    return { employee: e, summary: summarizeCategories(days) };
+  });
 
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
-  // usko alag se kyu banaya hai" — Task Assignment now renders directly on
-  // this page instead of its own /dashboard/tasks route, gated on the same
-  // task_management capability every role already has (see
-  // db/schema.sql). Fetch is skipped entirely for anyone without it.
-  const hasTaskManagement = employee.capabilities.includes("task_management");
-  let myTaskRows: TaskRow[] = [];
-  let assignedByMeRows: AssignedTaskRow[] = [];
-  let taskEmployees: { id: string; name: string; companyName: string }[] = [];
-  let taskWebsites: string[] = [];
+  // usko alag se kyu banaya hai" — the company-wide Task Reports view (Live
+  // Now + All Tasks) now renders directly on Attendance Admin instead of
+  // its own /dashboard/tasks/admin route, gated on task_admin (same 3
+  // roles as attendance_admin — see db/schema.sql).
+  const hasTaskAdmin = employee.capabilities.includes("task_admin");
+  let tasks: { id: string; website: string | null; category: string | null; priority: string; deadline: string | null; status: string; description: string; created_at: string; timer_started_at: string | null; time_spent_seconds: number; assigned_by_employee_id: string; assigned_to_employee_id: string }[] = [];
+  let liveNow: { id: string; description: string; timer_started_at: string | null; time_spent_seconds: number; assigned_to_employee_id: string; company_id: string }[] = [];
 
-  if (hasTaskManagement) {
-    // 2026-08-11 (round 4): "KOI BHI KISI KO ASSIGN KAR SAKTA HAI PHIR
-    // COMPANY CHAHE KOI BHI HO" — the Assign-To dropdown is explicitly NOT
-    // scoped to employee.companyIds anymore: every active employee across
-    // ALL 3 companies is selectable, regardless of which company(s) the
-    // assigner themselves has access to. assignTask()'s own server-side
-    // check was relaxed to match (see tasks/actions.ts).
-    const [{ data: taskEmployeesData }, { data: allCompanies }, { data: stores }, { data: myTasks }, { data: assignedByMe }] = await Promise.all([
-      supabase.from("employees").select("id, name, company_id").eq("active", true).order("name"),
-      supabase.from("companies").select("id, name"),
-      supabase.from("stores").select("name").in("company_id", employee.companyIds).eq("active", true).order("name"),
-      supabase
+  if (hasTaskAdmin) {
+    // 2026-08-11 (round 5): same root cause as attendance/page.tsx — reads
+    // against `tasks` must use the service-role client, not the anon
+    // session client, because RLS may not have a working policy on this
+    // (newer) table yet. Safe here too: already gated on hasTaskAdmin,
+    // and each query keeps its own explicit company scoping.
+    const taskSupabase = createServiceRoleClient();
+    const [{ data: tasksData }, { data: liveNowData }] = await Promise.all([
+      taskSupabase
         .from("tasks")
-        .select("id, website, category, priority, deadline, status, description, created_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, assigned_by_employee_id")
-        .eq("assigned_to_employee_id", employee.id)
-        .order("status", { ascending: true })
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("tasks")
-        .select("id, category, priority, status, description, deadline, time_spent_seconds, timer_started_at, assigned_to_employee_id")
-        .eq("assigned_by_employee_id", employee.id)
+        .select("id, website, category, priority, deadline, status, description, created_at, timer_started_at, time_spent_seconds, assigned_by_employee_id, assigned_to_employee_id")
+        .eq("company_id", selectedCompanyId)
         .order("created_at", { ascending: false })
-        .limit(50),
+        .limit(200),
+      // Live Now — across every company this login can see, not just the
+      // selected one, so a company switch never hides someone who's mid-task.
+      taskSupabase
+        .from("tasks")
+        .select("id, description, timer_started_at, time_spent_seconds, assigned_to_employee_id, company_id")
+        .in("company_id", employee.companyIds)
+        .not("timer_started_at", "is", null),
     ]);
+    tasks = tasksData ?? [];
+    liveNow = liveNowData ?? [];
 
-    const employeeName = new Map((taskEmployeesData ?? []).map((e) => [e.id, e.name]));
-    const companyName = new Map((allCompanies ?? []).map((c) => [c.id, c.name]));
-    taskEmployees = (taskEmployeesData ?? [])
-      .filter((e) => e.id !== employee.id)
-      .map((e) => ({ id: e.id, name: e.name, companyName: companyName.get(e.company_id) ?? "—" }));
-    taskWebsites = Array.from(new Set((stores ?? []).map((s) => s.name)));
-
-    // assignTask() allows cross-company assignment, so fetch any
-    // referenced employee id that isn't already covered — same pattern as
-    // the old standalone /dashboard/tasks page. (Now largely redundant
-    // since taskEmployeesData above already covers every active employee
-    // company-wide, but kept as a defensive fallback for an inactive or
-    // since-deleted employee that a task still references.)
+    // assignTask() allows cross-company assignment, so an "Assigned By"
+    // name or a Live Now name can reference an employee outside
+    // selectedCompanyId entirely — fetch whatever's missing from the
+    // teamEmployees-scoped map above.
     const missingIds = Array.from(
       new Set([
-        ...(myTasks ?? []).map((t) => t.assigned_by_employee_id),
-        ...(assignedByMe ?? []).map((t) => t.assigned_to_employee_id),
+        ...tasks.map((t) => t.assigned_by_employee_id),
+        ...tasks.map((t) => t.assigned_to_employee_id),
+        ...liveNow.map((l) => l.assigned_to_employee_id),
       ])
     ).filter((id) => !employeeName.has(id));
     if (missingIds.length) {
       const { data: extraEmployees } = await supabase.from("employees").select("id, name").in("id", missingIds);
       for (const e of extraEmployees ?? []) employeeName.set(e.id, e.name);
     }
-
-    myTaskRows = (myTasks ?? []).map((t) => ({
-      id: t.id,
-      website: t.website,
-      category: t.category,
-      priority: t.priority,
-      deadline: t.deadline,
-      status: t.status,
-      description: t.description,
-      created_at: t.created_at,
-      assignedByName: employeeName.get(t.assigned_by_employee_id) ?? "—",
-      timerStartedAt: t.timer_started_at,
-      timeSpentSeconds: t.time_spent_seconds,
-      firstStartedAt: t.first_started_at,
-      lastPausedAt: t.last_paused_at,
-    }));
-
-    assignedByMeRows = (assignedByMe ?? []).map((t) => ({
-      id: t.id,
-      category: t.category,
-      priority: t.priority,
-      status: t.status,
-      description: t.description,
-      deadline: t.deadline,
-      assignedToName: employeeName.get(t.assigned_to_employee_id) ?? "—",
-      timeSpentSeconds: t.time_spent_seconds,
-      timerStartedAt: t.timer_started_at,
-    }));
   }
+
+  const taskNowMs = new Date().getTime();
 
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">🕒 Attendance &amp; Daily Report</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Punch in/out happens automatically on login/logout — the button below is a manual backup only.
-        </p>
+        <h1 className="text-2xl font-semibold text-slate-900">🗓️ Attendance Admin</h1>
+        <p className="mt-1 text-sm text-slate-500">Holiday calendar, weekly off, team attendance &amp; daily work reports.</p>
       </div>
+
+      <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500">Company</label>
+          <select name="company" defaultValue={selectedCompanyId} className={selectClass}>
+            {(companies ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500">Month</label>
+          <input type="month" name="month" defaultValue={monthParam} className={selectClass} />
+        </div>
+        <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+          View
+        </button>
+      </form>
 
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Today — {today}</h2>
-          <div className="mb-3 flex flex-wrap gap-4 text-sm">
-            <div>
-              <div className="text-xs text-slate-400">Punch In</div>
-              <div className="font-medium text-slate-900">
-                {todayRow?.punch_in ? new Date(todayRow.punch_in).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "—"}
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">Holiday Calendar — {monthParam}</h2>
+          <div className="mb-3 space-y-1.5">
+            {(holidays ?? []).length === 0 && <p className="text-xs text-slate-400">No holidays added for this month.</p>}
+            {(holidays ?? []).map((h) => (
+              <div key={h.id} className="flex items-center justify-between rounded border border-slate-100 px-2 py-1.5 text-xs">
+                <span>
+                  <span className="font-medium text-slate-800">{h.holiday_date}</span> — {h.name}
+                  {h.company_id === null && <span className="ml-1 text-slate-400">(all companies)</span>}
+                </span>
+                <RemoveHolidayButton id={h.id} />
               </div>
-            </div>
-            <div>
-              <div className="text-xs text-slate-400">Punch Out</div>
-              <div className="font-medium text-slate-900">
-                {todayRow?.punch_out ? new Date(todayRow.punch_out).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "—"}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-slate-400">Status</div>
-              <div className="font-medium text-slate-900">{todayRow?.status ?? "Not punched in yet"}</div>
-            </div>
+            ))}
           </div>
-          <PunchButtons punchedIn={!!todayRow?.punch_in} punchedOut={!!todayRow?.punch_out} />
+          <HolidayForm companyId={selectedCompanyId} companies={companies ?? []} />
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">This Month So Far</h2>
-          <div className="flex flex-wrap gap-2 text-xs">
-            {(["Present", "Late", "Half Day", "Leave", "Absent", "Holiday", "Week Off"] as DayCategory[]).map((cat) => (
-              <span key={cat} className={`rounded-full px-2.5 py-1 font-medium ${CATEGORY_BADGE[cat]}`}>
-                {cat}: {summary[cat]}
-              </span>
-            ))}
-          </div>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">Weekly Off — {selectedCompany?.name}</h2>
+          <WeeklyOffForm companyId={selectedCompanyId} currentDays={weeklyOffDays} />
         </div>
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Day by Day — {today.slice(0, 7)}</h2>
-        <div className="flex flex-wrap gap-1.5">
-          {days.map((d) => (
-            <div
-              key={d.date}
-              title={holidayNameByDate.get(d.date) ?? d.category}
-              className={`flex h-9 w-9 flex-col items-center justify-center rounded text-[10px] font-medium ${CATEGORY_BADGE[d.category]}`}
-            >
-              {d.date.slice(8, 10)}
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Team Attendance Summary — {monthParam}</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="py-1 pr-3">Employee</th>
+                <th className="px-2">Present</th>
+                <th className="px-2">Late</th>
+                <th className="px-2">Half Day</th>
+                <th className="px-2">Leave</th>
+                <th className="px-2">Absent</th>
+                <th className="px-2">Holiday</th>
+                <th className="px-2">Week Off</th>
+              </tr>
+            </thead>
+            <tbody>
+              {teamSummary.map(({ employee: e, summary }) => (
+                <tr key={e.id} className="border-t border-slate-100">
+                  <td className="py-1.5 pr-3 font-medium text-slate-800">{e.name}</td>
+                  <td className="px-2 text-green-700">{summary.Present}</td>
+                  <td className="px-2 text-amber-700">{summary.Late}</td>
+                  <td className="px-2 text-amber-700">{summary["Half Day"]}</td>
+                  <td className="px-2 text-sky-700">{summary.Leave}</td>
+                  <td className="px-2 text-red-700">{summary.Absent}</td>
+                  <td className="px-2 text-purple-700">{summary.Holiday}</td>
+                  <td className="px-2 text-slate-500">{summary["Week Off"]}</td>
+                </tr>
+              ))}
+              {teamSummary.length === 0 && (
+                <tr><td colSpan={8} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Manual Correction</h2>
+        <p className="mb-3 text-xs text-slate-500">Missed punch, approved leave, or a one-off half day — sets/overrides that day&apos;s status directly.</p>
+        <ManualAttendanceForm companyId={selectedCompanyId} employees={teamEmployees ?? []} today={today} />
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Team Daily Work Log — {monthParam}</h2>
+        <div className="max-h-96 space-y-1.5 overflow-y-auto">
+          {(dailyLogs ?? []).length === 0 && <p className="text-xs text-slate-400">No work reports logged this month.</p>}
+          {(dailyLogs ?? []).map((l) => (
+            <div key={l.id} className="rounded border border-slate-100 px-2 py-1.5 text-xs">
+              <span className="font-medium text-slate-800">{l.log_date}</span>
+              <span className="ml-2 text-slate-500">{employeeName.get(l.employee_id) ?? "—"}</span>
+              <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
+              <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
+              {l.estimated_time_minutes ? (
+                <span className="ml-2 text-slate-400">Est {formatDuration(l.estimated_time_minutes * 60)}</span>
+              ) : null}
+              <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
+              <p className="mt-0.5 text-slate-600">{l.description}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="mb-3">
-        <h2 className="text-sm font-semibold text-slate-700">📝 Daily Work Report</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Auto-saves as you type — safe to refresh, nothing typed is lost. Logout also flushes any pending change.
-        </p>
-      </div>
-      <DailyReportForm todayLogs={todaysLogs} recentLogs={recentLogs ?? []} today={today} />
-
-      <div className="mt-6">
-        <RecentReportsList logs={submittedTodaysLogs} />
-      </div>
-
-      {hasTaskManagement && (
+      {hasTaskAdmin && (
         <div className="mt-6">
-          <div className="mb-3">
-            <h2 className="text-sm font-semibold text-slate-700">📋 Tasks</h2>
-            <p className="mt-1 text-xs text-slate-500">Assign work to anyone, and track your own tasks with a live timer.</p>
-          </div>
-
-          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">Assign a Task</h3>
-            <AssignTaskForm employees={taskEmployees} websites={taskWebsites} />
-          </div>
-
           <div className="mb-6">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">My Tasks</h3>
-            <TaskList tasks={myTaskRows} />
+            <h2 className="text-2xl font-semibold text-slate-900">📊 Task Reports</h2>
+            <p className="mt-1 text-sm text-slate-500">Every employee&apos;s tasks and live timers, company-wide.</p>
+          </div>
+
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-amber-800">🟢 Live Now</h3>
+            {liveNow.length === 0 && <p className="text-xs text-amber-700/70">No one is actively timing a task right now.</p>}
+            <div className="space-y-1.5">
+              {liveNow.map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-2 rounded border border-amber-100 bg-white px-2.5 py-1.5 text-xs">
+                  <span className="font-medium text-slate-800">{employeeName.get(t.assigned_to_employee_id) ?? "—"}</span>
+                  <span className="flex-1 truncate text-slate-600">{t.description}</span>
+                  <span className="font-semibold text-amber-800">
+                    {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">Tasks I Assigned</h3>
-            <AssignedByMeList tasks={assignedByMeRows} />
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">All Tasks — {selectedCompany?.name}</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-slate-400">
+                    <th className="py-1 pr-3">Assigned To</th>
+                    <th className="px-2">Assigned By</th>
+                    <th className="px-2">Description</th>
+                    <th className="px-2">Priority</th>
+                    <th className="px-2">Status</th>
+                    <th className="px-2">Deadline</th>
+                    <th className="px-2">Time Spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((t) => (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className="py-1.5 pr-3 font-medium text-slate-800">{employeeName.get(t.assigned_to_employee_id) ?? "—"}</td>
+                      <td className="px-2 text-slate-500">{employeeName.get(t.assigned_by_employee_id) ?? "—"}</td>
+                      <td className="max-w-xs truncate px-2 text-slate-600">{t.description}</td>
+                      <td className="px-2">{t.priority}</td>
+                      <td className="px-2">{t.status}</td>
+                      <td className="px-2 text-slate-500">{t.deadline ?? "—"}</td>
+                      <td className="px-2 text-amber-700">
+                        {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))}
+                        {t.timer_started_at && <span className="ml-1 text-green-600">●</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {tasks.length === 0 && (
+                    <tr><td colSpan={7} className="py-3 text-center text-slate-400">No tasks for this company yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
+
+const selectClass =
+  "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
