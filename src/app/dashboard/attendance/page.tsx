@@ -3,6 +3,8 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
 import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
+import { formatDuration } from "@/lib/attendance/timer";
+import { EXPECTED_WORK_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected } from "@/lib/attendance/work-hours";
 import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
@@ -27,20 +29,40 @@ const CATEGORY_BADGE: Record<DayCategory, string> = {
 // action + LogoutButton) — this page is the employee's own view: today's
 // status with a manual backup button, this month's day-by-day record, and
 // the Daily Work Report (auto-sync as you type, see daily-report-form.tsx).
-export default async function AttendancePage() {
+export default async function AttendancePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const employee = await requireCapability("attendance_punch");
   const supabase = await createClient();
+  // 2026-08-12 (round 6): "submit ki report submit dikha raha hai lekin
+  // admin panal me nahi dikh rahi, logout kar ke vaps login kar rahe to
+  // vo report hat ja rahi" — ROOT CAUSE: same class of bug as the task
+  // list (round 5). upsertDailyLog/submitDailyLog write via the
+  // SERVICE ROLE client (bypasses RLS), but this page was reading
+  // daily_work_logs via the anon/session client (subject to RLS) — a
+  // fresh reload (a real logout+login, not just stale client cache) hits
+  // whatever RLS state daily_work_logs actually has, and if it doesn't
+  // have a working allow-policy the read silently comes back empty even
+  // though the row is really there. Reading daily_work_logs via the
+  // service-role client sidesteps that entirely — safe here because
+  // every query below already scopes to .eq("employee_id", employee.id)
+  // (own data only).
+  const dwlSupabase = createServiceRoleClient();
   const today = todayIST();
   const [year, month] = today.split("-").map(Number);
   const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const sp = await searchParams;
+  const viewDate = typeof sp.viewDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.viewDate) ? sp.viewDate : null;
 
   // "AGAR KOI KAAM NEXT DAY KE LIYE MARK KIYA HAI TO VO AGALE DIN
   // AUTOMATIC PENDING ME DIKH JAYE" — copy forward any still-pending
   // "Next Day Carry On" rows from before today, BEFORE reading today's
   // logs below, so a freshly carried-over row shows up immediately.
-  await carryOverPendingDailyLogs(createServiceRoleClient(), employee.id, today);
+  await carryOverPendingDailyLogs(dwlSupabase, employee.id, today);
 
-  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }] =
+  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: viewDateLogs }] =
     await Promise.all([
       supabase.from("attendance").select("*").eq("employee_id", employee.id).eq("attendance_date", today).maybeSingle(),
       supabase
@@ -57,13 +79,26 @@ export default async function AttendancePage() {
         .gte("holiday_date", monthStart)
         .lte("holiday_date", `${year}-${String(month).padStart(2, "0")}-31`),
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
-      supabase
+      dwlSupabase
         .from("daily_work_logs")
         .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at")
         .eq("employee_id", employee.id)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
         .limit(30),
+      // 2026-08-12 (round 6): "employe kabhi bhi dekhna chahe to date
+      // chose kar ke dekh sake ki kab kya kaam kiya" — a separate,
+      // on-demand fetch for whatever date the employee picks below (not
+      // limited to the last-30-rows window `recentLogs` covers).
+      viewDate
+        ? dwlSupabase
+            .from("daily_work_logs")
+            .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at")
+            .eq("employee_id", employee.id)
+            .eq("log_date", viewDate)
+            .not("submitted_at", "is", null)
+            .order("submitted_at", { ascending: true })
+        : Promise.resolve({ data: null }),
     ]);
 
   const attendanceByDate = new Map((monthRows ?? []).map((r) => [r.attendance_date, { status: r.status }]));
@@ -86,6 +121,14 @@ export default async function AttendancePage() {
   // half-typed drafts. DailyReportForm below still gets the full
   // todaysLogs (drafts + submitted) so it can render both card types.
   const submittedTodaysLogs = todaysLogs.filter((l) => l.submitted_at !== null);
+
+  // 2026-08-12 (round 6): "jo time bachta hai utna time report me dikhe ki
+  // kitna ghante kaam kiya or kitna karna chahiye tha, agar koi kam kar
+  // raha hai to uska bhi pata chal jayega" — sum of everything logged
+  // today (draft + submitted, since a still-open row already reflects
+  // real time spent) against the 8h15m office-hours-minus-breaks target.
+  const todaysConsumedMinutes = todaysLogs.reduce((sum, l) => sum + Math.round((l.time_spent_seconds ?? 0) / 60), 0);
+  const todaysWorkHours = compareToExpected(todaysConsumedMinutes);
 
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
   // usko alag se kyu banaya hai" — Task Assignment now renders directly on
@@ -250,6 +293,28 @@ export default async function AttendancePage() {
         </div>
       </div>
 
+      <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white p-4">
+        <div>
+          <div className="text-xs text-slate-400">Today&apos;s Work</div>
+          <div className="text-lg font-semibold text-slate-900">{formatHM(todaysConsumedMinutes)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-400">Expected ({OFFICE_START_LABEL}–{OFFICE_END_LABEL}, minus lunch &amp; tea)</div>
+          <div className="text-lg font-semibold text-slate-500">{formatHM(EXPECTED_WORK_MINUTES)}</div>
+        </div>
+        <span
+          className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${
+            todaysWorkHours.verdict === "short" ? "bg-red-100 text-red-700" : todaysWorkHours.verdict === "on-track" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
+          }`}
+        >
+          {todaysWorkHours.verdict === "short"
+            ? `⚠ ${formatHM(Math.abs(todaysWorkHours.deltaMinutes))} short`
+            : todaysWorkHours.verdict === "on-track"
+              ? "On track"
+              : `+${formatHM(todaysWorkHours.deltaMinutes)} ahead`}
+        </span>
+      </div>
+
       <div className="mb-3">
         <h2 className="text-sm font-semibold text-slate-700">📝 Daily Work Report</h2>
         <p className="mt-1 text-xs text-slate-500">
@@ -260,6 +325,46 @@ export default async function AttendancePage() {
 
       <div className="mt-6">
         <RecentReportsList logs={submittedTodaysLogs} />
+      </div>
+
+      {/* 2026-08-12 (round 6): "employe kabhi bhi dekhna chahe to date
+          chose kar ke dekh sake ki kab kya kaam kiya" — pick any past date
+          and see that day's submitted reports, not just today's. */}
+      <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">📅 Report History</h2>
+        <form method="get" className="mb-3 flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">Date</label>
+            <input
+              type="date"
+              name="viewDate"
+              defaultValue={viewDate ?? ""}
+              max={today}
+              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+            />
+          </div>
+          <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+            View
+          </button>
+        </form>
+        {viewDate ? (
+          (viewDateLogs ?? []).length === 0 ? (
+            <p className="text-xs text-slate-400">No submitted reports on {viewDate}.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {(viewDateLogs ?? []).map((l) => (
+                <div key={l.id} className="rounded border border-slate-100 px-2.5 py-1.5 text-xs">
+                  <span className="font-medium text-slate-800">{l.category ?? "—"}</span>
+                  <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
+                  <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
+                  <p className="mt-0.5 text-slate-600">{l.description}</p>
+                </div>
+              ))}
+            </div>
+          )
+        ) : (
+          <p className="text-xs text-slate-400">Pick a date to see what you worked on that day.</p>
+        )}
       </div>
 
       {hasTaskManagement && (
