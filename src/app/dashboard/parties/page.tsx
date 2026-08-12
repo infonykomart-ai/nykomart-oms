@@ -15,7 +15,9 @@ export default async function PartiesPage() {
 
   const { data: parties } = await supabase
     .from("parties")
-    .select("id, name, party_type, payment_type, invoice_type, address, contact_no, email, gst, remark")
+    .select(
+      "id, name, party_type, payment_type, invoice_type, address, contact_no, email, gst, remark, bank_name, account_no, ifsc_code, account_holder_name"
+    )
     .order("name");
 
   return (

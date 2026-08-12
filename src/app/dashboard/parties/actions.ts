@@ -47,6 +47,10 @@ export type PartyInput = {
   email: string | null;
   gst: string | null;
   remark: string | null;
+  bankName: string | null;
+  accountNo: string | null;
+  ifscCode: string | null;
+  accountHolderName: string | null;
 };
 
 export async function savePartyCore(
@@ -87,6 +91,10 @@ export async function savePartyCore(
     email: input.email,
     gst: input.gst,
     remark: input.remark,
+    bank_name: input.bankName,
+    account_no: input.accountNo,
+    ifsc_code: input.ifscCode,
+    account_holder_name: input.accountHolderName,
   };
 
   if (partyId) {
@@ -123,6 +131,10 @@ export async function saveParty(_prev: PartyFormState, formData: FormData): Prom
     email: strOrNull(formData, "email"),
     gst: strOrNull(formData, "gst"),
     remark: strOrNull(formData, "remark"),
+    bankName: strOrNull(formData, "bank_name"),
+    accountNo: strOrNull(formData, "account_no"),
+    ifscCode: strOrNull(formData, "ifsc_code"),
+    accountHolderName: strOrNull(formData, "account_holder_name"),
   });
 
   if (result.error) return { error: result.error, success: false };
@@ -254,6 +266,10 @@ export async function bulkSaveParties(_prev: BulkPartyState, formData: FormData)
     const email = cellStr(raw, byHeader, "Email") || null;
     const gst = cellStr(raw, byHeader, "GST") || null;
     const remark = cellStr(raw, byHeader, "Remark") || null;
+    const bankName = cellStr(raw, byHeader, "Bank Name") || null;
+    const accountNo = cellStr(raw, byHeader, "Account No") || null;
+    const ifscCode = cellStr(raw, byHeader, "IFSC Code") || null;
+    const accountHolderName = cellStr(raw, byHeader, "Account Holder Name") || null;
 
     const existingId = partyIdByName.get(name.toLowerCase()) ?? null;
 
@@ -267,6 +283,10 @@ export async function bulkSaveParties(_prev: BulkPartyState, formData: FormData)
       email,
       gst,
       remark,
+      bankName,
+      accountNo,
+      ifscCode,
+      accountHolderName,
     });
 
     if (result.error) {

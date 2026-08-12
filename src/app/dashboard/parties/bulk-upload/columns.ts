@@ -12,4 +12,8 @@ export const PARTY_COLUMNS: PartyColumn[] = [
   { label: "Email", example: "", required: false },
   { label: "GST", example: "", required: false },
   { label: "Remark", example: "", required: false },
+  { label: "Bank Name", example: "", required: false },
+  { label: "Account No", example: "", required: false },
+  { label: "IFSC Code", example: "", required: false },
+  { label: "Account Holder Name", example: "", required: false, help: "Only if it differs from the Party Name itself." },
 ];

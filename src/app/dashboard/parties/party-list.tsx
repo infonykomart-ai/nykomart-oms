@@ -69,6 +69,12 @@ export function PartyList({ parties }: { parties: EditableParty[] }) {
                       <p className="mt-0.5 text-xs text-slate-500">{[p.contact_no, p.email].filter(Boolean).join(" · ")}</p>
                     )}
                     {p.gst && <p className="mt-0.5 text-xs text-slate-400">GST: {p.gst}</p>}
+                    {(p.bank_name || p.account_no) && (
+                      <p className="mt-0.5 text-xs text-slate-400">
+                        🏦 {[p.bank_name, p.account_no, p.ifsc_code].filter(Boolean).join(" · ")}
+                        {p.account_holder_name ? ` (${p.account_holder_name})` : ""}
+                      </p>
+                    )}
                     {deleteError[p.id] && <p className="mt-1 text-xs text-red-600">{deleteError[p.id]}</p>}
                   </div>
                   <div className="flex shrink-0 gap-2">

@@ -19,6 +19,10 @@ export type EditableParty = {
   email: string | null;
   gst: string | null;
   remark: string | null;
+  bank_name: string | null;
+  account_no: string | null;
+  ifsc_code: string | null;
+  account_holder_name: string | null;
 };
 
 // Used both for "add a new party" (party=null, on the main page's left
@@ -148,6 +152,53 @@ export function PartyForm({ party, onDone }: { party?: EditableParty; onDone?: (
           rows={2}
           className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
         />
+      </div>
+
+      {/* 2026-08-12 (round 8): bank details, so a Bill Pass Register
+          payment can be made without hunting the physical bill for
+          account info. */}
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+        <p className="mb-2 text-xs font-semibold text-slate-500">Bank Details</p>
+        <div>
+          <label className="block text-xs font-medium text-slate-600">Bank Name</label>
+          <input
+            type="text"
+            name="bank_name"
+            defaultValue={party?.bank_name ?? ""}
+            placeholder="e.g. HDFC Bank, Malviya Nagar, Jaipur"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+          />
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600">Account No</label>
+            <input
+              type="text"
+              name="account_no"
+              defaultValue={party?.account_no ?? ""}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600">IFSC Code</label>
+            <input
+              type="text"
+              name="ifsc_code"
+              defaultValue={party?.ifsc_code ?? ""}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+            />
+          </div>
+        </div>
+        <div className="mt-2">
+          <label className="block text-xs font-medium text-slate-600">Account Holder Name</label>
+          <input
+            type="text"
+            name="account_holder_name"
+            defaultValue={party?.account_holder_name ?? ""}
+            placeholder="Only if different from Party Name"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+          />
+        </div>
       </div>
 
       <div className="flex gap-2">
