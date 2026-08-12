@@ -51,3 +51,15 @@ export function datesInMonth(year: number, month: number): string[] {
   const mm = String(month).padStart(2, "0");
   return Array.from({ length: n }, (_, i) => `${year}-${mm}-${String(i + 1).padStart(2, "0")}`);
 }
+
+/**
+ * Adds (or subtracts, for a negative `days`) whole calendar days to a
+ * "YYYY-MM-DD" date string. Used by the Admin/MD Employee Performance view
+ * (2026-08-12, round 6) to default a date-range picker to "last 7 days"
+ * without pulling in a date library.
+ */
+export function addDaysToDateStr(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
