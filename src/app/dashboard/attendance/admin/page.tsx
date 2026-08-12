@@ -44,7 +44,7 @@ export default async function AttendanceAdminPage({
     // being typed. See daily_work_logs.submitted_at.
     supabase
       .from("daily_work_logs")
-      .select("id, log_date, employee_id, category, description, work_status, submitted_at")
+      .select("id, log_date, employee_id, category, description, work_status, submitted_at, time_spent_seconds, estimated_time_minutes")
       .eq("company_id", selectedCompanyId)
       .gte("log_date", monthStart)
       .lte("log_date", monthEnd)
@@ -225,6 +225,10 @@ export default async function AttendanceAdminPage({
               <span className="ml-2 text-slate-500">{employeeName.get(l.employee_id) ?? "—"}</span>
               <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
               <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
+              {l.estimated_time_minutes ? (
+                <span className="ml-2 text-slate-400">Est {formatDuration(l.estimated_time_minutes * 60)}</span>
+              ) : null}
+              <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
               <p className="mt-0.5 text-slate-600">{l.description}</p>
             </div>
           ))}
