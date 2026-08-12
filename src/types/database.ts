@@ -915,6 +915,12 @@ export type Database = {
           duty_tax_amt_inr: number | null;
           other_charge: number | null;
           gst_18pct: number | null;
+          credit_note_no: string | null;
+          credit_note_date: string | null;
+          credit_note_amt: number | null;
+          debit_note_no: string | null;
+          debit_note_date: string | null;
+          debit_note_amt: number | null;
           remark: string | null;
         };
         Insert: {
@@ -925,6 +931,12 @@ export type Database = {
           duty_tax_amt_inr?: number | null;
           other_charge?: number | null;
           gst_18pct?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number | null;
+          debit_note_no?: string | null;
+          debit_note_date?: string | null;
+          debit_note_amt?: number | null;
           remark?: string | null;
         };
         Update: {
@@ -935,6 +947,12 @@ export type Database = {
           duty_tax_amt_inr?: number | null;
           other_charge?: number | null;
           gst_18pct?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number | null;
+          debit_note_no?: string | null;
+          debit_note_date?: string | null;
+          debit_note_amt?: number | null;
           remark?: string | null;
         };
         Relationships: [
@@ -966,6 +984,9 @@ export type Database = {
           credit_note_no: string | null;
           credit_note_date: string | null;
           credit_note_amt: number;
+          disbursement_fee: number;
+          courier_duty_charges_adj: number;
+          total_payable_amt: number | null;
           created_at: string;
         };
         Insert: {
@@ -979,6 +1000,9 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
+          disbursement_fee?: number;
+          courier_duty_charges_adj?: number;
+          total_payable_amt?: number | null;
           created_at?: string;
         };
         Update: {
@@ -992,6 +1016,9 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
+          disbursement_fee?: number;
+          courier_duty_charges_adj?: number;
+          total_payable_amt?: number | null;
           created_at?: string;
         };
         Relationships: [
@@ -2233,6 +2260,13 @@ export type Database = {
           order_id: string;
           bill_weight_kg: number | null;
           difference_amt: number | null;
+          dimensional_weight_kg: number | null;
+          credit_note_no: string | null;
+          credit_note_date: string | null;
+          credit_note_amt: number | null;
+          debit_note_no: string | null;
+          debit_note_date: string | null;
+          debit_note_amt: number | null;
           remark: string | null;
         };
         Insert: {
@@ -2241,6 +2275,13 @@ export type Database = {
           order_id: string;
           bill_weight_kg?: number | null;
           difference_amt?: number | null;
+          dimensional_weight_kg?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number | null;
+          debit_note_no?: string | null;
+          debit_note_date?: string | null;
+          debit_note_amt?: number | null;
           remark?: string | null;
         };
         Update: {
@@ -2249,6 +2290,13 @@ export type Database = {
           order_id?: string;
           bill_weight_kg?: number | null;
           difference_amt?: number | null;
+          dimensional_weight_kg?: number | null;
+          credit_note_no?: string | null;
+          credit_note_date?: string | null;
+          credit_note_amt?: number | null;
+          debit_note_no?: string | null;
+          debit_note_date?: string | null;
+          debit_note_amt?: number | null;
           remark?: string | null;
         };
         Relationships: [
