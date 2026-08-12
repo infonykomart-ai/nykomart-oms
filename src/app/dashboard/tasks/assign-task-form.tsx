@@ -12,7 +12,7 @@ export function AssignTaskForm({
   employees,
   websites,
 }: {
-  employees: { id: string; name: string }[];
+  employees: { id: string; name: string; companyName: string }[];
   websites: string[];
 }) {
   const [state, formAction, pending] = useActionState(assignTask, initialState);
@@ -22,10 +22,14 @@ export function AssignTaskForm({
       {state.error && <p className="col-span-full rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
       {state.success && <p className="col-span-full rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">✓ Task assigned.</p>}
 
+      {/* 2026-08-11 (round 4): "koi bhi kisi ko assign kar sakta hai phir
+          company chahe koi bhi ho" — this list spans every active employee
+          across all 3 companies, not just ones the assigner has access to,
+          so the company name is shown alongside each name for clarity. */}
       <select name="assigned_to_employee_id" required defaultValue="" className={inputClass}>
         <option value="" disabled>Assign To…</option>
         {employees.map((e) => (
-          <option key={e.id} value={e.id}>{e.name}</option>
+          <option key={e.id} value={e.id}>{e.name} — {e.companyName}</option>
         ))}
       </select>
 
