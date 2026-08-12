@@ -825,6 +825,12 @@ type FreightBillParams = {
   freightAmt: number;
   fuelAmt: number;
   otherCharges: number;
+  // 2026-08-12: "shipment ke against me courier ka credit note aagya" —
+  // optional (PDF-extracted and bulk-CSV bills never have these; only the
+  // manual entry form below collects them), captured against THIS bill.
+  creditNoteNo?: string | null;
+  creditNoteDate?: string | null;
+  creditNoteAmt?: number;
 };
 
 async function saveFreightBillCore(
@@ -842,6 +848,9 @@ async function saveFreightBillCore(
       freight_amt: p.freightAmt,
       fuel_amt: p.fuelAmt,
       other_charges: p.otherCharges,
+      credit_note_no: p.creditNoteNo ?? null,
+      credit_note_date: p.creditNoteDate ?? null,
+      credit_note_amt: p.creditNoteAmt ?? 0,
     })
     .select("id, invoice_no")
     .single();
@@ -864,6 +873,9 @@ export async function saveFreightBill(_prev: DocFormState, formData: FormData): 
     freightAmt: numOrZero(formData, "freight_amt"),
     fuelAmt: numOrZero(formData, "fuel_amt"),
     otherCharges: numOrZero(formData, "other_charges"),
+    creditNoteNo: strOrNull(formData, "credit_note_no"),
+    creditNoteDate: strOrNull(formData, "credit_note_date"),
+    creditNoteAmt: numOrZero(formData, "credit_note_amt"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -935,6 +947,10 @@ type DutyBillParams = {
   dutyTaxAmtUsd: number | null;
   dutyTaxAmtInr: number;
   gst18pctAmt: number;
+  // 2026-08-12: same courier-credit-note capture as FreightBillParams above.
+  creditNoteNo?: string | null;
+  creditNoteDate?: string | null;
+  creditNoteAmt?: number;
 };
 
 async function saveDutyBillCore(
@@ -951,6 +967,9 @@ async function saveDutyBillCore(
       duty_tax_amt_usd: p.dutyTaxAmtUsd,
       duty_tax_amt_inr: p.dutyTaxAmtInr,
       gst_18pct_amt: p.gst18pctAmt,
+      credit_note_no: p.creditNoteNo ?? null,
+      credit_note_date: p.creditNoteDate ?? null,
+      credit_note_amt: p.creditNoteAmt ?? 0,
     })
     .select("id, invoice_no")
     .single();
@@ -972,6 +991,9 @@ export async function saveDutyBill(_prev: DocFormState, formData: FormData): Pro
     dutyTaxAmtUsd: numOrNull(formData, "duty_tax_amt_usd"),
     dutyTaxAmtInr: numOrZero(formData, "duty_tax_amt_inr"),
     gst18pctAmt: numOrZero(formData, "gst_18pct_amt"),
+    creditNoteNo: strOrNull(formData, "credit_note_no"),
+    creditNoteDate: strOrNull(formData, "credit_note_date"),
+    creditNoteAmt: numOrZero(formData, "credit_note_amt"),
   });
 
   if (result.error) return initialFail(result.error);

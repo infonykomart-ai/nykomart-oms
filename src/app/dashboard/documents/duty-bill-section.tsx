@@ -34,6 +34,9 @@ export type DutyBillRow = {
   duty_tax_amt_inr: number;
   gst_18pct_amt: number;
   gross_total_amt: number | null;
+  credit_note_no: string | null;
+  credit_note_date: string | null;
+  credit_note_amt: number;
   assignments: DutyBillAssignment[];
 };
 
@@ -74,6 +77,27 @@ export function DutyBillSection({ bills }: { bills: DutyBillRow[] }) {
           <div>
             <label className={labelClass} htmlFor="db_gst">GST @18% Amt</label>
             <input id="db_gst" name="gst_18pct_amt" type="number" step="0.01" className={inputClass} />
+          </div>
+        </div>
+
+        {/* 2026-08-12: "shipment ke against me courier ka credit note
+            aagya" — optional, only fill in if the courier actually issued
+            one against this invoice. */}
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any)</div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelClass} htmlFor="db_cn_no">Credit Note No.</label>
+              <input id="db_cn_no" name="credit_note_no" className={inputClass} placeholder="optional" />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="db_cn_date">Credit Note Date</label>
+              <input id="db_cn_date" name="credit_note_date" type="date" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="db_cn_amt">Credit Note Amt</label>
+              <input id="db_cn_amt" name="credit_note_amt" type="number" step="0.01" className={inputClass} placeholder="0" />
+            </div>
           </div>
         </div>
         <button
@@ -125,6 +149,11 @@ function DutyBillCard({ bill }: { bill: DutyBillRow }) {
             Duty ₹{bill.duty_tax_amt_inr} + GST ₹{bill.gst_18pct_amt}
             {bill.duty_tax_amt_usd ? ` (≈ $${bill.duty_tax_amt_usd})` : ""}
           </div>
+          {bill.credit_note_amt > 0 && (
+            <div className="text-purple-700">
+              CN {bill.credit_note_no ?? "—"} · −₹{bill.credit_note_amt}
+            </div>
+          )}
         </div>
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">

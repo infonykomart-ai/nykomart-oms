@@ -89,12 +89,12 @@ async function DocumentsPageInner() {
       .limit(8),
     supabase
       .from("freight_bills")
-      .select("id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt")
+      .select("id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt")
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
       .from("duty_tax_bills")
-      .select("id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt")
+      .select("id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt")
       .order("created_at", { ascending: false })
       .limit(8),
   ]);
@@ -204,6 +204,7 @@ async function DocumentsPageInner() {
             total_amt: b.total_amt != null ? Number(b.total_amt) : null,
             gst_18pct_amt: b.gst_18pct_amt != null ? Number(b.gst_18pct_amt) : null,
             gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
+            credit_note_amt: Number(b.credit_note_amt ?? 0),
             assignments: (freightAssignments ?? [])
               .filter((a) => a.freight_bill_id === b.id)
               .map((a) => ({
@@ -220,6 +221,7 @@ async function DocumentsPageInner() {
             duty_tax_amt_inr: Number(b.duty_tax_amt_inr),
             gst_18pct_amt: Number(b.gst_18pct_amt),
             gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
+            credit_note_amt: Number(b.credit_note_amt ?? 0),
             assignments: (dutyAssignments ?? [])
               .filter((a) => a.duty_tax_bill_id === b.id)
               .map((a) => ({
