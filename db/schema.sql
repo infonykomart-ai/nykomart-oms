@@ -1812,9 +1812,21 @@ CREATE TABLE etsy_ledger_lines (
   fees_and_taxes                  numeric(14,2),
   net                               numeric(14,2),
   tax_details                        text,
+  -- 2026-08-13: "store par jab order aaya to kon kon si fee lagi vo uske
+  -- store ke statement se milani padegi" — auto-extracted from Info (most
+  -- row types) or Title (Sale/Refund rows, where Info is blank) so a
+  -- store's per-order fees can be looked up by joining on
+  -- orders.marketplace_order_no. Verified against a real Jan 2026 export —
+  -- every row for a given order repeats "Order #<digits>" verbatim in one
+  -- of these 2 columns, always this exact format. See
+  -- db/2026-08-13-etsy-order-matching-and-invoice-fix.sql.
+  order_number text GENERATED ALWAYS AS (
+    COALESCE(substring(info from 'Order #(\d+)'), substring(title from 'Order #(\d+)'))
+  ) STORED,
   created_at                           timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_etsy_ledger_company_date ON etsy_ledger_lines(company_id, txn_date);
+CREATE INDEX idx_etsy_ledger_order_number ON etsy_ledger_lines(order_number) WHERE order_number IS NOT NULL;
 
 CREATE TABLE ebay_transaction_lines (
   id                             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2035,11 +2047,33 @@ CREATE TABLE etsy_monthly_tax_invoices (
   subscription_plan_fees                  numeric(14,2) NOT NULL DEFAULT 0,
   listing_fees_qty                          integer NOT NULL DEFAULT 0,
   listing_fees                                numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-08-13: a real Jan 2026 invoice showed a SECOND, flat "Listing
+  -- Fees" line with no stated qty/unit price (distinct from the qty-based
+  -- one above) — confirmed by the invoice's own Subtotal only reconciling
+  -- once this is included. See db/2026-08-13-etsy-order-matching-and-
+  -- invoice-fix.sql.
+  listing_fees_other                          numeric(14,2) NOT NULL DEFAULT 0,
   transaction_fees                              numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-08-13: real Feb-Jul 2026 invoices showed 2 more real line-item
+  -- shapes the Jan-only sample hadn't revealed yet — verified against all
+  -- 7 months (Jan-Jul 2026) real PDFs, not guessed:
+  --  1) a THIRD, distinct "Renew Fees" line (qty x $0.20), separate from
+  --     "Renew Expired Fees"/"Renew Sold Fees" below — seen in the real
+  --     March 2026 invoice (qty 1, INR19).
+  --  2) "Renew Expired Fees" and "Renew Sold Fees" can EACH also carry a
+  --     second, flat "--"-priced line (same shape as listing_fees_other
+  --     above) alongside their qty-based line — seen in Mar/Apr/May/Jun.
+  -- Mirrors listing_fees/listing_fees_other's qty+flat pattern so the
+  -- Statement Entry form can be filled in exactly line-by-line off the
+  -- real PDF without the user having to hand-sum two rows themselves.
+  renew_fees_qty                                  integer NOT NULL DEFAULT 0,
+  renew_fees                                        numeric(14,2) NOT NULL DEFAULT 0,
   renew_expired_fees_qty                          integer NOT NULL DEFAULT 0,
   renew_expired_fees                                numeric(14,2) NOT NULL DEFAULT 0,
+  renew_expired_fees_other                            numeric(14,2) NOT NULL DEFAULT 0,
   renew_sold_fees_qty                                 integer NOT NULL DEFAULT 0,
   renew_sold_fees                                       numeric(14,2) NOT NULL DEFAULT 0,
+  renew_sold_fees_other                                   numeric(14,2) NOT NULL DEFAULT 0,
   etsy_ads_fees                                           numeric(14,2) NOT NULL DEFAULT 0,
   processing_fees                                           numeric(14,2) NOT NULL DEFAULT 0,
   offsite_ads_fees                                            numeric(14,2) NOT NULL DEFAULT 0,
@@ -2047,24 +2081,33 @@ CREATE TABLE etsy_monthly_tax_invoices (
   promotional_discount                                            numeric(14,2) NOT NULL DEFAULT 0,
   gst_pct                                                           numeric(6,4) NOT NULL DEFAULT 0,
   total_eur                                                           numeric(14,2),
-  -- Subtotal = sum of the 9 real fee columns (excluding the 3 Qty columns
-  -- which sit inside that span but are counts, not amounts) minus the
-  -- promotional discount; GST Amount = Subtotal * GST %; Total = Subtotal +
-  -- GST Amount. All 3 inlined (can't chain generated columns). Matches the
-  -- source's own "Subtotal"/"Total" PDF lines to within ~₹1 (source
-  -- rounding per-line before the PDF's own subtotal, not a formula error
-  -- here — same disclosed discrepancy as the original build).
+  -- Subtotal = sum of every real fee column above minus the promotional
+  -- discount; GST Amount = Subtotal * GST %; Total = Subtotal + GST
+  -- Amount. All 3 inlined (can't chain generated columns). Verified
+  -- 2026-08-13 against ALL 7 real Jan-Jul 2026 invoices (not just Jan) by
+  -- re-summing every printed line item in Python and comparing to each
+  -- invoice's own printed Subtotal: residuals were +2/-1/-3/0/+3/-1/-1
+  -- rupees respectively — always a couple of rupees either direction,
+  -- never growing. This is the SAME disclosed rounding artifact the
+  -- original 2026-08-01 build already flagged (Etsy rounds each line to
+  -- the nearest rupee before printing, so summing the already-rounded
+  -- lines doesn't perfectly equal the PDF's own separately-rounded
+  -- Subtotal) — not a formula defect. If a future invoice shows a gap
+  -- much bigger than a few rupees, that's worth re-examining.
   subtotal_inr numeric(14,2) GENERATED ALWAYS AS (
-    subscription_plan_fees + listing_fees + transaction_fees + renew_expired_fees + renew_sold_fees
+    subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
+    + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount
   ) STORED,
   gst_amount_inr numeric(14,2) GENERATED ALWAYS AS (
-    (subscription_plan_fees + listing_fees + transaction_fees + renew_expired_fees + renew_sold_fees
+    (subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
+     + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
      + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount)
     * gst_pct
   ) STORED,
   total_inr numeric(14,2) GENERATED ALWAYS AS (
-    (subscription_plan_fees + listing_fees + transaction_fees + renew_expired_fees + renew_sold_fees
+    (subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
+     + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
      + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount)
     * (1 + gst_pct)
   ) STORED,
