@@ -26,13 +26,23 @@ function convertCell(row: Record<string, unknown>, byHeader: Map<string, string>
   const raw = cellRaw(row, byHeader, col.header);
   if (!raw) return null;
   switch (col.type) {
+    // 2026-08-13: fixed against real Etsy Ledger CSV exports — amount-type
+    // columns there come as "₹18,348", "-₹18", or "--" (Etsy's own blank
+    // marker), not plain numbers. Number("₹18,348") / Number("--") are
+    // both NaN, so every currency-formatted amount was silently importing
+    // as NULL. Stripping everything except digits/minus/decimal-point
+    // handles ₹, $, commas, and "--" (which collapses to "-" -> NaN ->
+    // null, still correctly null) without changing behavior for plain
+    // numeric input from other statement sources.
     case "number": {
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : null;
+      const cleaned = raw.replace(/[^0-9.-]/g, "");
+      const n = Number(cleaned);
+      return cleaned && Number.isFinite(n) ? n : null;
     }
     case "integer": {
-      const n = Number(raw);
-      return Number.isFinite(n) ? Math.trunc(n) : null;
+      const cleaned = raw.replace(/[^0-9.-]/g, "");
+      const n = Number(cleaned);
+      return cleaned && Number.isFinite(n) ? Math.trunc(n) : null;
     }
     case "boolean":
       return /^(true|yes|y|1)$/i.test(raw);

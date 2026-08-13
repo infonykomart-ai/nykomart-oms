@@ -102,11 +102,16 @@ function EtsyForm({ companies }: { companies: { id: string; name: string }[] }) 
         <NumField name="subscription_plan_fees" label="Subscription Plan Fees" />
         <NumField name="listing_fees_qty" label="Listing Fees Qty" />
         <NumField name="listing_fees" label="Listing Fees" />
+        <NumField name="listing_fees_other" label="Listing Fees (other, flat line)" />
         <NumField name="transaction_fees" label="Transaction Fees" />
+        <NumField name="renew_fees_qty" label="Renew Fees Qty (rare — separate from Expired/Sold)" />
+        <NumField name="renew_fees" label="Renew Fees (rare — separate from Expired/Sold)" />
         <NumField name="renew_expired_fees_qty" label="Renew Expired Fees Qty" />
         <NumField name="renew_expired_fees" label="Renew Expired Fees" />
+        <NumField name="renew_expired_fees_other" label="Renew Expired Fees (other, flat line)" />
         <NumField name="renew_sold_fees_qty" label="Renew Sold Fees Qty" />
         <NumField name="renew_sold_fees" label="Renew Sold Fees" />
+        <NumField name="renew_sold_fees_other" label="Renew Sold Fees (other, flat line)" />
         <NumField name="etsy_ads_fees" label="Etsy Ads Fees" />
         <NumField name="processing_fees" label="Processing Fees" />
         <NumField name="offsite_ads_fees" label="Offsite Ads Fees" />

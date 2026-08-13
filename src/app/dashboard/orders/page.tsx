@@ -120,6 +120,62 @@ export default async function OrdersPage({
     });
   }
 
+  // 2026-08-13 — "store par jab order aaya to kon kon si fee lagi vo uske
+  // store ke statement se milani padegi" (per-order fee reconciliation).
+  // etsy_ledger_lines.order_number is a generated column extracted from
+  // the real Etsy Ledger CSV's Info/Title text (verified against 7 real
+  // months, Jan-Jul 2026 — see db/2026-08-13-etsy-order-matching-and-
+  // invoice-fix.sql). Matched by company_id + marketplace_order_no so an
+  // order only ever sees fee rows from its own company's ledger. Orders
+  // that aren't Etsy (or have no ledger rows yet) simply get no match —
+  // this doesn't need to know which marketplace an order came from.
+  const marketplaceOrderNos = Array.from(
+    new Set((orders ?? []).map((o) => o.marketplace_order_no).filter((x): x is string => !!x))
+  );
+  const { data: etsyLines } = marketplaceOrderNos.length
+    ? await supabase
+        .from("etsy_ledger_lines")
+        .select("company_id, order_number, txn_date, type, title, info, amount, fees_and_taxes, net, currency")
+        .in("company_id", companyId ? [companyId] : employee.companyIds)
+        .in("order_number", marketplaceOrderNos)
+    : { data: [] };
+  type EtsyFeeLine = {
+    date: string | null;
+    type: string | null;
+    title: string | null;
+    info: string | null;
+    amount: number;
+    fees: number;
+    net: number;
+    currency: string | null;
+  };
+  const etsyFeesByOrder: Record<string, { lines: EtsyFeeLine[]; totalFeesInr: number }> = {};
+  for (const o of orders ?? []) {
+    if (!o.marketplace_order_no) continue;
+    const matches = (etsyLines ?? []).filter(
+      (l) => l.company_id === o.company_id && l.order_number === o.marketplace_order_no
+    );
+    if (matches.length === 0) continue;
+    etsyFeesByOrder[o.id] = {
+      lines: matches
+        .map((l) => ({
+          date: l.txn_date,
+          type: l.type,
+          title: l.title,
+          info: l.info,
+          amount: Number(l.amount ?? 0),
+          fees: Number(l.fees_and_taxes ?? 0),
+          net: Number(l.net ?? 0),
+          currency: l.currency,
+        }))
+        .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "")),
+      // Fees & Taxes is negative for charges, positive for TCS credits —
+      // summing it directly (not abs()) gives the real net fee impact,
+      // matching how the ledger itself signs these amounts.
+      totalFeesInr: matches.reduce((sum, l) => sum + Number(l.fees_and_taxes ?? 0), 0),
+    };
+  }
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -201,6 +257,7 @@ export default async function OrdersPage({
         purchasesByOrder={purchasesByOrder}
         trackingByOrder={trackingByOrder}
         refundsByOrder={refundsByOrder}
+        etsyFeesByOrder={etsyFeesByOrder}
       />
     </div>
   );

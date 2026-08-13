@@ -16,6 +16,18 @@ type OrderRow = EditableOrder & {
 
 type TrackingInfo = { awbNo: string | null; courierName: string | null; deliveredStatus: string | null; deliveredDate: string | null };
 
+type EtsyFeeLine = {
+  date: string | null;
+  type: string | null;
+  title: string | null;
+  info: string | null;
+  amount: number;
+  fees: number;
+  net: number;
+  currency: string | null;
+};
+type EtsyFeeMatch = { lines: EtsyFeeLine[]; totalFeesInr: number };
+
 // 2026-08-08 (pending item 7's UI half) — colour-code the shipment status
 // badge so "In Transit / Delivered / red alert on issues" is a glance, not
 // a read: green once it's actually moving/done, red for Returned/Cancelled
@@ -48,6 +60,7 @@ export function OrderListTable({
   purchasesByOrder,
   trackingByOrder,
   refundsByOrder,
+  etsyFeesByOrder,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -57,8 +70,10 @@ export function OrderListTable({
   purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]>;
   trackingByOrder: Record<string, TrackingInfo>;
   refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]>;
+  etsyFeesByOrder: Record<string, EtsyFeeMatch>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedFeesId, setExpandedFeesId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
@@ -210,6 +225,55 @@ export function OrderListTable({
                     💸 Refund: {r.amount} {r.currency} on {r.date}{r.hasCreditNote ? " · Credit Note generated" : ""}
                   </p>
                 ))}
+                {/* 2026-08-13 — "store par jab order aaya to kon kon si fee
+                    lagi vo uske store ke statement se milani padegi" — per-
+                    order fee reconciliation against the Etsy Ledger CSV
+                    (matched via etsy_ledger_lines.order_number, see
+                    page.tsx). Only shown when a real match exists, so
+                    orders from other marketplaces or with no ledger data
+                    yet don't clutter the list with an empty section. */}
+                {etsyFeesByOrder[o.id] && (
+                  <div className="mt-1.5 print:hidden">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedFeesId(expandedFeesId === o.id ? null : o.id)}
+                      className="text-xs font-medium text-indigo-700 underline decoration-dotted hover:text-indigo-900"
+                    >
+                      🧾 Etsy fees matched: {etsyFeesByOrder[o.id].lines.length} line
+                      {etsyFeesByOrder[o.id].lines.length === 1 ? "" : "s"} · net fee impact ₹
+                      {etsyFeesByOrder[o.id].totalFeesInr.toLocaleString("en-IN")}
+                      {expandedFeesId === o.id ? " ▲" : " ▼"}
+                    </button>
+                    {expandedFeesId === o.id && (
+                      <div className="mt-1.5 overflow-x-auto rounded-lg border border-indigo-100 bg-indigo-50/50">
+                        <table className="min-w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-indigo-100 text-left text-indigo-700">
+                              <th className="px-2 py-1 font-medium">Date</th>
+                              <th className="px-2 py-1 font-medium">Type</th>
+                              <th className="px-2 py-1 font-medium">Title / Info</th>
+                              <th className="px-2 py-1 text-right font-medium">Amount</th>
+                              <th className="px-2 py-1 text-right font-medium">Fees &amp; Taxes</th>
+                              <th className="px-2 py-1 text-right font-medium">Net</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {etsyFeesByOrder[o.id].lines.map((l, i) => (
+                              <tr key={i} className="border-b border-indigo-100/60 last:border-0">
+                                <td className="px-2 py-1 text-slate-600">{l.date ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.type ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.title || l.info || "—"}</td>
+                                <td className="px-2 py-1 text-right text-slate-600">{l.amount ? l.amount.toLocaleString("en-IN") : "—"}</td>
+                                <td className="px-2 py-1 text-right text-slate-600">{l.fees ? l.fees.toLocaleString("en-IN") : "—"}</td>
+                                <td className="px-2 py-1 text-right text-slate-600">{l.net ? l.net.toLocaleString("en-IN") : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {deleteError[o.id] && <p className="mt-2 text-xs font-medium text-red-600">{deleteError[o.id]}</p>}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2 print:hidden">

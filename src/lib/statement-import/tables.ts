@@ -58,7 +58,11 @@ export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
     dbTable: "etsy_ledger_lines",
     sourceNote: "Etsy's granular per-transaction ledger export.",
     columns: [
-      { header: "Txn Date", dbColumn: "txn_date", type: "date" },
+      // 2026-08-13: fixed against real Etsy Ledger CSV exports (Jan-Jul
+      // 2026) — the actual column is named "Date", not "Txn Date"; the
+      // old header here would never have matched, so txn_date would have
+      // imported as NULL for every row.
+      { header: "Date", dbColumn: "txn_date", type: "date" },
       { header: "Type", dbColumn: "type", type: "text" },
       { header: "Title", dbColumn: "title", type: "text" },
       { header: "Info", dbColumn: "info", type: "text" },

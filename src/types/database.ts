@@ -2076,6 +2076,7 @@ export type Database = {
           fees_and_taxes: number | null;
           net: number | null;
           tax_details: string | null;
+          order_number: string | null;
           created_at: string;
         };
         Insert: {
@@ -2090,6 +2091,7 @@ export type Database = {
           fees_and_taxes?: number | null;
           net?: number | null;
           tax_details?: string | null;
+          order_number?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2104,6 +2106,7 @@ export type Database = {
           fees_and_taxes?: number | null;
           net?: number | null;
           tax_details?: string | null;
+          order_number?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -2127,11 +2130,16 @@ export type Database = {
           subscription_plan_fees: number;
           listing_fees_qty: number;
           listing_fees: number;
+          listing_fees_other: number;
           transaction_fees: number;
+          renew_fees_qty: number;
+          renew_fees: number;
           renew_expired_fees_qty: number;
           renew_expired_fees: number;
+          renew_expired_fees_other: number;
           renew_sold_fees_qty: number;
           renew_sold_fees: number;
+          renew_sold_fees_other: number;
           etsy_ads_fees: number;
           processing_fees: number;
           offsite_ads_fees: number;
@@ -2154,11 +2162,16 @@ export type Database = {
           subscription_plan_fees?: number;
           listing_fees_qty?: number;
           listing_fees?: number;
+          listing_fees_other?: number;
           transaction_fees?: number;
+          renew_fees_qty?: number;
+          renew_fees?: number;
           renew_expired_fees_qty?: number;
           renew_expired_fees?: number;
+          renew_expired_fees_other?: number;
           renew_sold_fees_qty?: number;
           renew_sold_fees?: number;
+          renew_sold_fees_other?: number;
           etsy_ads_fees?: number;
           processing_fees?: number;
           offsite_ads_fees?: number;
@@ -2181,11 +2194,16 @@ export type Database = {
           subscription_plan_fees?: number;
           listing_fees_qty?: number;
           listing_fees?: number;
+          listing_fees_other?: number;
           transaction_fees?: number;
+          renew_fees_qty?: number;
+          renew_fees?: number;
           renew_expired_fees_qty?: number;
           renew_expired_fees?: number;
+          renew_expired_fees_other?: number;
           renew_sold_fees_qty?: number;
           renew_sold_fees?: number;
+          renew_sold_fees_other?: number;
           etsy_ads_fees?: number;
           processing_fees?: number;
           offsite_ads_fees?: number;
