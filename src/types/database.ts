@@ -12,6 +12,65 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      amazon_transactions: {
+        Row: {
+          id: string;
+          company_id: string;
+          txn_date: string | null;
+          transaction_status: string | null;
+          transaction_type: string | null;
+          order_id: string | null;
+          product_details: string | null;
+          total_product_charges: number | null;
+          total_promotional_rebates: number | null;
+          amazon_fees: number | null;
+          other: number | null;
+          total_amount: number | null;
+          currency: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          txn_date?: string | null;
+          transaction_status?: string | null;
+          transaction_type?: string | null;
+          order_id?: string | null;
+          product_details?: string | null;
+          total_product_charges?: number | null;
+          total_promotional_rebates?: number | null;
+          amazon_fees?: number | null;
+          other?: number | null;
+          total_amount?: number | null;
+          currency: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          txn_date?: string | null;
+          transaction_status?: string | null;
+          transaction_type?: string | null;
+          order_id?: string | null;
+          product_details?: string | null;
+          total_product_charges?: number | null;
+          total_promotional_rebates?: number | null;
+          amazon_fees?: number | null;
+          other?: number | null;
+          total_amount?: number | null;
+          currency?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "amazon_transactions_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       attendance: {
         Row: {
           id: string;
