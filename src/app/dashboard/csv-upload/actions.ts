@@ -46,6 +46,21 @@ function convertCell(row: Record<string, unknown>, byHeader: Map<string, string>
     }
     case "boolean":
       return /^(true|yes|y|1)$/i.test(raw);
+    // 2026-08-13: fixed against real Amazon Transactions exports — the
+    // SAME "Date" header is DD/MM/YYYY on the UK/GBP export and M/D/YYYY
+    // on the US/USD export (verified against each real file's own stated
+    // date range). Postgres' default DateStyle would misparse (or reject)
+    // whichever one doesn't match its expected order if passed through as
+    // plain text, so these convert explicitly to ISO before insert rather
+    // than leaving it to Postgres to guess.
+    case "date_dmy":
+    case "date_mdy": {
+      const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (!m) return raw; // unrecognized shape — pass through, let Postgres try (and fail loudly if genuinely bad)
+      const [, a, b, year] = m;
+      const [month, day] = col.type === "date_dmy" ? [b, a] : [a, b];
+      return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    }
     case "date":
     case "text":
     default:
@@ -83,7 +98,21 @@ async function readBulkFile(
   try {
     const XLSX = await import("xlsx");
     const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: "array" });
+    // 2026-08-13: fixed against real Amazon Transactions exports — WITHOUT
+    // `raw: true` here, xlsx's CSV parser auto-sniffs date-looking cells
+    // (e.g. "10/08/2026") and silently converts them to an Excel serial
+    // number using its OWN locale guess (verified: it assumed M/D, so a
+    // real 10 Aug 2026 — DD/MM, from the UK/Australia exports — silently
+    // became 8 Oct 2026, no error, no warning) before this code ever sees
+    // a "raw" string to parse with date_dmy/date_mdy. `raw: true` at the
+    // workbook-read level keeps CSV cells as their literal source text —
+    // confirmed this doesn't affect genuine .xlsx uploads with real
+    // Date-typed cells (those stay real Excel serials regardless, since
+    // that's inherent to the binary format, not this CSV-sniffing
+    // heuristic). This also protects every other statement CSV from the
+    // same class of silent corruption on any column that merely looks
+    // like a date or number to xlsx's heuristics.
+    const wb = XLSX.read(buf, { type: "array", raw: true });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) as unknown[][];
     if (!aoa.length) return { error: "Could not read that file — make sure it's the CSV/Excel template, unmodified in structure." };
@@ -157,7 +186,7 @@ export async function bulkImportStatement(_prev: BulkImportState, formData: Form
       results.push({ row: rowNum, error: `Missing required "${missingRequired.header}".` });
       continue;
     }
-    const dbRow: Record<string, unknown> = { company_id: companyId };
+    const dbRow: Record<string, unknown> = { company_id: companyId, ...config.fixedValues };
     for (const col of config.columns) {
       dbRow[col.dbColumn] = convertCell(raw, byHeader, col);
     }

@@ -16,7 +16,16 @@
 // — every one of these tables is a flat "one CSV row -> one DB row" import
 // with no cross-row logic, so a config-driven mapper is a correctness win
 // (one code path to get right) as well as a time one.
-export type ImportColumnType = "text" | "number" | "integer" | "date" | "boolean";
+// 2026-08-13: "date_dmy"/"date_mdy" added for Amazon's Transactions report
+// — the SAME "Date" header means DD/MM/YYYY on the UK/GBP export and
+// M/D/YYYY on the US/USD export (confirmed against each real file's own
+// stated date range). Postgres' default DateStyle would misparse (or
+// outright reject) whichever one isn't its expected order if imported as
+// plain "date" text, so these convert to ISO (YYYY-MM-DD) at import time
+// instead of relying on Postgres to guess. Plain "date" stays as before
+// (relies on Postgres accepting the source's own format, e.g. Etsy's
+// "January 31, 2026", which it does).
+export type ImportColumnType = "text" | "number" | "integer" | "date" | "date_dmy" | "date_mdy" | "boolean";
 
 export type ImportColumn = {
   header: string; // CSV column header (also the template header)
@@ -31,6 +40,13 @@ export type ImportTableConfig = {
   dbTable: string;
   sourceNote: string;
   columns: ImportColumn[];
+  // 2026-08-13: literal values applied to EVERY imported row, not read
+  // from the CSV at all — added for Amazon, where the currency isn't a
+  // fixed column (the "Total" column's own header changes per marketplace
+  // — "Total (GBP)" vs "Total (USD)"), so each currency gets its own
+  // template with its own currency literal + matching date column type
+  // instead of trying to auto-detect it from the file.
+  fixedValues?: Record<string, string>;
 };
 
 export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
@@ -288,6 +304,72 @@ export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
       { header: "Total Value INR", dbColumn: "total_value_inr", type: "number", required: true },
       { header: "Total Expenses INR", dbColumn: "total_expenses_inr", type: "number" },
     ],
+  },
+  {
+    key: "amazon_transactions_uk",
+    label: "Amazon Transactions (UK / GBP)",
+    dbTable: "amazon_transactions",
+    sourceNote: "Amazon Seller Central \"Transactions\" report, amazon.co.uk (GBP) — Date column is DD/MM/YYYY.",
+    columns: [
+      { header: "Date", dbColumn: "txn_date", type: "date_dmy" },
+      { header: "Transaction status", dbColumn: "transaction_status", type: "text" },
+      { header: "Transaction type", dbColumn: "transaction_type", type: "text" },
+      { header: "Order ID", dbColumn: "order_id", type: "text" },
+      { header: "Product Details", dbColumn: "product_details", type: "text" },
+      { header: "Total product charges", dbColumn: "total_product_charges", type: "number" },
+      { header: "Total promotional rebates", dbColumn: "total_promotional_rebates", type: "number" },
+      { header: "Amazon fees", dbColumn: "amazon_fees", type: "number" },
+      { header: "Other", dbColumn: "other", type: "number" },
+      { header: "Total (GBP)", dbColumn: "total_amount", type: "number" },
+    ],
+    fixedValues: { currency: "GBP" },
+  },
+  {
+    key: "amazon_transactions_us",
+    label: "Amazon Transactions (US / USD)",
+    dbTable: "amazon_transactions",
+    sourceNote: "Amazon Seller Central \"Transactions\" report, amazon.com (USD) — Date column is M/D/YYYY.",
+    columns: [
+      { header: "Date", dbColumn: "txn_date", type: "date_mdy" },
+      { header: "Transaction Status", dbColumn: "transaction_status", type: "text" },
+      { header: "Transaction type", dbColumn: "transaction_type", type: "text" },
+      { header: "Order ID", dbColumn: "order_id", type: "text" },
+      { header: "Product Details", dbColumn: "product_details", type: "text" },
+      { header: "Total product charges", dbColumn: "total_product_charges", type: "number" },
+      { header: "Total promotional rebates", dbColumn: "total_promotional_rebates", type: "number" },
+      { header: "Amazon fees", dbColumn: "amazon_fees", type: "number" },
+      { header: "Other", dbColumn: "other", type: "number" },
+      { header: "Total (USD)", dbColumn: "total_amount", type: "number" },
+    ],
+    fixedValues: { currency: "USD" },
+  },
+  // 2026-08-13: "agar baki country ki report bhi dali jaye to uska bhi
+  // dhyan rakhna" — Australia is the 3rd real Amazon marketplace export
+  // supplied. Confirmed DD/MM/YYYY (same as UK) by finding a real day-of-
+  // month > 12 in the file's own Date column (30/07/2026, 28/07/2026,
+  // etc. — unambiguous, since month 30 doesn't exist). Same recipe as
+  // UK/US above: one new template per marketplace/currency once a real
+  // export for it is supplied — don't add a country ahead of time without
+  // seeing its actual date format and column shape, since those are what
+  // differed between UK and US.
+  {
+    key: "amazon_transactions_au",
+    label: "Amazon Transactions (Australia / AUD)",
+    dbTable: "amazon_transactions",
+    sourceNote: "Amazon Seller Central \"Transactions\" report, amazon.com.au (AUD) — Date column is DD/MM/YYYY.",
+    columns: [
+      { header: "Date", dbColumn: "txn_date", type: "date_dmy" },
+      { header: "Transaction Status", dbColumn: "transaction_status", type: "text" },
+      { header: "Transaction type", dbColumn: "transaction_type", type: "text" },
+      { header: "Order ID", dbColumn: "order_id", type: "text" },
+      { header: "Product Details", dbColumn: "product_details", type: "text" },
+      { header: "Total product charges", dbColumn: "total_product_charges", type: "number" },
+      { header: "Total promotional rebates", dbColumn: "total_promotional_rebates", type: "number" },
+      { header: "Amazon fees", dbColumn: "amazon_fees", type: "number" },
+      { header: "Other", dbColumn: "other", type: "number" },
+      { header: "Total (AUD)", dbColumn: "total_amount", type: "number" },
+    ],
+    fixedValues: { currency: "AUD" },
   },
 ];
 
