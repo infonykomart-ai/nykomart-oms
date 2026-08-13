@@ -28,6 +28,16 @@ type EtsyFeeLine = {
 };
 type EtsyFeeMatch = { lines: EtsyFeeLine[]; totalFeesInr: number };
 
+type EbayFeeLine = {
+  date: string | null;
+  type: string | null;
+  description: string | null;
+  memo: string | null;
+  amount: number;
+  currency: string | null;
+};
+type EbayFeeMatch = { lines: EbayFeeLine[]; totalFeesUsd: number };
+
 // 2026-08-08 (pending item 7's UI half) — colour-code the shipment status
 // badge so "In Transit / Delivered / red alert on issues" is a glance, not
 // a read: green once it's actually moving/done, red for Returned/Cancelled
@@ -61,6 +71,7 @@ export function OrderListTable({
   trackingByOrder,
   refundsByOrder,
   etsyFeesByOrder,
+  ebayFeesByOrder,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -71,9 +82,11 @@ export function OrderListTable({
   trackingByOrder: Record<string, TrackingInfo>;
   refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]>;
   etsyFeesByOrder: Record<string, EtsyFeeMatch>;
+  ebayFeesByOrder: Record<string, EbayFeeMatch>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedFeesId, setExpandedFeesId] = useState<string | null>(null);
+  const [expandedEbayFeesId, setExpandedEbayFeesId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
@@ -266,6 +279,51 @@ export function OrderListTable({
                                 <td className="px-2 py-1 text-right text-slate-600">{l.amount ? l.amount.toLocaleString("en-IN") : "—"}</td>
                                 <td className="px-2 py-1 text-right text-slate-600">{l.fees ? l.fees.toLocaleString("en-IN") : "—"}</td>
                                 <td className="px-2 py-1 text-right text-slate-600">{l.net ? l.net.toLocaleString("en-IN") : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* 2026-08-13 — same idea, for eBay's real "Tax invoice
+                    detail" export. ebay_tax_invoice_lines.order_number is
+                    a NATIVE column there (no extraction needed) — see
+                    page.tsx. total_amount is negated so a fee charge
+                    reads as a negative "fee impact", matching Etsy's
+                    convention above; kept as a separate USD total since
+                    Etsy's is INR — never summed together. */}
+                {ebayFeesByOrder[o.id] && (
+                  <div className="mt-1.5 print:hidden">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedEbayFeesId(expandedEbayFeesId === o.id ? null : o.id)}
+                      className="text-xs font-medium text-purple-700 underline decoration-dotted hover:text-purple-900"
+                    >
+                      🧾 eBay fees matched: {ebayFeesByOrder[o.id].lines.length} line
+                      {ebayFeesByOrder[o.id].lines.length === 1 ? "" : "s"} · net fee impact $
+                      {ebayFeesByOrder[o.id].totalFeesUsd.toLocaleString("en-US")}
+                      {expandedEbayFeesId === o.id ? " ▲" : " ▼"}
+                    </button>
+                    {expandedEbayFeesId === o.id && (
+                      <div className="mt-1.5 overflow-x-auto rounded-lg border border-purple-100 bg-purple-50/50">
+                        <table className="min-w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-purple-100 text-left text-purple-700">
+                              <th className="px-2 py-1 font-medium">Date</th>
+                              <th className="px-2 py-1 font-medium">Fee Type</th>
+                              <th className="px-2 py-1 font-medium">Description / Memo</th>
+                              <th className="px-2 py-1 text-right font-medium">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ebayFeesByOrder[o.id].lines.map((l, i) => (
+                              <tr key={i} className="border-b border-purple-100/60 last:border-0">
+                                <td className="px-2 py-1 text-slate-600">{l.date ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.type ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.description || l.memo || "—"}</td>
+                                <td className="px-2 py-1 text-right text-slate-600">{l.amount ? l.amount.toLocaleString("en-US") : "—"}</td>
                               </tr>
                             ))}
                           </tbody>

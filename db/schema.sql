@@ -2173,6 +2173,52 @@ SELECT
   )                                                                                                   AS net_cash_movement_check
 FROM ebay_financial_summary s;
 
+-- 2026-08-13: "eBay Financial statement" — a DIFFERENT, simpler PDF report
+-- from ebay_financial_summary above (real eBay Commerce Inc. filename
+-- "Financial_StatementXxx0126.pdf", vs. the older/richer "Financial
+-- Summary Report" the table above was built from). This one is a monthly
+-- running-balance statement: opening funds carries forward as next
+-- month's opening funds (verified: Jan's Closing 0.00 = Feb's Opening
+-- 0.00; Apr's Closing 153.43 = May's Opening 153.43, etc., across 8 real
+-- consecutive real monthly PDFs, Dec 2025-Jul 2026).
+-- closing_funds_computed's formula (straight signed sum of every field —
+-- each already carries the sign printed on the PDF, e.g. "Other fees"
+-- and "Payouts" are usually negative) was verified against 4 of the 8
+-- real months (Jan/Apr/Jul/Aug-generated) and reproduced the PDF's own
+-- printed Closing funds EXACTLY (not just close) every time — a much
+-- tighter reconciliation than Etsy's per-line-rounding case, since this
+-- report shows only 2-decimal USD figures with no intermediate rounding
+-- step. closing_funds_stated is still hand-typed from the PDF (not
+-- dropped) so a real data-entry mistake shows up as a mismatch against
+-- the generated column, same audit pattern as this file's other
+-- computed-vs-stated columns.
+CREATE TABLE ebay_monthly_financial_statement (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                  uuid NOT NULL REFERENCES companies(id),
+  statement_number              text,   -- the PDF's own GUID-style "Statement number"
+  period_from                     date NOT NULL,
+  period_to                         date NOT NULL,
+  generated_date                      date,
+  opening_funds                         numeric(14,2) NOT NULL DEFAULT 0,
+  orders_total_minus_fees                 numeric(14,2) NOT NULL DEFAULT 0,
+  claims                                    numeric(14,2) NOT NULL DEFAULT 0,
+  refunds                                     numeric(14,2) NOT NULL DEFAULT 0,
+  payment_disputes                              numeric(14,2) NOT NULL DEFAULT 0,
+  shipping_labels                                 numeric(14,2) NOT NULL DEFAULT 0,
+  other_fees                                        numeric(14,2) NOT NULL DEFAULT 0,
+  adjustment                                          numeric(14,2) NOT NULL DEFAULT 0,
+  purchases                                             numeric(14,2) NOT NULL DEFAULT 0,
+  charges                                                 numeric(14,2) NOT NULL DEFAULT 0,
+  payouts                                                   numeric(14,2) NOT NULL DEFAULT 0,
+  closing_funds_stated                                        numeric(14,2) NOT NULL DEFAULT 0,
+  closing_funds_computed numeric(14,2) GENERATED ALWAYS AS (
+    opening_funds + orders_total_minus_fees + claims + refunds + payment_disputes
+    + shipping_labels + other_fees + adjustment + purchases + charges + payouts
+  ) STORED,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, period_from, period_to)
+);
+
 
 -- =============================================================================
 -- SECTION 16 — HR: ATTENDANCE, HR LETTERS
@@ -2938,6 +2984,7 @@ JOIN (VALUES
 -- eBay Tax Invoice Detail             -> ebay_tax_invoice_lines
 -- Etsy Monthly Tax Invoice            -> etsy_monthly_tax_invoices
 -- eBay Financial Summary Report       -> ebay_financial_summary (+ ebay_financial_summary_computed_view)
+-- eBay Financial statement (monthly)  -> ebay_monthly_financial_statement
 -- Net Revenue                         -> net_revenue_view
 -- Dispatch & Refund + FBA Refund +
 --   No Dispatch & Refund              -> refunds  (ONE table, `source` discriminator)

@@ -248,7 +248,13 @@ export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
     dbTable: "ebay_tax_invoice_lines",
     sourceNote: "eBay \"Tax invoice detail\" CSV export (fee-level IGST breakdown).",
     columns: [
-      { header: "Txn Date", dbColumn: "txn_date", type: "date" },
+      // 2026-08-13: fixed against 8 real months (Dec 2025-Jul 2026) of
+      // this export — the real column is "Date", not "Txn Date", and
+      // "IGST (%)" (with parens), not "IGST %". Both would have imported
+      // NULL for every row. This file also carries a 5-line metadata
+      // preamble before the header row — see the generic fix in
+      // ../../app/dashboard/csv-upload/actions.ts's readBulkFile.
+      { header: "Date", dbColumn: "txn_date", type: "date" },
       { header: "Description", dbColumn: "description", type: "text" },
       { header: "Memo", dbColumn: "memo", type: "text" },
       { header: "Order Number", dbColumn: "order_number", type: "text" },
@@ -257,7 +263,7 @@ export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
       { header: "Fee Type", dbColumn: "fee_type", type: "text" },
       { header: "Currency", dbColumn: "currency", type: "text" },
       { header: "Net Amount", dbColumn: "net_amount", type: "number" },
-      { header: "IGST %", dbColumn: "igst_pct", type: "number" },
+      { header: "IGST (%)", dbColumn: "igst_pct", type: "number" },
       { header: "IGST Amount", dbColumn: "igst_amount", type: "number" },
       { header: "Total Amount", dbColumn: "total_amount", type: "number" },
       { header: "Charged By Entity", dbColumn: "charged_by_entity", type: "text" },

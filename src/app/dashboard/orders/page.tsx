@@ -176,6 +176,57 @@ export default async function OrdersPage({
     };
   }
 
+  // 2026-08-13 — same matching for eBay, now that a real eBay export has
+  // been supplied: ebay_tax_invoice_lines.order_number is a NATIVE column
+  // in eBay's own "Tax invoice detail" CSV (no regex extraction needed,
+  // unlike Etsy) — verified against 8 real consecutive months (Dec 2025-
+  // Jul 2026) that every non-subscription row carries a real order number
+  // in eBay's own hyphenated format (e.g. "07-13945-27087"). Every row in
+  // this report is itself a fee (Final Value Fee, International Fee,
+  // Promoted Listings fee, Regulatory Operating Fee, Subscription Fee) —
+  // total_amount is always the fee charged (shown positive in the source
+  // CSV), so it's negated here to read as a fee-impact figure, the same
+  // sign convention as Etsy's totalFeesUsd below (negative = cost).
+  // Kept as a SEPARATE map from Etsy's (not merged into one combined
+  // total) since the two are different currencies (INR vs USD) — summing
+  // them together would be meaningless.
+  const { data: ebayTaxLines } = marketplaceOrderNos.length
+    ? await supabase
+        .from("ebay_tax_invoice_lines")
+        .select("company_id, order_number, txn_date, description, memo, fee_type, currency, net_amount, igst_amount, total_amount")
+        .in("company_id", companyId ? [companyId] : employee.companyIds)
+        .in("order_number", marketplaceOrderNos)
+    : { data: [] };
+  type EbayFeeLine = {
+    date: string | null;
+    type: string | null;
+    description: string | null;
+    memo: string | null;
+    amount: number;
+    currency: string | null;
+  };
+  const ebayFeesByOrder: Record<string, { lines: EbayFeeLine[]; totalFeesUsd: number }> = {};
+  for (const o of orders ?? []) {
+    if (!o.marketplace_order_no) continue;
+    const matches = (ebayTaxLines ?? []).filter(
+      (l) => l.company_id === o.company_id && l.order_number === o.marketplace_order_no
+    );
+    if (matches.length === 0) continue;
+    ebayFeesByOrder[o.id] = {
+      lines: matches
+        .map((l) => ({
+          date: l.txn_date,
+          type: l.fee_type,
+          description: l.description,
+          memo: l.memo,
+          amount: -Number(l.total_amount ?? 0),
+          currency: l.currency,
+        }))
+        .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "")),
+      totalFeesUsd: matches.reduce((sum, l) => sum - Number(l.total_amount ?? 0), 0),
+    };
+  }
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -258,6 +309,7 @@ export default async function OrdersPage({
         trackingByOrder={trackingByOrder}
         refundsByOrder={refundsByOrder}
         etsyFeesByOrder={etsyFeesByOrder}
+        ebayFeesByOrder={ebayFeesByOrder}
       />
     </div>
   );

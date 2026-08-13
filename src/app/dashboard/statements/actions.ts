@@ -77,6 +77,52 @@ export async function saveEtsyMonthlyTaxInvoice(_prev: SimpleFormState, formData
   return { error: null, success: true };
 }
 
+// 2026-08-13 — real eBay "Financial statement" PDF (eBay Commerce Inc.
+// letterhead), a different/simpler monthly running-balance report from
+// eBay Financial Summary Report above. See db/schema.sql's comment on
+// ebay_monthly_financial_statement for the verification detail.
+export async function saveEbayMonthlyFinancialStatement(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
+  await requireCapability("statement_entry");
+  const supabase = createServiceRoleClient();
+
+  const companyId = str(formData, "company_id");
+  const periodFrom = str(formData, "period_from");
+  const periodTo = str(formData, "period_to");
+  if (!companyId || !periodFrom || !periodTo) {
+    return { error: "Company, Period From, and Period To are required.", success: false };
+  }
+
+  const { error } = await supabase.from("ebay_monthly_financial_statement").insert({
+    company_id: companyId,
+    statement_number: strOrNull(formData, "statement_number"),
+    period_from: periodFrom,
+    period_to: periodTo,
+    generated_date: strOrNull(formData, "generated_date"),
+    opening_funds: num(formData, "opening_funds"),
+    orders_total_minus_fees: num(formData, "orders_total_minus_fees"),
+    claims: num(formData, "claims"),
+    refunds: num(formData, "refunds"),
+    payment_disputes: num(formData, "payment_disputes"),
+    shipping_labels: num(formData, "shipping_labels"),
+    other_fees: num(formData, "other_fees"),
+    adjustment: num(formData, "adjustment"),
+    purchases: num(formData, "purchases"),
+    charges: num(formData, "charges"),
+    payouts: num(formData, "payouts"),
+    closing_funds_stated: num(formData, "closing_funds_stated"),
+  });
+
+  if (error) {
+    if (error.message.toLowerCase().includes("duplicate key")) {
+      return { error: "A Financial Statement for this company and period already exists.", success: false };
+    }
+    return { error: error.message, success: false };
+  }
+
+  revalidatePath("/dashboard/statements");
+  return { error: null, success: true };
+}
+
 export async function saveEbayFinancialSummary(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
   await requireCapability("statement_entry");
   const supabase = createServiceRoleClient();

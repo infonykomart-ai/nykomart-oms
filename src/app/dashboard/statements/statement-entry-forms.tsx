@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { saveEbayFinancialSummary, saveEtsyMonthlyTaxInvoice, type SimpleFormState } from "./actions";
+import { saveEbayFinancialSummary, saveEbayMonthlyFinancialStatement, saveEtsyMonthlyTaxInvoice, type SimpleFormState } from "./actions";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -9,11 +9,11 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 const initialState: SimpleFormState = { error: null, success: false };
 
 export function StatementEntryForms({ companies }: { companies: { id: string; name: string }[] }) {
-  const [tab, setTab] = useState<"etsy" | "ebay">("etsy");
+  const [tab, setTab] = useState<"etsy" | "ebay" | "ebay-monthly">("etsy");
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1">
+      <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
         <button
           type="button"
           onClick={() => setTab("etsy")}
@@ -28,9 +28,16 @@ export function StatementEntryForms({ companies }: { companies: { id: string; na
         >
           eBay Financial Summary
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("ebay-monthly")}
+          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${tab === "ebay-monthly" ? "bg-amber-500 text-white" : "text-slate-500 hover:bg-slate-50"}`}
+        >
+          eBay Financial Statement (Monthly)
+        </button>
       </div>
 
-      {tab === "etsy" ? <EtsyForm companies={companies} /> : <EbayForm companies={companies} />}
+      {tab === "etsy" ? <EtsyForm companies={companies} /> : tab === "ebay" ? <EbayForm companies={companies} /> : <EbayMonthlyStatementForm companies={companies} />}
     </div>
   );
 }
@@ -218,6 +225,79 @@ function EbayForm({ companies }: { companies: { id: string; name: string }[] }) 
         className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
       >
         {pending ? "Saving..." : "Save Financial Summary"}
+      </button>
+    </form>
+  );
+}
+
+// 2026-08-13 — the real eBay "Financial statement" PDF (eBay Commerce
+// Inc. letterhead) is a DIFFERENT, simpler monthly report from the
+// "Financial Summary Report" the form above is for — a running-balance
+// statement (Opening funds -> ... -> Closing funds), verified against 8
+// real consecutive months (Dec 2025-Jul 2026): each month's Closing funds
+// equals the next month's Opening funds, and Closing = the straight
+// signed sum of every field below (verified exact, to the cent, not just
+// close) — see db/schema.sql's comment on ebay_monthly_financial_statement.
+// Type each field's value exactly as printed on the PDF, including its
+// sign (e.g. "Other fees" and "Payouts" are usually shown as negative).
+function EbayMonthlyStatementForm({ companies }: { companies: { id: string; name: string }[] }) {
+  const [state, formAction, pending] = useActionState(saveEbayMonthlyFinancialStatement, initialState);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (state.success) formRef.current?.reset();
+  }, [state.success]);
+
+  return (
+    <form ref={formRef} action={formAction} className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
+      <p className="text-xs text-slate-400">
+        From the PDF-only eBay &quot;Financial statement&quot; (the monthly running-balance report, not the Financial
+        Summary Report above). Type each field&apos;s value exactly as printed, including its +/- sign — Closing Funds
+        (Computed) below is a live check against what you type in Closing Funds (Stated).
+      </p>
+      {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
+      {state.success && <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">✓ Saved.</p>}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <CompanySelect companies={companies} />
+        <div>
+          <label className={labelClass} htmlFor="statement_number">Statement Number</label>
+          <input id="statement_number" name="statement_number" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="generated_date">Generated Date</label>
+          <input id="generated_date" name="generated_date" type="date" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="period_from">Period From *</label>
+          <input id="period_from" name="period_from" type="date" required className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="period_to">Period To *</label>
+          <input id="period_to" name="period_to" type="date" required className={inputClass} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <NumField name="opening_funds" label="Opening Funds" />
+        <NumField name="orders_total_minus_fees" label="Orders (Total minus fees)" />
+        <NumField name="claims" label="Claims" />
+        <NumField name="refunds" label="Refunds" />
+        <NumField name="payment_disputes" label="Payment Disputes" />
+        <NumField name="shipping_labels" label="Shipping Labels" />
+        <NumField name="other_fees" label="Other Fees" />
+        <NumField name="adjustment" label="Adjustment" />
+        <NumField name="purchases" label="Purchases" />
+        <NumField name="charges" label="Charges" />
+        <NumField name="payouts" label="Payouts" />
+        <NumField name="closing_funds_stated" label="Closing Funds (as printed)" />
+      </div>
+
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
+      >
+        {pending ? "Saving..." : "Save Financial Statement"}
       </button>
     </form>
   );

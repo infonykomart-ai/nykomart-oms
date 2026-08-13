@@ -8,7 +8,7 @@ export default async function StatementsPage() {
   const employee = await requireCapability("statement_entry");
   const supabase = await createClient();
 
-  const [{ data: companies }, { data: etsyInvoices }, { data: ebaySummaries }] = await Promise.all([
+  const [{ data: companies }, { data: etsyInvoices }, { data: ebaySummaries }, { data: ebayMonthlyStatements }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase
       .from("etsy_monthly_tax_invoices")
@@ -19,6 +19,12 @@ export default async function StatementsPage() {
     supabase
       .from("ebay_financial_summary_computed_view")
       .select("id, company_id, period_from, period_to, net_cash_movement_check")
+      .in("company_id", employee.companyIds)
+      .order("period_from", { ascending: false })
+      .limit(20),
+    supabase
+      .from("ebay_monthly_financial_statement")
+      .select("id, company_id, period_from, period_to, closing_funds_stated, closing_funds_computed")
       .in("company_id", employee.companyIds)
       .order("period_from", { ascending: false })
       .limit(20),
@@ -46,7 +52,7 @@ export default async function StatementsPage() {
 
       <StatementEntryForms companies={companies ?? []} />
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent Etsy Monthly Tax Invoices</h2>
           <div className="space-y-1 text-xs">
@@ -69,6 +75,23 @@ export default async function StatementsPage() {
                 <span className="font-medium text-slate-800">₹{Number(r.net_cash_movement_check ?? 0).toFixed(2)}</span>
               </div>
             ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent eBay Financial Statements (Monthly)</h2>
+          <div className="space-y-1 text-xs">
+            {(ebayMonthlyStatements ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
+            {(ebayMonthlyStatements ?? []).map((r) => {
+              const mismatch = Math.abs(Number(r.closing_funds_stated ?? 0) - Number(r.closing_funds_computed ?? 0)) > 0.01;
+              return (
+                <div key={r.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
+                  <span className="text-slate-600">{companyName.get(r.company_id)} — {r.period_from} to {r.period_to}</span>
+                  <span className={`font-medium ${mismatch ? "text-red-600" : "text-slate-800"}`}>
+                    ${Number(r.closing_funds_stated ?? 0).toFixed(2)}{mismatch ? " ⚠️ mismatch" : ""}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

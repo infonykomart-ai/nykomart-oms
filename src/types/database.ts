@@ -1328,6 +1328,83 @@ export type Database = {
           },
         ];
       };
+      ebay_monthly_financial_statement: {
+        Row: {
+          id: string;
+          company_id: string;
+          statement_number: string | null;
+          period_from: string;
+          period_to: string;
+          generated_date: string | null;
+          opening_funds: number;
+          orders_total_minus_fees: number;
+          claims: number;
+          refunds: number;
+          payment_disputes: number;
+          shipping_labels: number;
+          other_fees: number;
+          adjustment: number;
+          purchases: number;
+          charges: number;
+          payouts: number;
+          closing_funds_stated: number;
+          closing_funds_computed: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          statement_number?: string | null;
+          period_from: string;
+          period_to: string;
+          generated_date?: string | null;
+          opening_funds?: number;
+          orders_total_minus_fees?: number;
+          claims?: number;
+          refunds?: number;
+          payment_disputes?: number;
+          shipping_labels?: number;
+          other_fees?: number;
+          adjustment?: number;
+          purchases?: number;
+          charges?: number;
+          payouts?: number;
+          closing_funds_stated?: number;
+          closing_funds_computed?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          statement_number?: string | null;
+          period_from?: string;
+          period_to?: string;
+          generated_date?: string | null;
+          opening_funds?: number;
+          orders_total_minus_fees?: number;
+          claims?: number;
+          refunds?: number;
+          payment_disputes?: number;
+          shipping_labels?: number;
+          other_fees?: number;
+          adjustment?: number;
+          purchases?: number;
+          charges?: number;
+          payouts?: number;
+          closing_funds_stated?: number;
+          closing_funds_computed?: number | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "ebay_monthly_financial_statement_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       ebay_shipment_customs_lines: {
         Row: {
           id: string;
@@ -4164,17 +4241,17 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: "shipglobal_shipments_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
             foreignKeyName: "shipglobal_shipments_order_id_fkey";
             columns: ["order_id"];
             isOneToOne: false;
             referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipglobal_shipments_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
