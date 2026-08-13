@@ -249,14 +249,22 @@ export default async function OrdersPage({
 
   // 2026-08-13 — same matching for Amazon (new marketplace, ground-up
   // build this round): amazon_transactions.order_id is Amazon's own real
-  // order ID (native column, no extraction needed), verified against 2
-  // real "Transactions" exports (amazon.co.uk/GBP, amazon.com/USD).
-  // amazon_fees is already signed the same way as Etsy/eBay (negative =
-  // charge) — no sign flip needed here, unlike eBay's total_amount above.
-  // Grouped by currency (not a single flat total) since a company could
-  // in principle have rows in both GBP and USD — summing across
-  // currencies would be meaningless, same reasoning as keeping Etsy/eBay
-  // separate from each other.
+  // order ID (native column, no extraction needed), verified against 3
+  // real "Transactions" exports (amazon.co.uk/GBP, amazon.com/USD,
+  // amazon.com.au/AUD). amazon_fees is already signed the same way as
+  // Etsy/eBay (negative = charge) — no sign flip needed here, unlike
+  // eBay's total_amount above.
+  //
+  // 2026-08-13 (later same day) — user asked for a single Amazon section
+  // per order instead of one per currency (was previously grouped into
+  // separate collapsible blocks per currency, which read as 3 separate
+  // "Amazon" sections even though almost every real order only has one
+  // currency's worth of lines). Now all matching lines for an order are
+  // merged into one list (sorted by date), with a Currency column added
+  // to the table so a rare multi-currency order is still legible, and
+  // per-currency net-fee-impact subtotals are kept (never summed across
+  // currencies — that would be meaningless) but shown together in one
+  // header line instead of one header per currency.
   const { data: amazonLines } = marketplaceOrderNos.length
     ? await supabase
         .from("amazon_transactions")
@@ -272,7 +280,11 @@ export default async function OrdersPage({
     totalAmount: number;
     currency: string;
   };
-  const amazonFeesByOrder: Record<string, { currency: string; lines: AmazonFeeLine[]; totalFees: number }[]> = {};
+  type AmazonFeeMatch = {
+    lines: AmazonFeeLine[];
+    totalsByCurrency: { currency: string; totalFees: number }[];
+  };
+  const amazonFeesByOrder: Record<string, AmazonFeeMatch> = {};
   for (const o of orders ?? []) {
     const orderNo = normalizeOrderNo(o.marketplace_order_no);
     if (!orderNo) continue;
@@ -280,15 +292,13 @@ export default async function OrdersPage({
       (l) => l.company_id === o.company_id && l.order_id === orderNo
     );
     if (matches.length === 0) continue;
-    const byCurrency = new Map<string, typeof matches>();
+    const byCurrency = new Map<string, number>();
     for (const l of matches) {
       const cur = l.currency ?? "?";
-      if (!byCurrency.has(cur)) byCurrency.set(cur, []);
-      byCurrency.get(cur)!.push(l);
+      byCurrency.set(cur, (byCurrency.get(cur) ?? 0) + Number(l.amazon_fees ?? 0));
     }
-    amazonFeesByOrder[o.id] = Array.from(byCurrency.entries()).map(([currency, lines]) => ({
-      currency,
-      lines: lines
+    amazonFeesByOrder[o.id] = {
+      lines: matches
         .map((l) => ({
           date: l.txn_date,
           type: l.transaction_type,
@@ -298,8 +308,8 @@ export default async function OrdersPage({
           currency: l.currency ?? "?",
         }))
         .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "")),
-      totalFees: lines.reduce((sum, l) => sum + Number(l.amazon_fees ?? 0), 0),
-    }));
+      totalsByCurrency: Array.from(byCurrency.entries()).map(([currency, totalFees]) => ({ currency, totalFees })),
+    };
   }
 
   return (

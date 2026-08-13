@@ -38,6 +38,21 @@ type EbayFeeLine = {
 };
 type EbayFeeMatch = { lines: EbayFeeLine[]; totalFeesUsd: number };
 
+type AmazonFeeLine = {
+  date: string | null;
+  type: string | null;
+  productDetails: string | null;
+  amazonFees: number;
+  totalAmount: number;
+  currency: string;
+};
+// 2026-08-13 — merged into a single match object per order (was
+// previously an array of one-per-currency groups, rendered as separate
+// collapsible sections — user asked for one section). totalsByCurrency
+// keeps per-currency subtotals (never summed across currencies) but the
+// lines themselves are one flat, date-sorted list shown in one table.
+type AmazonFeeMatch = { lines: AmazonFeeLine[]; totalsByCurrency: { currency: string; totalFees: number }[] };
+
 // 2026-08-08 (pending item 7's UI half) — colour-code the shipment status
 // badge so "In Transit / Delivered / red alert on issues" is a glance, not
 // a read: green once it's actually moving/done, red for Returned/Cancelled
@@ -72,6 +87,7 @@ export function OrderListTable({
   refundsByOrder,
   etsyFeesByOrder,
   ebayFeesByOrder,
+  amazonFeesByOrder,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -83,10 +99,12 @@ export function OrderListTable({
   refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]>;
   etsyFeesByOrder: Record<string, EtsyFeeMatch>;
   ebayFeesByOrder: Record<string, EbayFeeMatch>;
+  amazonFeesByOrder: Record<string, AmazonFeeMatch>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedFeesId, setExpandedFeesId] = useState<string | null>(null);
   const [expandedEbayFeesId, setExpandedEbayFeesId] = useState<string | null>(null);
+  const [expandedAmazonFeesId, setExpandedAmazonFeesId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
@@ -324,6 +342,64 @@ export function OrderListTable({
                                 <td className="px-2 py-1 text-slate-600">{l.type ?? "—"}</td>
                                 <td className="px-2 py-1 text-slate-600">{l.description || l.memo || "—"}</td>
                                 <td className="px-2 py-1 text-right text-slate-600">{l.amount ? l.amount.toLocaleString("en-US") : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* 2026-08-13 — same idea, for Amazon (new marketplace,
+                    ground-up build this round). amazon_transactions.
+                    order_id is Amazon's own real order ID (native, no
+                    extraction). amazon_fees is already signed the same
+                    way as Etsy/eBay (negative = charge), no flip needed
+                    here.
+                    2026-08-13 (later) — one section per order now
+                    (was one section PER CURRENCY, which read as up to 3
+                    separate "Amazon" blocks on the same order). All
+                    matching lines are shown together in one table with a
+                    Currency column; per-currency net-fee-impact
+                    subtotals are still kept separate in the header text
+                    (never summed across currencies — GBP/USD/AUD are not
+                    interchangeable numbers) but on one line. */}
+                {amazonFeesByOrder[o.id] && (
+                  <div className="mt-1.5 print:hidden">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedAmazonFeesId(expandedAmazonFeesId === o.id ? null : o.id)}
+                      className="text-xs font-medium text-orange-700 underline decoration-dotted hover:text-orange-900"
+                    >
+                      🧾 Amazon fees matched: {amazonFeesByOrder[o.id].lines.length} line
+                      {amazonFeesByOrder[o.id].lines.length === 1 ? "" : "s"} · net fee impact{" "}
+                      {amazonFeesByOrder[o.id].totalsByCurrency
+                        .map((t) => `${t.totalFees.toLocaleString("en-US")} ${t.currency}`)
+                        .join(", ")}
+                      {expandedAmazonFeesId === o.id ? " ▲" : " ▼"}
+                    </button>
+                    {expandedAmazonFeesId === o.id && (
+                      <div className="mt-1.5 overflow-x-auto rounded-lg border border-orange-100 bg-orange-50/50">
+                        <table className="min-w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-orange-100 text-left text-orange-700">
+                              <th className="px-2 py-1 font-medium">Date</th>
+                              <th className="px-2 py-1 font-medium">Type</th>
+                              <th className="px-2 py-1 font-medium">Product Details</th>
+                              <th className="px-2 py-1 font-medium">Currency</th>
+                              <th className="px-2 py-1 text-right font-medium">Amazon Fees</th>
+                              <th className="px-2 py-1 text-right font-medium">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {amazonFeesByOrder[o.id].lines.map((l, i) => (
+                              <tr key={i} className="border-b border-orange-100/60 last:border-0">
+                                <td className="px-2 py-1 text-slate-600">{l.date ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.type ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.productDetails ?? "—"}</td>
+                                <td className="px-2 py-1 text-slate-600">{l.currency}</td>
+                                <td className="px-2 py-1 text-right text-slate-600">{l.amazonFees ? l.amazonFees.toLocaleString("en-US") : "—"}</td>
+                                <td className="px-2 py-1 text-right text-slate-600">{l.totalAmount ? l.totalAmount.toLocaleString("en-US") : "—"}</td>
                               </tr>
                             ))}
                           </tbody>
