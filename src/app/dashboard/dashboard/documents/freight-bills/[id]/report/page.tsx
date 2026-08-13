@@ -1,0 +1,231 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
+import { createServiceRoleClient } from "@/lib/supabase/server";
+import { PrintArea, PrintButton } from "@/components/print-view";
+
+// 2026-08-12 (round 10): "BILL PASS VALE SECTION ME CHALA JAYE US BILL KI
+// REPORT NIKALE KI KITNA KYA KYA KESE KESE JESE ME EK FILE DE RAHA HU
+// USKE ACCORDING EK FILE GENRATE HOYEGI" — a printable report for one
+// Courier Bill, laid out to match the real Freight/Courier Bill Excel the
+// user supplied (276431293.xlsx, 2026-08-12): per-shipment rows (PO No,
+// Invoice No, Type, Sizes, AWB, Buyer Country, sale/shipping amounts,
+// weights, difference) + a bottom summary (per item-category sale/
+// shipping breakdown + OUR SHIPPING CHARGE / COURIER SHIPPING CHARGE /
+// DIFFERENCE). Figures come from `orders` + `dispatch_invoices` (the
+// "OUR" side, already on file) joined against this bill's own
+// freight_bill_awb_assignments (the "BILL"/actual side, entered when the
+// courier's invoice arrives) — nothing here is guessed; anything not
+// derivable from either source (e.g. Dimensional Weight) is the manual
+// figure entered at assignment time.
+export default async function FreightBillReportPage({ params }: { params: Promise<{ id: string }> }) {
+  try {
+    return await FreightBillReportInner(await params);
+  } catch (err) {
+    if (err instanceof ForbiddenError || err instanceof UnauthorizedError) {
+      return (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+          <p className="font-semibold">Access Denied</p>
+          <p className="mt-1">{err.message}</p>
+        </div>
+      );
+    }
+    throw err;
+  }
+}
+
+async function FreightBillReportInner({ id }: { id: string }) {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: billRaw } = await supabase
+    .from("freight_bills")
+    .select(
+      "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt"
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (!billRaw) notFound();
+  // Postgres numeric columns come back as strings over PostgREST — normalize
+  // once here rather than trusting the generated `number` type (same
+  // convention as documents/page.tsx's mapping).
+  const bill = {
+    ...billRaw,
+    freight_amt: Number(billRaw.freight_amt),
+    fuel_amt: Number(billRaw.fuel_amt),
+    other_charges: Number(billRaw.other_charges),
+    total_amt: billRaw.total_amt != null ? Number(billRaw.total_amt) : null,
+    gst_18pct_amt: billRaw.gst_18pct_amt != null ? Number(billRaw.gst_18pct_amt) : null,
+    gross_total_amt: billRaw.gross_total_amt != null ? Number(billRaw.gross_total_amt) : null,
+    credit_note_amt: Number(billRaw.credit_note_amt ?? 0),
+  };
+
+  const { data: assignments } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("id, order_id, bill_weight_kg, dimensional_weight_kg, difference_amt, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark")
+    .eq("freight_bill_id", id);
+
+  const orderIds = (assignments ?? []).map((a) => a.order_id);
+  const [{ data: orders }, { data: dispatches }] = await Promise.all([
+    orderIds.length
+      ? supabase.from("orders").select("id, ref_no, size_label, item_categories(name)").in("id", orderIds)
+      : Promise.resolve({ data: [] }),
+    orderIds.length
+      ? supabase
+          .from("dispatch_invoices")
+          .select("order_id, awb_no, courier_name, buyer_country, org_sale_amt_inr, our_freight_amt, demand_surcharge_other_charge, gst_18pct, shipping_weight_kg")
+          .in("order_id", orderIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
+  const dispatchByOrder = new Map((dispatches ?? []).map((d) => [d.order_id, d]));
+
+  const rows = (assignments ?? []).map((a, i) => {
+    const order = orderById.get(a.order_id);
+    const dispatch = dispatchByOrder.get(a.order_id);
+    const category = order?.item_categories as unknown as { name: string } | { name: string }[] | null;
+    const categoryName = Array.isArray(category) ? category[0]?.name ?? "—" : category?.name ?? "—";
+    const ourShipping = Number(dispatch?.our_freight_amt ?? 0);
+    const otherCharges = Number(dispatch?.demand_surcharge_other_charge ?? 0);
+    const totalShipping = ourShipping + otherCharges;
+    const gst = Number(dispatch?.gst_18pct ?? 0);
+    const grossShipping = totalShipping + gst;
+    const orgSale = Number(dispatch?.org_sale_amt_inr ?? 0);
+    const shippingPct = orgSale > 0 ? (grossShipping / orgSale) * 100 : null;
+    return {
+      sr: i + 1,
+      refNo: order?.ref_no ?? "—",
+      category: categoryName,
+      size: order?.size_label ?? "—",
+      awb: dispatch?.awb_no ?? "—",
+      buyerCountry: dispatch?.buyer_country ?? "—",
+      orgSale,
+      ourShipping,
+      otherCharges,
+      totalShipping,
+      gst,
+      grossShipping,
+      ourWeight: dispatch?.shipping_weight_kg != null ? Number(dispatch.shipping_weight_kg) : null,
+      billWeight: a.bill_weight_kg != null ? Number(a.bill_weight_kg) : null,
+      dimWeight: a.dimensional_weight_kg != null ? Number(a.dimensional_weight_kg) : null,
+      differenceAmt: a.difference_amt != null ? Number(a.difference_amt) : null,
+      shippingPct,
+      remark: [a.remark, a.credit_note_no ? `CN ${a.credit_note_no} -₹${a.credit_note_amt}` : null, a.debit_note_no ? `DN ${a.debit_note_no} +₹${a.debit_note_amt}` : null]
+        .filter(Boolean)
+        .join(" · "),
+    };
+  });
+
+  // Bottom summary — per item-category sale/shipping breakdown (whatever
+  // categories actually appear, not a hardcoded Jute/Cotton/Tufted list —
+  // those were just what happened to be in the one example file).
+  const byCategory = new Map<string, { sale: number; shipping: number }>();
+  for (const r of rows) {
+    const cur = byCategory.get(r.category) ?? { sale: 0, shipping: 0 };
+    cur.sale += r.orgSale;
+    cur.shipping += r.grossShipping;
+    byCategory.set(r.category, cur);
+  }
+  // "Difference Amt" is the courier bill's own manual reconciliation
+  // figure (our estimate vs what they actually billed) — see schema.sql's
+  // comment on this column ("original author explicitly could NOT
+  // reverse-engineer a formula for it"). Courier's actual charge = our
+  // gross shipping + that difference.
+  const ourShippingCharge = rows.reduce((s, r) => s + r.grossShipping, 0);
+  const courierShippingCharge = rows.reduce((s, r) => s + r.grossShipping + (r.differenceAmt ?? 0), 0);
+  const difference = courierShippingCharge - ourShippingCharge;
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between print:hidden">
+        <Link href="/dashboard/documents" className="text-sm text-slate-500 hover:underline">← Back to Document Entry</Link>
+        <PrintButton label="🖨 Download PDF" />
+      </div>
+
+      <PrintArea id="freight-report-area">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-bold text-slate-900">Courier Bill Report</h1>
+              <p className="text-slate-500">Invoice {bill.invoice_no} · {bill.invoice_date ?? "—"}</p>
+            </div>
+            <div className="text-right text-slate-600">
+              <p>Freight ₹{bill.freight_amt} + Fuel ₹{bill.fuel_amt} + Other ₹{bill.other_charges}</p>
+              <p className="font-semibold text-slate-900">Gross Total ₹{bill.gross_total_amt ?? bill.total_amt ?? 0}</p>
+              {bill.credit_note_amt > 0 && <p className="text-purple-700">CN {bill.credit_note_no} · −₹{bill.credit_note_amt}</p>}
+            </div>
+          </div>
+
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
+                <th className="py-1 pr-2">Sr.</th>
+                <th className="py-1 pr-2">PO No.</th>
+                <th className="py-1 pr-2">Type</th>
+                <th className="py-1 pr-2">Size</th>
+                <th className="py-1 pr-2">AWB</th>
+                <th className="py-1 pr-2">Buyer Country</th>
+                <th className="py-1 pr-2 text-right">Sale Amt (INR)</th>
+                <th className="py-1 pr-2 text-right">Our Shipping</th>
+                <th className="py-1 pr-2 text-right">Other</th>
+                <th className="py-1 pr-2 text-right">GST 18%</th>
+                <th className="py-1 pr-2 text-right">Gross Shipping</th>
+                <th className="py-1 pr-2 text-right">Our Wt.</th>
+                <th className="py-1 pr-2 text-right">Bill Wt.</th>
+                <th className="py-1 pr-2 text-right">Dim. Wt.</th>
+                <th className="py-1 pr-2 text-right">Diff Amt</th>
+                <th className="py-1 pr-2 text-right">Shipping %</th>
+                <th className="py-1 pr-2">Remark</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.sr} className="border-b border-slate-100">
+                  <td className="py-1 pr-2">{r.sr}</td>
+                  <td className="py-1 pr-2 font-medium text-slate-900">{r.refNo}</td>
+                  <td className="py-1 pr-2">{r.category}</td>
+                  <td className="py-1 pr-2">{r.size}</td>
+                  <td className="py-1 pr-2">{r.awb}</td>
+                  <td className="py-1 pr-2">{r.buyerCountry}</td>
+                  <td className="py-1 pr-2 text-right">{r.orgSale.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{r.ourShipping.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{r.otherCharges.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{r.gst.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right font-medium">{r.grossShipping.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{r.ourWeight ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.billWeight ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.dimWeight ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.differenceAmt ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.shippingPct != null ? `${r.shippingPct.toFixed(1)}%` : "—"}</td>
+                  <td className="py-1 pr-2 text-slate-500">{r.remark || "—"}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={17} className="py-3 text-center text-slate-400">No AWBs assigned to this bill yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          <div className="mt-4 grid grid-cols-2 gap-6 border-t border-slate-300 pt-3">
+            <div>
+              <p className="mb-1 font-semibold text-slate-700">By Category</p>
+              {Array.from(byCategory.entries()).map(([cat, v]) => (
+                <p key={cat} className="text-slate-600">
+                  {cat}: Sale ₹{v.sale.toFixed(2)} · Shipping ₹{v.shipping.toFixed(2)}
+                </p>
+              ))}
+            </div>
+            <div className="text-right">
+              <p className="text-slate-600">OUR SHIPPING CHARGE: ₹{ourShippingCharge.toFixed(2)}</p>
+              <p className="text-slate-600">COURIER SHIPPING CHARGE: ₹{courierShippingCharge.toFixed(2)}</p>
+              <p className="font-semibold text-slate-900">DIFFERENCE: ₹{difference.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+      </PrintArea>
+    </div>
+  );
+}
