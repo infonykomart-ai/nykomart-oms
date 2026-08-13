@@ -2002,6 +2002,58 @@ CREATE TABLE ebay_shipment_customs_lines (
 );
 CREATE INDEX idx_ebay_shipment_awb ON ebay_shipment_customs_lines(tracking_no_awb);
 
+-- 2026-08-13: NEW marketplace — "amazon" (user's own word, ground-up
+-- build, ground truth was 2 real "Transactions" report exports: one for
+-- amazon.co.uk (GBP), one for amazon.com (USD), same seller ARTS OF
+-- JAIPUR / NYKO MART. Order-linked rows (Order Payment/Refund) carry
+-- Amazon's own real order ID (format "XXX-XXXXXXX-XXXXXXX") in Order ID
+-- — same "native column, no extraction needed" situation as eBay's Tax
+-- Invoice Detail. Account-level rows (Service Fees for
+-- Subscription/Cost of Advertising/etc., Unavailable balance, Paid to
+-- Amazon | Seller repayment) correctly show "---" instead. A few Service
+-- Fees rows carry a non-order reference in Order ID instead (a GUID for
+-- "Voucher Participation Fee", an "FBA...” code for "FBA Inbound
+-- Placement Service Fee") — verified these never collide with Amazon's
+-- real dashed order-ID format, so no extra filtering is needed for order
+-- matching to stay correct.
+-- amazon_fees is signed the same way as Etsy/eBay's fee columns
+-- (negative = charge, positive = credited back on a refund) — verified
+-- against real Refund rows in both files.
+-- currency is NOT parsed from the CSV (the "Total" column's own header
+-- literally changes per marketplace — "Total (GBP)" vs "Total (USD)" —
+-- so it can't be a single static column-header mapping); each currency's
+-- CSV Upload template (see src/lib/statement-import/tables.ts) hardcodes
+-- its own currency value + date format instead (see next paragraph). Only
+-- GBP and USD are set up so far, since those are the only 2 real exports
+-- supplied — a new marketplace/currency needs its own template entry
+-- once a real export for it is supplied (not guessed ahead of time).
+-- Date format is a REAL per-marketplace landmine: the UK export's Date
+-- column is DD/MM/YYYY ("13/08/2026"), the US export's is M/D/YYYY
+-- ("8/12/2026") — confirmed against each file's own stated date range in
+-- its filename. Postgres' default DateStyle would misparse (or outright
+-- reject) one of these if both were imported as plain "date" text, so the
+-- importer converts each to ISO before insert based on which currency
+-- template was used (see csv-upload/actions.ts's date_dmy/date_mdy
+-- column types).
+CREATE TABLE amazon_transactions (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                 uuid NOT NULL REFERENCES companies(id),
+  txn_date                     date,
+  transaction_status             text,
+  transaction_type                 text,
+  order_id                           text,   -- Amazon's own order ID, or "---"/a non-order reference for account-level rows — see comment above
+  product_details                      text,
+  total_product_charges                  numeric(14,2),
+  total_promotional_rebates                numeric(14,2),
+  amazon_fees                                numeric(14,2),
+  other                                         numeric(14,2),
+  total_amount                                   numeric(14,2),
+  currency                                         varchar(3) NOT NULL,
+  created_at                                         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_amazon_txn_company_date ON amazon_transactions(company_id, txn_date);
+CREATE INDEX idx_amazon_txn_order_id ON amazon_transactions(order_id) WHERE order_id != '---';
+
 CREATE TABLE ebay_wallet_ledger_lines (
   id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id                  uuid NOT NULL REFERENCES companies(id),
@@ -2982,6 +3034,7 @@ JOIN (VALUES
 -- eBay Shipment & Customs Report      -> ebay_shipment_customs_lines
 -- eBay Prepaid Wallet Ledger          -> ebay_wallet_ledger_lines
 -- eBay Tax Invoice Detail             -> ebay_tax_invoice_lines
+-- Amazon Transactions (UK/GBP + US/USD) -> amazon_transactions
 -- Etsy Monthly Tax Invoice            -> etsy_monthly_tax_invoices
 -- eBay Financial Summary Report       -> ebay_financial_summary (+ ebay_financial_summary_computed_view)
 -- eBay Financial statement (monthly)  -> ebay_monthly_financial_statement
