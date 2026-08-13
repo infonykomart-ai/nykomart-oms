@@ -129,8 +129,26 @@ export default async function OrdersPage({
   // order only ever sees fee rows from its own company's ledger. Orders
   // that aren't Etsy (or have no ledger rows yet) simply get no match —
   // this doesn't need to know which marketplace an order came from.
+  //
+  // 2026-08-13 (later same day) — user flagged that marketplace_order_no
+  // is sometimes typed/entered with a leading "#" (e.g. "#1234567890")
+  // and sometimes without, across Etsy/eBay/Amazon orders. None of the
+  // 3 ledger-side columns this matches against ever contain a "#" —
+  // etsy_ledger_lines.order_number is regex-extracted as digits only,
+  // and ebay_tax_invoice_lines.order_number / amazon_transactions.
+  // order_id are each marketplace's own native ID with no "#" in it — so
+  // an order entered as "#1234567890" would silently never match
+  // anything, even though the real order clearly did. Normalizing away a
+  // leading "#" (and stray whitespace) before every comparison below
+  // fixes that with no schema/CSV-import change needed; orders that
+  // never had a "#" are unaffected (trim() alone is a no-op for already-
+  // clean values).
+  const normalizeOrderNo = (v: string | null | undefined): string | null => {
+    const t = v?.trim().replace(/^#/, "").trim();
+    return t || null;
+  };
   const marketplaceOrderNos = Array.from(
-    new Set((orders ?? []).map((o) => o.marketplace_order_no).filter((x): x is string => !!x))
+    new Set((orders ?? []).map((o) => normalizeOrderNo(o.marketplace_order_no)).filter((x): x is string => !!x))
   );
   const { data: etsyLines } = marketplaceOrderNos.length
     ? await supabase
@@ -151,9 +169,10 @@ export default async function OrdersPage({
   };
   const etsyFeesByOrder: Record<string, { lines: EtsyFeeLine[]; totalFeesInr: number }> = {};
   for (const o of orders ?? []) {
-    if (!o.marketplace_order_no) continue;
+    const orderNo = normalizeOrderNo(o.marketplace_order_no);
+    if (!orderNo) continue;
     const matches = (etsyLines ?? []).filter(
-      (l) => l.company_id === o.company_id && l.order_number === o.marketplace_order_no
+      (l) => l.company_id === o.company_id && l.order_number === orderNo
     );
     if (matches.length === 0) continue;
     etsyFeesByOrder[o.id] = {
@@ -207,9 +226,10 @@ export default async function OrdersPage({
   };
   const ebayFeesByOrder: Record<string, { lines: EbayFeeLine[]; totalFeesUsd: number }> = {};
   for (const o of orders ?? []) {
-    if (!o.marketplace_order_no) continue;
+    const orderNo = normalizeOrderNo(o.marketplace_order_no);
+    if (!orderNo) continue;
     const matches = (ebayTaxLines ?? []).filter(
-      (l) => l.company_id === o.company_id && l.order_number === o.marketplace_order_no
+      (l) => l.company_id === o.company_id && l.order_number === orderNo
     );
     if (matches.length === 0) continue;
     ebayFeesByOrder[o.id] = {
@@ -225,6 +245,61 @@ export default async function OrdersPage({
         .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "")),
       totalFeesUsd: matches.reduce((sum, l) => sum - Number(l.total_amount ?? 0), 0),
     };
+  }
+
+  // 2026-08-13 — same matching for Amazon (new marketplace, ground-up
+  // build this round): amazon_transactions.order_id is Amazon's own real
+  // order ID (native column, no extraction needed), verified against 2
+  // real "Transactions" exports (amazon.co.uk/GBP, amazon.com/USD).
+  // amazon_fees is already signed the same way as Etsy/eBay (negative =
+  // charge) — no sign flip needed here, unlike eBay's total_amount above.
+  // Grouped by currency (not a single flat total) since a company could
+  // in principle have rows in both GBP and USD — summing across
+  // currencies would be meaningless, same reasoning as keeping Etsy/eBay
+  // separate from each other.
+  const { data: amazonLines } = marketplaceOrderNos.length
+    ? await supabase
+        .from("amazon_transactions")
+        .select("company_id, order_id, txn_date, transaction_type, product_details, amazon_fees, total_amount, currency")
+        .in("company_id", companyId ? [companyId] : employee.companyIds)
+        .in("order_id", marketplaceOrderNos)
+    : { data: [] };
+  type AmazonFeeLine = {
+    date: string | null;
+    type: string | null;
+    productDetails: string | null;
+    amazonFees: number;
+    totalAmount: number;
+    currency: string;
+  };
+  const amazonFeesByOrder: Record<string, { currency: string; lines: AmazonFeeLine[]; totalFees: number }[]> = {};
+  for (const o of orders ?? []) {
+    const orderNo = normalizeOrderNo(o.marketplace_order_no);
+    if (!orderNo) continue;
+    const matches = (amazonLines ?? []).filter(
+      (l) => l.company_id === o.company_id && l.order_id === orderNo
+    );
+    if (matches.length === 0) continue;
+    const byCurrency = new Map<string, typeof matches>();
+    for (const l of matches) {
+      const cur = l.currency ?? "?";
+      if (!byCurrency.has(cur)) byCurrency.set(cur, []);
+      byCurrency.get(cur)!.push(l);
+    }
+    amazonFeesByOrder[o.id] = Array.from(byCurrency.entries()).map(([currency, lines]) => ({
+      currency,
+      lines: lines
+        .map((l) => ({
+          date: l.txn_date,
+          type: l.transaction_type,
+          productDetails: l.product_details,
+          amazonFees: Number(l.amazon_fees ?? 0),
+          totalAmount: Number(l.total_amount ?? 0),
+          currency: l.currency ?? "?",
+        }))
+        .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "")),
+      totalFees: lines.reduce((sum, l) => sum + Number(l.amazon_fees ?? 0), 0),
+    }));
   }
 
   return (
@@ -310,6 +385,7 @@ export default async function OrdersPage({
         refundsByOrder={refundsByOrder}
         etsyFeesByOrder={etsyFeesByOrder}
         ebayFeesByOrder={ebayFeesByOrder}
+        amazonFeesByOrder={amazonFeesByOrder}
       />
     </div>
   );
