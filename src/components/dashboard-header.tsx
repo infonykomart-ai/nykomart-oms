@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LogoutButton } from "./logout-button";
 import { CompanySwitcher } from "./company-switcher";
 
@@ -52,18 +53,23 @@ export function DashboardHeader({
 
       <div className="flex items-center gap-4">
         <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
-        <div className="text-right">
-          <div className="text-sm font-medium leading-tight text-slate-900">{employeeName}</div>
-          <div className="text-xs leading-tight text-slate-500">{roleName}</div>
-        </div>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
-          {employeeName
-            .split(" ")
-            .map((w) => w[0])
-            .slice(0, 2)
-            .join("")
-            .toUpperCase()}
-        </div>
+        {/* 2026-08-12: "sabhi ko apni profile update karne ka option ho" —
+            the name/avatar is now a link to the self-service My Profile
+            page, open to every signed-in employee. */}
+        <Link href="/dashboard/profile" className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-right transition hover:bg-slate-100" title="My Profile">
+          <div>
+            <div className="text-sm font-medium leading-tight text-slate-900">{employeeName}</div>
+            <div className="text-xs leading-tight text-slate-500">{roleName}</div>
+          </div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+            {employeeName
+              .split(" ")
+              .map((w) => w[0])
+              .slice(0, 2)
+              .join("")
+              .toUpperCase()}
+          </div>
+        </Link>
         <LogoutButton />
       </div>
     </header>

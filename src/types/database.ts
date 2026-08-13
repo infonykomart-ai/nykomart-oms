@@ -185,6 +185,14 @@ export type Database = {
           employee_id: string | null;
           source: string | null;
           source_id: string | null;
+          approval_status: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
+          approved_l1_by: string | null;
+          approved_l1_at: string | null;
+          approved_l2_by: string | null;
+          approved_l2_at: string | null;
+          rejected_by: string | null;
+          rejected_at: string | null;
+          rejection_reason: string | null;
           created_at: string;
         };
         Insert: {
@@ -214,6 +222,14 @@ export type Database = {
           employee_id?: string | null;
           source?: string | null;
           source_id?: string | null;
+          approval_status?: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
+          approved_l1_by?: string | null;
+          approved_l1_at?: string | null;
+          approved_l2_by?: string | null;
+          approved_l2_at?: string | null;
+          rejected_by?: string | null;
+          rejected_at?: string | null;
+          rejection_reason?: string | null;
           created_at?: string;
         };
         Update: {
@@ -243,6 +259,14 @@ export type Database = {
           employee_id?: string | null;
           source?: string | null;
           source_id?: string | null;
+          approval_status?: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
+          approved_l1_by?: string | null;
+          approved_l1_at?: string | null;
+          approved_l2_by?: string | null;
+          approved_l2_at?: string | null;
+          rejected_by?: string | null;
+          rejected_at?: string | null;
+          rejection_reason?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -291,6 +315,78 @@ export type Database = {
           {
             foreignKeyName: "bill_pass_register_employee_id_fkey";
             columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_approved_l1_by_fkey";
+            columns: ["approved_l1_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_approved_l2_by_fkey";
+            columns: ["approved_l2_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_rejected_by_fkey";
+            columns: ["rejected_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      bill_pass_register_payments: {
+        Row: {
+          id: string;
+          bill_pass_register_id: string;
+          amount: number;
+          payment_date: string;
+          payment_mode: string | null;
+          reference_no: string | null;
+          remark: string | null;
+          entered_by: string | null;
+          entered_on: string;
+        };
+        Insert: {
+          id?: string;
+          bill_pass_register_id: string;
+          amount: number;
+          payment_date: string;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          remark?: string | null;
+          entered_by?: string | null;
+          entered_on?: string;
+        };
+        Update: {
+          id?: string;
+          bill_pass_register_id?: string;
+          amount?: number;
+          payment_date?: string;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          remark?: string | null;
+          entered_by?: string | null;
+          entered_on?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "bill_pass_register_payments_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_payments_entered_by_fkey";
+            columns: ["entered_by"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -4050,17 +4146,17 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: "shipglobal_shipments_order_id_fkey";
-            columns: ["order_id"];
-            isOneToOne: false;
-            referencedRelation: "orders";
-            referencedColumns: ["id"];
-          },
-          {
             foreignKeyName: "shipglobal_shipments_created_by_fkey";
             columns: ["created_by"];
             isOneToOne: false;
             referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipglobal_shipments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
             referencedColumns: ["id"];
           },
         ];
@@ -4768,6 +4864,7 @@ export type Database = {
       attendance_source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
       attendance_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday";
       bank_status: "Pending" | "Realized" | "Partially Realized";
+      bill_approval_status: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
       delivered_status: "Delivered" | "NOT Delivered";
       duty_tax_mode: "CSB-IV" | "CSB-V";
       employee_gender: "Male" | "Female";
