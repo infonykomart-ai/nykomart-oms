@@ -17,6 +17,14 @@ export async function addHoliday(_prev: SimpleActionState, formData: FormData): 
   const name = str(formData, "name");
   const companyId = str(formData, "company_id");
   if (!date || !name) return { error: "Date and name are both required.", success: false };
+  // 2026-08-12 (round 11 security review): company_id was previously
+  // trusted straight from the client with no check — an attendance_admin
+  // scoped to only one company could otherwise write a holiday for a
+  // company they have no access to. "" (all companies / national holiday)
+  // stays allowed for everyone with the capability, same as before.
+  if (companyId && !employee.companyIds.includes(companyId)) {
+    return { error: "You don't have access to that company.", success: false };
+  }
 
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("holidays").insert({
@@ -43,10 +51,14 @@ export async function removeHoliday(id: string): Promise<SimpleActionState> {
 
 /** Weekly off pattern (0=Sunday..6=Saturday) for one company. */
 export async function setWeeklyOffDays(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
-  await requireCapability("attendance_admin");
+  const employee = await requireCapability("attendance_admin");
   const companyId = str(formData, "company_id");
   const days = formData.getAll("weekly_off_days").map((v) => Number(v));
   if (!companyId) return { error: "Company is required.", success: false };
+  // 2026-08-12 (round 11 security review): see addHoliday's identical comment above.
+  if (!employee.companyIds.includes(companyId)) {
+    return { error: "You don't have access to that company.", success: false };
+  }
 
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("companies").update({ weekly_off_days: days }).eq("id", companyId);
@@ -71,6 +83,10 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
   const remark = str(formData, "remark");
   if (!employeeId || !companyId || !date || !status) {
     return { error: "Employee, date, and status are all required.", success: false };
+  }
+  // 2026-08-12 (round 11 security review): see addHoliday's identical comment above.
+  if (!admin.companyIds.includes(companyId)) {
+    return { error: "You don't have access to that company.", success: false };
   }
 
   const supabase = createServiceRoleClient();

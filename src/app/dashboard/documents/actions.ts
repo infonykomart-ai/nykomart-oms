@@ -862,11 +862,28 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
 }
 
 export async function updatePurchaseBill(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
-  await requireCapability("doc_entry");
+  const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
   const id = str(formData, "id");
   if (!id) return { error: "Missing Purchase Bill.", success: false };
+  // 2026-08-12 (round 11 security review): purchase_bills has no company_id
+  // column of its own — it's scoped via order_id -> orders.company_id (same
+  // as savePurchaseBillCore's own create-path check). Every sibling
+  // update/delete pair in this file (Credit Note, Debit Note, Washing
+  // Entry, Internal Invoice) verifies company access before writing; this
+  // one previously didn't. order_id is nullable (a Purchase Bill isn't
+  // required to reference an order), so a bill with no order stays
+  // editable by anyone with doc_entry, same as before — only a bill that
+  // DOES reference an order now gets checked against it.
+  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id").eq("id", id).single();
+  if (!existingBill) return { error: "Purchase Bill not found.", success: false };
+  if (existingBill.order_id) {
+    const { data: order } = await supabase.from("orders").select("company_id").eq("id", existingBill.order_id).single();
+    if (!order || !employee.companyIds.includes(order.company_id)) {
+      return { error: "You don't have access to this bill's company.", success: false };
+    }
+  }
   const vendorPartyId = str(formData, "vendor_party_id");
   const vendorInvoiceNo = str(formData, "vendor_invoice_no");
   if (!vendorPartyId) return { error: "Select a vendor party.", success: false };
@@ -894,8 +911,17 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
 }
 
 export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
-  await requireCapability("doc_entry");
+  const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
+  // 2026-08-12 (round 11 security review): see updatePurchaseBill's identical comment above.
+  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id").eq("id", id).single();
+  if (!existingBill) return { error: "Purchase Bill not found.", success: false };
+  if (existingBill.order_id) {
+    const { data: order } = await supabase.from("orders").select("company_id").eq("id", existingBill.order_id).single();
+    if (!order || !employee.companyIds.includes(order.company_id)) {
+      return { error: "You don't have access to this bill's company.", success: false };
+    }
+  }
   const { error } = await supabase.from("purchase_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
@@ -1083,8 +1109,17 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
 }
 
 export async function deleteFreightAwbAssignment(id: string): Promise<SimpleResult> {
-  await requireCapability("doc_entry");
+  const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
+  // 2026-08-12 (round 11 security review): same assignment->order->company
+  // check updateFreightAwbAssignmentNotes already does below — this delete
+  // previously skipped it.
+  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  if (!assignment) return { error: "Assignment not found.", success: false };
+  const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "You don't have access to this assignment's company.", success: false };
+  }
   const { error } = await supabase.from("freight_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
@@ -1355,8 +1390,15 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
 }
 
 export async function deleteDutyAwbAssignment(id: string): Promise<SimpleResult> {
-  await requireCapability("doc_entry");
+  const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
+  // 2026-08-12 (round 11 security review): same as deleteFreightAwbAssignment above.
+  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  if (!assignment) return { error: "Assignment not found.", success: false };
+  const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "You don't have access to this assignment's company.", success: false };
+  }
   const { error } = await supabase.from("duty_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");

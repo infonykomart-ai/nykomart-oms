@@ -1,0 +1,77 @@
+import Link from "next/link";
+import { requireCapability } from "@/lib/auth/require-capability";
+import { createClient } from "@/lib/supabase/server";
+import { StatementEntryForms } from "./statement-entry-forms";
+
+// Statement Entry (round 11) — see actions.ts header comment.
+export default async function StatementsPage() {
+  const employee = await requireCapability("statement_entry");
+  const supabase = await createClient();
+
+  const [{ data: companies }, { data: etsyInvoices }, { data: ebaySummaries }] = await Promise.all([
+    supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
+    supabase
+      .from("etsy_monthly_tax_invoices")
+      .select("id, company_id, invoice_no, invoice_date, subtotal_inr, gst_amount_inr, total_inr")
+      .in("company_id", employee.companyIds)
+      .order("invoice_date", { ascending: false })
+      .limit(20),
+    supabase
+      .from("ebay_financial_summary_computed_view")
+      .select("id, company_id, period_from, period_to, net_cash_movement_check")
+      .in("company_id", employee.companyIds)
+      .order("period_from", { ascending: false })
+      .limit(20),
+  ]);
+
+  const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+
+  return (
+    <div>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">📄 Statement Entry</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Manual entry for the 2 PDF-only statements (Etsy Monthly Tax Invoice, eBay Financial Summary) — everything
+            else in the statement family (Bank Statement, Etsy Ledger, eBay Transaction Report, etc.) comes in via CSV.
+          </p>
+        </div>
+        <Link
+          href="/dashboard/csv-upload"
+          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          📤 CSV Upload (other statements)
+        </Link>
+      </div>
+
+      <StatementEntryForms companies={companies ?? []} />
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent Etsy Monthly Tax Invoices</h2>
+          <div className="space-y-1 text-xs">
+            {(etsyInvoices ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
+            {(etsyInvoices ?? []).map((r) => (
+              <div key={r.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
+                <span className="text-slate-600">{companyName.get(r.company_id)} — {r.invoice_no} ({r.invoice_date ?? "—"})</span>
+                <span className="font-medium text-slate-800">₹{Number(r.total_inr ?? 0).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent eBay Financial Summaries</h2>
+          <div className="space-y-1 text-xs">
+            {(ebaySummaries ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
+            {(ebaySummaries ?? []).map((r) => (
+              <div key={r.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
+                <span className="text-slate-600">{companyName.get(r.company_id ?? "")} — {r.period_from} to {r.period_to}</span>
+                <span className="font-medium text-slate-800">₹{Number(r.net_cash_movement_check ?? 0).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
