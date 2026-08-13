@@ -163,6 +163,14 @@ CREATE TYPE payment_type AS ENUM ('ADVANCE', 'AGAINST BILL', 'CASH', 'NO BILL', 
 CREATE TYPE invoice_type AS ENUM
   ('DUTY TAX', 'Purchase', 'FREIGHT INVOICE', 'Printing', 'Washing', 'Disbursement FEE', 'Service', 'JOB WORK', 'Salary', 'Advance');
 
+-- 2026-08-12 (round 11): new — the "Approvals (L1)"/"Approvals (L2)"
+-- dashboard tiles had no backing workflow anywhere (never built even in
+-- the old Apps Script system). Deliberately minimal 2-level chain over
+-- bill_pass_register — see db/2026-08-12-round11-unbuilt-dashboard-
+-- sections.sql for the full rationale; flagged as a genuine new design,
+-- not a port of existing business logic.
+CREATE TYPE bill_approval_status AS ENUM ('Pending', 'Approved L1', 'Approved L2', 'Rejected');
+
 CREATE TYPE refund_type AS ENUM ('PARTIAL REFUND', 'FULL REFUND', 'A TO Z CLAIM', 'NO REFUND', 'CUSTOM TAX');
 
 -- Not in the old system — needed because Dispatch & Refund / FBA Refund /
@@ -1527,11 +1535,40 @@ CREATE TABLE bill_pass_register (
   employee_id                                                            uuid REFERENCES employees(id),
   source                                                                   text,
   source_id                                                                  uuid,
+  -- 2026-08-12 (round 11): new 2-level approval workflow (Approvals L1/L2
+  -- dashboard tiles) — see bill_approval_status's own comment above and
+  -- db/2026-08-12-round11-unbuilt-dashboard-sections.sql.
+  approval_status   bill_approval_status NOT NULL DEFAULT 'Pending',
+  approved_l1_by    uuid REFERENCES employees(id),
+  approved_l1_at    timestamptz,
+  approved_l2_by    uuid REFERENCES employees(id),
+  approved_l2_at    timestamptz,
+  rejected_by       uuid REFERENCES employees(id),
+  rejected_at       timestamptz,
+  rejection_reason  text,
   created_at                                                            timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_bill_pass_company  ON bill_pass_register(company_id);
 CREATE INDEX idx_bill_pass_party    ON bill_pass_register(party_id);
 CREATE INDEX idx_bill_pass_employee ON bill_pass_register(employee_id);
+CREATE INDEX idx_bill_pass_approval_status ON bill_pass_register(approval_status);
+
+-- 2026-08-12 (round 11): payment ledger backing the "Bill Payment"
+-- dashboard tile — bill_pass_register.total_paid (above) is recomputed as
+-- SUM(amount) over this table on every insert (see
+-- src/app/dashboard/bill-payment/actions.ts) rather than edited by hand.
+CREATE TABLE bill_pass_register_payments (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bill_pass_register_id    uuid NOT NULL REFERENCES bill_pass_register(id) ON DELETE CASCADE,
+  amount                     numeric(14,2) NOT NULL CHECK (amount > 0),
+  payment_date                  date NOT NULL,
+  payment_mode                     text,     -- NEFT / RTGS / Cheque / Cash / UPI — free text, no fixed list given
+  reference_no                        text,  -- cheque no. / UTR / transaction ref
+  remark                                 text,
+  entered_by                                uuid REFERENCES employees(id),
+  entered_on                                   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_bpr_payments_bill ON bill_pass_register_payments(bill_pass_register_id);
 -- 2026-08-12 (round 10): also auto-inserted for purchase_bills (source=
 -- 'purchase_bill', unambiguous — order_id always resolves one company) and,
 -- via an explicit reviewed "Send to Bill Pass Register" action, for
