@@ -47,6 +47,7 @@ async function DocumentsPageInner() {
     { data: companies },
     { data: parties },
     { data: stores },
+    { data: currencies },
     { data: recentCreditNotes },
     { data: recentDebitNotes },
     { data: recentWashingEntries },
@@ -54,6 +55,7 @@ async function DocumentsPageInner() {
     { data: recentPurchaseBills },
     { data: recentFreightBills },
     { data: recentDutyBills },
+    { data: recentCsbFilings },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     // 2026-08-12 (round 10): invoice_type/party_type added so the party
@@ -65,6 +67,7 @@ async function DocumentsPageInner() {
     // courier in a long flat list", not an actual code filter).
     supabase.from("parties").select("id, name, invoice_type, party_type").order("name"),
     supabase.from("stores").select("id, name, company_id").order("name"),
+    supabase.from("currencies").select("code, name").order("code"),
     supabase
       .from("credit_notes")
       .select(
@@ -103,6 +106,13 @@ async function DocumentsPageInner() {
       .from("duty_tax_bills")
       .select(
         "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt"
+      )
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("csb_filings")
+      .select(
+        "id, csb_number, exchange_rate, total_taxable_value, taxable_value_currency, fob_value_inr, filing_date, egm_number, egm_date, hawb_number, invoice_no, invoice_date"
       )
       .order("created_at", { ascending: false })
       .limit(8),
@@ -179,6 +189,7 @@ async function DocumentsPageInner() {
         companies={companies ?? []}
         parties={parties ?? []}
         stores={stores ?? []}
+        currencies={currencies ?? []}
         recent={{
           creditNotes: (recentCreditNotes ?? []).map((r) => ({
             ...r,
@@ -220,6 +231,12 @@ async function DocumentsPageInner() {
             unit_rate: Number(r.unit_rate),
             total_amount: Number(r.total_amount ?? 0),
             vendorName: partyName.get(r.vendor_party_id) ?? "",
+          })),
+          csbFilings: (recentCsbFilings ?? []).map((r) => ({
+            ...r,
+            exchange_rate: r.exchange_rate != null ? Number(r.exchange_rate) : null,
+            total_taxable_value: r.total_taxable_value != null ? Number(r.total_taxable_value) : null,
+            fob_value_inr: r.fob_value_inr != null ? Number(r.fob_value_inr) : null,
           })),
           freightBills: (recentFreightBills ?? []).map((b) => ({
             ...b,

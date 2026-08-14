@@ -4,12 +4,14 @@ import { BulkUploadTabs } from "./bulk-upload-tabs";
 
 // Document Entry bulk-CSV upload (2026-08-08) — same "all of them, one
 // after another" round as the Ad Spend store-scoping + sidebar/header lock
-// work. Covers all 6 Document Entry types (Credit Note, Debit Note,
+// work. Covers all Document Entry types (Credit Note, Debit Note,
 // Washing Entry, Purchase Bill, Courier Bill, Duty & Tax Bill) — the user
 // confirmed "Shipping Bill" = Courier Bill + Duty & Tax Bill, so no 7th
 // type is needed. Each tab in BulkUploadTabs reuses the exact same
 // saveXCore() logic as the single-entry forms on /dashboard/documents
 // (see ../actions.ts) — nothing is approximated for the bulk path.
+// 2026-08-14: CSB Filing (csb_filings — customs CSB-V filing confirmation
+// register) added as a 7th tab, same pattern.
 export default async function DocumentsBulkUploadPage() {
   await requireCapability("doc_entry");
 

@@ -716,6 +716,65 @@ export type Database = {
           },
         ];
       };
+      csb_filings: {
+        Row: {
+          id: string;
+          csb_number: string;
+          exchange_rate: number | null;
+          total_taxable_value: number | null;
+          taxable_value_currency: string | null;
+          fob_value_inr: number | null;
+          filing_date: string | null;
+          egm_number: string | null;
+          egm_date: string | null;
+          hawb_number: string | null;
+          invoice_no: string | null;
+          invoice_date: string | null;
+          entry_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          csb_number: string;
+          exchange_rate?: number | null;
+          total_taxable_value?: number | null;
+          taxable_value_currency?: string | null;
+          fob_value_inr?: number | null;
+          filing_date?: string | null;
+          egm_number?: string | null;
+          egm_date?: string | null;
+          hawb_number?: string | null;
+          invoice_no?: string | null;
+          invoice_date?: string | null;
+          entry_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          csb_number?: string;
+          exchange_rate?: number | null;
+          total_taxable_value?: number | null;
+          taxable_value_currency?: string | null;
+          fob_value_inr?: number | null;
+          filing_date?: string | null;
+          egm_number?: string | null;
+          egm_date?: string | null;
+          hawb_number?: string | null;
+          invoice_no?: string | null;
+          invoice_date?: string | null;
+          entry_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "csb_filings_entry_by_employee_id_fkey";
+            columns: ["entry_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       currencies: {
         Row: {
           code: string;

@@ -1924,3 +1924,173 @@ export async function bulkSaveDutyBills(_prev: BulkDocState, formData: FormData)
   if (results.some((r) => !r.error)) revalidatePath("/dashboard/documents");
   return { error: null, results };
 }
+
+// =============================================================================
+// CSB FILING (csb_filings) — 2026-08-14: customs CSB-V filing confirmation
+// register, built from the user's "NYKO_MART_Output.xlsx" (an OCR/PDF-
+// extraction output of CSB-V filing PDFs). Standalone header row, NOT
+// FK-linked to sales_invoices/orders — invoice_no is free text, same
+// pattern as freight_bills/duty_tax_bills above. See
+// db/2026-08-14-csb-filings.sql for the full decision writeup. Both the
+// single-entry form (saveCsbFiling) and the bulk xlsx upload
+// (bulkSaveCsbFilings) share saveCsbFilingCore, same convention as every
+// other doc type in this file.
+// =============================================================================
+
+export type CsbFilingParams = {
+  csbNumber: string;
+  exchangeRate: number | null;
+  totalTaxableValue: number | null;
+  taxableValueCurrency: string | null;
+  fobValueInr: number | null;
+  filingDate: string | null;
+  egmNumber: string | null;
+  egmDate: string | null;
+  hawbNumber: string | null;
+  invoiceNo: string | null;
+  invoiceDate: string | null;
+  entryByEmployeeId: string | null;
+};
+
+async function saveCsbFilingCore(
+  supabase: ServiceClient,
+  p: CsbFilingParams
+): Promise<{ error: string | null; id: string | null; docNo: string | null }> {
+  if (!p.csbNumber) return { error: "CSB Number is required.", id: null, docNo: null };
+
+  const { data, error } = await supabase
+    .from("csb_filings")
+    .insert({
+      csb_number: p.csbNumber,
+      exchange_rate: p.exchangeRate,
+      total_taxable_value: p.totalTaxableValue,
+      taxable_value_currency: p.taxableValueCurrency,
+      fob_value_inr: p.fobValueInr,
+      filing_date: p.filingDate,
+      egm_number: p.egmNumber,
+      egm_date: p.egmDate,
+      hawb_number: p.hawbNumber,
+      invoice_no: p.invoiceNo,
+      invoice_date: p.invoiceDate,
+      entry_by_employee_id: p.entryByEmployeeId,
+    })
+    .select("id, csb_number")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key")
+      ? "A CSB Filing with this CSB Number already exists."
+      : error?.message;
+    return { error: `Failed to save CSB Filing: ${msg ?? "unknown error"}`, id: null, docNo: null };
+  }
+
+  return { error: null, id: data.id, docNo: data.csb_number };
+}
+
+export async function saveCsbFiling(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const result = await saveCsbFilingCore(supabase, {
+    csbNumber: str(formData, "csb_number"),
+    exchangeRate: numOrNull(formData, "exchange_rate"),
+    totalTaxableValue: numOrNull(formData, "total_taxable_value"),
+    taxableValueCurrency: strOrNull(formData, "taxable_value_currency"),
+    fobValueInr: numOrNull(formData, "fob_value_inr"),
+    filingDate: strOrNull(formData, "filing_date"),
+    egmNumber: strOrNull(formData, "egm_number"),
+    egmDate: strOrNull(formData, "egm_date"),
+    hawbNumber: strOrNull(formData, "hawb_number"),
+    invoiceNo: strOrNull(formData, "invoice_no"),
+    invoiceDate: strOrNull(formData, "invoice_date"),
+    entryByEmployeeId: employee.id,
+  });
+
+  if (result.error) return initialFail(result.error);
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+export async function updateCsbFiling(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing CSB Filing.", success: false };
+  const csbNumber = str(formData, "csb_number");
+  if (!csbNumber) return { error: "CSB Number is required.", success: false };
+
+  const { error } = await supabase
+    .from("csb_filings")
+    .update({
+      csb_number: csbNumber,
+      exchange_rate: numOrNull(formData, "exchange_rate"),
+      total_taxable_value: numOrNull(formData, "total_taxable_value"),
+      taxable_value_currency: strOrNull(formData, "taxable_value_currency"),
+      fob_value_inr: numOrNull(formData, "fob_value_inr"),
+      filing_date: strOrNull(formData, "filing_date"),
+      egm_number: strOrNull(formData, "egm_number"),
+      egm_date: strOrNull(formData, "egm_date"),
+      hawb_number: strOrNull(formData, "hawb_number"),
+      invoice_no: strOrNull(formData, "invoice_no"),
+      invoice_date: strOrNull(formData, "invoice_date"),
+    })
+    .eq("id", id);
+
+  if (error) {
+    const msg = error.message.includes("duplicate key") ? "A CSB Filing with this CSB Number already exists." : error.message;
+    return { error: msg, success: false };
+  }
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deleteCsbFiling(id: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("csb_filings").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+// ---- CSB Filing bulk upload ------------------------------------------------
+// Accepts the same shape of xlsx as the user's "NYKO_MART_Output.xlsx"
+// (columns A "File Name" and M "Goods Description" are simply not in
+// CSB_FILING_COLUMNS below, so readBulkFile/cellStr ignore them if
+// present — matching is by column HEADER TEXT, same as every other bulk
+// doc type here, not by fixed column position).
+export async function bulkSaveCsbFilings(_prev: BulkDocState, formData: FormData): Promise<BulkDocState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { error: fileError, rows, byHeader } = await readBulkFile(formData);
+  if (fileError) return { error: fileError, results: null };
+
+  const results: BulkDocResult[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const raw = rows[i];
+    const rowNum = i + 2;
+    const csbNumber = cellStr(raw, byHeader, "CSB Number");
+
+    const result = await saveCsbFilingCore(supabase, {
+      csbNumber,
+      exchangeRate: cellStr(raw, byHeader, "Exchange Rate") ? Number(cellStr(raw, byHeader, "Exchange Rate")) : null,
+      totalTaxableValue: cellStr(raw, byHeader, "Total Taxable Value") ? Number(cellStr(raw, byHeader, "Total Taxable Value")) : null,
+      taxableValueCurrency: cellStr(raw, byHeader, "Taxable Value Currency") || null,
+      fobValueInr: cellStr(raw, byHeader, "FOB Value (In INR)") ? Number(cellStr(raw, byHeader, "FOB Value (In INR)")) : null,
+      filingDate: cellStr(raw, byHeader, "Filing Date") || null,
+      egmNumber: cellStr(raw, byHeader, "EGM Number") || null,
+      egmDate: cellStr(raw, byHeader, "EGM Date") || null,
+      hawbNumber: cellStr(raw, byHeader, "HAWB Number") || null,
+      invoiceNo: cellStr(raw, byHeader, "Invoice Number") || null,
+      invoiceDate: cellStr(raw, byHeader, "Invoice Date") || null,
+      entryByEmployeeId: employee.id,
+    });
+
+    results.push({ row: rowNum, label: csbNumber, docNo: result.docNo, error: result.error });
+  }
+
+  if (results.some((r) => !r.error)) revalidatePath("/dashboard/documents");
+  return { error: null, results };
+}

@@ -74,3 +74,23 @@ export const DUTY_TAX_BILL_COLUMNS: BulkDocColumn[] = [
   { label: "Duty/Tax Amount INR", example: "", required: false },
   { label: "GST 18% Amount", example: "", required: false },
 ];
+
+// CSB Filing (2026-08-14) — columns B-L of the user's "NYKO_MART_Output.xlsx"
+// (an OCR/PDF-extraction output of Indian customs CSB-V filing confirmation
+// PDFs). Column A "File Name" and column M "Goods Description" are
+// intentionally NOT listed here (per the user's explicit instruction) — a
+// file that still has those columns uploads fine, since matching is by
+// header text (see cellStr in ../actions.ts), not fixed position.
+export const CSB_FILING_COLUMNS: BulkDocColumn[] = [
+  { label: "CSB Number", example: "CSBV_DEL_2026-2027_30_07_18608", required: true, help: "The government CSB-V filing reference — must be unique." },
+  { label: "Exchange Rate", example: "95.45", required: false },
+  { label: "Total Taxable Value", example: "211.07", required: false },
+  { label: "Taxable Value Currency", example: "USD", required: false },
+  { label: "FOB Value (In INR)", example: "20146.63", required: false },
+  { label: "Filing Date", example: "30/07/2026", required: false },
+  { label: "EGM Number", example: "1064896", required: false },
+  { label: "EGM Date", example: "31/07/2026", required: false },
+  { label: "HAWB Number", example: "875033538890", required: false },
+  { label: "Invoice Number", example: "ARG-59-26-27", required: false },
+  { label: "Invoice Date", example: "29/07/2026", required: false },
+];

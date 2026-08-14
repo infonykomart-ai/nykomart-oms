@@ -15,13 +15,25 @@ import { WashingEntryEditForm, type EditableWashingEntry } from "./washing-entry
 import { InternalInvoiceEditForm, type EditableInternalInvoice } from "./internal-invoice-edit-form";
 import { PurchaseBillEditForm, type EditablePurchaseBill } from "./purchase-bill-edit-form";
 import { PurchaseBillMultiForm } from "./purchase-bill-multi-form";
-import { deleteCreditNote, deleteDebitNote, deleteWashingEntry, deleteInternalInvoice, deletePurchaseBill, type SimpleResult } from "./actions";
+import { CsbFilingForm } from "./csb-filing-form";
+import { CsbFilingEditForm, type EditableCsbFiling } from "./csb-filing-edit-form";
+import Link from "next/link";
+import {
+  deleteCreditNote,
+  deleteDebitNote,
+  deleteWashingEntry,
+  deleteInternalInvoice,
+  deletePurchaseBill,
+  deleteCsbFiling,
+  type SimpleResult,
+} from "./actions";
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
 
 type Company = { id: string; name: string };
 type Party = PartyOption;
 type Store = { id: string; name: string; company_id: string };
+type Currency = { code: string; name: string };
 
 type Recent = {
   creditNotes: (EditableCreditNote & { companyName: string })[];
@@ -31,6 +43,7 @@ type Recent = {
   purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number })[];
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
+  csbFilings: EditableCsbFiling[];
 };
 
 const TABS = [
@@ -42,6 +55,7 @@ const TABS = [
   { key: "courier-bill", label: "Courier Bill" },
   { key: "duty-tax-bill", label: "Duty & Tax Bill" },
   { key: "courier-bill-pdf", label: "Courier Bill (PDF Upload)" },
+  { key: "csb-filing", label: "CSB Filing" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -56,11 +70,13 @@ export function DocumentEntryTabs({
   companies,
   parties,
   stores,
+  currencies,
   recent,
 }: {
   companies: Company[];
   parties: Party[];
   stores: Store[];
+  currencies: Currency[];
   recent: Recent;
 }) {
   const [tab, setTab] = useState<TabKey>("credit-note");
@@ -132,6 +148,20 @@ export function DocumentEntryTabs({
                 </button>
               </div>
               {pbMode === "single" ? <PurchaseBillForm parties={parties} /> : <PurchaseBillMultiForm parties={parties} />}
+            </div>
+          )}
+          {tab === "csb-filing" && (
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs text-slate-400">
+                  Customs CSB-V filing confirmation — enter one row per filed shipping bill (matches the courier&apos;s
+                  filing PDF).
+                </p>
+                <Link href="/dashboard/documents/bulk-upload" className="shrink-0 text-xs font-medium text-amber-600 hover:underline">
+                  📤 Bulk upload xlsx →
+                </Link>
+              </div>
+              <CsbFilingForm currencies={currencies} />
             </div>
           )}
         </div>
@@ -221,6 +251,19 @@ export function DocumentEntryTabs({
           }))}
           onDelete={deletePurchaseBill}
           renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
+        />
+        <DocList
+          title="Recent CSB Filings"
+          rows={recent.csbFilings.map((r) => ({
+            id: r.id,
+            no: r.csb_number,
+            date: r.filing_date ?? "—",
+            sub: `HAWB ${r.hawb_number ?? "—"} · Inv ${r.invoice_no ?? "—"}`,
+            amount: r.fob_value_inr != null ? `₹${r.fob_value_inr}` : "—",
+            record: r,
+          }))}
+          onDelete={deleteCsbFiling}
+          renderEdit={(r, onDone) => <CsbFilingEditForm filing={r} currencies={currencies} onDone={onDone} />}
         />
         </PrintArea>
       </div>

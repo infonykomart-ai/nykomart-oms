@@ -9,6 +9,7 @@ import {
   bulkSavePurchaseBills,
   bulkSaveFreightBills,
   bulkSaveDutyBills,
+  bulkSaveCsbFilings,
 } from "../actions";
 import {
   CREDIT_NOTE_COLUMNS,
@@ -17,6 +18,7 @@ import {
   PURCHASE_BILL_COLUMNS,
   COURIER_BILL_COLUMNS,
   DUTY_TAX_BILL_COLUMNS,
+  CSB_FILING_COLUMNS,
 } from "./columns";
 
 const TABS = [
@@ -26,6 +28,7 @@ const TABS = [
   { key: "purchase-bill", label: "Purchase Bill" },
   { key: "courier-bill", label: "Courier Bill" },
   { key: "duty-tax-bill", label: "Duty & Tax Bill" },
+  { key: "csb-filing", label: "CSB Filing" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -106,6 +109,15 @@ export function BulkUploadTabs() {
           filenameBase="bulk-duty-tax-bill"
           columns={DUTY_TAX_BILL_COLUMNS}
           action={bulkSaveDutyBills}
+        />
+      )}
+      {tab === "csb-filing" && (
+        <BulkDocUploadForm
+          docLabel="CSB Filing"
+          refLabel="CSB Number"
+          filenameBase="bulk-csb-filing"
+          columns={CSB_FILING_COLUMNS}
+          action={bulkSaveCsbFilings}
         />
       )}
     </div>
