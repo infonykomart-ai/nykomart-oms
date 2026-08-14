@@ -21,6 +21,7 @@ export function DashboardHeader({
   companies,
   currentCompanyId,
   meId,
+  myPhotoUrl,
   unreadMessageCount,
 }: {
   companyName: string;
@@ -30,6 +31,7 @@ export function DashboardHeader({
   companies: { id: string; name: string }[];
   currentCompanyId: string;
   meId: string;
+  myPhotoUrl: string | null;
   unreadMessageCount: number;
 }) {
   const initials = companyName
@@ -67,14 +69,19 @@ export function DashboardHeader({
             <div className="text-sm font-medium leading-tight text-slate-900">{employeeName}</div>
             <div className="text-xs leading-tight text-slate-500">{roleName}</div>
           </div>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
-            {employeeName
-              .split(" ")
-              .map((w) => w[0])
-              .slice(0, 2)
-              .join("")
-              .toUpperCase()}
-          </div>
+          {myPhotoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={myPhotoUrl} alt={employeeName} className="h-9 w-9 rounded-full object-cover" />
+          ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+              {employeeName
+                .split(" ")
+                .map((w) => w[0])
+                .slice(0, 2)
+                .join("")
+                .toUpperCase()}
+            </div>
+          )}
         </Link>
         <LogoutButton />
       </div>

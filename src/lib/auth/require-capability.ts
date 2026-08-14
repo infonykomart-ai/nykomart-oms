@@ -42,6 +42,7 @@ export type AuthedEmployee = {
   companyIds: string[];
   storeIds: string[];
   name: string;
+  photoUrl: string | null;
   roleId: string;
   roleName: string;
   capabilities: string[];
@@ -68,7 +69,7 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
   // metadata and are just as correct.
   const { data: employee, error } = await supabase
     .from("employees")
-    .select("id, company_id, name, role_id, active")
+    .select("id, company_id, name, role_id, active, photo_url")
     .eq("auth_user_id", user.id)
     .single();
 
@@ -138,6 +139,7 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     companyIds,
     storeIds,
     name: employee.name,
+    photoUrl: employee.photo_url,
     roleId: employee.role_id,
     roleName: role?.name ?? "",
     capabilities: (caps ?? []).map((c) => c.capability_code),

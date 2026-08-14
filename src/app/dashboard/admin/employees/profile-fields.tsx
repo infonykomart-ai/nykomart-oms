@@ -30,6 +30,14 @@ export type ProfileFieldDefaults = {
  */
 export function ProfileFields({ defaults }: { defaults?: ProfileFieldDefaults }) {
   const [maritalStatus, setMaritalStatus] = useState(defaults?.marital_status ?? "");
+  // 2026-08-14: "employee ki photo ka preview dikhna chahiye" — a live
+  // preview next to the Photo URL field, since this is still a plain-text
+  // URL field (no upload widget — same pre-existing limitation as
+  // companies.logo_url, noted since 2026-08-07). Controlled only for this
+  // one field so the preview updates as you type/paste; every other field
+  // here stays uncontrolled (defaultValue), unchanged.
+  const [photoUrl, setPhotoUrl] = useState(defaults?.photo_url ?? "");
+  const [photoBroken, setPhotoBroken] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -40,7 +48,34 @@ export function ProfileFields({ defaults }: { defaults?: ProfileFieldDefaults })
         </div>
         <div>
           <label className={labelClass} htmlFor="photo_url">Photo URL</label>
-          <input id="photo_url" name="photo_url" defaultValue={defaults?.photo_url ?? ""} placeholder="https://..." className={inputClass} />
+          <div className="flex items-center gap-2">
+            {photoUrl && !photoBroken ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={photoUrl}
+                alt="Preview"
+                onError={() => setPhotoBroken(true)}
+                onLoad={() => setPhotoBroken(false)}
+                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 object-cover"
+              />
+            ) : (
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 text-xs text-slate-300">
+                {photoUrl ? "✕" : "—"}
+              </div>
+            )}
+            <input
+              id="photo_url"
+              name="photo_url"
+              value={photoUrl}
+              onChange={(e) => {
+                setPhotoUrl(e.target.value);
+                setPhotoBroken(false);
+              }}
+              placeholder="https://..."
+              className={inputClass}
+            />
+          </div>
+          {photoUrl && photoBroken && <p className="mt-1 text-xs text-red-500">Couldn&apos;t load an image from this URL.</p>}
         </div>
         <div>
           <label className={labelClass} htmlFor="gender">Gender</label>

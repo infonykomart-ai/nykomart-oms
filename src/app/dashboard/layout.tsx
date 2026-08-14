@@ -67,6 +67,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
               companies={companies ?? []}
               currentCompanyId={employee.currentCompanyId}
               meId={employee.id}
+              myPhotoUrl={employee.photoUrl}
               unreadMessageCount={unreadMessageCount ?? 0}
             />
             <main className="flex-1 overflow-y-auto p-6">

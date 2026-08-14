@@ -8,7 +8,7 @@
 // ever be pushed rows this employee is the sender or recipient of).
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { sendMessage, markConversationRead, type DirectMessage } from "./actions";
+import { sendMessage, markConversationRead, deleteMessage, type DirectMessage } from "./actions";
 
 type EmployeeOption = { id: string; name: string; photo_url: string | null; role_name: string; company_name: string };
 
@@ -19,6 +19,22 @@ function initialsOf(name: string): string {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+}
+
+// 2026-08-14: "employee ki photo ka preview dikhna chahiye" — real photo
+// when the employee has one on file (employees.photo_url), falling back to
+// initials otherwise. Shared by the sidebar list rows and the thread header.
+// Fixed h-9 w-9 size (Tailwind classes must be static, literal strings for
+// its build-time scan to pick them up — no dynamic `h-${n}` interpolation).
+function Avatar({ name, photoUrl }: { name: string; photoUrl: string | null }) {
+  return photoUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={photoUrl} alt={name} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+  ) : (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+      {initialsOf(name)}
+    </div>
+  );
 }
 
 function formatTime(iso: string): string {
@@ -133,11 +149,39 @@ export function MessagesClient({
           setMessages((prev) => (prev.some((p) => p.id === m.id) ? prev : [...prev, m]));
         }
       )
+      // "both side deleate" — when the OTHER person unsends a message they
+      // sent me, this removes it from my view in real time too, not just on
+      // next refresh. Filtering a DELETE event by a non-primary-key column
+      // (recipient_employee_id) requires the table's REPLICA IDENTITY to be
+      // FULL (set in db/2026-08-14n-...sql) — otherwise Postgres only
+      // includes the primary key in the old row and this filter never
+      // matches. My OWN deletes are already removed optimistically in
+      // handleDelete below, so this only needs to cover the incoming side.
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "direct_messages", filter: `recipient_employee_id=eq.${meId}` },
+        ({ old: row }) => {
+          const id = (row as { id?: string }).id;
+          if (id) setMessages((prev) => prev.filter((m) => m.id !== id));
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
   }, [supabase, meId]);
+
+  function handleDelete(messageId: string) {
+    const removed = messages.find((m) => m.id === messageId) ?? null;
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    startTransition(async () => {
+      const result = await deleteMessage(messageId);
+      if (result.error) {
+        setSendError(result.error);
+        if (removed) setMessages((prev) => (prev.some((m) => m.id === removed.id) ? prev : [...prev, removed]));
+      }
+    });
+  }
 
   function handleSend() {
     if (!selectedId) return;
@@ -187,9 +231,7 @@ export function MessagesClient({
                 onClick={() => setSelectedId(e.id)}
                 className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition ${active ? "bg-amber-50" : "hover:bg-slate-50"}`}
               >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                  {initialsOf(e.name)}
-                </div>
+                <Avatar name={e.name} photoUrl={e.photo_url} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-slate-800">{e.name}</span>
@@ -216,9 +258,7 @@ export function MessagesClient({
         {selectedEmployee ? (
           <>
             <div className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                {initialsOf(selectedEmployee.name)}
-              </div>
+              <Avatar name={selectedEmployee.name} photoUrl={selectedEmployee.photo_url} />
               <div>
                 <div className="text-sm font-semibold text-slate-800">{selectedEmployee.name}</div>
                 <div className="text-xs text-slate-400">
@@ -234,7 +274,18 @@ export function MessagesClient({
                   const mine = m.sender_employee_id === meId;
                   const isImage = (m.attachment_mime ?? "").startsWith("image/");
                   return (
-                    <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                    <div key={m.id} className={`group flex items-center gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
+                      {/* Unsend — sender only, deletes for both sides (see deleteMessage in actions.ts). Hover-revealed so the thread isn't cluttered by default. */}
+                      {mine && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(m.id)}
+                          title="Unsend (deletes for both of you)"
+                          className="shrink-0 rounded-full p-1 text-xs text-slate-300 opacity-0 transition hover:bg-slate-200 hover:text-red-600 group-hover:opacity-100"
+                        >
+                          🗑
+                        </button>
+                      )}
                       <div
                         className={`max-w-[70%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
                           mine ? "rounded-br-sm bg-amber-500 text-white" : "rounded-bl-sm border border-slate-200 bg-white text-slate-800"

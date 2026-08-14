@@ -101,3 +101,42 @@ export async function markConversationRead(otherEmployeeId: string): Promise<{ e
   revalidatePath("/dashboard/messages");
   return { error: null };
 }
+
+// 2026-08-14: "msg ko unsend ka option deleate & both side deleate ka
+// option ho" — a real, hard delete (not a per-user "delete for me" hide),
+// so it disappears from both the sender's and recipient's view. Only the
+// message's own sender may unsend it — same reasoning as WhatsApp's
+// "Delete for everyone", minus any time window (not asked for). The DB's
+// own RESTRICTIVE `direct_messages_delete_sender_only` policy
+// (db/2026-08-14n-...sql) enforces the identical rule at the RLS layer as
+// a second line of defense, same "never trust app-layer checks alone"
+// principle as everywhere else in this app — this explicit check here is
+// still the real gate, since this runs via the service-role client.
+export async function deleteMessage(messageId: string): Promise<{ error: string | null }> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+
+  const { data: message, error: fetchError } = await supabase
+    .from("direct_messages")
+    .select("sender_employee_id, attachment_path")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (fetchError) return { error: fetchError.message };
+  if (!message) return { error: null }; // already gone — nothing to do
+  if (message.sender_employee_id !== employee.id) {
+    return { error: "You can only unsend your own messages." };
+  }
+
+  if (message.attachment_path) {
+    // Best-effort — an orphaned Storage object is a cleanup nuisance, not a
+    // reason to block the message itself from being unsent.
+    const { error: removeError } = await supabase.storage.from(ATTACHMENT_BUCKET).remove([message.attachment_path]);
+    if (removeError) console.error("deleteMessage: failed to remove attachment", removeError);
+  }
+
+  const { error } = await supabase.from("direct_messages").delete().eq("id", messageId).eq("sender_employee_id", employee.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/dashboard/messages");
+  return { error: null };
+}

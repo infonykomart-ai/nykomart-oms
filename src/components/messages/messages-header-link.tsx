@@ -40,6 +40,18 @@ export function MessagesHeaderLink({ meId, initialUnreadCount }: { meId: string;
           setCount((c) => (onMessagesPageRef.current ? c : c + 1));
         }
       )
+      // If a message gets unsent before it was ever read, don't leave the
+      // badge overcounting it forever — REPLICA IDENTITY FULL (see
+      // db/2026-08-14n-...sql) means the DELETE payload's old row still has
+      // read_at, so this only decrements for messages that were unread.
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "direct_messages", filter: `recipient_employee_id=eq.${meId}` },
+        ({ old: row }) => {
+          const wasUnread = (row as { read_at?: string | null }).read_at == null;
+          if (wasUnread) setCount((c) => Math.max(0, c - 1));
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
