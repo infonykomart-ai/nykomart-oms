@@ -59,6 +59,30 @@ export default async function OrdersPage({
 
   const { data: orders } = await query;
 
+  // 2026-08-14: "sabhi order upar niche aa rahe hai to ye sabhi order me
+  // aaye a2z formate me" — the list was coming out in entry_timestamp order
+  // (whatever order rows were bulk-uploaded/entered in), which scatters PO/
+  // RF/RG numbers around instead of reading top-to-bottom in ref_no order.
+  // A plain text sort on ref_no would put "PO-A100" before "PO-A20" (string
+  // comparison, not numeric), so this pulls out the prefix/number/suffix
+  // pieces and compares them numerically — same idea as the natural sort
+  // used for the bulk-order-upload spreadsheet.
+  function refNoSortKey(ref: string | null): [string, number, number, number] {
+    if (!ref) return ["", 0, 0, 0];
+    const m = ref.match(/^([A-Za-z]+)-?(\d+)(?:-(\d+)\/(\d+))?/);
+    if (!m) return [ref, 0, 0, 0];
+    const [, prefix, num, part, total] = m;
+    return [prefix, Number(num), part ? Number(part) : 0, total ? Number(total) : 0];
+  }
+  orders?.sort((a, b) => {
+    const ka = refNoSortKey(a.ref_no);
+    const kb = refNoSortKey(b.ref_no);
+    if (ka[0] !== kb[0]) return ka[0].localeCompare(kb[0]);
+    if (ka[1] !== kb[1]) return ka[1] - kb[1];
+    if (ka[2] !== kb[2]) return ka[2] - kb[2];
+    return ka[3] - kb[3];
+  });
+
   // 2026-08-08: "YE LINK HONA CHAHIYE... SABHI CHEJE LINK RAHEGI" — reverse
   // lookup so the Orders hub itself shows which vendor Party (if any) each
   // order's item was purchased from, via Purchase Bill's now-required
