@@ -14,6 +14,16 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/dashboard/documents": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
   },
+  // 2026-08-14: Direct Messaging (src/app/dashboard/messages) lets an
+  // employee attach one file/image per message via a Server Action —
+  // Next's default Server Action body-size cap is 1MB, too small for a
+  // real photo. Raised to 10MB (matches the server-side check in
+  // sendMessage() in messages/actions.ts — keep both in sync if changed).
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
+  },
 };
 
 export default nextConfig;

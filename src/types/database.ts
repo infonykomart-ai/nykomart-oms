@@ -920,6 +920,60 @@ export type Database = {
           },
         ];
       };
+      direct_messages: {
+        Row: {
+          id: string;
+          sender_employee_id: string;
+          recipient_employee_id: string;
+          body: string | null;
+          attachment_path: string | null;
+          attachment_name: string | null;
+          attachment_mime: string | null;
+          attachment_size_bytes: number | null;
+          created_at: string;
+          read_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          sender_employee_id: string;
+          recipient_employee_id: string;
+          body?: string | null;
+          attachment_path?: string | null;
+          attachment_name?: string | null;
+          attachment_mime?: string | null;
+          attachment_size_bytes?: number | null;
+          created_at?: string;
+          read_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          sender_employee_id?: string;
+          recipient_employee_id?: string;
+          body?: string | null;
+          attachment_path?: string | null;
+          attachment_name?: string | null;
+          attachment_mime?: string | null;
+          attachment_size_bytes?: number | null;
+          created_at?: string;
+          read_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "direct_messages_sender_employee_id_fkey";
+            columns: ["sender_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "direct_messages_recipient_employee_id_fkey";
+            columns: ["recipient_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       dispatch_invoices: {
         Row: {
           id: string;
@@ -2614,6 +2668,46 @@ export type Database = {
           credit_note_date?: string | null;
           credit_note_amt?: number;
           created_at?: string;
+        };
+        Relationships: [
+        ];
+      };
+      help_articles: {
+        Row: {
+          id: string;
+          category: string;
+          title: string;
+          keywords: unknown[];
+          answer: string;
+          action_href: string | null;
+          action_label: string | null;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          category: string;
+          title: string;
+          keywords?: unknown[];
+          answer: string;
+          action_href?: string | null;
+          action_label?: string | null;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          category?: string;
+          title?: string;
+          keywords?: unknown[];
+          answer?: string;
+          action_href?: string | null;
+          action_label?: string | null;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [
         ];

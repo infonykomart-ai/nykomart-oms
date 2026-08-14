@@ -68,6 +68,13 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Enter daily Budget/Spend per store and view the combined Orders + Ad Spend report." },
   { code: "finished_stock_view", label: "Inventory", icon: "📦", href: "/dashboard/inventory",
     description: "Finished-goods Stock — auto-restocked from cancelled+refunded+already-purchased orders." },
+  // 2026-08-14: Help Center itself (the 🤖 chat bubble) and Messages (the
+  // header 💬 icon) are open to EVERY signed-in employee and are NOT
+  // capability-gated tiles — they don't appear here, same reasoning as My
+  // Profile. This tile only gates who may edit the Help Center's own
+  // article content.
+  { code: "help_center_admin", label: "Help Center Admin", icon: "🛠️", href: "/dashboard/admin/help-center",
+    description: "Add / edit / delete the Help Center's FAQ & guide articles." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LogoutButton } from "./logout-button";
 import { CompanySwitcher } from "./company-switcher";
+import { MessagesHeaderLink } from "./messages/messages-header-link";
 
 /**
  * Professional dashboard header — company logo + name (with a switcher for
@@ -19,6 +20,8 @@ export function DashboardHeader({
   roleName,
   companies,
   currentCompanyId,
+  meId,
+  unreadMessageCount,
 }: {
   companyName: string;
   logoUrl: string | null;
@@ -26,6 +29,8 @@ export function DashboardHeader({
   roleName: string;
   companies: { id: string; name: string }[];
   currentCompanyId: string;
+  meId: string;
+  unreadMessageCount: number;
 }) {
   const initials = companyName
     .split(" ")
@@ -53,6 +58,7 @@ export function DashboardHeader({
 
       <div className="flex items-center gap-4">
         <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
+        <MessagesHeaderLink meId={meId} initialUnreadCount={unreadMessageCount} />
         {/* 2026-08-12: "sabhi ko apni profile update karne ka option ho" —
             the name/avatar is now a link to the self-service My Profile
             page, open to every signed-in employee. */}
