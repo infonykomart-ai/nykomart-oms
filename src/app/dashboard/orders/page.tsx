@@ -19,6 +19,21 @@ export default async function OrdersPage({
   const sp = await searchParams;
 
   const companyId = typeof sp.company === "string" && sp.company ? sp.company : "";
+  // 2026-08-17 fix — "order page har jagh par" filter should respect the
+  // top-nav company switcher by default. Before this, landing on this page
+  // fresh (no ?company= param yet) always fell back to `employee.companyIds`
+  // (every accessible company mixed together), ignoring which company was
+  // selected up top. Now: no `company` param at all (fresh page load, or
+  // "Clear" was clicked) -> default to the currently selected company;
+  // `company` param present but empty (user explicitly picked "All" from
+  // this page's own filter and submitted) -> honor that explicit override
+  // and show every accessible company; `company=<id>` -> that one company.
+  const companyParamPresent = "company" in sp;
+  const effectiveCompanyIds = companyId
+    ? [companyId]
+    : companyParamPresent
+      ? employee.companyIds
+      : [employee.currentCompanyId];
   const status = typeof sp.status === "string" && sp.status ? sp.status : "";
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const fromDate = typeof sp.from === "string" ? sp.from : "";
@@ -43,7 +58,7 @@ export default async function OrdersPage({
     .select(
       "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country"
     )
-    .in("company_id", companyId ? [companyId] : employee.companyIds)
+    .in("company_id", effectiveCompanyIds)
     .order("entry_timestamp", { ascending: false })
     .limit(300);
 
@@ -178,7 +193,7 @@ export default async function OrdersPage({
     ? await supabase
         .from("etsy_ledger_lines")
         .select("company_id, order_number, txn_date, type, title, info, amount, fees_and_taxes, net, currency")
-        .in("company_id", companyId ? [companyId] : employee.companyIds)
+        .in("company_id", effectiveCompanyIds)
         .in("order_number", marketplaceOrderNos)
     : { data: [] };
   type EtsyFeeLine = {
@@ -237,7 +252,7 @@ export default async function OrdersPage({
     ? await supabase
         .from("ebay_tax_invoice_lines")
         .select("company_id, order_number, txn_date, description, memo, fee_type, currency, net_amount, igst_amount, total_amount")
-        .in("company_id", companyId ? [companyId] : employee.companyIds)
+        .in("company_id", effectiveCompanyIds)
         .in("order_number", marketplaceOrderNos)
     : { data: [] };
   type EbayFeeLine = {
@@ -293,7 +308,7 @@ export default async function OrdersPage({
     ? await supabase
         .from("amazon_transactions")
         .select("company_id, order_id, txn_date, transaction_type, product_details, amazon_fees, total_amount, currency")
-        .in("company_id", companyId ? [companyId] : employee.companyIds)
+        .in("company_id", effectiveCompanyIds)
         .in("order_id", marketplaceOrderNos)
     : { data: [] };
   type AmazonFeeLine = {
@@ -382,7 +397,7 @@ export default async function OrdersPage({
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
-          <select id="company" name="company" defaultValue={companyId} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+          <select id="company" name="company" defaultValue={companyParamPresent ? companyId : employee.currentCompanyId} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
             <option value="">All</option>
             {(companies ?? []).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
