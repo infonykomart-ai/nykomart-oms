@@ -14,7 +14,8 @@ import { useActionState } from "react";
 import { lookupOrderForPurchaseBill, savePurchaseBillMulti, type PurchaseBillMultiState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { UnitSelect } from "@/components/unit-select";
-import { toFeet, type LengthUnit } from "@/lib/length-units";
+import type { LengthUnit } from "@/lib/length-units";
+import { GstSelect, type GstType } from "@/components/gst-select";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -27,14 +28,8 @@ type PickedOrder = {
   sizeLabel: string | null;
   categoryName: string | null;
   qty: number;
-  sqFeet: number; // always feet — the value actually submitted (see linesJson below)
-  sqFeetAuto: boolean; // true while sqFeet still reflects the parser's own suggestion, not a manual edit
-  // 2026-08-17 — FT/MTR/INCH/YARD/CM unit picker (see src/lib/length-units.ts):
-  // sqFeetDisplay is literally what's typed in the box, in sqFeetUnit; sqFeet
-  // (above) is always that value converted to feet, recomputed on every edit
-  // to either field.
-  sqFeetDisplay: string;
-  sqFeetUnit: LengthUnit;
+  sqFeetAuto: boolean; // true while sqFeetDisplay still reflects the parser's own suggestion, not a manual edit
+  sqFeetDisplay: string; // the quantity as typed, in the form's ONE shared unit (see sharedUnit below)
   alreadyBilled: number;
 };
 
@@ -45,6 +40,17 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [isLooking, startLookup] = useTransition();
   const [orders, setOrders] = useState<PickedOrder[]>([]);
+  // 2026-08-17 — ONE shared unit for the whole invoice, not per-line: Unit
+  // Rate below is a SINGLE rate shared across every order on this invoice
+  // (that's the whole point of the multi-PO form — one vendor bill covers
+  // many orders), and a rate only means one thing if every line's quantity
+  // is in the same unit that rate was quoted in. Real bug found live (see
+  // db/2026-08-17-purchase-bills-qty-unit.sql): letting each line pick its
+  // own unit while sharing one rate silently mixed units under one price.
+  const [sharedUnit, setSharedUnit] = useState<LengthUnit>("FT");
+  // GST is also shared across the whole invoice, same reasoning as rate/unit.
+  const [gstRatePct, setGstRatePct] = useState<number | null>(null);
+  const [gstType, setGstType] = useState<GstType>("CGST_SGST");
 
   function handleAdd() {
     if (isLooking) return; // guard against a fast double-Enter firing two overlapping lookups for the same PO
@@ -61,7 +67,13 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         return;
       }
       setLookupError(null);
-      const suggestedSqFeet = r.order!.suggested_sq_feet ?? 0;
+      // suggested_sq_feet comes from the order's own Size field, parsed in
+      // FEET (src/lib/size-parser.ts) — only usable as-is when the shared
+      // unit is still FT; if the invoice's unit is something else, it's
+      // not a safe auto-fill (the vendor's MTR/INCH/etc figure isn't the
+      // same number as the order's feet-parsed size), so leave it blank
+      // for a manual entry instead of quietly suggesting the wrong unit.
+      const suggestedSqFeet = sharedUnit === "FT" ? r.order!.suggested_sq_feet ?? 0 : 0;
       setOrders((prev) => [
         ...prev,
         {
@@ -70,10 +82,8 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
           sizeLabel: r.order!.size_label,
           categoryName: r.order!.item_category_name,
           qty: r.order!.qty || 1,
-          sqFeet: suggestedSqFeet,
-          sqFeetAuto: r.order!.suggested_sq_feet != null,
+          sqFeetAuto: sharedUnit === "FT" && r.order!.suggested_sq_feet != null,
           sqFeetDisplay: suggestedSqFeet ? String(suggestedSqFeet) : "",
-          sqFeetUnit: "FT",
           alreadyBilled: r.existingBillCount,
         },
       ]);
@@ -89,7 +99,9 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
     setOrders((prev) => prev.filter((o) => o.orderId !== orderId));
   }
 
-  const linesJson = JSON.stringify(orders.map((o) => ({ orderId: o.orderId, qty: o.qty, sqFeet: o.sqFeet })));
+  const linesJson = JSON.stringify(
+    orders.map((o) => ({ orderId: o.orderId, qty: o.qty, sqFeet: Number(o.sqFeetDisplay) || 0 }))
+  );
 
   return (
     <form action={formAction} className="space-y-3">
@@ -105,6 +117,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
       )}
 
       <input type="hidden" name="lines_json" value={linesJson} />
+      <input type="hidden" name="qty_unit" value={sharedUnit} />
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
         <label className="mb-1 block text-xs font-medium text-slate-500">Add PO/RF/RG orders covered by this one vendor invoice</label>
@@ -153,33 +166,15 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
                 </div>
                 <div>
                   <label className="mb-0.5 block text-[11px] text-slate-400">
-                    Sq. Feet{o.sqFeetAuto && <span className="text-purple-600"> — auto from Size, editable</span>}
+                    Qty ({sharedUnit}){o.sqFeetAuto && <span className="text-purple-600"> — auto from Size, editable</span>}
                   </label>
-                  <div className="flex gap-1.5">
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={o.sqFeetDisplay}
-                      onChange={(e) => {
-                        const display = e.target.value;
-                        updateLine(o.orderId, {
-                          sqFeetDisplay: display,
-                          sqFeet: toFeet(Number(display) || 0, o.sqFeetUnit),
-                          sqFeetAuto: false,
-                        });
-                      }}
-                      className={inputClass}
-                    />
-                    <UnitSelect
-                      value={o.sqFeetUnit}
-                      onChange={(unit) =>
-                        updateLine(o.orderId, { sqFeetUnit: unit, sqFeet: toFeet(Number(o.sqFeetDisplay) || 0, unit) })
-                      }
-                    />
-                  </div>
-                  {o.sqFeetUnit !== "FT" && o.sqFeetDisplay && (
-                    <p className="mt-0.5 text-[11px] text-purple-600">= {o.sqFeet.toFixed(2)} Sq. Feet (saved)</p>
-                  )}
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={o.sqFeetDisplay}
+                    onChange={(e) => updateLine(o.orderId, { sqFeetDisplay: e.target.value, sqFeetAuto: false })}
+                    className={inputClass}
+                  />
                 </div>
               </div>
             </div>
@@ -210,12 +205,22 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
           <input id="pbm_inv_date" name="vendor_invoice_date" type="date" className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="pbm_rate">Unit Rate (per sq ft, shared)</label>
-          <input id="pbm_rate" name="unit_rate" type="number" step="0.01" className={inputClass} />
+          <label className={labelClass} htmlFor="pbm_rate">Unit Rate (shared across all orders above)</label>
+          <div className="flex gap-1.5">
+            <input id="pbm_rate" name="unit_rate" type="number" step="0.01" className={inputClass} />
+            <UnitSelect value={sharedUnit} onChange={setSharedUnit} />
+          </div>
+          <p className="mt-0.5 text-[11px] text-slate-400">Rate is per {sharedUnit} — every order&apos;s Qty above is in the same unit.</p>
         </div>
         <div className="col-span-2">
           <label className={labelClass} htmlFor="pbm_desc">Work Description</label>
           <input id="pbm_desc" name="work_description" className={inputClass} />
+        </div>
+        <div className="col-span-2">
+          <label className={labelClass} htmlFor="pbm_gst_rate">GST (shared across all orders above)</label>
+          <GstSelect ratePct={gstRatePct} onRateChange={setGstRatePct} gstType={gstType} onTypeChange={setGstType} idPrefix="pbm" />
+          <input type="hidden" name="gst_rate_pct" value={gstRatePct ?? ""} />
+          <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
         </div>
       </div>
 

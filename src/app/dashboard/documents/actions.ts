@@ -658,9 +658,12 @@ type PurchaseBillParams = {
   vendorInvoiceDate: string | null;
   qty: number;
   sqFeet: number;
+  qtyUnit: string;
   workDescription: string | null;
   unitRate: number;
   orderId: string | null;
+  gstRatePct: number | null;
+  gstType: string | null;
 };
 
 async function savePurchaseBillCore(
@@ -694,10 +697,13 @@ async function savePurchaseBillCore(
       vendor_invoice_date: p.vendorInvoiceDate,
       qty: p.qty || 1,
       sq_feet: p.sqFeet,
+      qty_unit: p.qtyUnit || "FT",
       work_description: p.workDescription,
       unit_rate: p.unitRate,
       order_id: p.orderId,
       company_id: companyId,
+      gst_rate_pct: p.gstRatePct,
+      gst_type: p.gstType,
     })
     .select("id, vendor_invoice_no, total_amount")
     .single();
@@ -749,9 +755,12 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
     vendorInvoiceDate: strOrNull(formData, "vendor_invoice_date"),
     qty: numOrZero(formData, "qty"),
     sqFeet: numOrZero(formData, "sq_feet"),
+    qtyUnit: str(formData, "qty_unit") || "FT",
     workDescription: strOrNull(formData, "work_description"),
     unitRate: numOrZero(formData, "unit_rate"),
     orderId: strOrNull(formData, "order_id"),
+    gstRatePct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
+    gstType: strOrNull(formData, "gst_type"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -842,6 +851,13 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
   const vendorInvoiceDate = strOrNull(formData, "vendor_invoice_date");
   const workDescription = strOrNull(formData, "work_description");
   const unitRate = numOrZero(formData, "unit_rate");
+  // 2026-08-17 — ONE shared unit for the whole invoice (see
+  // purchase-bill-multi-form.tsx's header comment): unit_rate above is a
+  // single rate shared across every line, so every line's qty must be in
+  // the same unit that rate was quoted in — not a per-line choice.
+  const qtyUnit = str(formData, "qty_unit") || "FT";
+  const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
+  const gstType = strOrNull(formData, "gst_type");
   const linesRaw = str(formData, "lines_json");
 
   if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
@@ -864,9 +880,12 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
       vendorInvoiceDate,
       qty: line.qty || 1,
       sqFeet: line.sqFeet || 0,
+      qtyUnit,
       workDescription,
       unitRate,
       orderId: line.orderId,
+      gstRatePct,
+      gstType,
     });
     results!.push({ orderId: line.orderId, ok: !result.error, docNo: result.docNo, error: result.error });
   }
@@ -912,8 +931,11 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
       vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
       qty: numOrZero(formData, "qty") || 1,
       sq_feet: numOrZero(formData, "sq_feet"),
+      qty_unit: str(formData, "qty_unit") || "FT",
       work_description: strOrNull(formData, "work_description"),
       unit_rate: numOrZero(formData, "unit_rate"),
+      gst_rate_pct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
+      gst_type: strOrNull(formData, "gst_type"),
     })
     .eq("id", id);
 
@@ -1943,9 +1965,16 @@ export async function bulkSavePurchaseBills(_prev: BulkDocState, formData: FormD
       vendorInvoiceDate: cellStr(raw, byHeader, "Vendor Invoice Date") || null,
       qty: Number(cellStr(raw, byHeader, "Qty")) || 0,
       sqFeet: Number(cellStr(raw, byHeader, "SQ Feet")) || 0,
+      // Bulk CSV template has no unit column yet — "SQ Feet" header means
+      // exactly that, same as always.
+      qtyUnit: "FT",
       workDescription: cellStr(raw, byHeader, "Work Description") || null,
       unitRate: Number(cellStr(raw, byHeader, "Unit Rate")) || 0,
       orderId: order.id,
+      // Bulk CSV template has no GST columns yet — leave unset, same as
+      // every bill entered before this feature existed.
+      gstRatePct: null,
+      gstType: null,
     });
 
     results.push({ row: rowNum, label: refNo, docNo: result.docNo, error: result.error });

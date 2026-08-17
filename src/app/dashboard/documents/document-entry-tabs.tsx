@@ -50,7 +50,7 @@ type Recent = {
   debitNotes: (EditableDebitNote & { companyName: string })[];
   washingEntries: (EditableWashingEntry & { companyName: string; amount: number })[];
   internalInvoices: (EditableInternalInvoice & { fromCompanyName: string; toCompanyName: string; total_amount: number })[];
-  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number })[];
+  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number; g_total_plus_gst: number | null })[];
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
@@ -276,7 +276,10 @@ export function DocumentEntryTabs({
             no: r.vendor_invoice_no ?? "—",
             date: r.vendor_invoice_date ?? "—",
             sub: r.vendorName,
-            amount: `₹${r.total_amount}`,
+            amount:
+              r.gst_rate_pct != null && r.g_total_plus_gst != null
+                ? `₹${r.total_amount} + GST (${r.gst_type === "IGST" ? "IGST" : "CGST+SGST"} ${r.gst_rate_pct * 2}%) = ₹${r.g_total_plus_gst}`
+                : `₹${r.total_amount}`,
             record: r,
           }))}
           onDelete={deletePurchaseBill}

@@ -7,6 +7,7 @@ import { OrderLookupBox } from "./order-lookup-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { UnitSelect } from "@/components/unit-select";
 import { toFeet, type LengthUnit } from "@/lib/length-units";
+import { GstSelect, type GstType } from "@/components/gst-select";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -29,13 +30,21 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   const partyGroups = groupPartyOptions(parties);
 
   // 2026-08-17 — "FT/MTR/INCH/YARD/CM SABHI KA FOURMULA KAAM KARNA CHAHIYE"
-  // — vendor can bill raw material in whichever unit; typed value + unit
-  // convert to feet (this app's own convention, matching the field's own
-  // "Sq. Feet" label) before it's actually submitted. See
+  // — vendor can bill raw material in whichever unit. 2026-08-17 (later,
+  // real bug found live): the value is saved AS ENTERED, in whichever unit
+  // is picked — NOT converted to feet — because Unit Rate is always the
+  // rate the vendor quoted per THAT unit (e.g. ₹21.03/MTR); converting the
+  // quantity to feet first and then multiplying by a per-MTR rate silently
+  // inflated the total by the conversion factor. The feet-equivalent below
+  // is shown purely as a reference conversion, not what gets saved or
+  // priced. See db/2026-08-17-purchase-bills-qty-unit.sql and
   // src/lib/length-units.ts.
   const [sqFeetInput, setSqFeetInput] = useState("");
   const [sqFeetUnit, setSqFeetUnit] = useState<LengthUnit>("FT");
   const sqFeetConverted = sqFeetInput ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
+
+  const [gstRatePct, setGstRatePct] = useState<number | null>(null);
+  const [gstType, setGstType] = useState<GstType>("CGST_SGST");
 
   function handleFound(r: OrderLookup) {
     setOrderId(r.order?.id ?? "");
@@ -101,17 +110,24 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
             <UnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
           {sqFeetUnit !== "FT" && sqFeetInput && (
-            <p className="mt-0.5 text-[11px] text-purple-600">= {sqFeetConverted.toFixed(2)} Sq. Feet (saved)</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">≈ {sqFeetConverted.toFixed(2)} Sq. Feet equivalent (reference only)</p>
           )}
-          <input type="hidden" name="sq_feet" value={sqFeetInput ? sqFeetConverted : ""} />
+          <input type="hidden" name="sq_feet" value={sqFeetInput} />
+          <input type="hidden" name="qty_unit" value={sqFeetUnit} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="pb_rate">Unit Rate</label>
+          <label className={labelClass} htmlFor="pb_rate">Unit Rate {sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
           <input id="pb_rate" name="unit_rate" type="number" step="0.01" className={inputClass} />
         </div>
         <div className="col-span-2">
           <label className={labelClass} htmlFor="pb_desc">Work Description</label>
           <input id="pb_desc" name="work_description" className={inputClass} />
+        </div>
+        <div className="col-span-2">
+          <label className={labelClass} htmlFor="pb_gst_rate">GST</label>
+          <GstSelect ratePct={gstRatePct} onRateChange={setGstRatePct} gstType={gstType} onTypeChange={setGstType} idPrefix="pb" />
+          <input type="hidden" name="gst_rate_pct" value={gstRatePct ?? ""} />
+          <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
         </div>
       </div>
 

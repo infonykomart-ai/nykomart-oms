@@ -115,7 +115,7 @@ async function DocumentsPageInner() {
     supabase
       .from("purchase_bills")
       .select(
-        "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, work_description, unit_rate, total_amount"
+        "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, total_amount, gst_rate_pct, gst_type, g_total_plus_gst"
       )
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
@@ -292,6 +292,8 @@ async function DocumentsPageInner() {
             sq_feet: Number(r.sq_feet),
             unit_rate: Number(r.unit_rate),
             total_amount: Number(r.total_amount ?? 0),
+            gst_rate_pct: r.gst_rate_pct != null ? Number(r.gst_rate_pct) : null,
+            g_total_plus_gst: r.g_total_plus_gst != null ? Number(r.g_total_plus_gst) : null,
             vendorName: partyName.get(r.vendor_party_id) ?? "",
           })),
           csbFilings: (recentCsbFilings ?? []).map((r) => ({
