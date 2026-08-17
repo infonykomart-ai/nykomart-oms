@@ -39,12 +39,20 @@ export default async function InvoicesPage() {
       // invoiced history accumulates. The selector's search box keeps a
       // longer list usable; if this ever needs to look further back than
       // the limit reaches, that's a sign to add a date-range filter here.
+      // 2026-08-17 fix — same bug/fix as Party Ledger / Bill Payment /
+      // Document Entry: this used to scope to `employee.companyIds` (every
+      // company this login can access) instead of the ONE company
+      // currently selected in the top-nav switcher, so an admin with
+      // access to all 3 companies saw every company's orders/invoices
+      // mixed together with no way to narrow it via the switcher — same
+      // shape as those other bugs, confirmed as unwanted (not an
+      // intentional cross-company report) and fixed the same way.
       supabase
         .from("orders")
         .select(
           "id, ref_no, ref_no_base, order_date, company_id, store_id, buyer_name_address, contact_no, sku_label, item_category_id, size_label, qty, order_value_original, order_currency, status, dispatch_date, invoice_id"
         )
-        .in("company_id", employee.companyIds)
+        .eq("company_id", employee.currentCompanyId)
         // Pending item 2 (2026-08-08): a Hold order is fully blocked from
         // further action, and a Cancelled order should never be dispatched/
         // invoiced — both excluded here even though every other status is
@@ -55,7 +63,7 @@ export default async function InvoicesPage() {
       supabase
         .from("sales_invoices")
         .select("id, invoice_no, master_invoice_no, invoice_date, company_id, store_id, buyer_name_address, courier_company, csb_type")
-        .in("company_id", employee.companyIds)
+        .eq("company_id", employee.currentCompanyId)
         .order("created_at", { ascending: false })
         .limit(100),
       supabase.from("companies").select("id, name").in("id", employee.companyIds),
