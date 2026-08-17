@@ -5,7 +5,13 @@ import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 // Bill Payment (round 11) — see actions.ts header comment. Lists every
 // bill_pass_register row (any invoice_type — vendor/courier/duty/salary/
 // advance, this ledger is shared by all of them) with balance_due > 0,
-// scoped to the signed-in employee's companies, oldest due date first.
+// scoped to the CURRENTLY SELECTED company (top-nav switcher), oldest due
+// date first.
+// 2026-08-17 fix — same bug/fix as Party Ledger: this used to scope to
+// `employee.companyIds` (every company this login can access), so an
+// admin with access to all 3 companies saw every company's outstanding
+// bills mixed together regardless of which company was selected up top.
+// Now matches the pattern used by orders/new, shipglobal, attendance, etc.
 export default async function BillPaymentPage() {
   const employee = await requireCapability("bill_payment");
   const supabase = createServiceRoleClient();
@@ -14,7 +20,7 @@ export default async function BillPaymentPage() {
     supabase
       .from("bill_pass_register")
       .select("id, company_id, invoice_no, vendor_invoice_no, invoice_type, party_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due")
-      .in("company_id", employee.companyIds)
+      .eq("company_id", employee.currentCompanyId)
       .gt("balance_due", 0)
       .order("due_date", { ascending: true, nullsFirst: false }),
     supabase.from("companies").select("id, name"),
