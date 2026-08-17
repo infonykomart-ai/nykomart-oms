@@ -155,7 +155,7 @@ async function PartyLedgerInner({ id }: { id: string }) {
             </thead>
             <tbody>
               {entries.map((e) => (
-                <tr key={e.id} className="border-b border-slate-100 align-top">
+                <tr key={e.id} className="border-b border-slate-100 align-top text-slate-700">
                   <td className="py-1 pr-2">{e.invoice_date ?? e.invoice_recv_date ?? "—"}</td>
                   <td className="py-1 pr-2">{sourceLabel[e.source ?? ""] ?? e.invoice_type ?? "—"}</td>
                   <td className="py-1 pr-2 font-medium text-slate-900">{e.vendor_invoice_no ?? e.invoice_no ?? "—"}</td>
