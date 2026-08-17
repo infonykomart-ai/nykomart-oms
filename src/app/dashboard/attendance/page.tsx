@@ -4,7 +4,7 @@ import { todayIST } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
 import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
 import { formatDuration } from "@/lib/attendance/timer";
-import { EXPECTED_WORK_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected } from "@/lib/attendance/work-hours";
+import { EXPECTED_WORK_MINUTES, ANOMALY_THRESHOLD_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected } from "@/lib/attendance/work-hours";
 import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
@@ -304,16 +304,30 @@ export default async function AttendancePage({
         </div>
         <span
           className={`ml-auto rounded-full px-3 py-1 text-xs font-semibold ${
-            todaysWorkHours.verdict === "short" ? "bg-red-100 text-red-700" : todaysWorkHours.verdict === "on-track" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
+            todaysWorkHours.verdict === "anomaly"
+              ? "bg-red-600 text-white"
+              : todaysWorkHours.verdict === "short"
+                ? "bg-red-100 text-red-700"
+                : todaysWorkHours.verdict === "on-track"
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-green-100 text-green-700"
           }`}
         >
-          {todaysWorkHours.verdict === "short"
-            ? `⚠ ${formatHM(Math.abs(todaysWorkHours.deltaMinutes))} short`
-            : todaysWorkHours.verdict === "on-track"
-              ? "On track"
-              : `+${formatHM(todaysWorkHours.deltaMinutes)} ahead`}
+          {todaysWorkHours.verdict === "anomaly"
+            ? `🚨 ${formatHM(todaysConsumedMinutes)} — looks wrong, check entries`
+            : todaysWorkHours.verdict === "short"
+              ? `⚠ ${formatHM(Math.abs(todaysWorkHours.deltaMinutes))} short`
+              : todaysWorkHours.verdict === "on-track"
+                ? "On track"
+                : `+${formatHM(todaysWorkHours.deltaMinutes)} ahead`}
         </span>
       </div>
+      {todaysWorkHours.verdict === "anomaly" && (
+        <div className="-mt-3 mb-6 rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-xs text-red-800">
+          🚨 Today&apos;s total ({formatHM(todaysConsumedMinutes)}) is more than {formatHM(ANOMALY_THRESHOLD_MINUTES)} — that&apos;s past a normal
+          full day. This usually means a typo in the Hours box below (e.g. 50 instead of 5) — please check and fix the Time Consumed on each row.
+        </div>
+      )}
 
       <div className="mb-3">
         <h2 className="text-sm font-semibold text-slate-700">📝 Daily Work Report</h2>

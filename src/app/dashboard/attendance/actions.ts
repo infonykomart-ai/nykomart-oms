@@ -93,8 +93,13 @@ export async function upsertDailyLog(input: DailyLogInput): Promise<{ error: str
     qty_done: input.qtyDone || null,
     work_status: input.workStatus || null,
     remark_sku: input.remarkSku || null,
-    estimated_time_minutes: input.estimatedTimeMinutes ? Math.max(0, parseInt(input.estimatedTimeMinutes, 10) || 0) : null,
-    time_spent_seconds: input.timeSpentMinutes ? Math.max(0, parseInt(input.timeSpentMinutes, 10) || 0) * 60 : 0,
+    // 2026-08-17: server-side backstop matching daily-report-form.tsx's own
+    // MAX_HOURS_PER_ROW (24h/row) — the client already clamps the Hours
+    // box as you type, but that's not authoritative; this is what actually
+    // stops an absurd value (the "10 ghante, 50 ghante" bug report) from
+    // ever reaching the DB, regardless of how the request got here.
+    estimated_time_minutes: input.estimatedTimeMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.estimatedTimeMinutes, 10) || 0)) : null,
+    time_spent_seconds: input.timeSpentMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.timeSpentMinutes, 10) || 0)) * 60 : 0,
     updated_at: new Date().toISOString(),
   };
 

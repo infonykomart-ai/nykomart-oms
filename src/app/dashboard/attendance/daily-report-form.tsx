@@ -37,11 +37,24 @@ import { useEffect, useRef, useState } from "react";
 import { upsertDailyLog, deleteDailyLog, submitDailyLog } from "./actions";
 import { formatDuration, formatISTTime } from "@/lib/attendance/timer";
 
+// 2026-08-17 — "TEAM WORK REPORT ME YE WORK OR UPDATE KARNE HAI" added a
+// batch of Etsy/marketplace-specific Work Type options. Appended after the
+// original list rather than merged into look-alike existing entries (e.g.
+// "Tracking Check" vs. the pre-existing "Tracking Update & Check", "Update
+// Social Media" vs. "Social Media") — deliberately not guessing which ones
+// are meant to replace/merge with an existing option, since that's a real
+// business decision, not a wording cleanup; both stay selectable until
+// confirmed otherwise.
 const CATEGORIES = [
   "Technical Work", "Tracking Update & Check", "Inventory Management", "Product Photography",
   "Product Uploading", "Listing Update", "Photo Edit", "Video Edit", "SEO", "Content / Blog",
   "Social Media", "Order Management", "Mail & Inbox", "Accounts & Billing", "Shipping & Customs",
-  "Vendor & Stock", "Admin / Communication", "Other",
+  "Vendor & Stock", "Admin / Communication",
+  "Tracking Update", "Shipment Dispatch Process (Invoicing, Booking, Data Manage)", "Etsy Report",
+  "Mail to Inquiry", "Follow Etsy User", "Link Submission", "Ads Work", "Other Work", "Tracking Check",
+  "Order Update & Sheet Update (All Etsy Three Portals)", "Vendor Date", "Update Social Media",
+  "Other Work Language Update", "New Listing", "Update Listing New",
+  "Other",
 ];
 const WORK_STATUSES = ["Pending", "In Progress", "Completed", "Next Day Carry On"];
 const DRAFT_KEY = "oms_daily_report_draft_v1";
@@ -133,8 +146,18 @@ function blankRow(today: string): LogRow {
   };
 }
 
+// 2026-08-17: "8:15 minut pure din kaam chahiye ... 10 ghnte 50 ghnate to
+// alert aajaye" — root cause of an absurd Time Consumed value (10h, 50h):
+// the Hours box below had NO upper bound at all (only Minutes was capped
+// at 59), so a typo like "50" instead of "5" sailed straight through.
+// 24 is a hard ceiling (can't work more hours than exist in a day) — the
+// separate, softer "past 9h looks wrong" alert (see work-hours.ts) still
+// applies well below this for anything that's merely unusual rather than
+// impossible.
+const MAX_HOURS_PER_ROW = 24;
+
 function hmToMinutes(h: string, m: string): number {
-  return Math.max(0, parseInt(h, 10) || 0) * 60 + Math.max(0, Math.min(59, parseInt(m, 10) || 0));
+  return Math.max(0, Math.min(MAX_HOURS_PER_ROW, parseInt(h, 10) || 0)) * 60 + Math.max(0, Math.min(59, parseInt(m, 10) || 0));
 }
 
 function loadDraftMap(): Record<string, LogRow & { savedLocallyAt: number }> {
@@ -517,9 +540,18 @@ function HourMinuteField({
         <input
           type="number"
           min={0}
+          max={MAX_HOURS_PER_ROW}
           inputMode="numeric"
           value={hours}
-          onChange={(e) => onChangeHours(e.target.value)}
+          onChange={(e) => {
+            const raw = e.target.value;
+            // Clamp as they type (not just on save) — a typo like "50"
+            // should visibly correct itself immediately, not silently get
+            // truncated only once the row saves.
+            if (raw === "") return onChangeHours(raw);
+            const n = parseInt(raw, 10);
+            onChangeHours(Number.isFinite(n) ? String(Math.max(0, Math.min(MAX_HOURS_PER_ROW, n))) : raw);
+          }}
           onBlur={onBlur}
           className={hmInputClass}
           placeholder="0"

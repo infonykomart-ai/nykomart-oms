@@ -32,11 +32,23 @@ export function formatSecondsHM(totalSeconds: number): string {
   return formatHM(totalSeconds / 60);
 }
 
-export type WorkHoursVerdict = "ahead" | "on-track" | "short";
+export type WorkHoursVerdict = "ahead" | "on-track" | "short" | "anomaly";
+
+// 2026-08-17: "8:15 MINUT PURE DIN KAAM CHAHIYE TO US SE JYADA 1 GHNTA
+// CHALA JAYE AGAR JAYADA JA RAHA HAI MATLAB KI 10 GHNTE 50 GNATE TO ALERT
+// AAJAYE ... 8.15 SE LAST 9 HOURS HO SAKTE HAI" — 8:15 is the target, up to
+// 9:00 is still normal (running a bit over), but anything past that is
+// treated as an anomaly rather than "great, way ahead" — in practice this
+// catches typos/bugs (e.g. an accidental "50" in the Hours box — see
+// daily-report-form.tsx's HourMinuteField, which had no upper bound on
+// Hours until this same round) rather than someone genuinely working a
+// sane amount of overtime.
+export const ANOMALY_THRESHOLD_MINUTES = 9 * 60; // 540 = 9h
 
 /** Compares consumed minutes against the expected daily target. */
 export function compareToExpected(consumedMinutes: number): { deltaMinutes: number; verdict: WorkHoursVerdict } {
   const deltaMinutes = consumedMinutes - EXPECTED_WORK_MINUTES;
-  const verdict: WorkHoursVerdict = deltaMinutes >= 0 ? "ahead" : deltaMinutes >= -30 ? "on-track" : "short";
+  const verdict: WorkHoursVerdict =
+    consumedMinutes > ANOMALY_THRESHOLD_MINUTES ? "anomaly" : deltaMinutes >= 0 ? "ahead" : deltaMinutes >= -30 ? "on-track" : "short";
   return { deltaMinutes, verdict };
 }

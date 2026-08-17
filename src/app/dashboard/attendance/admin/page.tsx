@@ -366,10 +366,22 @@ export default async function AttendanceAdminPage({
                         <td className="px-2">
                           <span
                             className={`rounded-full px-2 py-0.5 font-medium ${
-                              cmp.verdict === "short" ? "bg-red-100 text-red-700" : cmp.verdict === "on-track" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
+                              cmp.verdict === "anomaly"
+                                ? "bg-red-600 text-white"
+                                : cmp.verdict === "short"
+                                  ? "bg-red-100 text-red-700"
+                                  : cmp.verdict === "on-track"
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-green-100 text-green-700"
                             }`}
                           >
-                            {cmp.verdict === "short" ? `${formatHM(Math.abs(cmp.deltaMinutes))} short` : cmp.verdict === "on-track" ? "On track" : `+${formatHM(cmp.deltaMinutes)}`}
+                            {cmp.verdict === "anomaly"
+                              ? `🚨 ${formatHM(mins)} — check entries`
+                              : cmp.verdict === "short"
+                                ? `${formatHM(Math.abs(cmp.deltaMinutes))} short`
+                                : cmp.verdict === "on-track"
+                                  ? "On track"
+                                  : `+${formatHM(cmp.deltaMinutes)}`}
                           </span>
                         </td>
                       </tr>
