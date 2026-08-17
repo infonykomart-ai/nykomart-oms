@@ -13,7 +13,7 @@ export default async function StockPage() {
   await requireCapability("stock_entry");
   const supabase = await createClient();
 
-  const [{ data: parties }, { data: stockIn }, { data: stockOut }, { data: currentStock }] = await Promise.all([
+  const [{ data: parties }, { data: stockIn }, { data: stockOut }, { data: currentStock }, { data: materialOutChalans }] = await Promise.all([
     supabase.from("parties").select("id, name").order("name"),
     supabase
       .from("stock_in")
@@ -24,13 +24,23 @@ export default async function StockPage() {
       .limit(RECENT_LIMIT),
     supabase
       .from("stock_out")
-      .select("id, source_party_id, sku_code, product_name, chalan_no, out_date, quantity_out, remark, created_at")
+      .select("id, source_party_id, sku_code, product_name, chalan_no, chalan_id, out_date, quantity_out, remark, created_at")
       .order("created_at", { ascending: false })
       .limit(RECENT_LIMIT),
     supabase
       .from("stock_current_view")
       .select("source_party_id, sku_code, product_name, current_stock")
       .order("sku_code"),
+    // 2026-08-17 — Material OUT Chalan (see stock/actions.ts's
+    // createMaterialOutChalan): one header can cover several stock_out
+    // rows, so its own "recent" list is built from the header table, with
+    // matching lines pulled from the stockOut query above (same chalan_id)
+    // rather than a second round-trip.
+    supabase
+      .from("material_out_chalans")
+      .select("id, chalan_no, chalan_date, party_id, remark, created_at")
+      .order("created_at", { ascending: false })
+      .limit(RECENT_LIMIT),
   ]);
 
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
@@ -44,6 +54,25 @@ export default async function StockPage() {
       r.source_party_id !== null && r.sku_code !== null && r.current_stock !== null
   );
   const skuOptions = Array.from(new Set(currentStockRows.map((r) => r.sku_code))).sort();
+
+  // Queried separately by chalan_id (rather than reusing the RECENT_LIMIT-
+  // capped stockOut query above) so a chalan with several lines can't lose
+  // some of them off the edge of that unrelated "most recent 50 Stock Out
+  // rows overall" window.
+  const chalanIds = (materialOutChalans ?? []).map((c) => c.id);
+  const { data: chalanLines } = chalanIds.length
+    ? await supabase.from("stock_out").select("chalan_id, sku_code, quantity_out").in("chalan_id", chalanIds)
+    : { data: [] as { chalan_id: string | null; sku_code: string; quantity_out: number }[] };
+  const materialOutChalanRows = (materialOutChalans ?? []).map((c) => ({
+    id: c.id,
+    chalan_no: c.chalan_no,
+    chalan_date: c.chalan_date,
+    remark: c.remark,
+    partyName: partyName.get(c.party_id) ?? "—",
+    lines: (chalanLines ?? [])
+      .filter((r) => r.chalan_id === c.id)
+      .map((r) => ({ sku_code: r.sku_code, quantity_out: r.quantity_out })),
+  }));
 
   return (
     <div>
@@ -69,6 +98,7 @@ export default async function StockPage() {
         recentIn={(stockIn ?? []).map((r) => ({ ...r, sourceName: partyName.get(r.source_party_id) ?? "—" }))}
         recentOut={(stockOut ?? []).map((r) => ({ ...r, sourceName: partyName.get(r.source_party_id) ?? "—" }))}
         currentStock={currentStockRows.map((r) => ({ ...r, sourceName: partyName.get(r.source_party_id) ?? "—" }))}
+        materialOutChalans={materialOutChalanRows}
       />
     </div>
   );

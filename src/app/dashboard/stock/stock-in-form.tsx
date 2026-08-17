@@ -2,6 +2,8 @@
 
 import { useActionState, useMemo, useRef, useState, useEffect } from "react";
 import { saveStockIn, type StockFormState } from "./actions";
+import { UnitSelect } from "@/components/unit-select";
+import { toFeet, type LengthUnit } from "@/lib/length-units";
 
 const initialState: StockFormState = { error: null, success: false };
 const inputClass =
@@ -46,6 +48,12 @@ export function StockInForm({
 
   const [qty, setQty] = useState(row?.quantity_in?.toString() ?? "");
   const [rate, setRate] = useState(row?.rate_per_qty?.toString() ?? "");
+  // 2026-08-17 — same FT/MTR/INCH/YARD/CM picker as Purchase Bill (see
+  // src/lib/length-units.ts). `qty` stays exactly what's typed, in whatever
+  // unit is selected; the value actually submitted (quantity_in) is always
+  // converted to feet.
+  const [qtyUnit, setQtyUnit] = useState<LengthUnit>("FT");
+  const qtyInFeet = toFeet(Number(qty) || 0, qtyUnit);
 
   // Reset the live-preview inputs the moment a submit succeeds — adjusted
   // during render (React's documented pattern for "state derived from a
@@ -59,16 +67,17 @@ export function StockInForm({
     if (state.success) {
       setQty("");
       setRate("");
+      setQtyUnit("FT");
     }
   }
 
   const preview = useMemo(() => {
-    const q = Number(qty);
+    const q = toFeet(Number(qty) || 0, qtyUnit);
     const r = Number(rate);
     if (!Number.isFinite(q) || !Number.isFinite(r) || (!qty && !rate)) return null;
     const total = q * r;
     return { total, gst: total * 0.05, toBePaid: total * 1.05 };
-  }, [qty, rate]);
+  }, [qty, qtyUnit, rate]);
 
   useEffect(() => {
     if (state.success) {
@@ -117,16 +126,22 @@ export function StockInForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="si_qty">Quantity In *</label>
-          <input
-            id="si_qty"
-            name="quantity_in"
-            type="number"
-            step="0.01"
-            required
-            value={qty}
-            onChange={(e) => setQty(e.target.value)}
-            className={inputClass}
-          />
+          <div className="flex gap-1.5">
+            <input
+              id="si_qty"
+              type="number"
+              step="0.01"
+              required
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className={inputClass}
+            />
+            <UnitSelect value={qtyUnit} onChange={setQtyUnit} />
+          </div>
+          {qtyUnit !== "FT" && qty && (
+            <p className="mt-0.5 text-[11px] text-purple-600">= {qtyInFeet.toFixed(2)} Ft (saved)</p>
+          )}
+          <input type="hidden" name="quantity_in" value={qty ? qtyInFeet : ""} />
         </div>
         <div>
           <label className={labelClass} htmlFor="si_rate">Rate Per Qty</label>

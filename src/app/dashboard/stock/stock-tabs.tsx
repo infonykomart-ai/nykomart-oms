@@ -3,7 +3,8 @@
 import { useMemo, useState, useTransition } from "react";
 import { StockInForm, type EditableStockIn } from "./stock-in-form";
 import { StockOutForm, type EditableStockOut } from "./stock-out-form";
-import { deleteStockIn, deleteStockOut } from "./actions";
+import { MaterialOutChalanForm } from "./material-out-chalan-form";
+import { deleteStockIn, deleteStockOut, deleteMaterialOutChalan } from "./actions";
 
 type Party = { id: string; name: string };
 type StockInRow = EditableStockIn & { sourceName: string };
@@ -15,10 +16,19 @@ type CurrentStockRow = {
   product_name: string | null;
   current_stock: number;
 };
+type MaterialOutChalanRow = {
+  id: string;
+  chalan_no: string | null;
+  chalan_date: string;
+  remark: string | null;
+  partyName: string;
+  lines: { sku_code: string; quantity_out: number }[];
+};
 
 const TABS = [
   { key: "stock-in", label: "Stock In" },
   { key: "stock-out", label: "Stock Out" },
+  { key: "material-out-chalan", label: "Material OUT Chalan" },
   { key: "current-stock", label: "Current Stock" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
@@ -29,12 +39,14 @@ export function StockTabs({
   recentIn,
   recentOut,
   currentStock,
+  materialOutChalans,
 }: {
   parties: Party[];
   skuOptions: string[];
   recentIn: StockInRow[];
   recentOut: StockOutRow[];
   currentStock: CurrentStockRow[];
+  materialOutChalans: MaterialOutChalanRow[];
 }) {
   const [tab, setTab] = useState<TabKey>("stock-in");
 
@@ -71,12 +83,61 @@ export function StockTabs({
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           {tab === "stock-in" && <StockInForm parties={parties} skuOptions={skuOptions} />}
           {tab === "stock-out" && <StockOutForm parties={parties} skuOptions={skuOptions} />}
+          {tab === "material-out-chalan" && <MaterialOutChalanForm parties={parties} skuOptions={skuOptions} />}
         </div>
       </div>
 
       <div>
         {tab === "stock-in" && <StockInList rows={recentIn} parties={parties} skuOptions={skuOptions} />}
         {tab === "stock-out" && <StockOutList rows={recentOut} parties={parties} skuOptions={skuOptions} />}
+        {tab === "material-out-chalan" && <MaterialOutChalanList rows={materialOutChalans} />}
+      </div>
+    </div>
+  );
+}
+
+function MaterialOutChalanList({ rows }: { rows: MaterialOutChalanRow[] }) {
+  const [deleteError, setDeleteError] = useState<Record<string, string>>({});
+  const [isPending, startTransition] = useTransition();
+
+  function handleDelete(id: string, label: string) {
+    if (!window.confirm(`Delete Chalan "${label}"? This removes its stock movement too — this cannot be undone.`)) return;
+    setDeleteError((prev) => ({ ...prev, [id]: "" }));
+    startTransition(async () => {
+      const result = await deleteMaterialOutChalan(id);
+      if (result.error) setDeleteError((prev) => ({ ...prev, [id]: result.error! }));
+    });
+  }
+
+  return (
+    <div>
+      <h2 className="mb-2 text-sm font-semibold text-slate-700">Recent Material OUT Chalans</h2>
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium text-slate-900">{r.chalan_no ?? "—"} <span className="font-normal text-slate-400">· {r.partyName}</span></div>
+                <div className="text-slate-400">
+                  {r.lines.length === 0 ? "no items" : r.lines.map((l) => `${l.sku_code} (${l.quantity_out})`).join(", ")}
+                </div>
+              </div>
+              <div className="text-right text-slate-400">{r.chalan_date}</div>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
+              <p className="text-red-600">{deleteError[r.id]}</p>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+        {rows.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
       </div>
     </div>
   );

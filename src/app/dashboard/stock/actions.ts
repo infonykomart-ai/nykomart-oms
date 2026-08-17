@@ -256,6 +256,112 @@ export async function deleteStockOut(rowId: string): Promise<SimpleResult> {
   return { error: null, success: true };
 }
 
+// -----------------------------------------------------------------------
+// Material OUT Chalan — 2026-08-17. "KACHA MAAL BAHR KISI PARTY KO DIYA TO
+// USKA CHALAN KESE KATENGE JIS SE YE PATA CHAL JAYE KI KONSA MAAL AAYA
+// KONSA GAYA" — one auto-numbered chalan (NM/MOC/26-27/0001, same
+// reserve_next_number()/format_document_no() machinery as Washing Entry)
+// covering MULTIPLE SKU/qty lines going out to one party at once, instead
+// of one free-text chalan_no typed by hand per Stock Out row. Each line
+// still becomes a real stock_out row (so Current Stock stays correct and
+// every existing Stock Out list/report keeps working unchanged) — it just
+// also carries chalan_id back to the header that grouped it. See
+// db/2026-08-17-material-out-and-shipment-handover-chalans.sql.
+// -----------------------------------------------------------------------
+
+export type MaterialOutChalanLine = {
+  skuCode: string;
+  productName: string | null;
+  quantityOut: number; // already converted to feet client-side, same convention as Purchase Bill / Stock In / Stock Out
+};
+
+export type MaterialOutChalanState = {
+  error: string | null;
+  success: { chalanNo: string; results: { sku: string; ok: boolean; error: string | null }[] } | null;
+};
+
+export async function createMaterialOutChalan(_prev: MaterialOutChalanState, formData: FormData): Promise<MaterialOutChalanState> {
+  const employee = await requireCapability("stock_entry");
+  const supabase = createServiceRoleClient();
+
+  const partyId = str(formData, "party_id");
+  const chalanDate = strOrNull(formData, "chalan_date") ?? new Date().toISOString().slice(0, 10);
+  const remark = strOrNull(formData, "remark");
+
+  if (!partyId) return { error: "Select a party.", success: null };
+
+  let lines: MaterialOutChalanLine[];
+  try {
+    lines = JSON.parse(str(formData, "lines_json") || "[]");
+  } catch {
+    return { error: "Invalid line data — please retry.", success: null };
+  }
+  if (!lines.length) return { error: "Add at least one item to the chalan.", success: null };
+  for (const line of lines) {
+    if (!line.skuCode) return { error: "Every line needs a SKU Code.", success: null };
+    if (!line.quantityOut || line.quantityOut <= 0) {
+      return { error: `Quantity must be greater than 0 for ${line.skuCode}.`, success: null };
+    }
+  }
+
+  const { data: chalan, error: chalanError } = await supabase
+    .from("material_out_chalans")
+    .insert({ company_id: employee.currentCompanyId, party_id: partyId, chalan_date: chalanDate, remark })
+    .select("id, chalan_no")
+    .single();
+
+  if (chalanError || !chalan?.chalan_no) {
+    return { error: `Failed to create chalan: ${chalanError?.message ?? "unknown error"}`, success: null };
+  }
+
+  // Same "keep going, report per-line" tolerance as Purchase Bill Multi —
+  // the chalan header is already committed, so a mistake on one SKU
+  // shouldn't hide whether the others actually went through.
+  const results: { sku: string; ok: boolean; error: string | null }[] = [];
+  for (const line of lines) {
+    const itemResult = await upsertStockItemCore(supabase, partyId, line.skuCode, line.productName);
+    if (itemResult.error) {
+      results.push({ sku: line.skuCode, ok: false, error: itemResult.error });
+      continue;
+    }
+    const { error: lineError } = await supabase.from("stock_out").insert({
+      source_party_id: partyId,
+      sku_code: line.skuCode,
+      product_name: line.productName,
+      chalan_no: chalan.chalan_no,
+      chalan_id: chalan.id,
+      out_date: chalanDate,
+      quantity_out: line.quantityOut,
+    });
+    results.push({ sku: line.skuCode, ok: !lineError, error: lineError?.message ?? null });
+  }
+
+  revalidatePath("/dashboard/stock");
+  return { error: null, success: { chalanNo: chalan.chalan_no, results } };
+}
+
+export async function deleteMaterialOutChalan(chalanId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("stock_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: chalan } = await supabase.from("material_out_chalans").select("id, company_id").eq("id", chalanId).single();
+  if (!chalan) return { error: "Chalan not found.", success: false };
+  if (!employee.companyIds.includes(chalan.company_id)) {
+    return { error: "You don't have access to this chalan's company.", success: false };
+  }
+
+  // Deleting a chalan undoes the stock movement it represents, not just its
+  // paperwork — same "delete = real undo" convention as every other doc
+  // type in this app — so its stock_out lines go first (FK, no cascade).
+  const { error: linesError } = await supabase.from("stock_out").delete().eq("chalan_id", chalanId);
+  if (linesError) return { error: linesError.message, success: false };
+
+  const { error } = await supabase.from("material_out_chalans").delete().eq("id", chalanId);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/stock");
+  return { error: null, success: true };
+}
+
 // ---------------------------------------------------------------------------
 // Bulk Stock In / Stock Out upload via CSV/Excel — last piece of item 10's
 // "CSV upload + template download everywhere" rollout. Unlike Party Master,

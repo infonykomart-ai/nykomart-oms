@@ -1,8 +1,10 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { updatePurchaseBill, type DocEditState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { UnitSelect } from "@/components/unit-select";
+import { toFeet, type LengthUnit } from "@/lib/length-units";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -31,6 +33,14 @@ export function PurchaseBillEditForm({
 }) {
   const [state, formAction, pending] = useActionState(updatePurchaseBill, initialState);
   const partyGroups = groupPartyOptions(parties);
+
+  // 2026-08-17 — same FT/MTR/INCH/YARD/CM unit picker as the New Purchase
+  // Bill form (see src/lib/length-units.ts). The stored value (bill.sq_feet)
+  // is already in feet, so this starts at unit=FT showing that value as-is;
+  // switching unit only matters if re-entering a fresh vendor figure.
+  const [sqFeetInput, setSqFeetInput] = useState(String(bill.sq_feet));
+  const [sqFeetUnit, setSqFeetUnit] = useState<LengthUnit>("FT");
+  const sqFeetConverted = sqFeetInput ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
 
   useEffect(() => {
     if (state.success) onDone();
@@ -73,7 +83,21 @@ export function PurchaseBillEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`pb_sqfeet_${bill.id}`}>Sq. Feet</label>
-          <input id={`pb_sqfeet_${bill.id}`} name="sq_feet" type="number" step="0.01" defaultValue={bill.sq_feet} className={inputClass} />
+          <div className="flex gap-1.5">
+            <input
+              id={`pb_sqfeet_${bill.id}`}
+              type="number"
+              step="0.01"
+              value={sqFeetInput}
+              onChange={(e) => setSqFeetInput(e.target.value)}
+              className={inputClass}
+            />
+            <UnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+          </div>
+          {sqFeetUnit !== "FT" && sqFeetInput && (
+            <p className="mt-0.5 text-[11px] text-purple-600">= {sqFeetConverted.toFixed(2)} Sq. Feet (saved)</p>
+          )}
+          <input type="hidden" name="sq_feet" value={sqFeetInput ? sqFeetConverted : ""} />
         </div>
         <div>
           <label className={labelClass} htmlFor={`pb_rate_${bill.id}`}>Unit Rate</label>

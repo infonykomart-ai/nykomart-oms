@@ -56,6 +56,7 @@ async function DocumentsPageInner() {
     { data: recentFreightBills },
     { data: recentDutyBills },
     { data: recentCsbFilings },
+    { data: recentShipmentChalans },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     // 2026-08-12 (round 10): invoice_type/party_type added so the party
@@ -118,6 +119,15 @@ async function DocumentsPageInner() {
       )
       .order("created_at", { ascending: false })
       .limit(8),
+    // 2026-08-17 — Shipment Handover Chalan (see actions.ts's
+    // createShipmentHandoverChalan): "AAJ FEDEX 5 SHIPMENT DI TO USKA BHI
+    // CHALAN KATE". company_id scoped like every other doc type here.
+    supabase
+      .from("shipment_handover_chalans")
+      .select("id, chalan_no, chalan_date, company_id, courier_party_id, remark")
+      .in("company_id", employee.companyIds)
+      .order("created_at", { ascending: false })
+      .limit(8),
   ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
@@ -167,6 +177,31 @@ async function DocumentsPageInner() {
     ? await supabase.from("orders").select("id, ref_no").in("id", assignmentOrderIds)
     : { data: [] };
   const orderRefNo = new Map((assignmentOrders ?? []).map((o) => [o.id, o.ref_no]));
+
+  // Shipment Handover Chalan lines — same "fetch header, then its lines by
+  // chalan_id" shape as Material OUT Chalan (stock/page.tsx), joined back
+  // to the order's own ref_no for a human-readable list.
+  const shipmentChalanIds = (recentShipmentChalans ?? []).map((c) => c.id);
+  const { data: shipmentChalanLines } = shipmentChalanIds.length
+    ? await supabase
+        .from("shipment_handover_chalan_lines")
+        .select("chalan_id, order_id, orders(ref_no)")
+        .in("chalan_id", shipmentChalanIds)
+    : { data: [] as { chalan_id: string; order_id: string; orders: { ref_no: string } | { ref_no: string }[] | null }[] };
+  const shipmentChalanRows = (recentShipmentChalans ?? []).map((c) => ({
+    id: c.id,
+    chalan_no: c.chalan_no,
+    chalan_date: c.chalan_date,
+    remark: c.remark,
+    courierName: partyName.get(c.courier_party_id) ?? "—",
+    lines: (shipmentChalanLines ?? [])
+      .filter((l) => l.chalan_id === c.id)
+      .map((l) => {
+        const o = l.orders;
+        const refNo = Array.isArray(o) ? o[0]?.ref_no : o?.ref_no;
+        return refNo ?? "—";
+      }),
+  }));
 
   return (
     <div>
@@ -301,6 +336,7 @@ async function DocumentsPageInner() {
               })),
           })),
         }}
+        shipmentChalans={shipmentChalanRows}
       />
     </div>
   );

@@ -17,6 +17,7 @@ import { PurchaseBillEditForm, type EditablePurchaseBill } from "./purchase-bill
 import { PurchaseBillMultiForm } from "./purchase-bill-multi-form";
 import { CsbFilingForm } from "./csb-filing-form";
 import { CsbFilingEditForm, type EditableCsbFiling } from "./csb-filing-edit-form";
+import { ShipmentHandoverChalanForm } from "./shipment-handover-chalan-form";
 import Link from "next/link";
 import {
   deleteCreditNote,
@@ -25,6 +26,7 @@ import {
   deleteInternalInvoice,
   deletePurchaseBill,
   deleteCsbFiling,
+  deleteShipmentHandoverChalan,
   type SimpleResult,
 } from "./actions";
 import type { PartyOption } from "./party-options";
@@ -34,6 +36,14 @@ type Company = { id: string; name: string };
 type Party = PartyOption;
 type Store = { id: string; name: string; company_id: string };
 type Currency = { code: string; name: string };
+type ShipmentChalanRow = {
+  id: string;
+  chalan_no: string | null;
+  chalan_date: string;
+  remark: string | null;
+  courierName: string;
+  lines: string[];
+};
 
 type Recent = {
   creditNotes: (EditableCreditNote & { companyName: string })[];
@@ -56,6 +66,7 @@ const TABS = [
   { key: "duty-tax-bill", label: "Duty & Tax Bill" },
   { key: "courier-bill-pdf", label: "Courier Bill (PDF Upload)" },
   { key: "csb-filing", label: "CSB Filing" },
+  { key: "shipment-chalan", label: "Shipment Chalan" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -72,12 +83,14 @@ export function DocumentEntryTabs({
   stores,
   currencies,
   recent,
+  shipmentChalans,
 }: {
   companies: Company[];
   parties: Party[];
   stores: Store[];
   currencies: Currency[];
   recent: Recent;
+  shipmentChalans: ShipmentChalanRow[];
 }) {
   const [tab, setTab] = useState<TabKey>("credit-note");
   // 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
@@ -115,6 +128,23 @@ export function DocumentEntryTabs({
         {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} companies={companies} parties={parties} />}
         {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} companies={companies} parties={parties} />}
         {tab === "courier-bill-pdf" && <CourierBillPdfSection />}
+      </div>
+    );
+  }
+
+  // Shipment Handover Chalan is the same "one header covers many orders"
+  // shape as Courier Bill / Duty & Tax Bill above, so it gets the same
+  // full-width form+list layout instead of the usual 2-column split.
+  if (tab === "shipment-chalan") {
+    return (
+      <div>
+        {tabBar}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <ShipmentHandoverChalanForm parties={parties} />
+          </div>
+          <ShipmentChalanList rows={shipmentChalans} />
+        </div>
       </div>
     );
   }
@@ -266,6 +296,51 @@ export function DocumentEntryTabs({
           renderEdit={(r, onDone) => <CsbFilingEditForm filing={r} currencies={currencies} onDone={onDone} />}
         />
         </PrintArea>
+      </div>
+    </div>
+  );
+}
+
+function ShipmentChalanList({ rows }: { rows: ShipmentChalanRow[] }) {
+  const [deleteError, setDeleteError] = useState<Record<string, string>>({});
+  const [isPending, startTransition] = useTransition();
+
+  function handleDelete(id: string, label: string) {
+    if (!window.confirm(`Delete Chalan "${label}"? This cannot be undone.`)) return;
+    setDeleteError((prev) => ({ ...prev, [id]: "" }));
+    startTransition(async () => {
+      const result = await deleteShipmentHandoverChalan(id);
+      if (result.error) setDeleteError((prev) => ({ ...prev, [id]: result.error! }));
+    });
+  }
+
+  return (
+    <div>
+      <h2 className="mb-2 text-sm font-semibold text-slate-700">Recent Shipment Handover Chalans</h2>
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium text-slate-900">{r.chalan_no ?? "—"} <span className="font-normal text-slate-400">· {r.courierName}</span></div>
+                <div className="text-slate-400">{r.lines.length} shipment(s): {r.lines.join(", ") || "—"}</div>
+              </div>
+              <div className="text-right text-slate-400">{r.chalan_date}</div>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
+              <p className="text-red-600">{deleteError[r.id]}</p>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+        {rows.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
       </div>
     </div>
   );

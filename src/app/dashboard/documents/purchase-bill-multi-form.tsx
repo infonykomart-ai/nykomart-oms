@@ -13,6 +13,8 @@ import { useState, useTransition } from "react";
 import { useActionState } from "react";
 import { lookupOrderForPurchaseBill, savePurchaseBillMulti, type PurchaseBillMultiState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { UnitSelect } from "@/components/unit-select";
+import { toFeet, type LengthUnit } from "@/lib/length-units";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -25,8 +27,14 @@ type PickedOrder = {
   sizeLabel: string | null;
   categoryName: string | null;
   qty: number;
-  sqFeet: number;
+  sqFeet: number; // always feet — the value actually submitted (see linesJson below)
   sqFeetAuto: boolean; // true while sqFeet still reflects the parser's own suggestion, not a manual edit
+  // 2026-08-17 — FT/MTR/INCH/YARD/CM unit picker (see src/lib/length-units.ts):
+  // sqFeetDisplay is literally what's typed in the box, in sqFeetUnit; sqFeet
+  // (above) is always that value converted to feet, recomputed on every edit
+  // to either field.
+  sqFeetDisplay: string;
+  sqFeetUnit: LengthUnit;
   alreadyBilled: number;
 };
 
@@ -53,6 +61,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         return;
       }
       setLookupError(null);
+      const suggestedSqFeet = r.order!.suggested_sq_feet ?? 0;
       setOrders((prev) => [
         ...prev,
         {
@@ -61,8 +70,10 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
           sizeLabel: r.order!.size_label,
           categoryName: r.order!.item_category_name,
           qty: r.order!.qty || 1,
-          sqFeet: r.order!.suggested_sq_feet ?? 0,
+          sqFeet: suggestedSqFeet,
           sqFeetAuto: r.order!.suggested_sq_feet != null,
+          sqFeetDisplay: suggestedSqFeet ? String(suggestedSqFeet) : "",
+          sqFeetUnit: "FT",
           alreadyBilled: r.existingBillCount,
         },
       ]);
@@ -144,13 +155,31 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
                   <label className="mb-0.5 block text-[11px] text-slate-400">
                     Sq. Feet{o.sqFeetAuto && <span className="text-purple-600"> — auto from Size, editable</span>}
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={o.sqFeet}
-                    onChange={(e) => updateLine(o.orderId, { sqFeet: Number(e.target.value) || 0, sqFeetAuto: false })}
-                    className={inputClass}
-                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={o.sqFeetDisplay}
+                      onChange={(e) => {
+                        const display = e.target.value;
+                        updateLine(o.orderId, {
+                          sqFeetDisplay: display,
+                          sqFeet: toFeet(Number(display) || 0, o.sqFeetUnit),
+                          sqFeetAuto: false,
+                        });
+                      }}
+                      className={inputClass}
+                    />
+                    <UnitSelect
+                      value={o.sqFeetUnit}
+                      onChange={(unit) =>
+                        updateLine(o.orderId, { sqFeetUnit: unit, sqFeet: toFeet(Number(o.sqFeetDisplay) || 0, unit) })
+                      }
+                    />
+                  </div>
+                  {o.sqFeetUnit !== "FT" && o.sqFeetDisplay && (
+                    <p className="mt-0.5 text-[11px] text-purple-600">= {o.sqFeet.toFixed(2)} Sq. Feet (saved)</p>
+                  )}
                 </div>
               </div>
             </div>

@@ -636,11 +636,20 @@ export async function deleteInternalInvoice(id: string): Promise<SimpleResult> {
 
 // =============================================================================
 // PURCHASE BILL — vendor raw-material purchase log. A party (vendor) is
-// required, AND — 2026-08-08: "YE LINK HONA CHAHIYE... SABHI CHEJE LINK
-// RAHEGI" — the order link is now REQUIRED too, not optional. Every
-// purchase must be tied to the PO/RF/RG it was bought for, so "which party
-// this order's item came from" is always answerable from the order side
-// (see the reverse lookup added to the Orders hub the same day).
+// always required. 2026-08-08: "YE LINK HONA CHAHIYE... SABHI CHEJE LINK
+// RAHEGI" made the order link REQUIRED — every purchase tied to the
+// PO/RF/RG it was bought for, so "which party this order's item came from"
+// is answerable from the order side (see the reverse lookup on the Orders
+// hub). 2026-08-17: "KACHA MAAL... GENERAL STOCK KE LIYE — KOI FIXED PO
+// NAHI" — raw-material vendor purchases (e.g. Aaradhya Fabrics) are bought
+// as general stock, not for one specific order, so the order link is back
+// to OPTIONAL — but purchase_bills has no company_id of its own; it was
+// always derived from order_id -> orders.company_id. An orderless bill has
+// no order to derive it from, so company_id is now a real column on
+// purchase_bills: set from the linked order when there is one (unchanged
+// behavior), or from the employee's currently-selected company
+// (employee.currentCompanyId) when there isn't. See
+// db/2026-08-17-purchase-bills-optional-order-company-id.sql.
 // =============================================================================
 
 type PurchaseBillParams = {
@@ -661,16 +670,20 @@ async function savePurchaseBillCore(
 ): Promise<{ error: string | null; id: string | null; docNo: string | null }> {
   if (!p.vendorPartyId) return { error: "Select a vendor party.", id: null, docNo: null };
   if (!p.vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", id: null, docNo: null };
-  if (!p.orderId) {
-    return {
-      error: "Look up and link the PO/RF/RG this purchase is for — every Purchase Bill must be tied to an order.",
-      id: null,
-      docNo: null,
-    };
-  }
-  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", p.orderId).maybeSingle();
-  if (!order || !employee.companyIds.includes(order.company_id)) {
-    return { error: "The looked-up order is not accessible — clear it and try again.", id: null, docNo: null };
+
+  // Order link is optional (see section header comment above) — when given,
+  // it still pins down the company unambiguously and must be one the
+  // employee can access; when absent, fall back to whichever company is
+  // currently selected in the top-nav switcher.
+  let companyId: string;
+  if (p.orderId) {
+    const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", p.orderId).maybeSingle();
+    if (!order || !employee.companyIds.includes(order.company_id)) {
+      return { error: "The looked-up order is not accessible — clear it and try again.", id: null, docNo: null };
+    }
+    companyId = order.company_id;
+  } else {
+    companyId = employee.currentCompanyId;
   }
 
   const { data, error } = await supabase
@@ -684,6 +697,7 @@ async function savePurchaseBillCore(
       work_description: p.workDescription,
       unit_rate: p.unitRate,
       order_id: p.orderId,
+      company_id: companyId,
     })
     .select("id, vendor_invoice_no, total_amount")
     .single();
@@ -699,11 +713,11 @@ async function savePurchaseBillCore(
   // Salary/Advance — "koi pata nahi chal raha ki bill pass register mein
   // ye chala gaya ya nahi" was a real gap (a stale comment elsewhere
   // claimed Purchase Bill already did this; it never actually did).
-  // Unlike Freight/Duty bills, a Purchase Bill's company is unambiguous
-  // (always the linked order's own company), so this can post immediately
-  // with no review step.
+  // 2026-08-17: company_id now comes from the resolved value above (order's
+  // company, or the employee's current company for orderless general-stock
+  // purchases) rather than assuming an order always exists.
   const { error: bprError } = await supabase.from("bill_pass_register").insert({
-    company_id: order.company_id,
+    company_id: companyId,
     invoice_type: "Purchase",
     vendor_invoice_no: p.vendorInvoiceNo,
     invoice_date: p.vendorInvoiceDate,
@@ -867,22 +881,23 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
 
   const id = str(formData, "id");
   if (!id) return { error: "Missing Purchase Bill.", success: false };
-  // 2026-08-12 (round 11 security review): purchase_bills has no company_id
-  // column of its own — it's scoped via order_id -> orders.company_id (same
-  // as savePurchaseBillCore's own create-path check). Every sibling
-  // update/delete pair in this file (Credit Note, Debit Note, Washing
-  // Entry, Internal Invoice) verifies company access before writing; this
-  // one previously didn't. order_id is nullable (a Purchase Bill isn't
-  // required to reference an order), so a bill with no order stays
-  // editable by anyone with doc_entry, same as before — only a bill that
-  // DOES reference an order now gets checked against it.
-  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id").eq("id", id).single();
+  // 2026-08-12 (round 11 security review): every sibling update/delete pair
+  // in this file (Credit Note, Debit Note, Washing Entry, Internal Invoice)
+  // verifies company access before writing; this one previously didn't.
+  // 2026-08-17: purchase_bills now has its own company_id column (see
+  // savePurchaseBillCore's comment above) — for a bill WITH an order, the
+  // order's own company is still the source of truth (unchanged, in case
+  // the two ever drift); for an orderless general-stock bill, company_id
+  // itself is the only source, so it's checked directly.
+  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id, company_id").eq("id", id).single();
   if (!existingBill) return { error: "Purchase Bill not found.", success: false };
   if (existingBill.order_id) {
     const { data: order } = await supabase.from("orders").select("company_id").eq("id", existingBill.order_id).single();
     if (!order || !employee.companyIds.includes(order.company_id)) {
       return { error: "You don't have access to this bill's company.", success: false };
     }
+  } else if (!existingBill.company_id || !employee.companyIds.includes(existingBill.company_id)) {
+    return { error: "You don't have access to this bill's company.", success: false };
   }
   const vendorPartyId = str(formData, "vendor_party_id");
   const vendorInvoiceNo = str(formData, "vendor_invoice_no");
@@ -2169,4 +2184,153 @@ export async function bulkSaveCsbFilings(_prev: BulkDocState, formData: FormData
 
   if (results.some((r) => !r.error)) revalidatePath("/dashboard/documents");
   return { error: null, results };
+}
+
+// =============================================================================
+// SHIPMENT HANDOVER CHALAN — 2026-08-17. "SHIPMENT BHI AGAR JAYEGI KI AAJ
+// FEDEX 5 SHIPMENT DI TO USKA BHI CHALAN KATE KI IS CHALAN NO SE 5 SHIPMENT
+// FDEX KO GAYA" — groups however many existing orders (which already have
+// an AWB/tracking) were physically handed to one courier at once under a
+// single auto-numbered chalan (NM/SHC/26-27/0001, same
+// reserve_next_number()/format_document_no() machinery as Washing Entry).
+// Order lookup reuses lookupOrderForReconciliation's PO/RF/RG-or-AWB
+// pattern. Each order can only be on ONE handover chalan ever
+// (shipment_handover_chalan_lines' UNIQUE(order_id), same reasoning as
+// freight_bill_awb_assignments — a shipment physically leaves once). See
+// db/2026-08-17-material-out-and-shipment-handover-chalans.sql.
+// =============================================================================
+
+export type ChalanHandoverLookup = {
+  error: string | null;
+  order: { id: string; ref_no: string; company_id: string } | null;
+  dispatch: { awb_no: string | null; courier_name: string | null } | null;
+  alreadyHandedOver: boolean;
+};
+
+export async function lookupOrderForShipmentChalan(query: string): Promise<ChalanHandoverLookup> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const trimmed = query.trim();
+  if (!trimmed) return { error: "Enter a PO/RF/RG or AWB number.", order: null, dispatch: null, alreadyHandedOver: false };
+
+  let orderId: string | null = null;
+  const { data: byRef } = await supabase
+    .from("orders")
+    .select("id")
+    .ilike("ref_no", trimmed)
+    .in("company_id", employee.companyIds)
+    .maybeSingle();
+  orderId = byRef?.id ?? null;
+
+  if (!orderId) {
+    const { data: byAwb } = await supabase.from("dispatch_invoices").select("order_id").ilike("awb_no", trimmed).maybeSingle();
+    if (byAwb) orderId = byAwb.order_id;
+  }
+  if (!orderId) return { error: `No order found for "${trimmed}".`, order: null, dispatch: null, alreadyHandedOver: false };
+
+  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id").eq("id", orderId).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: `No order found for "${trimmed}".`, order: null, dispatch: null, alreadyHandedOver: false };
+  }
+
+  const { data: dispatch } = await supabase
+    .from("dispatch_invoices")
+    .select("awb_no, courier_name")
+    .eq("order_id", order.id)
+    .maybeSingle();
+
+  const { data: existing } = await supabase
+    .from("shipment_handover_chalan_lines")
+    .select("id")
+    .eq("order_id", order.id)
+    .maybeSingle();
+
+  return { error: null, order, dispatch: dispatch ?? null, alreadyHandedOver: !!existing };
+}
+
+export type ShipmentHandoverChalanState = {
+  error: string | null;
+  success: { chalanNo: string; results: { refNo: string; ok: boolean; error: string | null }[] } | null;
+};
+
+export async function createShipmentHandoverChalan(
+  _prev: ShipmentHandoverChalanState,
+  formData: FormData
+): Promise<ShipmentHandoverChalanState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const courierPartyId = str(formData, "courier_party_id");
+  const chalanDate = strOrNull(formData, "chalan_date") ?? new Date().toISOString().slice(0, 10);
+  const remark = strOrNull(formData, "remark");
+
+  if (!courierPartyId) return { error: "Select a courier.", success: null };
+
+  let orderIds: string[];
+  try {
+    orderIds = JSON.parse(str(formData, "order_ids_json") || "[]");
+  } catch {
+    return { error: "Invalid line data — please retry.", success: null };
+  }
+  if (!orderIds.length) return { error: "Add at least one shipment/order.", success: null };
+
+  const { data: chalan, error: chalanError } = await supabase
+    .from("shipment_handover_chalans")
+    .insert({ company_id: employee.currentCompanyId, courier_party_id: courierPartyId, chalan_date: chalanDate, remark })
+    .select("id, chalan_no")
+    .single();
+
+  if (chalanError || !chalan?.chalan_no) {
+    return { error: `Failed to create chalan: ${chalanError?.message ?? "unknown error"}`, success: null };
+  }
+
+  const { data: orders } = await supabase.from("orders").select("id, ref_no").in("id", orderIds);
+  const refNoById = new Map((orders ?? []).map((o) => [o.id, o.ref_no]));
+
+  // Same "header already committed, keep going and report per-line" pattern
+  // as Purchase Bill Multi / Material OUT Chalan — one order that's already
+  // on another handover chalan (UNIQUE(order_id)) shouldn't hide whether
+  // the rest of the day's shipments still went through.
+  const results: { refNo: string; ok: boolean; error: string | null }[] = [];
+  for (const orderId of orderIds) {
+    const { error: lineError } = await supabase
+      .from("shipment_handover_chalan_lines")
+      .insert({ chalan_id: chalan.id, order_id: orderId });
+    const label = refNoById.get(orderId) ?? orderId;
+    if (lineError) {
+      const msg = lineError.message.includes("duplicate key") ? "Already handed over on another chalan." : lineError.message;
+      results.push({ refNo: label, ok: false, error: msg });
+      continue;
+    }
+    results.push({ refNo: label, ok: true, error: null });
+  }
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { chalanNo: chalan.chalan_no, results } };
+}
+
+export async function deleteShipmentHandoverChalan(chalanId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: chalan } = await supabase
+    .from("shipment_handover_chalans")
+    .select("id, company_id")
+    .eq("id", chalanId)
+    .single();
+  if (!chalan) return { error: "Chalan not found.", success: false };
+  if (!employee.companyIds.includes(chalan.company_id)) {
+    return { error: "You don't have access to this chalan's company.", success: false };
+  }
+
+  // shipment_handover_chalan_lines has ON DELETE CASCADE, so deleting the
+  // header alone also removes its lines — unlike Material OUT Chalan,
+  // whose lines are real stock_out ledger rows that need explicit cleanup
+  // to actually undo the stock movement, a handover line has no ledger
+  // side effect of its own to unwind.
+  const { error } = await supabase.from("shipment_handover_chalans").delete().eq("id", chalanId);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
 }

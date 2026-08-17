@@ -3708,6 +3708,7 @@ export type Database = {
           work_description: string | null;
           unit_rate: number;
           order_id: string | null;
+          company_id: string | null;
           total_sq_feet: number | null;
           total_amount: number | null;
           g_total_plus_gst: number | null;
@@ -3723,6 +3724,7 @@ export type Database = {
           work_description?: string | null;
           unit_rate?: number;
           order_id?: string | null;
+          company_id?: string | null;
           total_sq_feet?: number | null;
           total_amount?: number | null;
           g_total_plus_gst?: number | null;
@@ -3738,6 +3740,7 @@ export type Database = {
           work_description?: string | null;
           unit_rate?: number;
           order_id?: string | null;
+          company_id?: string | null;
           total_sq_feet?: number | null;
           total_amount?: number | null;
           g_total_plus_gst?: number | null;
@@ -3756,6 +3759,13 @@ export type Database = {
             columns: ["order_id"];
             isOneToOne: false;
             referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "purchase_bills_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
             referencedColumns: ["id"];
           },
         ];
@@ -4680,6 +4690,7 @@ export type Database = {
           sku_code: string;
           product_name: string | null;
           chalan_no: string | null;
+          chalan_id: string | null;
           out_date: string | null;
           quantity_out: number;
           remark: string | null;
@@ -4691,6 +4702,7 @@ export type Database = {
           sku_code: string;
           product_name?: string | null;
           chalan_no?: string | null;
+          chalan_id?: string | null;
           out_date?: string | null;
           quantity_out: number;
           remark?: string | null;
@@ -4702,6 +4714,7 @@ export type Database = {
           sku_code?: string;
           product_name?: string | null;
           chalan_no?: string | null;
+          chalan_id?: string | null;
           out_date?: string | null;
           quantity_out?: number;
           remark?: string | null;
@@ -4713,6 +4726,142 @@ export type Database = {
             columns: ["source_party_id"];
             isOneToOne: false;
             referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "stock_out_chalan_id_fkey";
+            columns: ["chalan_id"];
+            isOneToOne: false;
+            referencedRelation: "material_out_chalans";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      material_out_chalans: {
+        Row: {
+          id: string;
+          company_id: string;
+          party_id: string;
+          chalan_no: string | null;
+          chalan_date: string;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          party_id: string;
+          chalan_no?: string | null;
+          chalan_date: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          party_id?: string;
+          chalan_no?: string | null;
+          chalan_date?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "material_out_chalans_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "material_out_chalans_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      shipment_handover_chalans: {
+        Row: {
+          id: string;
+          company_id: string;
+          courier_party_id: string;
+          chalan_no: string | null;
+          chalan_date: string;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          courier_party_id: string;
+          chalan_no?: string | null;
+          chalan_date: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          courier_party_id?: string;
+          chalan_no?: string | null;
+          chalan_date?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "shipment_handover_chalans_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipment_handover_chalans_courier_party_id_fkey";
+            columns: ["courier_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      shipment_handover_chalan_lines: {
+        Row: {
+          id: string;
+          chalan_id: string;
+          order_id: string;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          chalan_id: string;
+          order_id: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          chalan_id?: string;
+          order_id?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "shipment_handover_chalan_lines_chalan_id_fkey";
+            columns: ["chalan_id"];
+            isOneToOne: false;
+            referencedRelation: "shipment_handover_chalans";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipment_handover_chalan_lines_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
             referencedColumns: ["id"];
           },
         ];

@@ -1,7 +1,9 @@
 "use client";
 
-import { useActionState, useRef, useEffect } from "react";
+import { useActionState, useRef, useState, useEffect } from "react";
 import { saveStockOut, type StockFormState } from "./actions";
+import { UnitSelect } from "@/components/unit-select";
+import { toFeet, type LengthUnit } from "@/lib/length-units";
 
 const initialState: StockFormState = { error: null, success: false };
 const inputClass =
@@ -33,6 +35,26 @@ export function StockOutForm({
   const [state, formAction, pending] = useActionState(saveStockOut, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   const isEdit = !!row;
+
+  // 2026-08-17 — same FT/MTR/INCH/YARD/CM picker as Purchase Bill / Stock In
+  // (see src/lib/length-units.ts). This form was previously uncontrolled
+  // (defaultValue only); it now needs controlled state so the typed value
+  // can be converted to feet before submit.
+  const [qty, setQty] = useState(row?.quantity_out?.toString() ?? "");
+  const [qtyUnit, setQtyUnit] = useState<LengthUnit>("FT");
+  const qtyInFeet = toFeet(Number(qty) || 0, qtyUnit);
+
+  // Reset the unit-picker's local state during render on a fresh successful
+  // submit — same "derive state during render" pattern as stock-in-form.tsx,
+  // so this doesn't cascade an extra render the way setState-in-effect would.
+  const [prevState, setPrevState] = useState(state);
+  if (state !== prevState) {
+    setPrevState(state);
+    if (state.success) {
+      setQty("");
+      setQtyUnit("FT");
+    }
+  }
 
   useEffect(() => {
     if (state.success) {
@@ -81,7 +103,22 @@ export function StockOutForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="so_qty">Quantity Out *</label>
-          <input id="so_qty" name="quantity_out" type="number" step="0.01" required defaultValue={row?.quantity_out ?? ""} className={inputClass} />
+          <div className="flex gap-1.5">
+            <input
+              id="so_qty"
+              type="number"
+              step="0.01"
+              required
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className={inputClass}
+            />
+            <UnitSelect value={qtyUnit} onChange={setQtyUnit} />
+          </div>
+          {qtyUnit !== "FT" && qty && (
+            <p className="mt-0.5 text-[11px] text-purple-600">= {qtyInFeet.toFixed(2)} Ft (saved)</p>
+          )}
+          <input type="hidden" name="quantity_out" value={qty ? qtyInFeet : ""} />
         </div>
       </div>
 

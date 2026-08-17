@@ -5,6 +5,8 @@ import { useActionState } from "react";
 import { savePurchaseBill, type DocFormState, type OrderLookup } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { UnitSelect } from "@/components/unit-select";
+import { toFeet, type LengthUnit } from "@/lib/length-units";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -13,14 +15,27 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 // Purchase Bill (vendor's own bill for job-work/purchases) — same flat-form
 // + order-lookup pattern as Washing Entry. 2026-08-08: "YE LINK HONA
-// CHAHIYE... SABHI CHEJE LINK RAHEGI" — the order link is now REQUIRED
-// (was optional before): every purchase must be tied to the PO/RF/RG it
-// was bought for, so "which party did this order's item come from" is
-// always answerable — see the reverse lookup on the Orders hub.
+// CHAHIYE... SABHI CHEJE LINK RAHEGI" made the order link REQUIRED: every
+// purchase tied to the PO/RF/RG it was bought for, so "which party did
+// this order's item come from" is answerable — see the reverse lookup on
+// the Orders hub. 2026-08-17: "KACHA MAAL... GENERAL STOCK KE LIYE — KOI
+// FIXED PO NAHI" — raw-material vendor purchases aren't for one specific
+// order, so the link is optional again (see actions.ts's
+// savePurchaseBillCore comment for how company scoping still works
+// without one).
 export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
   const partyGroups = groupPartyOptions(parties);
+
+  // 2026-08-17 — "FT/MTR/INCH/YARD/CM SABHI KA FOURMULA KAAM KARNA CHAHIYE"
+  // — vendor can bill raw material in whichever unit; typed value + unit
+  // convert to feet (this app's own convention, matching the field's own
+  // "Sq. Feet" label) before it's actually submitted. See
+  // src/lib/length-units.ts.
+  const [sqFeetInput, setSqFeetInput] = useState("");
+  const [sqFeetUnit, setSqFeetUnit] = useState<LengthUnit>("FT");
+  const sqFeetConverted = sqFeetInput ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
 
   function handleFound(r: OrderLookup) {
     setOrderId(r.order?.id ?? "");
@@ -39,10 +54,10 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
 
-      <OrderLookupBox label="Link to an order by PO/RF/RG No. *" onFound={handleFound} />
+      <OrderLookupBox label="Link to an order by PO/RF/RG No. (optional)" onFound={handleFound} />
       {!orderId && (
-        <p className="-mt-1 text-xs text-amber-700">
-          Required — look up the PO/RF/RG this purchase is for before saving.
+        <p className="-mt-1 text-xs text-slate-400">
+          Optional — leave blank for a general-stock raw-material purchase not tied to one specific order.
         </p>
       )}
 
@@ -74,7 +89,21 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
         </div>
         <div>
           <label className={labelClass} htmlFor="pb_sqfeet">Sq. Feet</label>
-          <input id="pb_sqfeet" name="sq_feet" type="number" step="0.01" className={inputClass} />
+          <div className="flex gap-1.5">
+            <input
+              id="pb_sqfeet"
+              type="number"
+              step="0.01"
+              value={sqFeetInput}
+              onChange={(e) => setSqFeetInput(e.target.value)}
+              className={inputClass}
+            />
+            <UnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+          </div>
+          {sqFeetUnit !== "FT" && sqFeetInput && (
+            <p className="mt-0.5 text-[11px] text-purple-600">= {sqFeetConverted.toFixed(2)} Sq. Feet (saved)</p>
+          )}
+          <input type="hidden" name="sq_feet" value={sqFeetInput ? sqFeetConverted : ""} />
         </div>
         <div>
           <label className={labelClass} htmlFor="pb_rate">Unit Rate</label>
