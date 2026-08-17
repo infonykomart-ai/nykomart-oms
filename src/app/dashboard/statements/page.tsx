@@ -4,6 +4,16 @@ import { createClient } from "@/lib/supabase/server";
 import { StatementEntryForms } from "./statement-entry-forms";
 
 // Statement Entry (round 11) — see actions.ts header comment.
+// 2026-08-17 fix — same bug/fix as Party Ledger / Bill Payment: the 3
+// "Recent …" recap lists used to scope to `employee.companyIds` (every
+// company this login can access) instead of the currently selected
+// company, so switching the top-nav company selector had no effect on
+// what showed here. The `companies` dropdown below (line 12) is left on
+// `companyIds` deliberately — that one populates the entry FORM's own
+// company picker (which company a *new* statement row is being saved
+// into), and an employee should be able to enter a statement for any
+// company they have access to, not just whichever one happens to be
+// selected up top.
 export default async function StatementsPage() {
   const employee = await requireCapability("statement_entry");
   const supabase = await createClient();
@@ -13,19 +23,19 @@ export default async function StatementsPage() {
     supabase
       .from("etsy_monthly_tax_invoices")
       .select("id, company_id, invoice_no, invoice_date, subtotal_inr, gst_amount_inr, total_inr")
-      .in("company_id", employee.companyIds)
+      .eq("company_id", employee.currentCompanyId)
       .order("invoice_date", { ascending: false })
       .limit(20),
     supabase
       .from("ebay_financial_summary_computed_view")
       .select("id, company_id, period_from, period_to, net_cash_movement_check")
-      .in("company_id", employee.companyIds)
+      .eq("company_id", employee.currentCompanyId)
       .order("period_from", { ascending: false })
       .limit(20),
     supabase
       .from("ebay_monthly_financial_statement")
       .select("id, company_id, period_from, period_to, closing_funds_stated, closing_funds_computed")
-      .in("company_id", employee.companyIds)
+      .eq("company_id", employee.currentCompanyId)
       .order("period_from", { ascending: false })
       .limit(20),
   ]);
