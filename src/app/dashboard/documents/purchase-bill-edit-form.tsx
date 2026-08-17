@@ -24,6 +24,7 @@ export type EditablePurchaseBill = {
   unit_rate: number;
   gst_rate_pct: number | null;
   gst_type: string | null;
+  round_off_amt: number;
 };
 
 export function PurchaseBillEditForm({
@@ -122,6 +123,12 @@ export function PurchaseBillEditForm({
           <GstSelect ratePct={gstRatePct} onRateChange={setGstRatePct} gstType={gstType} onTypeChange={setGstType} idPrefix={`pb_${bill.id}`} />
           <input type="hidden" name="gst_rate_pct" value={gstRatePct ?? ""} />
           <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
+        </div>
+        <div>
+          {/* 2026-08-17: see purchase-bill-form.tsx's Round Off field comment. */}
+          <label className={labelClass} htmlFor={`pb_round_off_${bill.id}`}>Round Off <span className="text-slate-400">(± optional)</span></label>
+          <input id={`pb_round_off_${bill.id}`} name="round_off_amt" type="number" step="0.01" defaultValue={bill.round_off_amt} className={inputClass} />
+          <p className="mt-0.5 text-[11px] text-slate-400">e.g. −0.30 to match the vendor&apos;s exact invoice total.</p>
         </div>
       </div>
 

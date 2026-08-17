@@ -276,10 +276,23 @@ export function DocumentEntryTabs({
             no: r.vendor_invoice_no ?? "—",
             date: r.vendor_invoice_date ?? "—",
             sub: r.vendorName,
+            // g_total_plus_gst always includes SOME gst figure — a flat 5%
+            // fallback when no per-bill rate was picked (see
+            // db/2026-08-17-purchase-bills-gst.sql) — so it's only shown
+            // here when gst_rate_pct is actually set; otherwise the round
+            // off is added onto total_amount directly instead, so a bill
+            // with no GST rate chosen doesn't silently display a 5% figure
+            // nobody selected.
             amount:
               r.gst_rate_pct != null && r.g_total_plus_gst != null
-                ? `₹${r.total_amount} + GST (${r.gst_type === "IGST" ? "IGST" : "CGST+SGST"} ${r.gst_rate_pct * 2}%) = ₹${r.g_total_plus_gst}`
-                : `₹${r.total_amount}`,
+                ? `₹${r.total_amount} + GST (${r.gst_type === "IGST" ? "IGST" : "CGST+SGST"} ${r.gst_rate_pct * 2}%)${
+                    r.round_off_amt ? ` ${r.round_off_amt > 0 ? "+" : "−"} Round Off ₹${Math.abs(r.round_off_amt)}` : ""
+                  } = ₹${r.g_total_plus_gst}`
+                : r.round_off_amt
+                  ? `₹${r.total_amount} ${r.round_off_amt > 0 ? "+" : "−"} Round Off ₹${Math.abs(r.round_off_amt)} = ₹${(
+                      r.total_amount + r.round_off_amt
+                    ).toFixed(2)}`
+                  : `₹${r.total_amount}`,
             record: r,
           }))}
           onDelete={deletePurchaseBill}

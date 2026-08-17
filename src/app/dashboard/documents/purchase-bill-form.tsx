@@ -129,6 +129,16 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
           <input type="hidden" name="gst_rate_pct" value={gstRatePct ?? ""} />
           <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
         </div>
+        <div>
+          {/* 2026-08-17: manual adjustment so the saved total can match a
+              vendor invoice that itself rounds off by a few paise (e.g.
+              AF/145: CGST 904.25 + SGST 904.25, then "Round Off (-)0.30"
+              on the vendor's own bill) — see
+              db/2026-08-17-purchase-bills-round-off.sql. */}
+          <label className={labelClass} htmlFor="pb_round_off">Round Off <span className="text-slate-400">(± optional)</span></label>
+          <input id="pb_round_off" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
+          <p className="mt-0.5 text-[11px] text-slate-400">e.g. −0.30 to match the vendor&apos;s exact invoice total.</p>
+        </div>
       </div>
 
       <button

@@ -905,9 +905,13 @@ CREATE TABLE shipping_bills (
 -- was for (e.g. printing, washing, dyeing) — kept as free text since the
 -- exact structured vocabulary wasn't pinned down, but its general purpose
 -- is now confirmed rather than a total unknown (SCHEMA_NOTES.md #6).
--- "G. TOTAL + GST" assumes a flat 5% GST (2.5% CGST + 2.5% SGST) — same
--- assumption the source made, flagged there as adjustable if a different
--- HSN/GST slab applies.
+-- "G. TOTAL + GST" defaults to a flat 5% GST (2.5% CGST + 2.5% SGST) when
+-- no per-bill GST rate is picked (gst_rate_pct IS NULL — every bill
+-- entered before the GST feature existed, see
+-- db/2026-08-17-purchase-bills-gst.sql), otherwise uses the real selected
+-- rate, doubled (CGST+SGST or IGST both total the same tax — see that
+-- migration's comment), plus round_off_amt (see
+-- db/2026-08-17-purchase-bills-round-off.sql).
 CREATE TABLE purchase_bills (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   vendor_party_id         uuid NOT NULL REFERENCES parties(id),
@@ -915,15 +919,50 @@ CREATE TABLE purchase_bills (
   vendor_invoice_date       date,
   qty                        integer NOT NULL DEFAULT 1,
   sq_feet                     numeric(10,2) NOT NULL DEFAULT 0,
+  -- 2026-08-17: which unit `sq_feet` (and thus unit_rate) is actually in —
+  -- vendor's rate is always quoted per whatever unit THEY billed in, so
+  -- this must travel with the quantity rather than always assuming feet
+  -- (see db/2026-08-17-purchase-bills-qty-unit.sql — a real financial bug
+  -- otherwise, e.g. MTR quantity x per-MTR rate silently inflated ~3.28x
+  -- if converted to feet first).
+  qty_unit                     text NOT NULL DEFAULT 'FT'
+                                  CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM')),
   work_description             text,        -- "WORK1" in the source — general purpose confirmed 2026-08-04, see SCHEMA_NOTES.md #6
   unit_rate                     numeric(14,2) NOT NULL DEFAULT 0,
   order_id                       uuid REFERENCES orders(id),   -- optional make-to-order reference (added 2026-08 round)
+  -- 2026-08-17: purchase_bills never had its own company_id — it was
+  -- always derived from order_id -> orders.company_id, which only works
+  -- when an order is linked. Raw-material general-stock purchases have no
+  -- order to derive it from, so this is a real column now: set from the
+  -- linked order when there is one, or the entering employee's currently
+  -- selected company otherwise (see
+  -- db/2026-08-17-purchase-bills-optional-order-company-id.sql).
+  company_id                     uuid REFERENCES companies(id),
+  -- 2026-08-17: manual per-bill CGST+SGST/IGST choice (checked live —
+  -- most vendor parties have no GST number on file, so auto-deciding
+  -- isn't reliable). gst_rate_pct is the CGST/SGST INDIVIDUAL rate — total
+  -- GST is always double this, however it's itemized (see
+  -- db/2026-08-17-purchase-bills-gst.sql). Both nullable — no rate picked
+  -- keeps the historical flat-5% g_total_plus_gst fallback below.
+  gst_rate_pct                   numeric(4,2) CHECK (gst_rate_pct IN (2.5, 3, 4, 9)),
+  gst_type                       text CHECK (gst_type IN ('CGST_SGST', 'IGST')),
+  -- 2026-08-17: manual signed adjustment so the system total can match a
+  -- vendor invoice that itself rounds off by a few paise (e.g. -0.30) —
+  -- see db/2026-08-17-purchase-bills-round-off.sql. CHECK just guards
+  -- against a fat-fingered full amount landing in this field by mistake;
+  -- a real round-off is always small.
+  round_off_amt                   numeric(8,2) NOT NULL DEFAULT 0
+                                     CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   -- TOTAL SQ FEET = QTY * SQ FEET, then TOTAL AMOUNT = TOTAL SQ FEET * UNIT
   -- RATE — inlined fully (qty * sq_feet * unit_rate) since a generated
   -- column can't reference another generated column.
   total_sq_feet                   numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet) STORED,
   total_amount                     numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet * unit_rate) STORED,
-  g_total_plus_gst                  numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet * unit_rate * 1.05) STORED,
+  g_total_plus_gst                  numeric(14,2) GENERATED ALWAYS AS (
+                                       (qty * sq_feet * unit_rate)
+                                       + (qty * sq_feet * unit_rate) * (CASE WHEN gst_rate_pct IS NOT NULL THEN gst_rate_pct * 2 ELSE 5 END / 100)
+                                       + round_off_amt
+                                     ) STORED,
   created_at                          timestamptz NOT NULL DEFAULT now(),
   -- 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
   -- JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — one vendor invoice
@@ -935,6 +974,7 @@ CREATE TABLE purchase_bills (
   UNIQUE (vendor_party_id, vendor_invoice_no, order_id)
 );
 CREATE INDEX idx_purchase_bills_order ON purchase_bills(order_id);
+CREATE INDEX idx_purchase_bills_company ON purchase_bills(company_id);
 
 -- Inventory / Stock for finished goods (pending item 4, 2026-08-08) — see
 -- db/2026-08-08-inventory-finished-stock.sql for the full design. A
@@ -2643,6 +2683,63 @@ COMMENT ON TABLE leave_coverage_assignments IS
 
 
 -- =============================================================================
+-- SECTION 16b (2026-08-14) — Help Center + Direct Messaging
+-- "sabhi employe ko agar system ke bare me kuch puchna ho to chat boat khul
+-- jaye or sabhi ko ek dusre employe se chat karni ho ya kuch bheejna ho uske
+-- liye massaging option do online" — a chat-style Help Center (rule-based
+-- FAQ/guide search, NOT an AI chat — same 2026-08-01 decision made once
+-- already for the old system, to avoid needing the user's own AI API key
+-- and an ongoing per-message cost) + 1-to-1 direct messaging between any two
+-- employees, with an optional file/image attachment.
+--
+-- Both open to every signed-in employee, no capability gate (same pattern
+-- as My Profile) — only maintaining the Help Center's own article content
+-- is capability-gated (help_center_admin, Admin + MD only — see seed data
+-- below). RLS policies + the private storage bucket for attachments live in
+-- db/2026-08-14m-help-center-and-messaging.sql (not here — this file is
+-- also applied to a plain throwaway Postgres for local type-gen/testing,
+-- which has no auth.uid()/storage schema, same reason RLS is never defined
+-- in this file for any other table either).
+-- =============================================================================
+
+CREATE TABLE help_articles (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  category      text NOT NULL,
+  title         text NOT NULL,
+  keywords      text[] NOT NULL DEFAULT '{}',
+  answer        text NOT NULL,
+  action_href   text,          -- e.g. '/dashboard/orders' — optional "jump to this screen"
+  action_label  text,          -- e.g. 'Go to Order Entry'
+  sort_order    integer NOT NULL DEFAULT 0,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_help_articles_category ON help_articles(category, sort_order);
+
+CREATE TABLE direct_messages (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  sender_employee_id    uuid NOT NULL REFERENCES employees(id),
+  recipient_employee_id uuid NOT NULL REFERENCES employees(id),
+  body                  text,
+  attachment_path       text,     -- Storage object path in the private 'message-attachments' bucket
+  attachment_name       text,
+  attachment_mime       text,
+  attachment_size_bytes bigint,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  read_at               timestamptz,
+  CONSTRAINT direct_messages_not_self CHECK (sender_employee_id <> recipient_employee_id),
+  CONSTRAINT direct_messages_has_content CHECK (body IS NOT NULL OR attachment_path IS NOT NULL)
+);
+CREATE INDEX idx_direct_messages_thread
+  ON direct_messages (LEAST(sender_employee_id, recipient_employee_id), GREATEST(sender_employee_id, recipient_employee_id), created_at);
+CREATE INDEX idx_direct_messages_recipient_unread
+  ON direct_messages (recipient_employee_id, read_at) WHERE read_at IS NULL;
+COMMENT ON TABLE direct_messages IS
+  'Private 1-to-1 messages — see db/2026-08-14m-help-center-and-messaging.sql for the RESTRICTIVE RLS '
+  'policy that hard-scopes reads/writes to a message''s own sender/recipient.';
+
+
+-- =============================================================================
 -- SECTION 17 — REPORTING VIEWS
 -- Old: Net Revenue sheet (all-time, all-company live summary) and the CRM
 -- Dashboard's ad-hoc alert scan (getAlerts_() in Code.gs) — both pure
@@ -2948,7 +3045,10 @@ INSERT INTO capabilities (code, description) VALUES
   -- deliberately NOT granted to the general Order Entry role by default:
   -- creates a REAL external shipment (costs money, real customs
   -- declaration) once real Shipglobal credentials are live.
-  ('shipglobal_shipment', 'Create Shipglobal shipments (real external shipment + label + customs declaration)');
+  ('shipglobal_shipment', 'Create Shipglobal shipments (real external shipment + label + customs declaration)'),
+  -- 2026-08-14: Help Center itself needs NO capability (open to every
+  -- signed-in employee) — this one only gates maintaining its content.
+  ('help_center_admin',   'Add/edit/delete Help Center FAQ & guide articles');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -2982,6 +3082,7 @@ JOIN (VALUES
   ('MD',                 'reports'), -- 2026-08-06: Universal Reports system (item 6) — MD (owner login) gets it too.
   ('MD',                 'invoicing'), -- 2026-08-06: Invoice Generation module.
   ('MD',                 'shipglobal_shipment'),
+  ('MD',                 'help_center_admin'),
   ('Admin',              'permissions_admin'),
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
   ('Admin',              'invoicing'),
@@ -2996,7 +3097,7 @@ JOIN (VALUES
   -- hit first while testing/administering the system.
   ('Admin',              'order_entry'), ('Admin', 'csv_upload'), ('Admin', 'bill_payment'),
   ('Admin',              'salary_admin'), ('Admin', 'statement_entry'), ('Admin', 'approve_level1'),
-  ('Admin',              'approve_level2'), ('Admin', 'shipglobal_shipment'),
+  ('Admin',              'approve_level2'), ('Admin', 'shipglobal_shipment'), ('Admin', 'help_center_admin'),
   ('Listing',            'attendance_punch'), ('Listing', 'task_management'),
   ('Photoshop/Graphics', 'attendance_punch'), ('Photoshop/Graphics', 'task_management'),
   ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch'), ('Inventory', 'finished_stock_view'),

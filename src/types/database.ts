@@ -3714,6 +3714,7 @@ export type Database = {
           total_amount: number | null;
           gst_rate_pct: number | null;
           gst_type: string | null;
+          round_off_amt: number;
           g_total_plus_gst: number | null;
           created_at: string;
         };
@@ -3733,6 +3734,7 @@ export type Database = {
           total_amount?: number | null;
           gst_rate_pct?: number | null;
           gst_type?: string | null;
+          round_off_amt?: number;
           g_total_plus_gst?: number | null;
           created_at?: string;
         };
@@ -3752,6 +3754,7 @@ export type Database = {
           total_amount?: number | null;
           gst_rate_pct?: number | null;
           gst_type?: string | null;
+          round_off_amt?: number;
           g_total_plus_gst?: number | null;
           created_at?: string;
         };

@@ -664,6 +664,13 @@ type PurchaseBillParams = {
   orderId: string | null;
   gstRatePct: number | null;
   gstType: string | null;
+  // 2026-08-17: manual round-off so the system total can match a vendor
+  // invoice that itself rounds by a few paise (e.g. AF/145: -0.30). See
+  // db/2026-08-17-purchase-bills-round-off.sql. Defaults to 0 (no-op) for
+  // any caller that doesn't pass one — e.g. the multi-PO form, where one
+  // shared invoice becomes several rows and a single round-off figure
+  // can't be unambiguously split across them.
+  roundOffAmt: number;
 };
 
 async function savePurchaseBillCore(
@@ -704,6 +711,7 @@ async function savePurchaseBillCore(
       company_id: companyId,
       gst_rate_pct: p.gstRatePct,
       gst_type: p.gstType,
+      round_off_amt: p.roundOffAmt || 0,
     })
     .select("id, vendor_invoice_no, total_amount")
     .single();
@@ -761,6 +769,7 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
     orderId: strOrNull(formData, "order_id"),
     gstRatePct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
     gstType: strOrNull(formData, "gst_type"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -886,6 +895,10 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
       orderId: line.orderId,
       gstRatePct,
       gstType,
+      // Round Off isn't offered on the multi-PO form — one shared invoice
+      // becomes several rows here, and a single round-off figure can't be
+      // unambiguously split across them (see PurchaseBillParams comment).
+      roundOffAmt: 0,
     });
     results!.push({ orderId: line.orderId, ok: !result.error, docNo: result.docNo, error: result.error });
   }
@@ -936,6 +949,7 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
       unit_rate: numOrZero(formData, "unit_rate"),
       gst_rate_pct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
       gst_type: strOrNull(formData, "gst_type"),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
     })
     .eq("id", id);
 
@@ -2084,10 +2098,11 @@ export async function bulkSavePurchaseBills(_prev: BulkDocState, formData: FormD
       workDescription: cellStr(raw, byHeader, "Work Description") || null,
       unitRate: Number(cellStr(raw, byHeader, "Unit Rate")) || 0,
       orderId: order.id,
-      // Bulk CSV template has no GST columns yet — leave unset, same as
-      // every bill entered before this feature existed.
+      // Bulk CSV template has no GST or Round Off columns yet — leave
+      // unset, same as every bill entered before those features existed.
       gstRatePct: null,
       gstType: null,
+      roundOffAmt: 0,
     });
 
     results.push({ row: rowNum, label: refNo, docNo: result.docNo, error: result.error });
