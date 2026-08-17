@@ -4866,6 +4866,42 @@ export type Database = {
           },
         ];
       };
+      stock_out_order_links: {
+        Row: {
+          id: string;
+          stock_out_id: string;
+          order_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          stock_out_id: string;
+          order_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          stock_out_id?: string;
+          order_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "stock_out_order_links_stock_out_id_fkey";
+            columns: ["stock_out_id"];
+            isOneToOne: false;
+            referencedRelation: "stock_out";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "stock_out_order_links_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       store_ad_spend: {
         Row: {
           id: string;

@@ -22,7 +22,7 @@ type MaterialOutChalanRow = {
   chalan_date: string;
   remark: string | null;
   partyName: string;
-  lines: { sku_code: string; quantity_out: number }[];
+  lines: { sku_code: string; quantity_out: number; linkedOrders: { orderId: string; refNo: string }[] }[];
 };
 
 const TABS = [
@@ -119,7 +119,15 @@ function MaterialOutChalanList({ rows }: { rows: MaterialOutChalanRow[] }) {
               <div>
                 <div className="font-medium text-slate-900">{r.chalan_no ?? "—"} <span className="font-normal text-slate-400">· {r.partyName}</span></div>
                 <div className="text-slate-400">
-                  {r.lines.length === 0 ? "no items" : r.lines.map((l) => `${l.sku_code} (${l.quantity_out})`).join(", ")}
+                  {r.lines.length === 0
+                    ? "no items"
+                    : r.lines
+                        .map(
+                          (l) =>
+                            `${l.sku_code} (${l.quantity_out})` +
+                            (l.linkedOrders.length ? ` → ${l.linkedOrders.map((o) => o.refNo).join(", ")}` : "")
+                        )
+                        .join("; ")}
                 </div>
               </div>
               <div className="text-right text-slate-400">{r.chalan_date}</div>
@@ -236,6 +244,9 @@ function StockOutList({ rows, parties, skuOptions }: { rows: StockOutRow[]; part
                 <div>
                   <div className="font-medium text-slate-900">{r.sku_code} <span className="font-normal text-slate-400">· {r.sourceName}</span></div>
                   <div className="text-slate-400">{r.product_name || "—"} · Chalan {r.chalan_no ?? "—"}</div>
+                  {(r.linkedOrders?.length ?? 0) > 0 && (
+                    <div className="mt-0.5 text-purple-600">→ {r.linkedOrders!.map((o) => o.refNo).join(", ")}</div>
+                  )}
                 </div>
                 <div className="text-right">
                   <div className="text-slate-700">Qty {r.quantity_out}</div>

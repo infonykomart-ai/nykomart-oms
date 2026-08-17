@@ -4,6 +4,7 @@ import { useActionState, useRef, useState, useEffect } from "react";
 import { saveStockOut, type StockFormState } from "./actions";
 import { UnitSelect } from "@/components/unit-select";
 import { toFeet, type LengthUnit } from "@/lib/length-units";
+import { OrderMultiPicker, type PickedOrderRef } from "./order-multi-picker";
 
 const initialState: StockFormState = { error: null, success: false };
 const inputClass =
@@ -19,6 +20,9 @@ export type EditableStockOut = {
   out_date: string | null;
   quantity_out: number;
   remark: string | null;
+  // 2026-08-17 — existing order links, for prefilling the picker in edit
+  // mode. See db/2026-08-17-stock-out-order-links.sql.
+  linkedOrders?: PickedOrderRef[];
 };
 
 export function StockOutForm({
@@ -44,6 +48,11 @@ export function StockOutForm({
   const [qtyUnit, setQtyUnit] = useState<LengthUnit>("FT");
   const qtyInFeet = toFeet(Number(qty) || 0, qtyUnit);
 
+  // 2026-08-17 — optional link to the order(s) this material is for. See
+  // db/2026-08-17-stock-out-order-links.sql / order-multi-picker.tsx.
+  const [orders, setOrders] = useState<PickedOrderRef[]>(row?.linkedOrders ?? []);
+  const orderIdsJson = JSON.stringify(orders.map((o) => o.orderId));
+
   // Reset the unit-picker's local state during render on a fresh successful
   // submit — same "derive state during render" pattern as stock-in-form.tsx,
   // so this doesn't cascade an extra render the way setState-in-effect would.
@@ -53,6 +62,7 @@ export function StockOutForm({
     if (state.success) {
       setQty("");
       setQtyUnit("FT");
+      setOrders([]);
     }
   }
 
@@ -68,6 +78,7 @@ export function StockOutForm({
     <form ref={formRef} action={formAction} className="space-y-3">
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       {isEdit && <input type="hidden" name="row_id" value={row.id} />}
+      <input type="hidden" name="order_ids_json" value={orderIdsJson} />
 
       <datalist id="stock-sku-options-out">
         {skuOptions.map((s) => (
@@ -120,6 +131,11 @@ export function StockOutForm({
           )}
           <input type="hidden" name="quantity_out" value={qty ? qtyInFeet : ""} />
         </div>
+      </div>
+
+      <div>
+        <label className={labelClass}>Order(s) this material is for (optional)</label>
+        <OrderMultiPicker value={orders} onChange={setOrders} />
       </div>
 
       <div>

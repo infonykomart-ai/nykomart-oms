@@ -12,6 +12,7 @@ import { useActionState, useState } from "react";
 import { createMaterialOutChalan, type MaterialOutChalanState } from "./actions";
 import { UnitSelect } from "@/components/unit-select";
 import { toFeet, type LengthUnit } from "@/lib/length-units";
+import { OrderMultiPicker, type PickedOrderRef } from "./order-multi-picker";
 
 const initialState: MaterialOutChalanState = { error: null, success: null };
 const inputClass =
@@ -24,11 +25,12 @@ type Line = {
   productName: string;
   qtyDisplay: string;
   qtyUnit: LengthUnit;
+  orders: PickedOrderRef[];
 };
 
 let nextKey = 1;
 function blankLine(): Line {
-  return { key: nextKey++, skuCode: "", productName: "", qtyDisplay: "", qtyUnit: "FT" };
+  return { key: nextKey++, skuCode: "", productName: "", qtyDisplay: "", qtyUnit: "FT", orders: [] };
 }
 
 export function MaterialOutChalanForm({ parties, skuOptions }: { parties: { id: string; name: string }[]; skuOptions: string[] }) {
@@ -52,6 +54,7 @@ export function MaterialOutChalanForm({ parties, skuOptions }: { parties: { id: 
         skuCode: l.skuCode.trim(),
         productName: l.productName.trim() || null,
         quantityOut: toFeet(Number(l.qtyDisplay) || 0, l.qtyUnit),
+        orderIds: l.orders.map((o) => o.orderId),
       }))
   );
 
@@ -149,6 +152,10 @@ export function MaterialOutChalanForm({ parties, skuOptions }: { parties: { id: 
                 >
                   Remove
                 </button>
+              </div>
+              <div className="mt-2">
+                <label className="mb-0.5 block text-[11px] text-slate-400">Order(s) this material is for</label>
+                <OrderMultiPicker value={l.orders} onChange={(orders) => updateLine(l.key, { orders })} />
               </div>
             </div>
           ))}

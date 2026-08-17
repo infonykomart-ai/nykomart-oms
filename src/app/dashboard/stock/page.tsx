@@ -61,8 +61,31 @@ export default async function StockPage() {
   // rows overall" window.
   const chalanIds = (materialOutChalans ?? []).map((c) => c.id);
   const { data: chalanLines } = chalanIds.length
-    ? await supabase.from("stock_out").select("chalan_id, sku_code, quantity_out").in("chalan_id", chalanIds)
-    : { data: [] as { chalan_id: string | null; sku_code: string; quantity_out: number }[] };
+    ? await supabase.from("stock_out").select("id, chalan_id, sku_code, quantity_out").in("chalan_id", chalanIds)
+    : { data: [] as { id: string; chalan_id: string | null; sku_code: string; quantity_out: number }[] };
+
+  // 2026-08-17 — "KACHA MAAL BAHR SE BINA PO KE AA SKATA HAI LEKIN JA NAHI
+  // SAKTA": pull the optional order links for every stock_out row we're
+  // about to render (both the plain Stock Out recent list and every
+  // Material OUT Chalan line), joined to the order's ref_no for display —
+  // see db/2026-08-17-stock-out-order-links.sql.
+  const allStockOutIds = Array.from(
+    new Set([...(stockOut ?? []).map((r) => r.id), ...(chalanLines ?? []).map((r) => r.id)])
+  );
+  const { data: orderLinks } = allStockOutIds.length
+    ? await supabase
+        .from("stock_out_order_links")
+        .select("stock_out_id, order_id, orders(ref_no)")
+        .in("stock_out_id", allStockOutIds)
+    : { data: [] as { stock_out_id: string; order_id: string; orders: { ref_no: string } | null }[] };
+  const linkedOrdersByStockOutId = new Map<string, { orderId: string; refNo: string }[]>();
+  for (const link of orderLinks ?? []) {
+    if (!link.orders) continue;
+    const list = linkedOrdersByStockOutId.get(link.stock_out_id) ?? [];
+    list.push({ orderId: link.order_id, refNo: link.orders.ref_no });
+    linkedOrdersByStockOutId.set(link.stock_out_id, list);
+  }
+
   const materialOutChalanRows = (materialOutChalans ?? []).map((c) => ({
     id: c.id,
     chalan_no: c.chalan_no,
@@ -71,7 +94,11 @@ export default async function StockPage() {
     partyName: partyName.get(c.party_id) ?? "—",
     lines: (chalanLines ?? [])
       .filter((r) => r.chalan_id === c.id)
-      .map((r) => ({ sku_code: r.sku_code, quantity_out: r.quantity_out })),
+      .map((r) => ({
+        sku_code: r.sku_code,
+        quantity_out: r.quantity_out,
+        linkedOrders: linkedOrdersByStockOutId.get(r.id) ?? [],
+      })),
   }));
 
   return (
@@ -96,7 +123,11 @@ export default async function StockPage() {
         parties={parties ?? []}
         skuOptions={skuOptions}
         recentIn={(stockIn ?? []).map((r) => ({ ...r, sourceName: partyName.get(r.source_party_id) ?? "—" }))}
-        recentOut={(stockOut ?? []).map((r) => ({ ...r, sourceName: partyName.get(r.source_party_id) ?? "—" }))}
+        recentOut={(stockOut ?? []).map((r) => ({
+          ...r,
+          sourceName: partyName.get(r.source_party_id) ?? "—",
+          linkedOrders: linkedOrdersByStockOutId.get(r.id) ?? [],
+        }))}
         currentStock={currentStockRows.map((r) => ({ ...r, sourceName: partyName.get(r.source_party_id) ?? "—" }))}
         materialOutChalans={materialOutChalanRows}
       />

@@ -185,7 +185,28 @@ export type StockOutInput = {
   outDate: string | null;
   quantityOut: number | null;
   remark: string | null;
+  // 2026-08-17 — "KACHA MAAL BINA PO KE AA SKATA HAI LEKIN JA NAHI SAKTA":
+  // optional, and multiple orders per movement — see
+  // db/2026-08-17-stock-out-order-links.sql. Empty array is fine (no link
+  // at all); syncSel below fully replaces whatever links existed before,
+  // so editing a row to remove all orders also works correctly.
+  orderIds: string[];
 };
+
+// Replaces stock_out_order_links for one stock_out row with exactly the
+// given set — delete-then-insert rather than diffing, since the list is
+// always small and this is simpler to get right for both the create path
+// (nothing to delete yet) and the edit path (old links may differ).
+async function syncStockOutOrderLinks(supabase: ServiceClient, stockOutId: string, orderIds: string[]): Promise<{ error: string | null }> {
+  const { error: delError } = await supabase.from("stock_out_order_links").delete().eq("stock_out_id", stockOutId);
+  if (delError) return { error: delError.message };
+  const unique = Array.from(new Set(orderIds));
+  if (!unique.length) return { error: null };
+  const { error: insError } = await supabase
+    .from("stock_out_order_links")
+    .insert(unique.map((orderId) => ({ stock_out_id: stockOutId, order_id: orderId })));
+  return { error: insError ? insError.message : null };
+}
 
 export async function saveStockOutCore(
   supabase: ServiceClient,
@@ -211,15 +232,20 @@ export async function saveStockOutCore(
     remark: input.remark,
   };
 
+  let finalId: string;
   if (rowId) {
     const { error } = await supabase.from("stock_out").update(payload).eq("id", rowId);
     if (error) return { error: error.message, id: null };
-    return { error: null, id: rowId };
+    finalId = rowId;
+  } else {
+    const { data, error } = await supabase.from("stock_out").insert(payload).select("id").single();
+    if (error) return { error: error.message, id: null };
+    finalId = data.id;
   }
 
-  const { data, error } = await supabase.from("stock_out").insert(payload).select("id").single();
-  if (error) return { error: error.message, id: null };
-  return { error: null, id: data.id };
+  const linkResult = await syncStockOutOrderLinks(supabase, finalId, input.orderIds);
+  if (linkResult.error) return { error: `Saved, but order link failed: ${linkResult.error}`, id: finalId };
+  return { error: null, id: finalId };
 }
 
 export async function saveStockOut(_prev: StockFormState, formData: FormData): Promise<StockFormState> {
@@ -227,6 +253,13 @@ export async function saveStockOut(_prev: StockFormState, formData: FormData): P
   const supabase = createServiceRoleClient();
 
   const rowId = strOrNull(formData, "row_id");
+  let orderIds: string[] = [];
+  try {
+    orderIds = JSON.parse(str(formData, "order_ids_json") || "[]");
+  } catch {
+    return { error: "Invalid order link data — please retry.", success: false };
+  }
+
   const result = await saveStockOutCore(
     supabase,
     rowId,
@@ -238,6 +271,7 @@ export async function saveStockOut(_prev: StockFormState, formData: FormData): P
       outDate: strOrNull(formData, "out_date"),
       quantityOut: numOrNull(formData, "quantity_out"),
       remark: strOrNull(formData, "remark"),
+      orderIds,
     },
     /* requireChalan */ true
   );
@@ -245,6 +279,31 @@ export async function saveStockOut(_prev: StockFormState, formData: FormData): P
   if (result.error) return { error: result.error, success: false };
   revalidatePath("/dashboard/stock");
   return { error: null, success: true };
+}
+
+// 2026-08-17 — shared order lookup for the Stock Out / Material OUT
+// Chalan "link to order(s), optional" picker — same PO/RF/RG-by-ref_no
+// pattern as documents/actions.ts's lookupOrderForPurchaseBill, kept as
+// its own copy here since the Stock module has never imported from
+// Document Entry's actions.ts (separate capability, separate module).
+export type StockOrderLookup = { error: string | null; order: { id: string; ref_no: string } | null };
+
+export async function lookupOrderForStock(query: string): Promise<StockOrderLookup> {
+  const employee = await requireCapability("stock_entry");
+  const supabase = createServiceRoleClient();
+
+  const trimmed = query.trim();
+  if (!trimmed) return { error: "Enter a PO/RF/RG number.", order: null };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, ref_no, company_id")
+    .ilike("ref_no", trimmed)
+    .in("company_id", employee.companyIds)
+    .maybeSingle();
+
+  if (!order) return { error: `No order found for "${trimmed}".`, order: null };
+  return { error: null, order: { id: order.id, ref_no: order.ref_no } };
 }
 
 export async function deleteStockOut(rowId: string): Promise<SimpleResult> {
@@ -273,6 +332,10 @@ export type MaterialOutChalanLine = {
   skuCode: string;
   productName: string | null;
   quantityOut: number; // already converted to feet client-side, same convention as Purchase Bill / Stock In / Stock Out
+  // 2026-08-17 — same optional/multiple order link as plain Stock Out, but
+  // per line here since one chalan can cover material for several
+  // different orders at once. See db/2026-08-17-stock-out-order-links.sql.
+  orderIds: string[];
 };
 
 export type MaterialOutChalanState = {
@@ -324,16 +387,38 @@ export async function createMaterialOutChalan(_prev: MaterialOutChalanState, for
       results.push({ sku: line.skuCode, ok: false, error: itemResult.error });
       continue;
     }
-    const { error: lineError } = await supabase.from("stock_out").insert({
-      source_party_id: partyId,
-      sku_code: line.skuCode,
-      product_name: line.productName,
-      chalan_no: chalan.chalan_no,
-      chalan_id: chalan.id,
-      out_date: chalanDate,
-      quantity_out: line.quantityOut,
+    const { data: stockOutRow, error: lineError } = await supabase
+      .from("stock_out")
+      .insert({
+        source_party_id: partyId,
+        sku_code: line.skuCode,
+        product_name: line.productName,
+        chalan_no: chalan.chalan_no,
+        chalan_id: chalan.id,
+        out_date: chalanDate,
+        quantity_out: line.quantityOut,
+      })
+      .select("id")
+      .single();
+
+    if (lineError || !stockOutRow) {
+      results.push({ sku: line.skuCode, ok: false, error: lineError?.message ?? "unknown error" });
+      continue;
+    }
+
+    let linkError: string | null = null;
+    if (line.orderIds?.length) {
+      const unique = Array.from(new Set(line.orderIds));
+      const { error } = await supabase
+        .from("stock_out_order_links")
+        .insert(unique.map((orderId) => ({ stock_out_id: stockOutRow.id, order_id: orderId })));
+      linkError = error ? error.message : null;
+    }
+    results.push({
+      sku: line.skuCode,
+      ok: !linkError,
+      error: linkError ? `saved, but order link failed: ${linkError}` : null,
     });
-    results.push({ sku: line.skuCode, ok: !lineError, error: lineError?.message ?? null });
   }
 
   revalidatePath("/dashboard/stock");
@@ -518,6 +603,9 @@ export async function bulkSaveStockOut(_prev: BulkStockState, formData: FormData
         outDate: cellStr(raw, byHeader, "Out Date") || null,
         quantityOut: cellNum(raw, byHeader, "Quantity Out"),
         remark: cellStr(raw, byHeader, "Remark") || null,
+        // Bulk import has no column for order linking — leave unlinked;
+        // can be added afterwards from the Stock Out list's edit form.
+        orderIds: [],
       },
       /* requireChalan */ false
     );
