@@ -99,13 +99,15 @@ async function DocumentsPageInner() {
       .limit(8),
     supabase
       .from("freight_bills")
-      .select("id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt")
+      .select(
+        "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, vendor_party_id"
+      )
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
       .from("duty_tax_bills")
       .select(
-        "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt"
+        "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, vendor_party_id"
       )
       .order("created_at", { ascending: false })
       .limit(8),
@@ -248,6 +250,8 @@ async function DocumentsPageInner() {
             gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
             credit_note_amt: Number(b.credit_note_amt ?? 0),
             sentToFinance: sentFreightBillIds.has(b.id),
+            vendor_party_id: b.vendor_party_id,
+            vendor_name: b.vendor_party_id ? partyName.get(b.vendor_party_id) ?? null : null,
             assignments: (freightAssignments ?? [])
               .filter((a) => a.freight_bill_id === b.id)
               .map((a) => ({
@@ -276,6 +280,8 @@ async function DocumentsPageInner() {
             courier_duty_charges_adj: Number(b.courier_duty_charges_adj ?? 0),
             total_payable_amt: b.total_payable_amt != null ? Number(b.total_payable_amt) : null,
             sentToFinance: sentDutyBillIds.has(b.id),
+            vendor_party_id: b.vendor_party_id,
+            vendor_name: b.vendor_party_id ? partyName.get(b.vendor_party_id) ?? null : null,
             assignments: (dutyAssignments ?? [])
               .filter((a) => a.duty_tax_bill_id === b.id)
               .map((a) => ({

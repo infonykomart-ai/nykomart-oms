@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { deleteParty } from "./actions";
 import { PartyForm, type EditableParty } from "./party-form";
 
@@ -78,6 +79,16 @@ export function PartyList({ parties }: { parties: EditableParty[] }) {
                     {deleteError[p.id] && <p className="mt-1 text-xs text-red-600">{deleteError[p.id]}</p>}
                   </div>
                   <div className="flex shrink-0 gap-2">
+                    {/* 2026-08-17: "SABHI PARTY KE LADGER BHI NAHI BANE" —
+                        every bill against this party (Purchase/Courier/Duty),
+                        running balance, payment history. See
+                        dashboard/parties/[id]/ledger/page.tsx. */}
+                    <Link
+                      href={`/dashboard/parties/${p.id}/ledger`}
+                      className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      📒 Ledger
+                    </Link>
                     <button
                       type="button"
                       onClick={() => setEditingId(p.id)}

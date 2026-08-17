@@ -12,11 +12,13 @@ import {
   updateFreightAwbAssignmentNotes,
   sendFreightBillToFinance,
   sendDutyBillToFinance,
+  updateFreightBillVendor,
   type DocFormState,
   type ReconciliationLookup,
   type SimpleResult,
   type BulkAwbResult,
 } from "./actions";
+import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialFormState: DocFormState = { error: null, success: null };
 const initialSimple: SimpleResult = { error: null, success: false };
@@ -55,6 +57,11 @@ export type FreightBillRow = {
   credit_note_amt: number;
   assignments: FreightBillAssignment[];
   sentToFinance: boolean;
+  // 2026-08-17: which courier/vendor party issued this bill — optional
+  // (existing bills + PDF/CSV imports won't have this), see actions.ts's
+  // comment on FreightBillParams.vendorPartyId for why this was added.
+  vendor_party_id: string | null;
+  vendor_name: string | null;
 };
 
 // Courier Bill (freight_bills) — an invoice-level header covering MANY
@@ -64,8 +71,17 @@ export type FreightBillRow = {
 // assign AWBs (one at a time, or in bulk — 2026-08-12 round 10) and to
 // see/remove its already-assigned AWBs, plus (round 10) send the whole
 // bill to the Finance ledger once reviewed.
-export function FreightBillSection({ bills, companies }: { bills: FreightBillRow[]; companies: { id: string; name: string }[] }) {
+export function FreightBillSection({
+  bills,
+  companies,
+  parties,
+}: {
+  bills: FreightBillRow[];
+  companies: { id: string; name: string }[];
+  parties: PartyOption[];
+}) {
   const [state, formAction, pending] = useActionState(saveFreightBill, initialFormState);
+  const partyGroups = groupPartyOptions(parties);
 
   return (
     <div className="space-y-4">
@@ -77,6 +93,23 @@ export function FreightBillSection({ bills, companies }: { bills: FreightBillRow
             Courier Bill saved — <strong>{state.success.docNo}</strong>.
           </p>
         )}
+        {/* 2026-08-17: "SABHI PARTY KE LADGER BHI NAHI BANE" — optional (not
+            required, so this doesn't block saving a bill before the courier
+            has been added to Party Master), but selecting it here is what
+            lets this bill later show up in that courier's Party Ledger. */}
+        <div>
+          <label className={labelClass} htmlFor="fb_party">Vendor / Courier Party</label>
+          <select id="fb_party" name="vendor_party_id" defaultValue="" className={inputClass}>
+            <option value="">— Not linked to a party yet —</option>
+            {partyGroups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.parties.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelClass} htmlFor="fb_inv_no">Invoice No. *</label>
@@ -136,7 +169,7 @@ export function FreightBillSection({ bills, companies }: { bills: FreightBillRow
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-slate-700">Recent Courier Bills</h3>
         {bills.map((b) => (
-          <FreightBillCard key={b.id} bill={b} companies={companies} />
+          <FreightBillCard key={b.id} bill={b} companies={companies} parties={parties} />
         ))}
         {bills.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
       </div>
@@ -144,12 +177,22 @@ export function FreightBillSection({ bills, companies }: { bills: FreightBillRow
   );
 }
 
-function FreightBillCard({ bill, companies }: { bill: FreightBillRow; companies: { id: string; name: string }[] }) {
+function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; companies: { id: string; name: string }[]; parties: PartyOption[] }) {
   const [expanded, setExpanded] = useState(false);
   const [bulkMode, setBulkMode] = useState(false);
   const [financeMode, setFinanceMode] = useState(false);
+  const [vendorMode, setVendorMode] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [vendorState, vendorAction, vendorPending] = useActionState(updateFreightBillVendor, initialSimple);
+  const partyGroups = groupPartyOptions(parties);
+
+  useEffect(() => {
+    if (vendorState.success) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setVendorMode(false);
+    }
+  }, [vendorState.success]);
 
   function handleDeleteBill() {
     if (!window.confirm(`Delete Courier Bill "${bill.invoice_no}"? This cannot be undone.`)) return;
@@ -168,6 +211,9 @@ function FreightBillCard({ bill, companies }: { bill: FreightBillRow; companies:
           <div className="text-slate-400">
             {bill.invoice_date ?? "—"} · {bill.assignments.length} AWB(s) assigned
             {bill.sentToFinance && <span className="ml-1 text-green-700">· ✓ in Bill Pass Register</span>}
+          </div>
+          <div className={bill.vendor_name ? "text-slate-500" : "text-amber-600"}>
+            {bill.vendor_name ? `🚚 ${bill.vendor_name}` : "⚠ No vendor/courier party linked — won't appear in a Party Ledger"}
           </div>
         </div>
         <div className="text-right">
@@ -198,6 +244,13 @@ function FreightBillCard({ bill, companies }: { bill: FreightBillRow; companies:
           >
             {expanded ? "Hide AWBs" : "Assign / View AWBs"}
           </button>
+          <button
+            type="button"
+            onClick={() => setVendorMode((v) => !v)}
+            className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+          >
+            ✏️ {bill.vendor_name ? "Change" : "Set"} Vendor
+          </button>
           {!bill.sentToFinance && (
             <button
               type="button"
@@ -217,6 +270,33 @@ function FreightBillCard({ bill, companies }: { bill: FreightBillRow; companies:
           </button>
         </div>
       </div>
+
+      {vendorMode && (
+        <form action={vendorAction} className="mt-2 flex items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <input type="hidden" name="freight_bill_id" value={bill.id} />
+          <div className="flex-1">
+            <label className={labelClass}>Vendor / Courier Party</label>
+            {vendorState.error && <p className="mb-1 rounded bg-red-50 px-2 py-1 text-red-800">{vendorState.error}</p>}
+            <select name="vendor_party_id" defaultValue={bill.vendor_party_id ?? ""} className={inputClass}>
+              <option value="">— Not linked to a party —</option>
+              {partyGroups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.parties.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <button
+            type="submit"
+            disabled={vendorPending}
+            className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+          >
+            {vendorPending ? "Saving..." : "Save"}
+          </button>
+        </form>
+      )}
 
       {financeMode && (
         <SendToFinanceForm

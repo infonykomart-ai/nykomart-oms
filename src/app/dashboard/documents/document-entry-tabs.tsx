@@ -112,8 +112,8 @@ export function DocumentEntryTabs({
     return (
       <div>
         {tabBar}
-        {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} companies={companies} />}
-        {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} companies={companies} />}
+        {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} companies={companies} parties={parties} />}
+        {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} companies={companies} parties={parties} />}
         {tab === "courier-bill-pdf" && <CourierBillPdfSection />}
       </div>
     );

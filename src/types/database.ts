@@ -1255,6 +1255,7 @@ export type Database = {
           disbursement_fee: number;
           courier_duty_charges_adj: number;
           total_payable_amt: number | null;
+          vendor_party_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -1271,6 +1272,7 @@ export type Database = {
           disbursement_fee?: number;
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
+          vendor_party_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -1287,9 +1289,17 @@ export type Database = {
           disbursement_fee?: number;
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
+          vendor_party_id?: string | null;
           created_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "duty_tax_bills_vendor_party_id_fkey";
+            columns: ["vendor_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
         ];
       };
       ebay_financial_summary: {
@@ -2694,6 +2704,7 @@ export type Database = {
           credit_note_no: string | null;
           credit_note_date: string | null;
           credit_note_amt: number;
+          vendor_party_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -2710,6 +2721,7 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
+          vendor_party_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2726,9 +2738,17 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
+          vendor_party_id?: string | null;
           created_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "freight_bills_vendor_party_id_fkey";
+            columns: ["vendor_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
         ];
       };
       help_articles: {

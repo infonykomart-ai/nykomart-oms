@@ -1004,6 +1004,13 @@ type FreightBillParams = {
   creditNoteNo?: string | null;
   creditNoteDate?: string | null;
   creditNoteAmt?: number;
+  // 2026-08-17: "SABHI PARTY KE LADGER BHI NAHI BANE" — Courier Bills had no
+  // vendor/party linkage at all, so a Courier Bill sent to the Finance
+  // ledger could never surface under any specific party's ledger (party_id
+  // stayed NULL). Optional (existing bills + PDF/CSV imports won't have
+  // this filled in) — but selecting it here is what lets this bill show up
+  // in that courier's Party Ledger later.
+  vendorPartyId?: string | null;
 };
 
 async function saveFreightBillCore(
@@ -1024,6 +1031,7 @@ async function saveFreightBillCore(
       credit_note_no: p.creditNoteNo ?? null,
       credit_note_date: p.creditNoteDate ?? null,
       credit_note_amt: p.creditNoteAmt ?? 0,
+      vendor_party_id: p.vendorPartyId ?? null,
     })
     .select("id, invoice_no")
     .single();
@@ -1049,11 +1057,40 @@ export async function saveFreightBill(_prev: DocFormState, formData: FormData): 
     creditNoteNo: strOrNull(formData, "credit_note_no"),
     creditNoteDate: strOrNull(formData, "credit_note_date"),
     creditNoteAmt: numOrZero(formData, "credit_note_amt"),
+    vendorPartyId: strOrNull(formData, "vendor_party_id"),
   });
 
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+/**
+ * 2026-08-17: "purane bills me edit option bana do" — Courier/Duty Bills are
+ * otherwise header create+delete only (no general edit), but vendor/party
+ * linkage is the one field that genuinely needs a way to be set AFTER
+ * creation: it didn't exist as a column until this same round, so every
+ * bill created before now needs this to ever show up in a Party Ledger.
+ * Also syncs bill_pass_register.party_id if this bill was already "Sent to
+ * Finance" before a vendor was selected — otherwise setting the vendor here
+ * would fix the bill but the already-posted Finance ledger entry would stay
+ * orphaned from any party forever.
+ */
+export async function updateFreightBillVendor(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const freightBillId = str(formData, "freight_bill_id");
+  const vendorPartyId = strOrNull(formData, "vendor_party_id");
+  if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
+
+  const { error } = await supabase.from("freight_bills").update({ vendor_party_id: vendorPartyId }).eq("id", freightBillId);
+  if (error) return { error: error.message, success: false };
+
+  await supabase.from("bill_pass_register").update({ party_id: vendorPartyId }).eq("source", "freight_bill").eq("source_id", freightBillId);
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
 }
 
 export async function deleteFreightBill(id: string): Promise<SimpleResult> {
@@ -1240,7 +1277,11 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
     .maybeSingle();
   if (existing) return { error: "This Courier Bill has already been sent to the Finance ledger.", success: false };
 
-  const { data: bill } = await supabase.from("freight_bills").select("invoice_no, invoice_date").eq("id", freightBillId).maybeSingle();
+  const { data: bill } = await supabase
+    .from("freight_bills")
+    .select("invoice_no, invoice_date, vendor_party_id")
+    .eq("id", freightBillId)
+    .maybeSingle();
 
   const { error } = await supabase.from("bill_pass_register").insert({
     company_id: companyId,
@@ -1249,6 +1290,12 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
     invoice_date: bill?.invoice_date ?? null,
     invoice_recv_date: bill?.invoice_date ?? null,
     total_amt: totalAmt,
+    // 2026-08-17: carry the Courier Bill's own vendor/party through to the
+    // Finance ledger — previously this stayed NULL even when the bill had
+    // a vendor selected, which is why Courier Bills could never appear in
+    // a Party Ledger. party_type stays "Courier" either way (still useful
+    // for bills sent before a vendor was ever selected).
+    party_id: bill?.vendor_party_id ?? null,
     party_type: "Courier",
     source: "freight_bill",
     source_id: freightBillId,
@@ -1280,6 +1327,9 @@ type DutyBillParams = {
   disbursementFee?: number;
   courierDutyChargesAdj?: number;
   totalPayableAmt?: number | null;
+  // 2026-08-17: same optional vendor/party linkage as FreightBillParams
+  // above, for the same Party Ledger reason.
+  vendorPartyId?: string | null;
 };
 
 async function saveDutyBillCore(
@@ -1302,6 +1352,7 @@ async function saveDutyBillCore(
       disbursement_fee: p.disbursementFee ?? 0,
       courier_duty_charges_adj: p.courierDutyChargesAdj ?? 0,
       total_payable_amt: p.totalPayableAmt ?? null,
+      vendor_party_id: p.vendorPartyId ?? null,
     })
     .select("id, invoice_no")
     .single();
@@ -1329,11 +1380,30 @@ export async function saveDutyBill(_prev: DocFormState, formData: FormData): Pro
     disbursementFee: numOrZero(formData, "disbursement_fee"),
     courierDutyChargesAdj: numOrZero(formData, "courier_duty_charges_adj"),
     totalPayableAmt: numOrNull(formData, "total_payable_amt"),
+    vendorPartyId: strOrNull(formData, "vendor_party_id"),
   });
 
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+/** 2026-08-17: same "purane bills me edit option" as updateFreightBillVendor above. */
+export async function updateDutyBillVendor(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const dutyTaxBillId = str(formData, "duty_tax_bill_id");
+  const vendorPartyId = strOrNull(formData, "vendor_party_id");
+  if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
+
+  const { error } = await supabase.from("duty_tax_bills").update({ vendor_party_id: vendorPartyId }).eq("id", dutyTaxBillId);
+  if (error) return { error: error.message, success: false };
+
+  await supabase.from("bill_pass_register").update({ party_id: vendorPartyId }).eq("source", "duty_tax_bill").eq("source_id", dutyTaxBillId);
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
 }
 
 export async function deleteDutyBill(id: string): Promise<SimpleResult> {
@@ -1504,7 +1574,11 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
     .maybeSingle();
   if (existing) return { error: "This Duty & Tax Bill has already been sent to the Finance ledger.", success: false };
 
-  const { data: bill } = await supabase.from("duty_tax_bills").select("invoice_no, invoice_date").eq("id", dutyTaxBillId).maybeSingle();
+  const { data: bill } = await supabase
+    .from("duty_tax_bills")
+    .select("invoice_no, invoice_date, vendor_party_id")
+    .eq("id", dutyTaxBillId)
+    .maybeSingle();
 
   const { error } = await supabase.from("bill_pass_register").insert({
     company_id: companyId,
@@ -1513,6 +1587,8 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
     invoice_date: bill?.invoice_date ?? null,
     invoice_recv_date: bill?.invoice_date ?? null,
     total_amt: totalAmt,
+    // 2026-08-17: same vendor/party carry-through as sendFreightBillToFinance above.
+    party_id: bill?.vendor_party_id ?? null,
     party_type: "Courier",
     source: "duty_tax_bill",
     source_id: dutyTaxBillId,
