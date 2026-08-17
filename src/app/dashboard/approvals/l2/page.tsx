@@ -4,7 +4,11 @@ import { ApprovalList, type ApprovalBillRow } from "../approval-list";
 
 // Approvals (L2) — see ../actions.ts header comment. Lists every
 // bill_pass_register row already 'Approved L1' and waiting on final
-// second-level sign-off, scoped to the signed-in employee's companies.
+// second-level sign-off, scoped to the CURRENTLY SELECTED company
+// (top-nav switcher).
+// 2026-08-17 fix — same bug/fix as Party Ledger / Bill Payment: used to
+// scope to `employee.companyIds` (every accessible company) instead of
+// the one selected up top.
 export default async function ApprovalsL2Page() {
   const employee = await requireCapability("approve_level2");
   const supabase = createServiceRoleClient();
@@ -13,7 +17,7 @@ export default async function ApprovalsL2Page() {
     supabase
       .from("bill_pass_register")
       .select("id, company_id, invoice_no, vendor_invoice_no, invoice_type, party_id, total_amt, to_be_pay, prepared_by_employee_id, approved_l1_by, approved_l1_at, created_at")
-      .in("company_id", employee.companyIds)
+      .eq("company_id", employee.currentCompanyId)
       .eq("approval_status", "Approved L1")
       .order("approved_l1_at", { ascending: true }),
     supabase.from("companies").select("id, name"),
