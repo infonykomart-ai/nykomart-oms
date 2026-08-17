@@ -26,6 +26,18 @@ export default async function CrmOverviewPage({
 
   const today = todayIST();
 
+  // 2026-08-17 fix — same bug/fix as Party Ledger / Bill Payment /
+  // Statements: order-status counts, today's attendance, alerts and Quick
+  // Find used to scope to `employee.companyIds` (every company this login
+  // can access) instead of the currently selected company. "P&L by
+  // Company" (plByCompany) is left scoped to `companyIds` deliberately —
+  // it's a one-row-per-company COMPARISON table by design
+  // (`pl_dashboard_by_company_view` is `GROUP BY company`), so narrowing
+  // it to a single company would defeat the point of that specific
+  // widget. "P&L by Month" (plByMonth) has no company_id column at all —
+  // `pl_dashboard_by_month_view` aggregates `sale_profit_ledger` straight
+  // to month with no per-company breakdown in the view itself, so it
+  // can't be scoped without a schema/view change; flagged, not fixed here.
   const [
     { data: orderStatusRows },
     { data: attendanceRows },
@@ -34,16 +46,16 @@ export default async function CrmOverviewPage({
     { data: plByMonth },
     quickFindResult,
   ] = await Promise.all([
-    supabase.from("orders").select("status").in("company_id", employee.companyIds),
-    finSupabase.from("attendance").select("status").in("company_id", employee.companyIds).eq("attendance_date", today),
-    finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").in("company_id", employee.companyIds).limit(50),
+    supabase.from("orders").select("status").eq("company_id", employee.currentCompanyId),
+    finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
+    finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
     finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct").in("company_id", employee.companyIds),
     finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct").limit(24),
     query
       ? supabase
           .from("orders")
           .select("id, ref_no, company_id, buyer_name_address, contact_no, marketplace_order_no, status")
-          .in("company_id", employee.companyIds)
+          .eq("company_id", employee.currentCompanyId)
           .or(`ref_no.ilike.%${query}%,buyer_name_address.ilike.%${query}%,contact_no.ilike.%${query}%,marketplace_order_no.ilike.%${query}%`)
           .limit(20)
       : Promise.resolve({ data: [] as { id: string; ref_no: string; company_id: string; buyer_name_address: string | null; contact_no: string | null; marketplace_order_no: string | null; status: string }[] }),
