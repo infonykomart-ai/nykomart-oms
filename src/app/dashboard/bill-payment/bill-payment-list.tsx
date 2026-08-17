@@ -10,12 +10,22 @@
 // recordBulkBillPayment. The original single-row "Record Payment" inline
 // form is unchanged for the common one-bill-at-a-time case.
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { recordBillPayment, recordBulkBillPayment, type RecordPaymentState, type BulkPaymentState } from "./actions";
+import {
+  recordBillPayment,
+  recordBulkBillPayment,
+  updateBillPassRegisterEntry,
+  type RecordPaymentState,
+  type BulkPaymentState,
+  type EditBillState,
+} from "./actions";
+import { groupPartyOptions, type PartyOption } from "../documents/party-options";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
+const labelClass = "mb-0.5 block text-[11px] text-slate-400";
 const initialState: RecordPaymentState = { error: null, success: false };
 const initialBulkState: BulkPaymentState = { error: null, success: null };
+const initialEditState: EditBillState = { error: null, success: false };
 
 export type PayableBillRow = {
   id: string;
@@ -23,16 +33,22 @@ export type PayableBillRow = {
   invoice_no: string | null;
   vendor_invoice_no: string | null;
   invoice_type: string | null;
+  invoice_date: string | null;
+  invoice_recv_date: string | null;
+  party_id: string | null;
   party_name: string | null;
+  party_type: string | null;
+  source: string | null;
   due_date: string | null;
   total_amt: number;
   credit_note_amt: number;
   to_be_pay: number;
   total_paid: number;
   balance_due: number;
+  remark: string | null;
 };
 
-export function BillPaymentList({ bills }: { bills: PayableBillRow[] }) {
+export function BillPaymentList({ bills, parties }: { bills: PayableBillRow[]; parties: PartyOption[] }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [partyFilter, setPartyFilter] = useState("");
 
@@ -131,7 +147,7 @@ export function BillPaymentList({ bills }: { bills: PayableBillRow[] }) {
                 </tr>
               )}
               {bills.map((b) => (
-                <BillRow key={b.id} bill={b} checked={selected.has(b.id)} onToggle={() => toggle(b.id)} />
+                <BillRow key={b.id} bill={b} parties={parties} checked={selected.has(b.id)} onToggle={() => toggle(b.id)} />
               ))}
             </tbody>
           </table>
@@ -145,9 +161,21 @@ export function BillPaymentList({ bills }: { bills: PayableBillRow[] }) {
   );
 }
 
-function BillRow({ bill, checked, onToggle }: { bill: PayableBillRow; checked: boolean; onToggle: () => void }) {
+function BillRow({
+  bill,
+  parties,
+  checked,
+  onToggle,
+}: {
+  bill: PayableBillRow;
+  parties: PartyOption[];
+  checked: boolean;
+  onToggle: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [state, formAction, pending] = useActionState(recordBillPayment, initialState);
+  const [editState, editFormAction, editPending] = useActionState(updateBillPassRegisterEntry, initialEditState);
 
   useEffect(() => {
     if (state.success) {
@@ -156,7 +184,19 @@ function BillRow({ bill, checked, onToggle }: { bill: PayableBillRow; checked: b
     }
   }, [state.success]);
 
+  useEffect(() => {
+    if (editState.success) {
+      const t = setTimeout(() => setEditOpen(false), 1200);
+      return () => clearTimeout(t);
+    }
+  }, [editState.success]);
+
   const overdue = bill.due_date && new Date(bill.due_date) < new Date();
+  // 2026-08-17: only manually-entered/imported rows (source IS NULL) are
+  // safe to edit directly here — see actions.ts's comment on
+  // updateBillPassRegisterEntry for why auto-mirrored rows aren't.
+  const editable = !bill.source;
+  const partyGroups = groupPartyOptions(parties);
 
   return (
     <>
@@ -174,12 +214,89 @@ function BillRow({ bill, checked, onToggle }: { bill: PayableBillRow; checked: b
         <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{bill.to_be_pay.toFixed(2)}</td>
         <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{bill.total_paid.toFixed(2)}</td>
         <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{bill.balance_due.toFixed(2)}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-right">
+        <td className="whitespace-nowrap px-3 py-2 text-right space-x-2">
+          {editable ? (
+            <button type="button" onClick={() => setEditOpen((v) => !v)} className="text-xs font-semibold text-slate-600 hover:underline">
+              {editOpen ? "Cancel" : "✏️ Edit"}
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-400" title={`Auto-linked from ${bill.source?.replace("_", " ")} — edit it there`}>
+              (auto-linked)
+            </span>
+          )}
           <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs font-semibold text-amber-600 hover:underline">
             {open ? "Cancel" : "Record Payment"}
           </button>
         </td>
       </tr>
+      {editOpen && editable && (
+        <tr>
+          <td colSpan={10} className="bg-indigo-50 px-3 py-3">
+            <form action={editFormAction} className="space-y-2">
+              <input type="hidden" name="bill_pass_register_id" value={bill.id} />
+              {editState.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{editState.error}</p>}
+              {editState.success && <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">✓ Bill updated.</p>}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div>
+                  <label className={labelClass}>Invoice No.</label>
+                  <input name="invoice_no" defaultValue={bill.invoice_no ?? ""} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Vendor Invoice No.</label>
+                  <input name="vendor_invoice_no" defaultValue={bill.vendor_invoice_no ?? ""} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Invoice Date</label>
+                  <input name="invoice_date" type="date" defaultValue={bill.invoice_date ?? ""} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Invoice Recv. Date</label>
+                  <input name="invoice_recv_date" type="date" defaultValue={bill.invoice_recv_date ?? ""} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Party</label>
+                  <select name="party_id" defaultValue={bill.party_id ?? ""} className={inputClass}>
+                    <option value="">— No party —</option>
+                    {partyGroups.map((g) => (
+                      <optgroup key={g.label} label={g.label}>
+                        {g.parties.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Party Type</label>
+                  <input name="party_type" defaultValue={bill.party_type ?? ""} placeholder="Purchase / Courier / ..." className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Total Amt *</label>
+                  <input name="total_amt" type="number" step="0.01" required defaultValue={bill.total_amt} className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Credit Note Amt</label>
+                  <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} className={inputClass} />
+                </div>
+              </div>
+              <div>
+                <label className={labelClass}>Remark</label>
+                <input name="remark" defaultValue={bill.remark ?? ""} className={inputClass} />
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Total Paid isn&apos;t editable here — it&apos;s tracked only through Record Payment above, so it never drifts from the payment ledger.
+              </p>
+              <button
+                type="submit"
+                disabled={editPending}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {editPending ? "Saving..." : "Save Changes"}
+              </button>
+            </form>
+          </td>
+        </tr>
+      )}
       {open && (
         <tr>
           <td colSpan={10} className="bg-slate-50 px-3 py-3">

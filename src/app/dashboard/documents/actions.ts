@@ -1103,15 +1103,12 @@ export async function saveFreightBill(_prev: DocFormState, formData: FormData): 
 }
 
 /**
- * 2026-08-17: "purane bills me edit option bana do" — Courier/Duty Bills are
- * otherwise header create+delete only (no general edit), but vendor/party
- * linkage is the one field that genuinely needs a way to be set AFTER
- * creation: it didn't exist as a column until this same round, so every
- * bill created before now needs this to ever show up in a Party Ledger.
- * Also syncs bill_pass_register.party_id if this bill was already "Sent to
- * Finance" before a vendor was selected — otherwise setting the vendor here
- * would fix the bill but the already-posted Finance ledger entry would stay
- * orphaned from any party forever.
+ * 2026-08-17 (round 1): "purane bills me edit option bana do" — narrowly
+ * scoped to vendor/party at the time, since that was the one brand-new
+ * column with no way to backfill it. Superseded by updateFreightBillDetails
+ * below (2026-08-17 round 2 — "SABHI PARKAR KE BILL" edit option), which
+ * covers this plus every other field. Left in place, unused, rather than
+ * deleted — no functional reason to remove a working action.
  */
 export async function updateFreightBillVendor(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
   await requireCapability("doc_entry");
@@ -1125,6 +1122,67 @@ export async function updateFreightBillVendor(_prev: SimpleResult, formData: For
   if (error) return { error: error.message, success: false };
 
   await supabase.from("bill_pass_register").update({ party_id: vendorPartyId }).eq("source", "freight_bill").eq("source_id", freightBillId);
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+/**
+ * 2026-08-17 (round 2): "SABHI PARKAR KE BILL" ke liye update option chahiye
+ * — Courier Bill ka full header edit (invoice no/date, weight, freight/fuel/
+ * other charges, whole-bill credit note, vendor) — sirf vendor tak simit
+ * nahi. total_amt/gst_18pct_amt/gross_total_amt STORED generated columns
+ * hain (freight_amt+fuel_amt+other_charges se), isliye wo khud recalculate
+ * ho jate hain — unhe direct set nahi kiya ja sakta aur karne ki zaroorat
+ * bhi nahi.
+ *
+ * Agar ye bill pehle se "Sent to Bill Pass Register" ho chuka hai, to
+ * invoice_no/invoice_date bill_pass_register ke mirror row (source=
+ * 'freight_bill') me bhi sync karte hain — vendor sync (updateFreightBillVendor)
+ * jaisa hi pattern, taaki edit karne ke baad Finance ledger wala row purana
+ * (stale) invoice no/date na dikhaye. total_amt jaan-bujhkar NAHI chhedte —
+ * wo "Send to Finance" ke time par ek insaan ne review karke set kiya tha
+ * (credit note wagera adjust karke), aur bill ke raw total se alag ho sakta
+ * hai jaan-bujhkar — usi tarah jaise total_paid ko is session me payment-
+ * reconciliation kaam me jaan-bujhkar nahi chheda (already-reviewed numbers
+ * ko silently overwrite karna galat data bana sakta hai).
+ */
+export async function updateFreightBillDetails(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const freightBillId = str(formData, "freight_bill_id");
+  if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
+  const invoiceNo = str(formData, "invoice_no");
+  if (!invoiceNo) return { error: "Invoice No. is required.", success: false };
+  const invoiceDate = strOrNull(formData, "invoice_date");
+  const vendorPartyId = strOrNull(formData, "vendor_party_id");
+
+  const { error } = await supabase
+    .from("freight_bills")
+    .update({
+      invoice_no: invoiceNo,
+      invoice_date: invoiceDate,
+      bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
+      freight_amt: numOrZero(formData, "freight_amt"),
+      fuel_amt: numOrZero(formData, "fuel_amt"),
+      other_charges: numOrZero(formData, "other_charges"),
+      credit_note_no: strOrNull(formData, "credit_note_no"),
+      credit_note_date: strOrNull(formData, "credit_note_date"),
+      credit_note_amt: numOrZero(formData, "credit_note_amt"),
+      vendor_party_id: vendorPartyId,
+    })
+    .eq("id", freightBillId);
+  if (error) {
+    const msg = error.message.includes("duplicate key") ? "A Courier Bill with that Invoice No. already exists." : error.message;
+    return { error: msg, success: false };
+  }
+
+  await supabase
+    .from("bill_pass_register")
+    .update({ party_id: vendorPartyId, vendor_invoice_no: invoiceNo, invoice_date: invoiceDate, invoice_recv_date: invoiceDate })
+    .eq("source", "freight_bill")
+    .eq("source_id", freightBillId);
 
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
@@ -1425,7 +1483,11 @@ export async function saveDutyBill(_prev: DocFormState, formData: FormData): Pro
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
 }
 
-/** 2026-08-17: same "purane bills me edit option" as updateFreightBillVendor above. */
+/**
+ * 2026-08-17 (round 1): same narrowly-scoped "purane bills me edit option"
+ * as updateFreightBillVendor above. Superseded by updateDutyBillDetails
+ * below (round 2 — "SABHI PARKAR KE BILL"); left in place, unused.
+ */
 export async function updateDutyBillVendor(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
   await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
@@ -1438,6 +1500,57 @@ export async function updateDutyBillVendor(_prev: SimpleResult, formData: FormDa
   if (error) return { error: error.message, success: false };
 
   await supabase.from("bill_pass_register").update({ party_id: vendorPartyId }).eq("source", "duty_tax_bill").eq("source_id", dutyTaxBillId);
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+/**
+ * 2026-08-17 (round 2): full Duty & Tax Bill header edit — same reasoning
+ * and same total_payable_amt-not-touched-on-mirror caveat as
+ * updateFreightBillDetails above (gross_total_amt IS a generated column
+ * here so it recalculates itself; total_payable_amt is NOT generated —
+ * schema.sql notes real bills don't reconcile to one clean formula — so it
+ * stays a plain editable field, same as at creation).
+ */
+export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const dutyTaxBillId = str(formData, "duty_tax_bill_id");
+  if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
+  const invoiceNo = str(formData, "invoice_no");
+  if (!invoiceNo) return { error: "Invoice No. is required.", success: false };
+  const invoiceDate = strOrNull(formData, "invoice_date");
+  const vendorPartyId = strOrNull(formData, "vendor_party_id");
+
+  const { error } = await supabase
+    .from("duty_tax_bills")
+    .update({
+      invoice_no: invoiceNo,
+      invoice_date: invoiceDate,
+      duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
+      duty_tax_amt_inr: numOrZero(formData, "duty_tax_amt_inr"),
+      gst_18pct_amt: numOrZero(formData, "gst_18pct_amt"),
+      credit_note_no: strOrNull(formData, "credit_note_no"),
+      credit_note_date: strOrNull(formData, "credit_note_date"),
+      credit_note_amt: numOrZero(formData, "credit_note_amt"),
+      disbursement_fee: numOrZero(formData, "disbursement_fee"),
+      courier_duty_charges_adj: numOrZero(formData, "courier_duty_charges_adj"),
+      total_payable_amt: numOrNull(formData, "total_payable_amt"),
+      vendor_party_id: vendorPartyId,
+    })
+    .eq("id", dutyTaxBillId);
+  if (error) {
+    const msg = error.message.includes("duplicate key") ? "A Duty & Tax Bill with that Invoice No. already exists." : error.message;
+    return { error: msg, success: false };
+  }
+
+  await supabase
+    .from("bill_pass_register")
+    .update({ party_id: vendorPartyId, vendor_invoice_no: invoiceNo, invoice_date: invoiceDate, invoice_recv_date: invoiceDate })
+    .eq("source", "duty_tax_bill")
+    .eq("source_id", dutyTaxBillId);
 
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };

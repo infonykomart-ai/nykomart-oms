@@ -12,7 +12,7 @@ import {
   updateFreightAwbAssignmentNotes,
   sendFreightBillToFinance,
   sendDutyBillToFinance,
-  updateFreightBillVendor,
+  updateFreightBillDetails,
   type DocFormState,
   type ReconciliationLookup,
   type SimpleResult,
@@ -181,18 +181,18 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
   const [expanded, setExpanded] = useState(false);
   const [bulkMode, setBulkMode] = useState(false);
   const [financeMode, setFinanceMode] = useState(false);
-  const [vendorMode, setVendorMode] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [vendorState, vendorAction, vendorPending] = useActionState(updateFreightBillVendor, initialSimple);
+  const [editState, editAction, editPending] = useActionState(updateFreightBillDetails, initialSimple);
   const partyGroups = groupPartyOptions(parties);
 
   useEffect(() => {
-    if (vendorState.success) {
+    if (editState.success) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setVendorMode(false);
+      setEditMode(false);
     }
-  }, [vendorState.success]);
+  }, [editState.success]);
 
   function handleDeleteBill() {
     if (!window.confirm(`Delete Courier Bill "${bill.invoice_no}"? This cannot be undone.`)) return;
@@ -246,10 +246,10 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
           </button>
           <button
             type="button"
-            onClick={() => setVendorMode((v) => !v)}
+            onClick={() => setEditMode((v) => !v)}
             className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
           >
-            ✏️ {bill.vendor_name ? "Change" : "Set"} Vendor
+            ✏️ Edit Bill
           </button>
           {!bill.sentToFinance && (
             <button
@@ -271,12 +271,12 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
         </div>
       </div>
 
-      {vendorMode && (
-        <form action={vendorAction} className="mt-2 flex items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      {editMode && (
+        <form action={editAction} className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
           <input type="hidden" name="freight_bill_id" value={bill.id} />
-          <div className="flex-1">
+          {editState.error && <p className="rounded bg-red-50 px-2 py-1.5 text-red-800">{editState.error}</p>}
+          <div>
             <label className={labelClass}>Vendor / Courier Party</label>
-            {vendorState.error && <p className="mb-1 rounded bg-red-50 px-2 py-1 text-red-800">{vendorState.error}</p>}
             <select name="vendor_party_id" defaultValue={bill.vendor_party_id ?? ""} className={inputClass}>
               <option value="">— Not linked to a party —</option>
               {partyGroups.map((g) => (
@@ -288,12 +288,52 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
               ))}
             </select>
           </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div>
+              <label className={labelClass}>Invoice No. *</label>
+              <input name="invoice_no" required defaultValue={bill.invoice_no} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Invoice Date</label>
+              <input name="invoice_date" type="date" defaultValue={bill.invoice_date ?? ""} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Bill Weight (kg)</label>
+              <input name="bill_weight_kg" type="number" step="0.01" defaultValue={bill.bill_weight_kg ?? ""} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Freight Amt</label>
+              <input name="freight_amt" type="number" step="0.01" defaultValue={bill.freight_amt} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Fuel Amt</label>
+              <input name="fuel_amt" type="number" step="0.01" defaultValue={bill.fuel_amt} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Other Charges</label>
+              <input name="other_charges" type="number" step="0.01" defaultValue={bill.other_charges} className={inputClass} />
+            </div>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+            <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
+            <div className="grid grid-cols-3 gap-2">
+              <input name="credit_note_no" defaultValue={bill.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+              <input name="credit_note_date" type="date" defaultValue={bill.credit_note_date ?? ""} className={inputClass} />
+              <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} placeholder="Amt" className={inputClass} />
+            </div>
+          </div>
+          {bill.sentToFinance && (
+            <p className="text-[11px] text-slate-400">
+              This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
+              reviewed when it was sent (not auto-recalculated).
+            </p>
+          )}
           <button
             type="submit"
-            disabled={vendorPending}
-            className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+            disabled={editPending}
+            className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
           >
-            {vendorPending ? "Saving..." : "Save"}
+            {editPending ? "Saving..." : "Save Changes"}
           </button>
         </form>
       )}

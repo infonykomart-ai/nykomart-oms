@@ -10,7 +10,7 @@ import {
   lookupOrderForReconciliation,
   bulkAssignDutyAwbs,
   updateDutyAwbAssignmentNotes,
-  updateDutyBillVendor,
+  updateDutyBillDetails,
   type DocFormState,
   type ReconciliationLookup,
   type SimpleResult,
@@ -64,9 +64,10 @@ export type DutyBillRow = {
 };
 
 // Duty & Tax Bill (duty_tax_bills) — exact mirror of Courier Bill's shape:
-// invoice-level header covering many AWBs/orders, header create + delete
-// only (no edit), assignments create + delete only. See
-// freight-bill-section.tsx and actions.ts's header comment for the "why".
+// invoice-level header covering many AWBs/orders. Header now supports full
+// edit (2026-08-17 round 2 — "SABHI PARKAR KE BILL"), assignments stay
+// create + delete only. See freight-bill-section.tsx and actions.ts's
+// header comment for the "why".
 export function DutyBillSection({
   bills,
   companies,
@@ -192,18 +193,18 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
   const [expanded, setExpanded] = useState(false);
   const [bulkMode, setBulkMode] = useState(false);
   const [financeMode, setFinanceMode] = useState(false);
-  const [vendorMode, setVendorMode] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [vendorState, vendorAction, vendorPending] = useActionState(updateDutyBillVendor, initialSimple);
+  const [editState, editAction, editPending] = useActionState(updateDutyBillDetails, initialSimple);
   const partyGroups = groupPartyOptions(parties);
 
   useEffect(() => {
-    if (vendorState.success) {
+    if (editState.success) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setVendorMode(false);
+      setEditMode(false);
     }
-  }, [vendorState.success]);
+  }, [editState.success]);
 
   function handleDeleteBill() {
     if (!window.confirm(`Delete Duty & Tax Bill "${bill.invoice_no}"? This cannot be undone.`)) return;
@@ -258,10 +259,10 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
           </button>
           <button
             type="button"
-            onClick={() => setVendorMode((v) => !v)}
+            onClick={() => setEditMode((v) => !v)}
             className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
           >
-            ✏️ {bill.vendor_name ? "Change" : "Set"} Vendor
+            ✏️ Edit Bill
           </button>
           {!bill.sentToFinance && (
             <button
@@ -283,12 +284,12 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
         </div>
       </div>
 
-      {vendorMode && (
-        <form action={vendorAction} className="mt-2 flex items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      {editMode && (
+        <form action={editAction} className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
           <input type="hidden" name="duty_tax_bill_id" value={bill.id} />
-          <div className="flex-1">
+          {editState.error && <p className="rounded bg-red-50 px-2 py-1.5 text-red-800">{editState.error}</p>}
+          <div>
             <label className={labelClass}>Vendor / Courier Party</label>
-            {vendorState.error && <p className="mb-1 rounded bg-red-50 px-2 py-1 text-red-800">{vendorState.error}</p>}
             <select name="vendor_party_id" defaultValue={bill.vendor_party_id ?? ""} className={inputClass}>
               <option value="">— Not linked to a party —</option>
               {partyGroups.map((g) => (
@@ -300,12 +301,56 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
               ))}
             </select>
           </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div>
+              <label className={labelClass}>Invoice No. *</label>
+              <input name="invoice_no" required defaultValue={bill.invoice_no} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Invoice Date</label>
+              <input name="invoice_date" type="date" defaultValue={bill.invoice_date ?? ""} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Duty/Tax Amt (USD)</label>
+              <input name="duty_tax_amt_usd" type="number" step="0.01" defaultValue={bill.duty_tax_amt_usd ?? ""} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Duty/Tax Amt (INR)</label>
+              <input name="duty_tax_amt_inr" type="number" step="0.01" defaultValue={bill.duty_tax_amt_inr} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>GST @18% Amt</label>
+              <input name="gst_18pct_amt" type="number" step="0.01" defaultValue={bill.gst_18pct_amt} className={inputClass} />
+            </div>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+            <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
+            <div className="grid grid-cols-3 gap-2">
+              <input name="credit_note_no" defaultValue={bill.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+              <input name="credit_note_date" type="date" defaultValue={bill.credit_note_date ?? ""} className={inputClass} />
+              <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} placeholder="Amt" className={inputClass} />
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-2">
+            <div className="mb-1 text-[11px] font-medium text-slate-600">Bottom Summary (off the physical bill)</div>
+            <div className="grid grid-cols-3 gap-2">
+              <input name="disbursement_fee" type="number" step="0.01" defaultValue={bill.disbursement_fee} placeholder="Disbursement Fee" className={inputClass} />
+              <input name="courier_duty_charges_adj" type="number" step="0.01" defaultValue={bill.courier_duty_charges_adj} placeholder="Duty Charges (adj.)" className={inputClass} />
+              <input name="total_payable_amt" type="number" step="0.01" defaultValue={bill.total_payable_amt ?? ""} placeholder="Total Payable Amt" className={inputClass} />
+            </div>
+          </div>
+          {bill.sentToFinance && (
+            <p className="text-[11px] text-slate-400">
+              This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
+              reviewed when it was sent (not auto-recalculated).
+            </p>
+          )}
           <button
             type="submit"
-            disabled={vendorPending}
-            className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
+            disabled={editPending}
+            className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
           >
-            {vendorPending ? "Saving..." : "Save"}
+            {editPending ? "Saving..." : "Save Changes"}
           </button>
         </form>
       )}

@@ -183,3 +183,72 @@ export async function recordBulkBillPayment(_prev: BulkPaymentState, formData: F
   revalidatePath("/dashboard/bill-payment");
   return { error: null, success: { results } };
 }
+
+// -----------------------------------------------------------------------
+// Edit a Bill Pass Register entry — 2026-08-17. "SABHI PARKAR KE BILL"
+// (all bill types) needed an update option; Bill Pass Register had none at
+// all before this (only "record a payment"). Deliberately restricted to
+// rows where source IS NULL — i.e. manually typed in, or imported (like
+// today's NYKO-PNB/RUGARA-PNB bank-ledger import), directly on this table.
+// Rows with source = 'purchase_bill' / 'freight_bill' / 'duty_tax_bill' /
+// 'salary_payment' / 'employee_advance' are auto-mirrored FROM another
+// table (see schema.sql's comment on bill_pass_register.source) — editing
+// the mirror here instead of the real source row would desync the two, so
+// those should be edited at their source (Purchase Bill already has an
+// edit form; Courier/Duty Bill now do too, as of this same round).
+// total_paid is intentionally not editable here either — it's tracked only
+// through the payment ledger above (recordBillPayment/recordBulkBillPayment),
+// same reasoning as the payment-import SQL generated earlier today: never
+// let a hand-typed number silently overwrite what the itemized ledger says.
+// -----------------------------------------------------------------------
+
+export type EditBillState = { error: string | null; success: boolean };
+
+export async function updateBillPassRegisterEntry(_prev: EditBillState, formData: FormData): Promise<EditBillState> {
+  const employee = await requireCapability("bill_payment");
+  const supabase = createServiceRoleClient();
+
+  const billId = str(formData, "bill_pass_register_id");
+  if (!billId) return { error: "Bill not specified.", success: false };
+
+  const { data: bill, error: billError } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, source")
+    .eq("id", billId)
+    .single();
+  if (billError || !bill) return { error: "Bill not found.", success: false };
+  if (!employee.companyIds.includes(bill.company_id)) {
+    return { error: "You don't have access to this bill's company.", success: false };
+  }
+  if (bill.source) {
+    return {
+      error: `This entry was auto-created from a ${bill.source.replace("_", " ")} — edit it there instead, not here (keeps the two in sync).`,
+      success: false,
+    };
+  }
+
+  const totalAmtStr = str(formData, "total_amt");
+  const totalAmt = Number(totalAmtStr);
+  if (!totalAmtStr || !Number.isFinite(totalAmt) || totalAmt < 0) {
+    return { error: "Total Amt must be a non-negative number.", success: false };
+  }
+
+  const { error } = await supabase
+    .from("bill_pass_register")
+    .update({
+      invoice_no: strOrNull(formData, "invoice_no"),
+      vendor_invoice_no: strOrNull(formData, "vendor_invoice_no"),
+      invoice_date: strOrNull(formData, "invoice_date"),
+      invoice_recv_date: strOrNull(formData, "invoice_recv_date"),
+      total_amt: totalAmt,
+      credit_note_amt: Number(str(formData, "credit_note_amt")) || 0,
+      party_id: strOrNull(formData, "party_id"),
+      party_type: strOrNull(formData, "party_type"),
+      remark: strOrNull(formData, "remark"),
+    })
+    .eq("id", billId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/bill-payment");
+  return { error: null, success: true };
+}

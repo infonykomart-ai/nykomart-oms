@@ -19,12 +19,14 @@ export default async function BillPaymentPage() {
   const [{ data: bills }, { data: companies }, { data: parties }] = await Promise.all([
     supabase
       .from("bill_pass_register")
-      .select("id, company_id, invoice_no, vendor_invoice_no, invoice_type, party_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due")
+      .select(
+        "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
+      )
       .eq("company_id", employee.currentCompanyId)
       .gt("balance_due", 0)
       .order("due_date", { ascending: true, nullsFirst: false }),
     supabase.from("companies").select("id, name"),
-    supabase.from("parties").select("id, name"),
+    supabase.from("parties").select("id, name, party_type, invoice_type"),
   ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
@@ -36,13 +38,24 @@ export default async function BillPaymentPage() {
     invoice_no: b.invoice_no,
     vendor_invoice_no: b.vendor_invoice_no,
     invoice_type: b.invoice_type,
+    invoice_date: b.invoice_date,
+    invoice_recv_date: b.invoice_recv_date,
+    party_id: b.party_id,
     party_name: b.party_id ? partyName.get(b.party_id) ?? null : null,
+    party_type: b.party_type,
+    // 2026-08-17: null = manually entered/imported straight onto this
+    // table — editable here. Non-null means it was auto-mirrored FROM a
+    // Purchase Bill / Courier Bill / Duty & Tax Bill / Salary / Advance
+    // row, so editing belongs at that source instead (see actions.ts's
+    // comment on updateBillPassRegisterEntry).
+    source: b.source,
     due_date: b.due_date,
     total_amt: Number(b.total_amt),
     credit_note_amt: Number(b.credit_note_amt),
     to_be_pay: Number(b.to_be_pay),
     total_paid: Number(b.total_paid),
     balance_due: Number(b.balance_due),
+    remark: b.remark,
   }));
 
   const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);
@@ -57,7 +70,7 @@ export default async function BillPaymentPage() {
         </p>
       </div>
 
-      <BillPaymentList bills={rows} />
+      <BillPaymentList bills={rows} parties={parties ?? []} />
     </div>
   );
 }
