@@ -45,12 +45,24 @@ async function PartyLedgerInner({ id }: { id: string }) {
       "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
     )
     .eq("party_id", id)
-    .in("company_id", employee.companyIds)
+    .eq("company_id", employee.currentCompanyId)
     .order("invoice_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 
+  // 2026-08-17 fix — "RUGARA ME RUG ARA KI SUMMERY DIKHNI CHAHIYE NYKO MART
+  // ME KYU AARI HAI": `parties` is deliberately NOT company-scoped (one
+  // party can have bills against more than one company, e.g. a courier or
+  // "Prachi Rugs" appearing in both the Nyko Mart and Rug Ara historical
+  // imports) — so this page must filter bill_pass_register down to
+  // `employee.currentCompanyId` (the company picked in the top-nav
+  // switcher), NOT `employee.companyIds` (every company this login can
+  // access). The old `.in(..., companyIds)` leaked another company's bills
+  // for the same party into whichever company happened to be selected —
+  // matches the pattern every other per-company page in this app already
+  // uses (orders/new, shipglobal, attendance, etc.).
   const { data: companies } = await supabase.from("companies").select("id, name");
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const currentCompanyName = companyName.get(employee.currentCompanyId) ?? "—";
 
   const billIds = (entriesRaw ?? []).map((e) => e.id);
   const { data: paymentsRaw } = billIds.length
@@ -128,6 +140,7 @@ async function PartyLedgerInner({ id }: { id: string }) {
             <div>
               <h1 className="text-lg font-bold text-slate-900">Party Ledger</h1>
               <p className="text-slate-500">{party.name}{party.party_type ? ` · ${party.party_type}` : ""}</p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-400">{currentCompanyName}</p>
             </div>
             <div className="text-right text-slate-600">
               <p>Total Billed ₹{totalBilled.toFixed(2)} − Credit Notes ₹{totalCredited.toFixed(2)}</p>
