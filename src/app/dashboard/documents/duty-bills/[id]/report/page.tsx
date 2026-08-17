@@ -159,7 +159,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.sr} className="border-b border-slate-100">
+                <tr key={r.sr} className="border-b border-slate-100 text-slate-700">
                   <td className="py-1 pr-2">{r.sr}</td>
                   <td className="py-1 pr-2 font-medium text-slate-900">{r.refNo}</td>
                   <td className="py-1 pr-2">{r.category}</td>
