@@ -69,11 +69,23 @@ async function DocumentsPageInner() {
     supabase.from("parties").select("id, name, invoice_type, party_type").order("name"),
     supabase.from("stores").select("id, name, company_id").order("name"),
     supabase.from("currencies").select("code, name").order("code"),
+    // 2026-08-17 fix — same bug/fix as Party Ledger / Bill Payment: these 5
+    // "Recent" lists had NO company filter at all (worse than the
+    // companyIds bug — RLS here is USING (true), so app-level filtering is
+    // the only boundary), meaning every employee with doc_entry access saw
+    // every company's Credit Notes / Debit Notes / Washing Entries /
+    // Internal Invoices / Purchase Bills mixed together regardless of the
+    // top-nav company switcher. Now scoped to employee.currentCompanyId,
+    // matching every other doc type on this page and every other fixed
+    // "Recent" list elsewhere in the app. (freight_bills / duty_tax_bills /
+    // csb_filings genuinely have no company_id column — those registers
+    // are standalone by design, see db/schema.sql — so they're unchanged.)
     supabase
       .from("credit_notes")
       .select(
         "id, cn_no, company_id, store_id, credit_note_date, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, remark"
       )
+      .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
@@ -81,21 +93,31 @@ async function DocumentsPageInner() {
       .select(
         "id, debit_note_no, debit_note_date, company_id, party_id, against_invoice_bill_no, particulars, bill_no, bill_date, sq_ft, qty, rate, debit_amount, remark"
       )
+      .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
       .from("washing_entries")
       .select("id, chalan_no, chalan_date, company_id, party_id, store_id, item_size, pcs, sq_mtr_ft, rate, debit_charges, amount")
+      .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
       .from("internal_invoices")
       .select("id, invoice_no, invoice_date, from_company_id, to_company_id, description, qty, rate, remark, total_amount")
+      // company_id on this table is set to from_company_id by its own
+      // insert trigger (db/schema.sql) — "invoices issued BY the currently
+      // selected company", the natural match for a per-company Doc Entry
+      // recent list.
+      .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
       .from("purchase_bills")
-      .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, work_description, unit_rate, total_amount")
+      .select(
+        "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, work_description, unit_rate, total_amount"
+      )
+      .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
@@ -121,11 +143,14 @@ async function DocumentsPageInner() {
       .limit(8),
     // 2026-08-17 — Shipment Handover Chalan (see actions.ts's
     // createShipmentHandoverChalan): "AAJ FEDEX 5 SHIPMENT DI TO USKA BHI
-    // CHALAN KATE". company_id scoped like every other doc type here.
+    // CHALAN KATE". Scoped to the CURRENTLY SELECTED company (not every
+    // company the login can access) — same currentCompanyId fix as the 5
+    // lists above, applied here from the start since this table is also
+    // new this session.
     supabase
       .from("shipment_handover_chalans")
       .select("id, chalan_no, chalan_date, company_id, courier_party_id, remark")
-      .in("company_id", employee.companyIds)
+      .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
   ]);
