@@ -14,7 +14,12 @@ export default async function InventoryPage() {
   const supabase = await createClient();
 
   const [{ data: stock }, { data: movements }, { data: itemCategories }] = await Promise.all([
-    supabase.from("finished_stock").select("id, item_category_id, sku_label, size_label, qty, updated_at").order("updated_at", { ascending: false }),
+    // 2026-08-18 perf fix — no limit here before; naturally bounded today
+    // by (item_category_id, sku_label, size_label) cardinality (the unique
+    // key), not by order volume, so this isn't urgent, but flagged in the
+    // 2026-08-17 perf audit as worth capping defensively rather than
+    // relying on that staying true forever.
+    supabase.from("finished_stock").select("id, item_category_id, sku_label, size_label, qty, updated_at").order("updated_at", { ascending: false }).limit(1000),
     supabase
       .from("finished_stock_movements")
       .select("id, item_category_id, sku_label, size_label, qty_change, reason, order_id, created_at")

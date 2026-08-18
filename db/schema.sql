@@ -1607,6 +1607,14 @@ CREATE INDEX idx_bill_pass_party    ON bill_pass_register(party_id);
 CREATE INDEX idx_bill_pass_employee ON bill_pass_register(employee_id);
 CREATE INDEX idx_bill_pass_approval_status ON bill_pass_register(approval_status);
 
+-- 2026-08-18 perf fix — bill-payment/page.tsx's main query is
+-- `.eq(company_id).gt(balance_due, 0).order(due_date)`; idx_bill_pass_company
+-- above covers the company_id half but Postgres still has to sort every
+-- matching row by due_date and filter balance_due in-memory. A partial
+-- index matching this exact WHERE clause lets it satisfy the whole query
+-- (filter + sort) from the index alone. See db/2026-08-18-bill-pass-due-date-index.sql.
+CREATE INDEX idx_bill_pass_company_due_date ON bill_pass_register(company_id, due_date) WHERE balance_due > 0;
+
 -- 2026-08-12 (round 11): payment ledger backing the "Bill Payment"
 -- dashboard tile — bill_pass_register.total_paid (above) is recomputed as
 -- SUM(amount) over this table on every insert (see
