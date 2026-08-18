@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { sendMessage, markConversationRead, deleteMessage, type DirectMessage } from "./actions";
+import { useOnlineEmployeeIds } from "@/components/presence/presence-context";
 
 type EmployeeOption = { id: string; name: string; photo_url: string | null; role_name: string; company_name: string };
 
@@ -26,13 +27,28 @@ function initialsOf(name: string): string {
 // initials otherwise. Shared by the sidebar list rows and the thread header.
 // Fixed h-9 w-9 size (Tailwind classes must be static, literal strings for
 // its build-time scan to pick them up — no dynamic `h-${n}` interpolation).
-function Avatar({ name, photoUrl }: { name: string; photoUrl: string | null }) {
-  return photoUrl ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={photoUrl} alt={name} className="h-9 w-9 shrink-0 rounded-full object-cover" />
-  ) : (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-      {initialsOf(name)}
+// 2026-08-18 — "kon kon online hai... instagram facebook par bubble aata
+// hai vese dikhao": a small green dot, bottom-right of the avatar, when
+// this employee's browser is currently tracked on the shared presence
+// channel (see presence-context.tsx). `online` is optional so Avatar keeps
+// working anywhere it's used without the dot (e.g. if reused elsewhere).
+function Avatar({ name, photoUrl, online }: { name: string; photoUrl: string | null; online?: boolean }) {
+  return (
+    <div className="relative h-9 w-9 shrink-0">
+      {photoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={photoUrl} alt={name} className="h-9 w-9 rounded-full object-cover" />
+      ) : (
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+          {initialsOf(name)}
+        </div>
+      )}
+      {online && (
+        <span
+          title="Online"
+          className="absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-green-500"
+        />
+      )}
     </div>
   );
 }
@@ -72,6 +88,7 @@ export function MessagesClient({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const supabase = useMemo(() => createClient(), []);
+  const onlineIds = useOnlineEmployeeIds();
 
   // Conversation summary per counterpart: last message + unread count.
   const conversationByEmployeeId = useMemo(() => {
@@ -231,7 +248,7 @@ export function MessagesClient({
                 onClick={() => setSelectedId(e.id)}
                 className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition ${active ? "bg-amber-50" : "hover:bg-slate-50"}`}
               >
-                <Avatar name={e.name} photoUrl={e.photo_url} />
+                <Avatar name={e.name} photoUrl={e.photo_url} online={onlineIds.has(e.id)} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium text-slate-800">{e.name}</span>
@@ -258,11 +275,17 @@ export function MessagesClient({
         {selectedEmployee ? (
           <>
             <div className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-3">
-              <Avatar name={selectedEmployee.name} photoUrl={selectedEmployee.photo_url} />
+              <Avatar name={selectedEmployee.name} photoUrl={selectedEmployee.photo_url} online={onlineIds.has(selectedEmployee.id)} />
               <div>
                 <div className="text-sm font-semibold text-slate-800">{selectedEmployee.name}</div>
                 <div className="text-xs text-slate-400">
-                  {selectedEmployee.role_name} · {selectedEmployee.company_name}
+                  {onlineIds.has(selectedEmployee.id) ? (
+                    <span className="text-green-600">● Online</span>
+                  ) : (
+                    <>
+                      {selectedEmployee.role_name} · {selectedEmployee.company_name}
+                    </>
+                  )}
                 </div>
               </div>
             </div>

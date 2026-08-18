@@ -9,6 +9,8 @@ import { TodaysCelebrationsBanner } from "@/components/celebration/todays-celebr
 import { getTodaysCelebrations } from "@/lib/celebration/today";
 import { HelpCenterProvider } from "@/components/help-center/help-center-provider";
 import { getHelpArticles } from "@/lib/help-center/get-articles";
+import { PresenceProvider } from "@/components/presence/presence-context";
+import { MessageToastProvider } from "@/components/messages/message-toast-provider";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   let employee;
@@ -46,7 +48,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // enough to run on every dashboard page load, unlike a full reorder-
   // alert-style computation would be.
   const bprClient = createServiceRoleClient();
-  const [helpArticles, { count: unreadMessageCount }, { count: pendingL1Count }, { count: pendingL2Count }, { count: overdueBillsCount }] =
+  const [helpArticles, { count: unreadMessageCount }, { data: messagingEmployees }, { count: pendingL1Count }, { count: pendingL2Count }, { count: overdueBillsCount }] =
     await Promise.all([
       getHelpArticles(),
       createServiceRoleClient()
@@ -54,6 +56,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         .select("id", { count: "exact", head: true })
         .eq("recipient_employee_id", employee.id)
         .is("read_at", null),
+      // 2026-08-18 — id/name/photo_url for every active employee, so the
+      // new message "bubble" toast (fired from a layout-level, app-wide
+      // subscription — see message-toast-provider.tsx) can show the
+      // sender's name/photo without a per-toast lookup. Small table
+      // (headcount-sized), cheap alongside the other layout queries above.
+      bprClient.from("employees").select("id, name, photo_url").eq("active", true),
       employee.capabilities.includes("approve_level1")
         ? bprClient
             .from("bill_pass_register")
@@ -90,6 +98,10 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       : null,
   ].filter((i): i is { key: string; label: string; count: number; href: string } => i !== null);
 
+  const employeesById = Object.fromEntries(
+    (messagingEmployees ?? []).map((e) => [e.id, { name: e.name, photo_url: e.photo_url }])
+  );
+
   // 2026-08-08: "LEFT WINDOW AND TOP DESBORD LOCK KARO BICH KI JO DETAIL HAI
   // VAHI MOVE HONI CHAHIYE SABHI SECTION ME" — the left Work Menu sidebar
   // and the top header used to scroll away with the page on any long list
@@ -102,30 +114,33 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // (dashboard-sidebar.tsx) still lets its tile grid scroll independently
   // if it's ever taller than the viewport.
   return (
-    <CelebrationProvider>
-      <HelpCenterProvider articles={helpArticles}>
-        <div className="flex h-screen overflow-hidden bg-slate-100">
-          <DashboardSidebar capabilities={employee.capabilities} />
-          <div className="flex flex-1 flex-col overflow-hidden">
-            <DashboardHeader
-              companyName={currentCompany?.name ?? ""}
-              logoUrl={currentCompany?.logo_url ?? null}
-              employeeName={employee.name}
-              roleName={employee.roleName}
-              companies={companies ?? []}
-              currentCompanyId={employee.currentCompanyId}
-              meId={employee.id}
-              myPhotoUrl={employee.photoUrl}
-              unreadMessageCount={unreadMessageCount ?? 0}
-              notificationItems={notificationItems}
-            />
-            <main className="flex-1 overflow-y-auto p-6">
-              <TodaysCelebrationsBanner celebrations={celebrations} />
-              {children}
-            </main>
+    <PresenceProvider meId={employee.id}>
+      <CelebrationProvider>
+        <HelpCenterProvider articles={helpArticles}>
+          <div className="flex h-screen overflow-hidden bg-slate-100">
+            <DashboardSidebar capabilities={employee.capabilities} />
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <DashboardHeader
+                companyName={currentCompany?.name ?? ""}
+                logoUrl={currentCompany?.logo_url ?? null}
+                employeeName={employee.name}
+                roleName={employee.roleName}
+                companies={companies ?? []}
+                currentCompanyId={employee.currentCompanyId}
+                meId={employee.id}
+                myPhotoUrl={employee.photoUrl}
+                unreadMessageCount={unreadMessageCount ?? 0}
+                notificationItems={notificationItems}
+              />
+              <main className="flex-1 overflow-y-auto p-6">
+                <TodaysCelebrationsBanner celebrations={celebrations} />
+                {children}
+              </main>
+            </div>
           </div>
-        </div>
-      </HelpCenterProvider>
-    </CelebrationProvider>
+          <MessageToastProvider meId={employee.id} employeesById={employeesById} />
+        </HelpCenterProvider>
+      </CelebrationProvider>
+    </PresenceProvider>
   );
 }
