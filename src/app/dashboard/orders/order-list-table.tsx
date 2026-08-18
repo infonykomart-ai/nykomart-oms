@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { deleteOrder } from "./actions";
 import { OrderEditForm, type EditableOrder } from "./order-edit-form";
 import { OrderHoldCancelActions } from "./order-hold-cancel-actions";
+import { CustomerWhatsAppButton } from "./customer-whatsapp-button";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 
@@ -432,6 +433,18 @@ export function OrderListTable({
                   order={{ id: o.id, ref_no: o.ref_no, status: o.status, order_currency: o.order_currency }}
                   hasExistingRefund={(refundsByOrder[o.id] ?? []).length > 0}
                   currencies={currencies}
+                />
+                <CustomerWhatsAppButton
+                  order={{
+                    ref_no: o.ref_no,
+                    status: o.status,
+                    buyer_name_address: o.buyer_name_address,
+                    contact_no: o.contact_no,
+                    item_category_name: categoryName.get(o.item_category_id) ?? "",
+                    size_label: o.size_label,
+                    qty: o.qty,
+                  }}
+                  tracking={trackingByOrder[o.id]}
                 />
               </div>
             </div>

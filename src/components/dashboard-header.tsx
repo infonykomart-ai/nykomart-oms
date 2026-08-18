@@ -2,6 +2,7 @@ import Link from "next/link";
 import { LogoutButton } from "./logout-button";
 import { CompanySwitcher } from "./company-switcher";
 import { MessagesHeaderLink } from "./messages/messages-header-link";
+import { NotificationBell, type NotificationItem } from "./notification-bell";
 
 /**
  * Professional dashboard header — company logo + name (with a switcher for
@@ -23,6 +24,7 @@ export function DashboardHeader({
   meId,
   myPhotoUrl,
   unreadMessageCount,
+  notificationItems,
 }: {
   companyName: string;
   logoUrl: string | null;
@@ -33,6 +35,7 @@ export function DashboardHeader({
   meId: string;
   myPhotoUrl: string | null;
   unreadMessageCount: number;
+  notificationItems: NotificationItem[];
 }) {
   const initials = companyName
     .split(" ")
@@ -60,6 +63,7 @@ export function DashboardHeader({
 
       <div className="flex items-center gap-4">
         <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
+        <NotificationBell items={notificationItems} />
         <MessagesHeaderLink meId={meId} initialUnreadCount={unreadMessageCount} />
         {/* 2026-08-12: "sabhi ko apni profile update karne ka option ho" —
             the name/avatar is now a link to the self-service My Profile

@@ -33,14 +33,62 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // back silently empty because of an RLS gap, and both queries are either
   // non-sensitive (help_articles) or hard-scoped to the caller's own id
   // (the count() below) regardless.
-  const [helpArticles, { count: unreadMessageCount }] = await Promise.all([
-    getHelpArticles(),
-    createServiceRoleClient()
-      .from("direct_messages")
-      .select("id", { count: "exact", head: true })
-      .eq("recipient_employee_id", employee.id)
-      .is("read_at", null),
-  ]);
+  //
+  // 2026-08-18 — same batch, 2 more count-only queries for the new
+  // notification bell (see notification-bell.tsx's header comment for why
+  // this is derived-on-load rather than a stored notifications table).
+  // Deliberately capability-gated the SAME way the pages themselves are
+  // (approve_level1/approve_level2/bill_payment) and skipped entirely for
+  // employees without the relevant capability, so this never queries a
+  // table the employee couldn't otherwise see. Both are single indexed
+  // count(*) queries (idx_bill_pass_approval_status, and the
+  // idx_bill_pass_company_due_date partial index added 2026-08-18) — cheap
+  // enough to run on every dashboard page load, unlike a full reorder-
+  // alert-style computation would be.
+  const bprClient = createServiceRoleClient();
+  const [helpArticles, { count: unreadMessageCount }, { count: pendingL1Count }, { count: pendingL2Count }, { count: overdueBillsCount }] =
+    await Promise.all([
+      getHelpArticles(),
+      createServiceRoleClient()
+        .from("direct_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_employee_id", employee.id)
+        .is("read_at", null),
+      employee.capabilities.includes("approve_level1")
+        ? bprClient
+            .from("bill_pass_register")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", employee.currentCompanyId)
+            .eq("approval_status", "Pending")
+        : { count: 0 },
+      employee.capabilities.includes("approve_level2")
+        ? bprClient
+            .from("bill_pass_register")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", employee.currentCompanyId)
+            .eq("approval_status", "Approved L1")
+        : { count: 0 },
+      employee.capabilities.includes("bill_payment")
+        ? bprClient
+            .from("bill_pass_register")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", employee.currentCompanyId)
+            .gt("balance_due", 0)
+            .lt("due_date", new Date().toISOString().slice(0, 10))
+        : { count: 0 },
+    ]);
+
+  const notificationItems = [
+    employee.capabilities.includes("approve_level1")
+      ? { key: "approvals_l1", label: "Bills awaiting L1 approval", count: pendingL1Count ?? 0, href: "/dashboard/approvals/l1" }
+      : null,
+    employee.capabilities.includes("approve_level2")
+      ? { key: "approvals_l2", label: "Bills awaiting L2 approval", count: pendingL2Count ?? 0, href: "/dashboard/approvals/l2" }
+      : null,
+    employee.capabilities.includes("bill_payment")
+      ? { key: "overdue_bills", label: "Overdue vendor bills", count: overdueBillsCount ?? 0, href: "/dashboard/bill-payment" }
+      : null,
+  ].filter((i): i is { key: string; label: string; count: number; href: string } => i !== null);
 
   // 2026-08-08: "LEFT WINDOW AND TOP DESBORD LOCK KARO BICH KI JO DETAIL HAI
   // VAHI MOVE HONI CHAHIYE SABHI SECTION ME" — the left Work Menu sidebar
@@ -69,6 +117,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
               meId={employee.id}
               myPhotoUrl={employee.photoUrl}
               unreadMessageCount={unreadMessageCount ?? 0}
+              notificationItems={notificationItems}
             />
             <main className="flex-1 overflow-y-auto p-6">
               <TodaysCelebrationsBanner celebrations={celebrations} />
