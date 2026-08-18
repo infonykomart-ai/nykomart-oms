@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { deleteOrder } from "./actions";
+import { OrderPhotoThumb } from "./order-photo-thumb";
 import { OrderEditForm, type EditableOrder } from "./order-edit-form";
 import { OrderHoldCancelActions } from "./order-hold-cancel-actions";
 import { CustomerWhatsAppButton } from "./customer-whatsapp-button";
@@ -203,7 +204,14 @@ export function OrderListTable({
             />
           ) : (
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
+              {/* 2026-08-18 — "order preview bhi to dikhana chahiye": a
+                  small photo thumbnail per row, so an order's photo is
+                  visible right here without having to open Edit for every
+                  single one. print:hidden — the printed Orders list stays
+                  text-only, same as every other UI-only element in this
+                  row. */}
+              <OrderPhotoThumb photoUrl={o.photo_url} className="print:hidden" />
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-slate-900">{o.ref_no}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClass(o.status)}`}>{o.status}</span>
