@@ -45,6 +45,7 @@ export default async function CrmOverviewPage({
     { data: plByCompany },
     { data: plByMonth },
     quickFindResult,
+    { data: buyerOrderRows },
   ] = await Promise.all([
     supabase.from("orders").select("status").eq("company_id", employee.currentCompanyId),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
@@ -59,6 +60,16 @@ export default async function CrmOverviewPage({
           .or(`ref_no.ilike.%${query}%,buyer_name_address.ilike.%${query}%,contact_no.ilike.%${query}%,marketplace_order_no.ilike.%${query}%`)
           .limit(20)
       : Promise.resolve({ data: [] as { id: string; ref_no: string; company_id: string; buyer_name_address: string | null; contact_no: string | null; marketplace_order_no: string | null; status: string }[] }),
+    // 2026-08-17 — Top Buyers (gap identified in an OMS-features audit:
+    // "customer database" had no repeat-buyer view). Grouped in JS below
+    // by contact_no (falling back to buyer_name_address when contact_no is
+    // blank) since there's no separate customer table — buyer identity
+    // only exists as free text on each order (see orders.buyer_name_address
+    // comment in schema.sql). Same un-limited per-company select pattern
+    // already used for Orders by Status above — flagged in the same
+    // 2026-08-17 performance review as something to revisit once order
+    // volume grows large enough to matter (not yet, at current volume).
+    supabase.from("orders").select("buyer_name_address, contact_no, order_value_usd").eq("company_id", employee.currentCompanyId),
   ]);
 
   const orderStatusCounts = new Map<string, number>();
@@ -74,6 +85,32 @@ export default async function CrmOverviewPage({
   const ATTENDANCE_STATUSES = ["Present", "Absent", "Late", "Half Day", "Week Off", "Leave", "Holiday"];
 
   const quickFindRows = "data" in quickFindResult ? quickFindResult.data ?? [] : [];
+
+  // Top Buyers — group by contact_no when present (a phone number is a
+  // much more reliable dedup key than free-text buyer_name_address, which
+  // varies row to row for the same real buyer — different spelling,
+  // extra address details, etc.), falling back to the name text only when
+  // no contact number was captured. Rows with neither are skipped (not a
+  // real identifiable buyer to group).
+  const buyerKey = (b: { buyer_name_address: string | null; contact_no: string | null }) =>
+    b.contact_no?.trim() || b.buyer_name_address?.trim() || null;
+  const buyerStats = new Map<string, { label: string; orderCount: number; totalUsd: number }>();
+  for (const o of buyerOrderRows ?? []) {
+    const key = buyerKey(o);
+    if (!key) continue;
+    const existing = buyerStats.get(key);
+    const usd = Number(o.order_value_usd ?? 0);
+    if (existing) {
+      existing.orderCount += 1;
+      existing.totalUsd += usd;
+    } else {
+      buyerStats.set(key, { label: o.buyer_name_address?.trim() || key, orderCount: 1, totalUsd: usd });
+    }
+  }
+  const topBuyers = Array.from(buyerStats.values())
+    .filter((b) => b.orderCount > 1) // "repeat" buyers — a single one-off order isn't a repeat-customer signal
+    .sort((a, b) => b.orderCount - a.orderCount || b.totalUsd - a.totalUsd)
+    .slice(0, 15);
 
   return (
     <div className="space-y-6">
@@ -107,6 +144,41 @@ export default async function CrmOverviewPage({
           </div>
         )}
       </form>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-800">Top Buyers — Repeat Customers (current company)</h2>
+        <p className="mb-3 text-xs text-slate-400">
+          Grouped by contact number (falls back to buyer name when no number was captured). Only buyers with more than
+          one order are shown.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Buyer</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Orders</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Total Value (USD)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {topBuyers.map((b) => (
+                <tr key={b.label + b.orderCount}>
+                  <td className="px-3 py-2 font-medium text-slate-800">{b.label}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{b.orderCount}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-slate-900">${b.totalUsd.toFixed(2)}</td>
+                </tr>
+              ))}
+              {topBuyers.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="px-3 py-6 text-center text-slate-400">
+                    No repeat buyers yet for this company.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4">

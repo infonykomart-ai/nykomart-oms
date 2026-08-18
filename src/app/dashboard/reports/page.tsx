@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { OrdersReportTable } from "./orders-report-table";
@@ -52,11 +53,22 @@ export default async function ReportsPage({
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">📈 Reports</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Orders report — apply filters, then download as CSV/Excel/Word/PDF or send via Email/WhatsApp.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">📈 Reports</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Orders report — apply filters, then download as CSV/Excel/Word/PDF or send via Email/WhatsApp.
+          </p>
+        </div>
+        {/* 2026-08-17 — Returns/Refunds report, new. Linked from here since
+            it's conceptually part of the Reports suite (reuses the same
+            `reports` capability rather than a new one). */}
+        <Link
+          href="/dashboard/returns"
+          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          ↩️ Returns / Refunds
+        </Link>
       </div>
 
       <OrdersReportTable
