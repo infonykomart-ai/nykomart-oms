@@ -81,6 +81,17 @@ export default async function ReturnsPage() {
     .reduce((sum, r) => sum + Number(r.refund_amount), 0);
   const totalHistoricalRefundsUsd = historicalRefunds.reduce((sum, r) => sum + Number(r.refund_amt_usd ?? 0), 0);
 
+  // 2026-08-18 — user's own 2-category refund classification, confirmed in
+  // chat: "Dispatch & Refund" = invoice already generated + tracking
+  // arrived, order later cancelled (so a Credit Note exists against it);
+  // "No Dispatch & Refund" = buyer raised a cancel request before dispatch
+  // (no invoice, no Credit Note). saveOrderRefund (orders/actions.ts)
+  // already implements exactly this split — it only creates a Credit Note
+  // when order.invoice_id is set — so credit_note_id presence/absence on
+  // order_refunds IS the category, no new data or business logic needed.
+  const dispatchRefundCount = orderRefunds.filter((r) => r.credit_note_id).length;
+  const noDispatchRefundCount = orderRefunds.length - dispatchRefundCount;
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -96,21 +107,26 @@ export default async function ReturnsPage() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs font-medium text-slate-500">Live Order Refunds</div>
           <div className="mt-1 text-2xl font-bold text-slate-900">{orderRefunds.length}</div>
           <div className="text-xs text-slate-400">${totalOrderRefundsUsd.toFixed(2)} (USD rows only — shown below with currency)</div>
         </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="text-xs font-medium text-amber-700">🚚 Dispatch &amp; Refund</div>
+          <div className="mt-1 text-2xl font-bold text-amber-900">{dispatchRefundCount}</div>
+          <div className="text-xs text-amber-600">invoiced + dispatched, cancelled after</div>
+        </div>
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+          <div className="text-xs font-medium text-sky-700">🛑 No Dispatch &amp; Refund</div>
+          <div className="mt-1 text-2xl font-bold text-sky-900">{noDispatchRefundCount}</div>
+          <div className="text-xs text-sky-600">cancelled before invoice/dispatch</div>
+        </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs font-medium text-slate-500">Historical Marketplace Refunds</div>
           <div className="mt-1 text-2xl font-bold text-slate-900">{historicalRefunds.length}</div>
           <div className="text-xs text-slate-400">${totalHistoricalRefundsUsd.toFixed(2)} total</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs font-medium text-slate-500">With a Credit Note</div>
-          <div className="mt-1 text-2xl font-bold text-slate-900">{orderRefunds.filter((r) => r.credit_note_id).length}</div>
-          <div className="text-xs text-slate-400">of {orderRefunds.length} live order refunds</div>
         </div>
       </div>
 
@@ -126,7 +142,7 @@ export default async function ReturnsPage() {
                 <th className="whitespace-nowrap px-3 py-2 text-right text-xs font-semibold text-slate-500">Refund Amount</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">Refund Date</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">Reason</th>
-                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">Credit Note</th>
+                <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">Category</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -140,7 +156,17 @@ export default async function ReturnsPage() {
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-slate-600">{r.refund_date}</td>
                   <td className="px-3 py-2 text-slate-500">{r.reason || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-slate-500">{r.credit_note_id ? "✅" : "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    {r.credit_note_id ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                        🚚 Dispatch &amp; Refund
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
+                        🛑 No Dispatch &amp; Refund
+                      </span>
+                    )}
+                  </td>
                 </tr>
               ))}
               {orderRefunds.length === 0 && (

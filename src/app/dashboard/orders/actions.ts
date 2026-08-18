@@ -9,9 +9,50 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
+}
+
+// 2026-08-18 — "jo order me photo dalte hai to usme photo ka preview nahi
+// aata" + "jaha jaha par photo ke link hai vo kaam nahi karte": order
+// photos were a plain paste-a-link field with no real upload, so staff
+// often pasted a page/share link (not a direct image URL), which can never
+// render as an <img>. This adds a real upload path (same pattern as
+// direct_messages' message-attachments bucket) alongside the existing
+// paste-a-link field — see photo-url-field.tsx, used from both the New
+// Order form and the inline Order edit form. Bucket is PUBLIC (unlike the
+// private message-attachments bucket) since order photos are plain product
+// photos, not private content, and need to render directly in printed
+// invoices/WhatsApp messages without going through an auth-gated proxy —
+// requires `insert into storage.buckets (id, name, public) values
+// ('order-photos', 'order-photos', true) on conflict (id) do nothing;`
+// (see db/2026-08-18-order-photos-bucket.sql) to be run once in Supabase.
+const ORDER_PHOTO_BUCKET = "order-photos";
+const MAX_ORDER_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB — matches message-attachments' cap
+
+export async function uploadOrderPhoto(formData: FormData): Promise<{ url: string | null; error: string | null }> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { url: null, error: "No file selected." };
+  if (file.size > MAX_ORDER_PHOTO_BYTES) return { url: null, error: "File is too large — max 10MB." };
+  if (!file.type.startsWith("image/")) return { url: null, error: "Please upload an image file." };
+
+  const safeName = file.name.replace(/[^\w.\- ]/g, "_").slice(0, 150);
+  const path = `${employee.id}/${randomUUID()}-${safeName}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const { error: uploadError } = await supabase.storage.from(ORDER_PHOTO_BUCKET).upload(path, buffer, {
+    contentType: file.type,
+    upsert: false,
+  });
+  if (uploadError) return { url: null, error: `Upload failed: ${uploadError.message}` };
+
+  const { data } = supabase.storage.from(ORDER_PHOTO_BUCKET).getPublicUrl(path);
+  return { url: data.publicUrl, error: null };
 }
 function strOrNull(formData: FormData, key: string): string | null {
   const v = str(formData, key);

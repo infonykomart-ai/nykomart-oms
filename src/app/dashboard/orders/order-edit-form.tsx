@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import { updateOrder, type OrderEditState } from "./actions";
+import { PhotoUrlField } from "./photo-url-field";
 
 const initialState: OrderEditState = { error: null, success: false };
 
@@ -147,8 +148,12 @@ export function OrderEditForm({
           </select>
         </div>
         <div className="sm:col-span-2">
-          <label className={labelClass} htmlFor={`photo_url-${order.id}`}>Photo URL</label>
-          <input id={`photo_url-${order.id}`} name="photo_url" type="url" defaultValue={order.photo_url ?? ""} className={inputClass} />
+          <PhotoUrlField
+            id={`photo_url-${order.id}`}
+            name="photo_url"
+            defaultValue={order.photo_url}
+            labelClass={labelClass}
+          />
         </div>
         <div className="flex items-center gap-2 pt-5">
           <input id={`tassel_fringes-${order.id}`} name="tassel_fringes" type="checkbox" defaultChecked={!!order.tassel_fringes} className="h-4 w-4 rounded border-slate-300" />

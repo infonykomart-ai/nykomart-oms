@@ -2,6 +2,7 @@
 
 import { useActionState, useRef, useEffect, useState, type FormEvent } from "react";
 import { createOrder, checkFinishedStockAction, type OrderFormState } from "./actions";
+import { PhotoUrlField } from "../photo-url-field";
 
 const initialState: OrderFormState = { error: null, success: null };
 
@@ -112,8 +113,7 @@ function ItemBlock({
           </select>
         </div>
         <div className="sm:col-span-2">
-          <label className={labelClass} htmlFor={id("photo_url")}>Photo URL</label>
-          <input id={id("photo_url")} name={id("photo_url")} type="url" className={inputClass} placeholder="https://…" />
+          <PhotoUrlField id={id("photo_url")} name={id("photo_url")} labelClass={labelClass} />
         </div>
         <div className="flex items-center gap-2 pt-6">
           <input id={id("tassel_fringes")} name={id("tassel_fringes")} type="checkbox" className="h-4 w-4 rounded border-slate-300" />
@@ -161,9 +161,12 @@ export function OrderForm({
       // Syncing local item-block count back to 1 after a successful
       // server-action save (mirrors the native form.reset() above); there's
       // no render-time equivalent since this only fires once per submit.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setItemKeys([0]);
-      nextKeyRef.current = 1;
+      // Uses a FRESH key (not the old 0) so ItemBlock — and PhotoUrlField's
+      // internal controlled preview state inside it — actually remounts
+      // instead of silently keeping the just-saved order's photo preview
+      // visible after a reset (native form.reset() can't touch React state
+      // in a controlled input).
+      setItemKeys([nextKeyRef.current++]);
     }
   }, [state.success]);
 
