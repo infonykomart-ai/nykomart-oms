@@ -80,52 +80,81 @@ async function PartyLedgerInner({ id }: { id: string }) {
     paymentsByBill.set(p.bill_pass_register_id, list);
   }
 
-  type LedgerEntry = (typeof entriesRaw extends (infer T)[] | null ? T : never) & {
-    total_amt: number;
-    credit_note_amt: number;
-    to_be_pay: number;
-    total_paid: number;
-    balance_due: number;
-    companyName: string;
-    payments: LedgerPayment[];
-    runningBalance: number;
-  };
-
-  // Running balance — cumulative "to be pay" (bill amount net of its own
-  // credit note) minus cumulative paid, in the same oldest-first order the
-  // table is sorted in. This is a plain running total, not a stored
-  // column — bill_pass_register only stores each row's OWN balance_due.
-  // Built via reduce (not an outer-scope running-total variable mutated
-  // inside .map) so this Server Component's render function stays free of
-  // reassignment across iterations.
-  const entries = (entriesRaw ?? []).reduce<LedgerEntry[]>((acc, e) => {
-    const toBePay = Number(e.to_be_pay);
-    const totalPaid = Number(e.total_paid);
-    const prevBalance = acc.length ? acc[acc.length - 1].runningBalance : 0;
-    acc.push({
-      ...e,
-      total_amt: Number(e.total_amt),
-      credit_note_amt: Number(e.credit_note_amt),
-      to_be_pay: toBePay,
-      total_paid: totalPaid,
-      balance_due: Number(e.balance_due),
-      companyName: companyName.get(e.company_id) ?? "—",
-      payments: paymentsByBill.get(e.id) ?? [],
-      runningBalance: prevBalance + toBePay - totalPaid,
-    });
-    return acc;
-  }, []);
-
-  const totalBilled = entries.reduce((s, e) => s + e.total_amt, 0);
-  const totalCredited = entries.reduce((s, e) => s + e.credit_note_amt, 0);
-  const totalPaid = entries.reduce((s, e) => s + e.total_paid, 0);
-  const totalOutstanding = entries.reduce((s, e) => s + e.balance_due, 0);
-
   const sourceLabel: Record<string, string> = {
     purchase_bill: "Purchase Bill",
     freight_bill: "Courier Bill",
     duty_tax_bill: "Duty & Tax Bill",
   };
+
+  // 2026-08-18 — "ek entry debit ki dikh rahi hai phir credit ki dikh rahi
+  // hai, ese ladger format apne system me": redesigned from "one row per
+  // invoice, with its payments nested inside" to a real chronological
+  // Debit/Credit/Balance ledger — the classic passbook format, same shape
+  // as the vendor statements this gets reconciled against (see
+  // claude/onpoint-express-ledger-reconciliation-2026-08-18.md). Every bill
+  // becomes its own Debit line, every credit note becomes its own Credit
+  // line, every payment becomes its own Credit line — all merged into one
+  // list and sorted strictly by date, so debits and credits genuinely
+  // alternate in the order money actually moved, not grouped by invoice.
+  type Txn = {
+    date: string;
+    particulars: string;
+    type: "Debit" | "Credit";
+    debit: number;
+    credit: number;
+    sortKey: string; // date + a same-day tiebreaker so a bill sorts before its own same-day payment
+  };
+
+  const txns: Txn[] = [];
+  for (const e of entriesRaw ?? []) {
+    const ref = e.vendor_invoice_no ?? e.invoice_no ?? "—";
+    const label = sourceLabel[e.source ?? ""] ?? e.invoice_type ?? "Bill";
+    const billDate = e.invoice_date ?? e.invoice_recv_date ?? e.created_at.slice(0, 10);
+    const totalAmt = Number(e.total_amt);
+    const creditNoteAmt = Number(e.credit_note_amt);
+    if (totalAmt !== 0) {
+      txns.push({
+        date: billDate,
+        particulars: `${label} ${ref}`,
+        type: "Debit",
+        debit: totalAmt,
+        credit: 0,
+        sortKey: `${billDate}_0`,
+      });
+    }
+    if (creditNoteAmt > 0) {
+      txns.push({
+        date: billDate,
+        particulars: `Credit Note against ${ref}`,
+        type: "Credit",
+        debit: 0,
+        credit: creditNoteAmt,
+        sortKey: `${billDate}_1`,
+      });
+    }
+    for (const p of paymentsByBill.get(e.id) ?? []) {
+      txns.push({
+        date: p.payment_date,
+        particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
+        type: "Credit",
+        debit: 0,
+        credit: p.amount,
+        sortKey: `${p.payment_date}_2`,
+      });
+    }
+  }
+  txns.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+
+  type LedgerLine = Txn & { balance: number };
+  const ledgerLines = txns.reduce<LedgerLine[]>((acc, t) => {
+    const prevBalance = acc.length ? acc[acc.length - 1].balance : 0;
+    acc.push({ ...t, balance: prevBalance + t.debit - t.credit });
+    return acc;
+  }, []);
+
+  const totalDebit = ledgerLines.reduce((s, t) => s + t.debit, 0);
+  const totalCredit = ledgerLines.reduce((s, t) => s + t.credit, 0);
+  const closingBalance = ledgerLines.length ? ledgerLines[ledgerLines.length - 1].balance : 0;
 
   return (
     <div>
@@ -143,9 +172,9 @@ async function PartyLedgerInner({ id }: { id: string }) {
               <p className="text-[10px] uppercase tracking-wide text-slate-400">{currentCompanyName}</p>
             </div>
             <div className="text-right text-slate-600">
-              <p>Total Billed ₹{totalBilled.toFixed(2)} − Credit Notes ₹{totalCredited.toFixed(2)}</p>
-              <p>Paid ₹{totalPaid.toFixed(2)}</p>
-              <p className="font-semibold text-slate-900">Outstanding ₹{totalOutstanding.toFixed(2)}</p>
+              <p>Total Debit ₹{totalDebit.toFixed(2)}</p>
+              <p>Total Credit ₹{totalCredit.toFixed(2)}</p>
+              <p className="font-semibold text-slate-900">Closing Balance ₹{closingBalance.toFixed(2)}</p>
             </div>
           </div>
 
@@ -153,47 +182,25 @@ async function PartyLedgerInner({ id }: { id: string }) {
             <thead>
               <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                 <th className="py-1 pr-2">Date</th>
-                <th className="py-1 pr-2">Type</th>
-                <th className="py-1 pr-2">Invoice No.</th>
-                <th className="py-1 pr-2">Company</th>
-                <th className="py-1 pr-2 text-right">Total Amt</th>
-                <th className="py-1 pr-2 text-right">Credit Note</th>
-                <th className="py-1 pr-2 text-right">To Be Pay</th>
-                <th className="py-1 pr-2 text-right">Paid</th>
-                <th className="py-1 pr-2 text-right">Balance Due</th>
-                <th className="py-1 pr-2 text-right">Running Balance</th>
-                <th className="py-1 pr-2">Status</th>
-                <th className="py-1 pr-2">Remark / Payments</th>
+                <th className="py-1 pr-2">Particulars</th>
+                <th className="py-1 pr-2 text-right">Debit</th>
+                <th className="py-1 pr-2 text-right">Credit</th>
+                <th className="py-1 pr-2 text-right">Balance</th>
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => (
-                <tr key={e.id} className="border-b border-slate-100 align-top text-slate-700">
-                  <td className="py-1 pr-2">{e.invoice_date ?? e.invoice_recv_date ?? "—"}</td>
-                  <td className="py-1 pr-2">{sourceLabel[e.source ?? ""] ?? e.invoice_type ?? "—"}</td>
-                  <td className="py-1 pr-2 font-medium text-slate-900">{e.vendor_invoice_no ?? e.invoice_no ?? "—"}</td>
-                  <td className="py-1 pr-2">{e.companyName}</td>
-                  <td className="py-1 pr-2 text-right">{e.total_amt.toFixed(2)}</td>
-                  <td className="py-1 pr-2 text-right">{e.credit_note_amt.toFixed(2)}</td>
-                  <td className="py-1 pr-2 text-right">{e.to_be_pay.toFixed(2)}</td>
-                  <td className="py-1 pr-2 text-right">{e.total_paid.toFixed(2)}</td>
-                  <td className="py-1 pr-2 text-right font-medium">{e.balance_due.toFixed(2)}</td>
-                  <td className="py-1 pr-2 text-right font-medium">{e.runningBalance.toFixed(2)}</td>
-                  <td className="py-1 pr-2">{e.approval_status}</td>
-                  <td className="py-1 pr-2 text-slate-500">
-                    {e.remark && <div>{e.remark}</div>}
-                    {e.payments.map((p) => (
-                      <div key={p.id}>
-                        ✓ ₹{p.amount.toFixed(2)} on {p.payment_date}{p.payment_mode ? ` (${p.payment_mode})` : ""}
-                        {p.reference_no ? ` · ${p.reference_no}` : ""}
-                      </div>
-                    ))}
-                  </td>
+              {ledgerLines.map((t, i) => (
+                <tr key={i} className="border-b border-slate-100 align-top text-slate-700">
+                  <td className="py-1 pr-2">{t.date}</td>
+                  <td className="py-1 pr-2 font-medium text-slate-900">{t.particulars}</td>
+                  <td className="py-1 pr-2 text-right">{t.debit > 0 ? t.debit.toFixed(2) : ""}</td>
+                  <td className="py-1 pr-2 text-right">{t.credit > 0 ? t.credit.toFixed(2) : ""}</td>
+                  <td className="py-1 pr-2 text-right font-medium">{t.balance.toFixed(2)}</td>
                 </tr>
               ))}
-              {entries.length === 0 && (
+              {ledgerLines.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="py-3 text-center text-slate-400">
+                  <td colSpan={5} className="py-3 text-center text-slate-400">
                     No bills against this party yet.
                   </td>
                 </tr>
