@@ -39,7 +39,7 @@ export default async function CrmOverviewPage({
   // to month with no per-company breakdown in the view itself, so it
   // can't be scoped without a schema/view change; flagged, not fixed here.
   const [
-    { data: orderStatusRows },
+    { data: orderStatusCountRows },
     { data: attendanceRows },
     { data: alerts },
     { data: plByCompany },
@@ -47,7 +47,12 @@ export default async function CrmOverviewPage({
     quickFindResult,
     { data: buyerOrderRows },
   ] = await Promise.all([
-    supabase.from("orders").select("status").eq("company_id", employee.currentCompanyId),
+    // 2026-08-17 perf fix — was `.select("status")` with no limit (every
+    // order row for the company pulled just to count-by-status in Node).
+    // get_order_status_counts() does the same GROUP BY in the database
+    // instead, using idx_orders_status. See
+    // db/2026-08-17-ebay-indexes-and-order-status-rpc.sql.
+    supabase.rpc("get_order_status_counts", { p_company_id: employee.currentCompanyId }),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
     finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct").in("company_id", employee.companyIds),
@@ -73,8 +78,8 @@ export default async function CrmOverviewPage({
   ]);
 
   const orderStatusCounts = new Map<string, number>();
-  for (const o of orderStatusRows ?? []) {
-    orderStatusCounts.set(o.status, (orderStatusCounts.get(o.status) ?? 0) + 1);
+  for (const row of orderStatusCountRows ?? []) {
+    orderStatusCounts.set(row.status, Number(row.cnt));
   }
   const ORDER_STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
 

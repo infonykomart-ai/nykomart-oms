@@ -730,6 +730,20 @@ CREATE INDEX idx_orders_marketplace_no ON orders(marketplace_order_no);
 CREATE INDEX idx_orders_contact_no     ON orders(company_id, contact_no);
 CREATE INDEX idx_orders_entry_timestamp ON orders(entry_timestamp);
 
+-- 2026-08-17 perf fix — crm/page.tsx previously pulled every order row's
+-- status column (no limit, no server-side aggregation) just to count
+-- per-status totals in Node; this does the same GROUP BY in the database
+-- instead, using idx_orders_status above. See
+-- db/2026-08-17-ebay-indexes-and-order-status-rpc.sql.
+CREATE OR REPLACE FUNCTION get_order_status_counts(p_company_id uuid)
+RETURNS TABLE (status order_status, cnt bigint)
+LANGUAGE sql STABLE AS $$
+  SELECT o.status, count(*)
+  FROM orders o
+  WHERE o.company_id = p_company_id
+  GROUP BY o.status;
+$$;
+
 COMMENT ON COLUMN orders.ref_no IS
   'PO/RF/RG number, possibly with a "-position/total" buyer-batch suffix (e.g. "PO-0001-1/2"). Base number '
   'reservation and batch-suffix tagging are APPLICATION LOGIC (see top-of-file BUSINESS RULES comment), not '
@@ -2126,6 +2140,12 @@ CREATE TABLE ebay_tax_invoice_lines (
   charged_by_entity                             text,
   created_at                                      timestamptz NOT NULL DEFAULT now()
 );
+
+-- 2026-08-17 perf fix — was missing the (company_id, date) + order-number
+-- index pair that etsy_ledger_lines/amazon_transactions already have; see
+-- db/2026-08-17-ebay-indexes-and-order-status-rpc.sql.
+CREATE INDEX idx_ebay_tax_company_date ON ebay_tax_invoice_lines(company_id, txn_date);
+CREATE INDEX idx_ebay_tax_order_number ON ebay_tax_invoice_lines(order_number) WHERE order_number IS NOT NULL;
 
 -- Old sheet: Etsy Monthly Tax Invoice — PDF-only statement, entered by hand
 -- via the "Statement Entry" screen (not CSV-uploadable).

@@ -40,8 +40,21 @@ export async function addHoliday(_prev: SimpleActionState, formData: FormData): 
 }
 
 export async function removeHoliday(id: string): Promise<SimpleActionState> {
-  await requireCapability("attendance_admin");
+  const employee = await requireCapability("attendance_admin");
   const supabase = createServiceRoleClient();
+
+  // 2026-08-17 security fix — addHoliday/setWeeklyOffDays/setManualAttendance
+  // in this same file all re-check company access before writing; this one
+  // didn't, so an attendance_admin scoped to only one company could delete
+  // another company's holiday (company_id NULL = a national/all-companies
+  // holiday, left deletable by anyone with the capability, same as
+  // addHoliday's own "" case).
+  const { data: holiday } = await supabase.from("holidays").select("id, company_id").eq("id", id).maybeSingle();
+  if (!holiday) return { error: "Holiday not found.", success: false };
+  if (holiday.company_id && !employee.companyIds.includes(holiday.company_id)) {
+    return { error: "You don't have access to that company.", success: false };
+  }
+
   const { error } = await supabase.from("holidays").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/attendance/admin");
@@ -90,6 +103,26 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
   }
 
   const supabase = createServiceRoleClient();
+
+  // 2026-08-17 security fix — the check above only verified the ADMIN can
+  // access companyId; it never verified the target employeeId actually
+  // belongs to that company. Without this, an attendance_admin scoped to
+  // Company A could pass another company's employee_id alongside
+  // company_id=A (which they DO have legitimate access to) and write a
+  // manual attendance row that misattributes a Company B employee's
+  // attendance to Company A — a real data-integrity hole, not just an
+  // access-control one. Accessible = the employee's own home company, or
+  // an explicit employee_company_access grant (same "which companies can
+  // this login act as" logic used everywhere else).
+  const [{ data: targetEmployee }, { data: crossAccess }] = await Promise.all([
+    supabase.from("employees").select("id, company_id").eq("id", employeeId).maybeSingle(),
+    supabase.from("employee_company_access").select("company_id").eq("employee_id", employeeId).eq("company_id", companyId).maybeSingle(),
+  ]);
+  if (!targetEmployee) return { error: "Employee not found.", success: false };
+  if (targetEmployee.company_id !== companyId && !crossAccess) {
+    return { error: "That employee doesn't belong to the selected company.", success: false };
+  }
+
   const { data: existing } = await supabase
     .from("attendance")
     .select("id")

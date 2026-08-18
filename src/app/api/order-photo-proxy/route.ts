@@ -1,4 +1,9 @@
 import { requireCapability, UnauthorizedError, ForbiddenError } from "@/lib/auth/require-capability";
+import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
+
+// dns.lookup (used by safeExternalFetch's SSRF guard, added 2026-08-17)
+// needs the Node runtime, not Edge.
+export const runtime = "nodejs";
 
 // 2026-08-07: "order entry me whatsaap par photo jani chahiye" — the
 // WhatsApp button (order-whatsapp-button.tsx) tries to attach the actual
@@ -23,25 +28,9 @@ export async function GET(request: Request) {
   const raw = new URL(request.url).searchParams.get("url");
   if (!raw) return new Response("Missing url", { status: 400 });
 
-  let target: URL;
-  try {
-    target = new URL(raw);
-  } catch {
-    return new Response("Invalid url", { status: 400 });
-  }
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return new Response("Invalid url", { status: 400 });
-  }
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(target.toString());
-  } catch {
-    return new Response("Could not fetch photo", { status: 502 });
-  }
-  if (!upstream.ok || !upstream.body) {
-    return new Response("Could not fetch photo", { status: 502 });
-  }
+  const result = await safeExternalFetch(raw);
+  if (!result.ok) return new Response(result.error, { status: result.status });
+  const upstream = result.response;
 
   return new Response(upstream.body, {
     headers: {

@@ -5366,6 +5366,15 @@ export type Database = {
           effective_from: string | null;
         }[];
       };
+      get_order_status_counts: {
+        Args: {
+          p_company_id: string;
+        };
+        Returns: {
+          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
+          cnt: number;
+        }[];
+      };
       recover_employee_advance: {
         Args: {
           p_advance_id: string;

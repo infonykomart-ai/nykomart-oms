@@ -729,8 +729,21 @@ export async function updateInvoiceFields(
     duty_payable_other_specify?: string | null;
   }
 ): Promise<{ error: string | null }> {
-  await requireCapability("invoicing");
+  const employee = await requireCapability("invoicing");
   const supabase = createServiceRoleClient();
+
+  // 2026-08-17 security fix — every sibling write in this file (deleteInvoice)
+  // re-verifies company access before writing; this one didn't, so an
+  // employee with `invoicing` capability but access to fewer than all 3
+  // companies could call this Server Action directly (bypassing the UI,
+  // which itself filters correctly) with another company's invoiceId and
+  // rewrite it. Same pattern as every other company-scoped write in this
+  // codebase.
+  const { data: invoice } = await supabase.from("sales_invoices").select("id, company_id").eq("id", invoiceId).single();
+  if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
+    return { error: "Invoice not found or you don't have access to this company." };
+  }
+
   const { error } = await supabase.from("sales_invoices").update(fields).eq("id", invoiceId);
   if (error) return { error: error.message };
   revalidatePath(`/dashboard/invoices/${invoiceId}`);

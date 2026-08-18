@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { requireCapability, UnauthorizedError, ForbiddenError } from "@/lib/auth/require-capability";
+import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
 
 // 2026-08-08: "WHATSAPP PAR PHOTO OR MSG DONO ALAG ALAG KYU JA RAHE HAI EK
 // SATH JANA CHAHIYE" — user confirmed the photo and the caption text land
@@ -72,26 +73,9 @@ export async function GET(request: Request) {
   const raw = params.get("url");
   if (!raw) return new Response("Missing url", { status: 400 });
 
-  let target: URL;
-  try {
-    target = new URL(raw);
-  } catch {
-    return new Response("Invalid url", { status: 400 });
-  }
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return new Response("Invalid url", { status: 400 });
-  }
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(target.toString());
-  } catch {
-    return new Response("Could not fetch photo", { status: 502 });
-  }
-  if (!upstream.ok || !upstream.body) {
-    return new Response("Could not fetch photo", { status: 502 });
-  }
-  const photoBuffer = Buffer.from(await upstream.arrayBuffer());
+  const result = await safeExternalFetch(raw);
+  if (!result.ok) return new Response(result.error, { status: result.status });
+  const photoBuffer = Buffer.from(await result.response.arrayBuffer());
 
   const isAmazon = params.get("is_amazon") === "1";
   const refNo = params.get("ref_no") || "-";

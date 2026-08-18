@@ -103,9 +103,73 @@ export default async function OrdersPage({
   // order's item was purchased from, via Purchase Bill's now-required
   // order_id link (see documents/actions.ts's savePurchaseBill).
   const orderIds = (orders ?? []).map((o) => o.id);
-  const { data: purchaseBills } = orderIds.length
-    ? await supabase.from("purchase_bills").select("order_id, vendor_party_id, vendor_invoice_no").in("order_id", orderIds)
-    : { data: [] };
+
+  // 2026-08-13 (see comment further down, kept here since normalizeOrderNo
+  // is now needed before the marketplace fee queries fire, not after) —
+  // marketplace_order_no is sometimes typed with a leading "#" and
+  // sometimes without; none of the 3 ledger-side columns ever contain one.
+  const normalizeOrderNo = (v: string | null | undefined): string | null => {
+    const t = v?.trim().replace(/^#/, "").trim();
+    return t || null;
+  };
+  const marketplaceOrderNos = Array.from(
+    new Set((orders ?? []).map((o) => normalizeOrderNo(o.marketplace_order_no)).filter((x): x is string => !!x))
+  );
+
+  // 2026-08-17 performance fix — these 6 queries (purchaseBills through
+  // amazonLines) each only depend on orderIds/marketplaceOrderNos computed
+  // above, never on each other's results, but were previously awaited one
+  // at a time — a fully sequential chain of round-trips on every Orders
+  // hub page load. Running them together cuts that to the slowest single
+  // query instead of the sum of all 6. Same empty-array short-circuit as
+  // before (skip the query entirely, resolve to { data: [] }) — Promise.all
+  // accepts a plain value alongside real promises just fine.
+  const [
+    { data: purchaseBills },
+    { data: dispatchInvoices },
+    { data: refunds },
+    { data: etsyLines },
+    { data: ebayTaxLines },
+    { data: amazonLines },
+  ] = await Promise.all([
+    orderIds.length
+      ? supabase.from("purchase_bills").select("order_id, vendor_party_id, vendor_invoice_no").in("order_id", orderIds)
+      : { data: [] },
+    orderIds.length
+      ? supabase
+          .from("dispatch_invoices")
+          .select("order_id, awb_no, courier_name, delivered_status, delivered_date")
+          .in("order_id", orderIds)
+      : { data: [] },
+    orderIds.length
+      ? supabase
+          .from("order_refunds")
+          .select("order_id, refund_amount, refund_currency, refund_date, credit_note_id")
+          .in("order_id", orderIds)
+      : { data: [] },
+    marketplaceOrderNos.length
+      ? supabase
+          .from("etsy_ledger_lines")
+          .select("company_id, order_number, txn_date, type, title, info, amount, fees_and_taxes, net, currency")
+          .in("company_id", effectiveCompanyIds)
+          .in("order_number", marketplaceOrderNos)
+      : { data: [] },
+    marketplaceOrderNos.length
+      ? supabase
+          .from("ebay_tax_invoice_lines")
+          .select("company_id, order_number, txn_date, description, memo, fee_type, currency, net_amount, igst_amount, total_amount")
+          .in("company_id", effectiveCompanyIds)
+          .in("order_number", marketplaceOrderNos)
+      : { data: [] },
+    marketplaceOrderNos.length
+      ? supabase
+          .from("amazon_transactions")
+          .select("company_id, order_id, txn_date, transaction_type, product_details, amazon_fees, total_amount, currency")
+          .in("company_id", effectiveCompanyIds)
+          .in("order_id", marketplaceOrderNos)
+      : { data: [] },
+  ]);
+
   const purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]> = {};
   for (const pb of purchaseBills ?? []) {
     if (!pb.order_id) continue;
@@ -120,12 +184,6 @@ export default async function OrdersPage({
   // click-through") — courier tracking info (AWB/courier/delivered date),
   // filled in via Bulk Courier Tracking Update (item 8, manual for now
   // since the live courier-API integration itself is still blocked).
-  const { data: dispatchInvoices } = orderIds.length
-    ? await supabase
-        .from("dispatch_invoices")
-        .select("order_id, awb_no, courier_name, delivered_status, delivered_date")
-        .in("order_id", orderIds)
-    : { data: [] };
   const trackingByOrder: Record<
     string,
     { awbNo: string | null; courierName: string | null; deliveredStatus: string | null; deliveredDate: string | null }
@@ -143,12 +201,6 @@ export default async function OrdersPage({
   // entered against each order, and whether one auto-generated a Credit
   // Note, right on the Orders hub (same "link everything" principle as
   // purchasesByOrder/trackingByOrder above).
-  const { data: refunds } = orderIds.length
-    ? await supabase
-        .from("order_refunds")
-        .select("order_id, refund_amount, refund_currency, refund_date, credit_note_id")
-        .in("order_id", orderIds)
-    : { data: [] };
   const refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]> = {};
   for (const r of refunds ?? []) {
     (refundsByOrder[r.order_id] ??= []).push({
@@ -172,30 +224,9 @@ export default async function OrdersPage({
   // 2026-08-13 (later same day) — user flagged that marketplace_order_no
   // is sometimes typed/entered with a leading "#" (e.g. "#1234567890")
   // and sometimes without, across Etsy/eBay/Amazon orders. None of the
-  // 3 ledger-side columns this matches against ever contain a "#" —
-  // etsy_ledger_lines.order_number is regex-extracted as digits only,
-  // and ebay_tax_invoice_lines.order_number / amazon_transactions.
-  // order_id are each marketplace's own native ID with no "#" in it — so
-  // an order entered as "#1234567890" would silently never match
-  // anything, even though the real order clearly did. Normalizing away a
-  // leading "#" (and stray whitespace) before every comparison below
-  // fixes that with no schema/CSV-import change needed; orders that
-  // never had a "#" are unaffected (trim() alone is a no-op for already-
-  // clean values).
-  const normalizeOrderNo = (v: string | null | undefined): string | null => {
-    const t = v?.trim().replace(/^#/, "").trim();
-    return t || null;
-  };
-  const marketplaceOrderNos = Array.from(
-    new Set((orders ?? []).map((o) => normalizeOrderNo(o.marketplace_order_no)).filter((x): x is string => !!x))
-  );
-  const { data: etsyLines } = marketplaceOrderNos.length
-    ? await supabase
-        .from("etsy_ledger_lines")
-        .select("company_id, order_number, txn_date, type, title, info, amount, fees_and_taxes, net, currency")
-        .in("company_id", effectiveCompanyIds)
-        .in("order_number", marketplaceOrderNos)
-    : { data: [] };
+  // 3 ledger-side columns this matches against ever contain a "#" — see
+  // normalizeOrderNo above (moved up so marketplaceOrderNos is available
+  // before the parallel query block fires).
   type EtsyFeeLine = {
     date: string | null;
     type: string | null;
@@ -248,13 +279,6 @@ export default async function OrdersPage({
   // Kept as a SEPARATE map from Etsy's (not merged into one combined
   // total) since the two are different currencies (INR vs USD) — summing
   // them together would be meaningless.
-  const { data: ebayTaxLines } = marketplaceOrderNos.length
-    ? await supabase
-        .from("ebay_tax_invoice_lines")
-        .select("company_id, order_number, txn_date, description, memo, fee_type, currency, net_amount, igst_amount, total_amount")
-        .in("company_id", effectiveCompanyIds)
-        .in("order_number", marketplaceOrderNos)
-    : { data: [] };
   type EbayFeeLine = {
     date: string | null;
     type: string | null;
@@ -304,13 +328,6 @@ export default async function OrdersPage({
   // per-currency net-fee-impact subtotals are kept (never summed across
   // currencies — that would be meaningless) but shown together in one
   // header line instead of one header per currency.
-  const { data: amazonLines } = marketplaceOrderNos.length
-    ? await supabase
-        .from("amazon_transactions")
-        .select("company_id, order_id, txn_date, transaction_type, product_details, amazon_fees, total_amount, currency")
-        .in("company_id", effectiveCompanyIds)
-        .in("order_id", marketplaceOrderNos)
-    : { data: [] };
   type AmazonFeeLine = {
     date: string | null;
     type: string | null;

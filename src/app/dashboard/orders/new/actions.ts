@@ -3,7 +3,7 @@
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { buyerMatchKey } from "@/lib/orders/buyer-match";
-import { computeCurrencyConversion } from "@/lib/orders/currency";
+import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/currency";
 import { revalidatePath } from "next/cache";
 
 export type OrderFormState = {
@@ -301,8 +301,32 @@ export async function createOrderCore(
 
   const { poDate, deliveryDate, emailId, taxId, addressType, remark, vatNumber, eoriNumber, iossNumber, destinationCountry } = input;
 
+  // 2026-08-17 performance fix — computeCurrencyConversion() can fall
+  // through to an external HTTP call (api.frankfurter.app, 5s timeout) when
+  // no Exchange Rate Master entry covers this order's date. Called once per
+  // line item below, this could add up to ~5s PER ITEM to a single "Save
+  // Order" click on a day with no cached rate — a 5-item order could hang
+  // ~25s. The conversion result only depends on (currency, orderDate,
+  // originalValue), and orderDate is fixed for this whole order, so cache
+  // by (currency, originalValue) for the duration of this one request —
+  // multiple line items in the same currency (the common case — most
+  // orders are single-currency) now hit the network/RPC at most once each,
+  // not once per item. Doesn't touch the sequential ref_no/siblingCount
+  // logic below at all — same insert order, same suffixes, just the
+  // conversion lookup itself is deduplicated.
+  const conversionCache = new Map<string, Promise<ConversionResult>>();
+  function cachedConversion(currency: string, originalValue: number): Promise<ConversionResult> {
+    const key = `${currency}:${originalValue}`;
+    let pending = conversionCache.get(key);
+    if (!pending) {
+      pending = computeCurrencyConversion(supabase, currency, orderDate, originalValue);
+      conversionCache.set(key, pending);
+    }
+    return pending;
+  }
+
   for (const item of items) {
-    const conversion = await computeCurrencyConversion(supabase, item.orderCurrency, orderDate, item.orderValueOriginal);
+    const conversion = await cachedConversion(item.orderCurrency, item.orderValueOriginal);
     siblingCount += 1;
     const provisionalRefNo = siblingCount > 1 ? `${baseRefNo}-${siblingCount}/${siblingCount}` : baseRefNo;
 
