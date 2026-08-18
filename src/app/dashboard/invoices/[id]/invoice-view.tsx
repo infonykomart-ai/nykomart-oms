@@ -72,6 +72,8 @@ type Item = {
   order_value_original: number;
   order_currency: string;
   order_value_usd: number | null;
+  order_value_inr: number | null;
+  exchange_rate_source: string | null;
   colour: string | null;
 };
 
@@ -519,6 +521,45 @@ export function InvoiceView({
                 <p key={n.id}>Debit Note <strong>{n.no}</strong> — ₹{n.amount} ({n.refNo})</p>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* 2026-08-18 — "conversation rate are not showing": which exchange
+            rate converted each item's foreign-currency order value into
+            INR wasn't visible anywhere on this page. Reference only (not
+            part of the printed customs invoice, which is correctly priced
+            in the buyer's own currency) — helps whoever's finalizing the
+            invoice sanity-check the INR figures before printing. */}
+        {items.some((i) => i.order_currency && i.order_currency !== "INR") && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <h3 className="mb-1 text-xs font-semibold text-slate-700">Currency Conversion (reference only)</h3>
+            <p className="mb-2 text-[11px] text-slate-400">
+              Rate used to convert each item&apos;s order value to INR — not printed on the invoice itself.
+            </p>
+            <table className="w-full text-[11px] text-slate-600">
+              <thead>
+                <tr className="text-left text-slate-400">
+                  <th className="pb-1 pr-2 font-medium">Ref No.</th>
+                  <th className="pb-1 pr-2 font-medium text-right">Order Value</th>
+                  <th className="pb-1 pr-2 font-medium text-right">≈ INR</th>
+                  <th className="pb-1 font-medium">Rate Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((i) => (
+                  <tr key={i.id} className="border-t border-slate-200">
+                    <td className="py-1 pr-2">{i.ref_no}</td>
+                    <td className="py-1 pr-2 text-right">
+                      {i.order_currency} {Number(i.order_value_original || 0).toFixed(2)}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {i.order_value_inr != null ? `₹${Number(i.order_value_inr).toFixed(2)}` : "—"}
+                    </td>
+                    <td className="py-1">{i.exchange_rate_source || (i.order_currency === "INR" ? "—" : "not recorded")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

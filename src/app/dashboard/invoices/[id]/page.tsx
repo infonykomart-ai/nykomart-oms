@@ -12,9 +12,19 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   if (!invoice || !employee.companyIds.includes(invoice.company_id)) notFound();
 
   const [{ data: orders }, { data: company }, { data: profile }, { data: store }, { data: itemCategories }] = await Promise.all([
+    // 2026-08-18 — "conversation rate are not showing" (currency conversion
+    // rate): order_value_inr/exchange_rate_source already exist on orders
+    // (computed at Order Entry time, see computeCurrencyConversion) but
+    // weren't being selected here, so the invoice page had no way to show
+    // what rate was used to convert a foreign-currency order into INR.
+    // Added for the reference-only panel in invoice-view.tsx — purely
+    // informational, doesn't change anything about the printed customs
+    // invoice itself.
     supabase
       .from("orders")
-      .select("id, ref_no, ref_no_base, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, order_value_usd, colour")
+      .select(
+        "id, ref_no, ref_no_base, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, order_value_usd, order_value_inr, exchange_rate_source, colour"
+      )
       .eq("invoice_id", id),
     supabase.from("companies").select("id, name, logo_url").eq("id", invoice.company_id).single(),
     supabase.from("company_profiles").select("*").eq("company_id", invoice.company_id).single(),
