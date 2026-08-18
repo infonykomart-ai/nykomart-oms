@@ -713,7 +713,7 @@ async function savePurchaseBillCore(
       gst_type: p.gstType,
       round_off_amt: p.roundOffAmt || 0,
     })
-    .select("id, vendor_invoice_no, total_amount")
+    .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
     .single();
 
   if (error || !data) {
@@ -730,13 +730,20 @@ async function savePurchaseBillCore(
   // 2026-08-17: company_id now comes from the resolved value above (order's
   // company, or the employee's current company for orderless general-stock
   // purchases) rather than assuming an order always exists.
+  // 2026-08-18 fix — this used to mirror `total_amount` (the PRE-GST base,
+  // qty*sq_feet*unit_rate), which understates what's actually owed to the
+  // vendor by the entire GST amount whenever gst_rate_pct is set.
+  // `g_total_plus_gst` (base + GST + round_off_amt) is the real payable
+  // total and is what Bill Payment / Party Ledger should show as
+  // outstanding — see db/2026-08-18-bill-pass-register-purchase-sync-fix.sql
+  // for the one-time repair of rows already mirrored with the wrong value.
   const { error: bprError } = await supabase.from("bill_pass_register").insert({
     company_id: companyId,
     invoice_type: "Purchase",
     vendor_invoice_no: p.vendorInvoiceNo,
     invoice_date: p.vendorInvoiceDate,
     invoice_recv_date: p.vendorInvoiceDate,
-    total_amt: Number(data.total_amount ?? 0),
+    total_amt: Number(data.g_total_plus_gst ?? data.total_amount ?? 0),
     party_id: p.vendorPartyId,
     party_type: "Purchase",
     source: "purchase_bill",
@@ -936,7 +943,7 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   if (!vendorPartyId) return { error: "Select a vendor party.", success: false };
   if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", success: false };
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("purchase_bills")
     .update({
       vendor_party_id: vendorPartyId,
@@ -951,13 +958,44 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
       gst_type: strOrNull(formData, "gst_type"),
       round_off_amt: numOrZero(formData, "round_off_amt"),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
+    .single();
 
   if (error) {
     const msg = error.message.includes("duplicate key") ? "This vendor already has a bill with that invoice number." : error.message;
     return { error: msg, success: false };
   }
+
+  // 2026-08-18 fix — "why to cannot update": editing a Purchase Bill (e.g.
+  // fixing qty/rate/GST) updated purchase_bills correctly, but the mirrored
+  // bill_pass_register row (source='purchase_bill') was NEVER re-synced, so
+  // Bill Payment / Party Ledger kept showing whatever total_amt was frozen
+  // at from the ORIGINAL save — looking like the edit silently did nothing.
+  // This is the exact "source discriminator" sync-back rule (see BRAIN.md
+  // §4) that every other mirrored-row edit path already follows; Purchase
+  // Bill's edit path was the one that never got it. Also carries
+  // vendor_party_id/vendor_invoice_no/invoice_date through in case those
+  // were changed too — matches what the ledger row should reflect either
+  // way. Missing mirror row (e.g. the original insert's Finance-ledger step
+  // failed, see savePurchaseBillCore) is not an error here — nothing to
+  // sync in that case, the bill just was never in Finance to begin with.
+  if (updated) {
+    await supabase
+      .from("bill_pass_register")
+      .update({
+        total_amt: Number(updated.g_total_plus_gst ?? updated.total_amount ?? 0),
+        party_id: updated.vendor_party_id,
+        vendor_invoice_no: updated.vendor_invoice_no,
+        invoice_date: updated.vendor_invoice_date,
+        invoice_recv_date: updated.vendor_invoice_date,
+      })
+      .eq("source", "purchase_bill")
+      .eq("source_id", id);
+  }
+
   revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };
 }
 
