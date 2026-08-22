@@ -252,12 +252,20 @@ async function fetchDhlBatchNormalized(apiKey: string, awbNos: string[]): Promis
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
 /**
- * Fetches every not-yet-delivered dispatch_invoices row matching
+ * Fetches every not-yet-delivered order_shipments row matching
  * `courierNameLike` (an ILIKE pattern, e.g. "%fedex%"), batches its AWBs
  * through `fetchBatch`, and applies whatever comes back through the same
  * applyTrackingEvent() helper the push webhooks use — identical to the
  * original single-courier version of this route, just parameterized so
  * FedEx and Aramex can share it.
+ *
+ * Gap 1 (2026-08-20): queries order_shipments, NOT dispatch_invoices —
+ * dispatch_invoices.delivered_status is now a per-ORDER weakest-link
+ * summary (see resync-dispatch-summary.ts), so a multi-AWB order with one
+ * shipment still pending and one already delivered would show a non-null
+ * 'NOT Delivered' there and get silently skipped forever. order_shipments'
+ * delivered_status is the real per-AWB value, so this is the correct
+ * "which individual AWBs still need polling" source.
  */
 async function processCourier(
   supabase: ServiceClient,
@@ -267,7 +275,7 @@ async function processCourier(
   fetchBatch: (awbNos: string[]) => Promise<PolledEvent[]>
 ): Promise<{ polled: number; matched: number; updated: number; errors?: string[] }> {
   const { data: pending, error: fetchError } = await supabase
-    .from("dispatch_invoices")
+    .from("order_shipments")
     .select("awb_no")
     .ilike("courier_name", courierNameLike)
     .not("awb_no", "is", null)
@@ -318,7 +326,7 @@ async function processCourier(
         if (event.bucket === "DELIVERED" || event.bucket === "RTO" || event.bucket === "IN_TRANSIT") updated += 1;
         await markCourierWebhookProcessed(supabase, logId);
       } else {
-        await markCourierWebhookError(supabase, logId, `No dispatch_invoices row found for AWB ${event.awbNo}`);
+        await markCourierWebhookError(supabase, logId, `No order_shipments row found for AWB ${event.awbNo}`);
       }
     }
   }

@@ -130,6 +130,7 @@ export async function GET(req: NextRequest) {
           eoriNumber: null,
           iossNumber: null,
           destinationCountry: null,
+          vendorPartyId: null, // no reliable source from marketplace sync — fillable later via the order edit panel, see Gap 2 note in new/actions.ts.
           remark: "Auto-imported by marketplace sync",
           items: [
             {

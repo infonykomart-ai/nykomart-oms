@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { applyTrackingEvent } from "@/lib/courier-webhooks/apply-tracking-event";
 import type { Json } from "@/types/database";
 
 function verifySignature(rawBody: string, signatureHeader: string | null): boolean {
@@ -102,20 +103,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unrecognized payload shape" }, { status: 422 });
   }
 
-  // dispatch_invoices.awb_no is the existing link (same field
-  // src/lib/courier-bills/match.ts already matches on) — update the
-  // existing row rather than creating anything new.
-  const { data: dispatchInvoice, error: findError } = await supabase
-    .from("dispatch_invoices")
-    .select("id, order_id")
-    .ilike("awb_no", event.awbNo)
-    .maybeSingle();
+  // Gap 1 (2026-08-20): matching + writing now goes through the shared
+  // applyTrackingEvent() helper (order_shipments-aware — an order can have
+  // more than one AWB now, see claude/gap1-multipackage-design-2026-08-20.md)
+  // instead of this route querying dispatch_invoices directly — this route
+  // used to duplicate that logic rather than reuse the helper the FedEx
+  // poller already used; fixed as part of the same rearchitecture.
+  const { matched } = await applyTrackingEvent(supabase, {
+    awbNo: event.awbNo,
+    bucket: event.courierStatus,
+    deliveredDate: event.deliveredDate,
+    rawStatusText: null,
+  });
 
-  if (findError || !dispatchInvoice) {
+  if (!matched) {
     if (logRow) {
       await supabase
         .from("courier_webhook_log")
-        .update({ error_message: `No dispatch_invoices row found for AWB ${event.awbNo}` })
+        .update({ error_message: `No order_shipments row found for AWB ${event.awbNo}` })
         .eq("id", logRow.id);
     }
     // 200, not an error status — an unmatched AWB is a normal occurrence
@@ -123,21 +128,6 @@ export async function POST(req: NextRequest) {
     // either side. It stays in courier_webhook_log unprocessed=false for
     // manual/later reprocessing.
     return NextResponse.json({ status: "logged_unmatched" });
-  }
-
-  const delivered = event.courierStatus === "DELIVERED";
-
-  await supabase
-    .from("dispatch_invoices")
-    .update({
-      delivered_status: delivered ? "Delivered" : undefined,
-      delivered_date: event.deliveredDate,
-      last_update_date: new Date().toISOString().slice(0, 10),
-    })
-    .eq("id", dispatchInvoice.id);
-
-  if (delivered) {
-    await supabase.from("orders").update({ shipment_status: "Delivered" }).eq("id", dispatchInvoice.order_id);
   }
 
   if (logRow) {

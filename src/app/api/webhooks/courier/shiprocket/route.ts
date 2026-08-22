@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!matched) {
-    await markCourierWebhookError(supabase, logId, `No dispatch_invoices row found for AWB ${awbNo}`);
+    await markCourierWebhookError(supabase, logId, `No order_shipments row found for AWB ${awbNo}`);
     return NextResponse.json({ status: "logged_unmatched" });
   }
 
