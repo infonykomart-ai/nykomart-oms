@@ -25,6 +25,14 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Create a real Shipglobal shipment + label for an order (DPD / UniUni / VipParcel / DHL E-Commerce / UBI)." },
   { code: "bill_payment", label: "Bill Payment", icon: "💳", href: "/dashboard/bill-payment",
     description: "Bill-payment approval workflow." },
+  { code: "internal_expense_entry", label: "Office Expenses", icon: "🧾", href: "/dashboard/expenses",
+    description: "Log rent, electricity, fuel and other costs not tied to a purchase order or AWB — feeds the P&L Dashboard as a separate overhead line." },
+  { code: "freight_estimate", label: "Freight Cost Estimator", icon: "🧮", href: "/dashboard/freight-estimate",
+    description: "Estimate/compare shipping cost by courier, zone and weight before booking or dispatch — from the manually-maintained Courier Rate Card." },
+  { code: "freight_rate_admin", label: "Courier Rate Card", icon: "📊", href: "/dashboard/courier-rates",
+    description: "Maintain the manual courier rate sheet (courier / zone / weight-slab) that the Freight Cost Estimator uses." },
+  { code: "doc_entry", label: "Order Shipments & Packages", icon: "📦", href: "/dashboard/order-packages",
+    description: "Record how an order actually shipped — one or more physical packages, each under a shipment/AWB (packages can share one AWB or each get their own)." },
   { code: "salary_admin", label: "Salary & Advances", icon: "💰", href: "/dashboard/salary",
     description: "Salary and advance tracking." },
   { code: "statement_entry", label: "Statement Entry", icon: "📄", href: "/dashboard/statements",
@@ -75,6 +83,11 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // article content.
   { code: "help_center_admin", label: "Help Center Admin", icon: "🛠️", href: "/dashboard/admin/help-center",
     description: "Add / edit / delete the Help Center's FAQ & guide articles." },
+  // 2026-08-22: Backup Export — see db/2026-08-22-backup-export-admin.sql.
+  // Admin/MD only (own capability, not "reports" — bypasses per-company
+  // scoping and reads every company's orders at once).
+  { code: "data_export_admin", label: "Backup Export", icon: "💾", href: "/dashboard/admin/backup",
+    description: "Export every order + its generated invoice fields (all companies) as one Excel workbook." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

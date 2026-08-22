@@ -592,6 +592,158 @@ export type Database = {
         Relationships: [
         ];
       };
+      courier_rate_cards: {
+        Row: {
+          id: string;
+          company_id: string;
+          courier_name: string;
+          zone_label: string;
+          min_weight_kg: number;
+          max_weight_kg: number;
+          base_rate: number;
+          rate_per_kg: number;
+          fuel_surcharge_pct: number;
+          other_charges: number;
+          currency: string;
+          remark: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          courier_name: string;
+          zone_label: string;
+          min_weight_kg?: number;
+          max_weight_kg: number;
+          base_rate?: number;
+          rate_per_kg?: number;
+          fuel_surcharge_pct?: number;
+          other_charges?: number;
+          currency?: string;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          courier_name?: string;
+          zone_label?: string;
+          min_weight_kg?: number;
+          max_weight_kg?: number;
+          base_rate?: number;
+          rate_per_kg?: number;
+          fuel_surcharge_pct?: number;
+          other_charges?: number;
+          currency?: string;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_rate_cards_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_rate_cards_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      freight_cost_estimates: {
+        Row: {
+          id: string;
+          company_id: string;
+          order_id: string | null;
+          courier_name: string;
+          zone_label: string;
+          weight_kg: number;
+          base_rate: number;
+          weight_charge: number;
+          fuel_surcharge_amt: number;
+          other_charges: number;
+          estimated_total: number;
+          currency: string;
+          rate_card_id: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          order_id?: string | null;
+          courier_name: string;
+          zone_label: string;
+          weight_kg: number;
+          base_rate: number;
+          weight_charge: number;
+          fuel_surcharge_amt: number;
+          other_charges: number;
+          estimated_total: number;
+          currency?: string;
+          rate_card_id?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          order_id?: string | null;
+          courier_name?: string;
+          zone_label?: string;
+          weight_kg?: number;
+          base_rate?: number;
+          weight_charge?: number;
+          fuel_surcharge_amt?: number;
+          other_charges?: number;
+          estimated_total?: number;
+          currency?: string;
+          rate_card_id?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "freight_cost_estimates_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "freight_cost_estimates_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "freight_cost_estimates_rate_card_id_fkey";
+            columns: ["rate_card_id"];
+            isOneToOne: false;
+            referencedRelation: "courier_rate_cards";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "freight_cost_estimates_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       credit_notes: {
         Row: {
           id: string;
@@ -1179,6 +1331,7 @@ export type Database = {
           id: string;
           duty_tax_bill_id: string;
           order_id: string;
+          order_shipment_id: string;
           duty_tax_amt_usd: number | null;
           duty_tax_amt_inr: number | null;
           other_charge: number | null;
@@ -1195,6 +1348,7 @@ export type Database = {
           id?: string;
           duty_tax_bill_id: string;
           order_id: string;
+          order_shipment_id: string;
           duty_tax_amt_usd?: number | null;
           duty_tax_amt_inr?: number | null;
           other_charge?: number | null;
@@ -1211,6 +1365,7 @@ export type Database = {
           id?: string;
           duty_tax_bill_id?: string;
           order_id?: string;
+          order_shipment_id?: string;
           duty_tax_amt_usd?: number | null;
           duty_tax_amt_inr?: number | null;
           other_charge?: number | null;
@@ -2251,6 +2406,8 @@ export type Database = {
           family_contact_2_name: string | null;
           family_contact_2_relation: string | null;
           family_contact_2_number: string | null;
+          theme_id: string | null;
+          custom_accent_color: string | null;
           created_at: string;
         };
         Insert: {
@@ -2277,6 +2434,8 @@ export type Database = {
           family_contact_2_name?: string | null;
           family_contact_2_relation?: string | null;
           family_contact_2_number?: string | null;
+          theme_id?: string | null;
+          custom_accent_color?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2303,6 +2462,8 @@ export type Database = {
           family_contact_2_name?: string | null;
           family_contact_2_relation?: string | null;
           family_contact_2_number?: string | null;
+          theme_id?: string | null;
+          custom_accent_color?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -2631,6 +2792,7 @@ export type Database = {
           id: string;
           freight_bill_id: string;
           order_id: string;
+          order_shipment_id: string;
           bill_weight_kg: number | null;
           difference_amt: number | null;
           dimensional_weight_kg: number | null;
@@ -2646,6 +2808,7 @@ export type Database = {
           id?: string;
           freight_bill_id: string;
           order_id: string;
+          order_shipment_id: string;
           bill_weight_kg?: number | null;
           difference_amt?: number | null;
           dimensional_weight_kg?: number | null;
@@ -2661,6 +2824,7 @@ export type Database = {
           id?: string;
           freight_bill_id?: string;
           order_id?: string;
+          order_shipment_id?: string;
           bill_weight_kg?: number | null;
           difference_amt?: number | null;
           dimensional_weight_kg?: number | null;
@@ -2891,6 +3055,57 @@ export type Database = {
           {
             foreignKeyName: "hr_letters_generated_by_employee_id_fkey";
             columns: ["generated_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      internal_expenses: {
+        Row: {
+          id: string;
+          company_id: string;
+          expense_date: string;
+          category: string;
+          amount_inr: number;
+          payment_mode: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          expense_date: string;
+          category: string;
+          amount_inr: number;
+          payment_mode?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          expense_date?: string;
+          category?: string;
+          amount_inr?: number;
+          payment_mode?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "internal_expenses_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "internal_expenses_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -3235,6 +3450,53 @@ export type Database = {
           },
         ];
       };
+      order_packages: {
+        Row: {
+          id: string;
+          order_shipment_id: string;
+          package_no: number;
+          weight_kg: number | null;
+          length_cm: number | null;
+          width_cm: number | null;
+          height_cm: number | null;
+          volumetric_weight: number | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          order_shipment_id: string;
+          package_no: number;
+          weight_kg?: number | null;
+          length_cm?: number | null;
+          width_cm?: number | null;
+          height_cm?: number | null;
+          volumetric_weight?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_shipment_id?: string;
+          package_no?: number;
+          weight_kg?: number | null;
+          length_cm?: number | null;
+          width_cm?: number | null;
+          height_cm?: number | null;
+          volumetric_weight?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "order_packages_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       order_refunds: {
         Row: {
           id: string;
@@ -3294,6 +3556,63 @@ export type Database = {
           {
             foreignKeyName: "order_refunds_entry_by_employee_id_fkey";
             columns: ["entry_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      order_shipments: {
+        Row: {
+          id: string;
+          order_id: string;
+          shipment_no: number;
+          courier_name: string | null;
+          awb_no: string | null;
+          delivered_status: "Delivered" | "NOT Delivered" | null;
+          delivered_date: string | null;
+          last_update_date: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          order_id: string;
+          shipment_no: number;
+          courier_name?: string | null;
+          awb_no?: string | null;
+          delivered_status?: "Delivered" | "NOT Delivered" | null;
+          delivered_date?: string | null;
+          last_update_date?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          shipment_no?: number;
+          courier_name?: string | null;
+          awb_no?: string | null;
+          delivered_status?: "Delivered" | "NOT Delivered" | null;
+          delivered_date?: string | null;
+          last_update_date?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "order_shipments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_shipments_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -5301,6 +5620,8 @@ export type Database = {
           portal_expenses_25pct: number | null;
           net_earn: number | null;
           profit_pct: number | null;
+          total_internal_expenses_inr: number | null;
+          net_earn_after_overhead: number | null;
         };
         Relationships: [];
       };
@@ -5311,6 +5632,8 @@ export type Database = {
           total_expenses_inr: number | null;
           net_earn: number | null;
           profit_pct: number | null;
+          total_internal_expenses_inr: number | null;
+          net_earn_after_overhead: number | null;
         };
         Relationships: [];
       };
