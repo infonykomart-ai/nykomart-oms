@@ -17,6 +17,17 @@ import {
 // per-page re-implementation. PDF reuses the page's own print-area
 // convention (see printAreaId), so this component doesn't generate PDFs
 // itself, it just triggers window.print().
+//
+// 2026-08-22 — generic column/section picker (Reports hub extension). When
+// the caller passes `allColumns` + `hiddenKeys` + `onToggleColumn` (see
+// useColumnVisibility, src/lib/export/use-column-visibility.ts), a
+// "Columns" button renders here with a checkbox per column. `columns`
+// itself is always treated as the CURRENT effective (already-filtered)
+// list — every export format below reads only from `columns`, so hiding a
+// column here hides it from CSV/Excel/Word/Email/WhatsApp too. The caller
+// is responsible for filtering its own on-screen <table> the same way
+// (Orders Report does this — see orders-report-table.tsx) so PDF/Print,
+// which just captures the DOM, matches automatically.
 export function ExportBar<T>({
   title,
   filenameBase,
@@ -24,6 +35,9 @@ export function ExportBar<T>({
   rows,
   printAreaId,
   whatsappPhone,
+  allColumns,
+  hiddenKeys,
+  onToggleColumn,
 }: {
   title: string;
   filenameBase: string;
@@ -33,9 +47,16 @@ export function ExportBar<T>({
   printAreaId?: string;
   /** Optional phone number to pre-fill the wa.me fallback (e.g. a buyer's contact_no when the report is buyer-specific). */
   whatsappPhone?: string | null;
+  /** Full column list (unfiltered) — pass alongside hiddenKeys/onToggleColumn to show the "Columns" picker. Omit to hide the picker entirely. */
+  allColumns?: ExportColumn<T>[];
+  /** Set of column `key`s currently hidden — from useColumnVisibility(). */
+  hiddenKeys?: Set<string>;
+  /** Called with a column's key when its checkbox is toggled — from useColumnVisibility(). */
+  onToggleColumn?: (key: string) => void;
 }) {
   const [isSharing, startShare] = useTransition();
   const [notice, setNotice] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   function flash(msg: string) {
     setNotice(msg);
@@ -47,6 +68,38 @@ export function ExportBar<T>({
 
   return (
     <div className="flex flex-wrap items-center gap-2 print:hidden">
+      {allColumns && hiddenKeys && onToggleColumn && (
+        <div className="relative">
+          <button type="button" className={btnClass} onClick={() => setPickerOpen((v) => !v)}>
+            🧩 Columns ({allColumns.length - hiddenKeys.size}/{allColumns.length})
+          </button>
+          {pickerOpen && (
+            <>
+              {/* Click-outside catcher — a plain fixed overlay under the dropdown, same trick used elsewhere in this app for dropdown menus. */}
+              <div className="fixed inset-0 z-10" onClick={() => setPickerOpen(false)} />
+              <div className="absolute left-0 z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+                <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Show columns
+                </p>
+                {allColumns.map((c) => (
+                  <label
+                    key={c.key}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!hiddenKeys.has(c.key)}
+                      onChange={() => onToggleColumn(c.key)}
+                      className="h-3.5 w-3.5 rounded border-slate-300"
+                    />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
       <button type="button" className={btnClass} disabled={!rows.length} onClick={() => downloadCSV(filenameBase, columns, rows)}>
         ⬇️ CSV
       </button>

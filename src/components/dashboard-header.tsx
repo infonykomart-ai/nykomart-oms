@@ -45,39 +45,49 @@ export function DashboardHeader({
     .toUpperCase();
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
+    <header className="flex h-16 items-center justify-between border-b border-[var(--oms-header-border)] bg-[var(--oms-header-bg)] px-6 shadow-sm">
       <div className="flex items-center gap-3">
         {logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={logoUrl} alt={companyName} className="h-9 w-9 rounded-lg object-contain" />
         ) : (
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-sm font-bold text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--oms-accent)] text-sm font-bold text-[var(--oms-accent-contrast)]">
             {initials || "OMS"}
           </div>
         )}
         <div>
-          <div className="text-sm font-semibold leading-tight text-slate-900">{companyName}</div>
-          <div className="text-xs leading-tight text-slate-500">Order Management System</div>
+          <div className="text-sm font-semibold leading-tight text-[var(--oms-text)]">{companyName}</div>
+          <div className="text-xs leading-tight text-[var(--oms-text-muted)]">Order Management System</div>
         </div>
       </div>
 
       <div className="flex items-center gap-4">
         <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
+        {/* 2026-08-22: Theme settings — open to every signed-in employee,
+            same "not a capability tile" precedent as My Profile/Messages/
+            Help Center just below (see capability-info.ts). */}
+        <Link
+          href="/dashboard/settings/theme"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-lg hover:bg-[var(--oms-canvas)]"
+          title="Theme settings"
+        >
+          🎨
+        </Link>
         <NotificationBell items={notificationItems} />
         <MessagesHeaderLink meId={meId} initialUnreadCount={unreadMessageCount} />
         {/* 2026-08-12: "sabhi ko apni profile update karne ka option ho" —
             the name/avatar is now a link to the self-service My Profile
             page, open to every signed-in employee. */}
-        <Link href="/dashboard/profile" className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-right transition hover:bg-slate-100" title="My Profile">
+        <Link href="/dashboard/profile" className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-right transition hover:bg-[var(--oms-canvas)]" title="My Profile">
           <div>
-            <div className="text-sm font-medium leading-tight text-slate-900">{employeeName}</div>
-            <div className="text-xs leading-tight text-slate-500">{roleName}</div>
+            <div className="text-sm font-medium leading-tight text-[var(--oms-text)]">{employeeName}</div>
+            <div className="text-xs leading-tight text-[var(--oms-text-muted)]">{roleName}</div>
           </div>
           {myPhotoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={myPhotoUrl} alt={employeeName} className="h-9 w-9 rounded-full object-cover" />
           ) : (
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--oms-accent)]/20 text-sm font-semibold text-[var(--oms-text)]">
               {employeeName
                 .split(" ")
                 .map((w) => w[0])

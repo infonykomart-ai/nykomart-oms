@@ -78,14 +78,14 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   // has been read) so there's no flash of the wrong layout.
   if (!mounted || pinned) {
     return (
-      <aside className="flex w-72 flex-col border-r border-slate-200 bg-slate-900">
-        <div className="flex h-16 items-center justify-between gap-2 border-b border-slate-800 px-6">
-          <span className="text-lg font-bold text-white">Work Menu</span>
+      <aside className="flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)]">
+        <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-6">
+          <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
           <button
             type="button"
             onClick={togglePinned}
             title="Hide menu (hover the edge to bring it back)"
-            className="rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white"
+            className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
           >
             📌
           </button>
@@ -97,21 +97,21 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
 
   return (
     <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <div className="group flex h-full w-3 shrink-0 cursor-pointer flex-col items-center border-r border-slate-200 bg-slate-900 pt-3">
-        <div className="h-10 w-1 rounded-full bg-slate-700 transition group-hover:bg-amber-500" />
+      <div className="group flex h-full w-3 shrink-0 cursor-pointer flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3">
+        <div className="h-10 w-1 rounded-full bg-[var(--oms-sidebar-tile-border)] transition group-hover:bg-[var(--oms-accent)]" />
       </div>
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-slate-200 bg-slate-900 shadow-2xl transition-transform duration-200 ease-out ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] shadow-2xl transition-transform duration-200 ease-out ${
           hovered ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex h-16 items-center justify-between gap-2 border-b border-slate-800 px-6">
-          <span className="text-lg font-bold text-white">Work Menu</span>
+        <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-6">
+          <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
           <button
             type="button"
             onClick={togglePinned}
             title="Keep menu pinned open"
-            className="rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-white"
+            className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
           >
             📌
           </button>
@@ -138,8 +138,8 @@ function SidebarTile({
       href={href}
       className={`group flex flex-col items-center justify-center gap-1.5 rounded-xl border px-2 py-4 text-center transition ${
         active
-          ? "border-amber-400 bg-amber-500 text-white shadow-md shadow-amber-500/20"
-          : "border-slate-800 bg-slate-800/60 text-slate-300 hover:-translate-y-0.5 hover:border-amber-500/40 hover:bg-slate-800 hover:text-white hover:shadow-md"
+          ? "border-[var(--oms-accent)] bg-[var(--oms-accent)] text-[var(--oms-accent-contrast)] shadow-md shadow-[var(--oms-accent)]/20"
+          : "border-[var(--oms-sidebar-tile-border)] bg-[var(--oms-sidebar-tile-bg)] text-[var(--oms-sidebar-text-muted)] hover:-translate-y-0.5 hover:border-[var(--oms-accent)]/40 hover:bg-[var(--oms-sidebar-border)] hover:text-[var(--oms-sidebar-text)] hover:shadow-md"
       }`}
     >
       <span className="text-2xl leading-none">{icon}</span>
