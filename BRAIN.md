@@ -167,17 +167,24 @@ numbered sections — Section 17 is the reporting-views section, a good landing 
 - Employee password reset is a proper `employee_admin`-gated admin action
   (`supabase.auth.admin.updateUserById`), 8-char minimum (stricter than the project floor).
 
-**Real gaps to fix**, prioritized:
-1. **Medium** — `updateInvoiceFields` (`src/app/dashboard/invoices/actions.ts:691-738`) is missing
-   the company-scope check every sibling action has. An employee with `invoicing` capability but
-   access to fewer than all 3 companies could call the Server Action directly (bypassing the UI,
-   which itself filters correctly) with another company's invoice id and rewrite it.
-2. **Medium** — SSRF risk in `src/app/api/order-photo-proxy/route.ts` and
-   `src/app/api/order-whatsapp-image/route.ts`: both require login + `order_entry` but then `fetch()`
-   an arbitrary client-supplied URL server-side with only a scheme check, no host allowlist.
-3. **Low** — `removeHoliday` and `setManualAttendance` have narrower/missing checks than their
-   siblings (calendar sabotage risk, not data exposure).
-4. **Supabase project settings** (dashboard-level, not code): public "Allow new users to sign up" is
+**Real gaps found, all 4 code-level ones FIXED 2026-08-17 (round 2) — delivered via
+`2026-08-17-security-perf-round2.zip`, pending user upload confirmation + `git fetch` re-verify:**
+1. ~~**Medium** — `updateInvoiceFields`~~ **FIXED** (`src/app/dashboard/invoices/actions.ts`) — now
+   resolves the invoice's `company_id` and checks `employee.companyIds.includes(...)` before writing,
+   same pattern as the sibling `deleteInvoice`.
+2. ~~**Medium** — SSRF risk in `order-photo-proxy`/`order-whatsapp-image`~~ **FIXED** — new
+   `src/lib/security/safe-external-fetch.ts` resolves the hostname via `dns.lookup`, rejects any
+   private/loopback/link-local/cloud-metadata/reserved address (IPv4 + IPv6), and fetches with
+   `redirect: "manual"` so a redirect to an internal address can't bypass the check. Both routes now
+   route through it instead of a raw `fetch()`.
+3. ~~**Low** — `removeHoliday` and `setManualAttendance`~~ **FIXED** — `removeHoliday` now checks the
+   holiday's `company_id` against `employee.companyIds` before deleting (NULL = national holiday,
+   deletable by anyone with the capability, unchanged). `setManualAttendance` now additionally
+   verifies the target `employeeId` actually belongs to (or has cross-access to) the `companyId`
+   being written, closing a data-integrity hole where an admin scoped to Company A could misattribute
+   a Company B employee's attendance to Company A.
+4. **Supabase project settings** (dashboard-level, not code, NOT changed — flagged for user decision
+   only): public "Allow new users to sign up" is
    ON even though the app has no self-signup UI (accounts are only created by an admin via
    `supabase.auth.admin.createUser`) — direct calls to Supabase's own signup endpoint would still be
    accepted, though a rogue signup gets zero data access since there's no matching `employees` row.
@@ -190,29 +197,51 @@ numbered sections — Section 17 is the reporting-views section, a good landing 
 ## 7. Performance posture (audited 2026-08-17 — see project doc `perf-audit-2026-08-17.md` for full detail)
 
 **Most likely cause of "system slow" complaints**: `createOrderCore`
-(`src/app/dashboard/orders/new/actions.ts:304-346`) does per-line-item sequential currency
-conversion, which can fall through to an external HTTP call (`api.frankfurter.app`, 5s timeout) when
-no cached official rate exists for that date. A 5-item order on such a day can add up to ~25s of
-serial latency to a single "Save Order" click — this is the single most-used action in the app.
+(`src/app/dashboard/orders/new/actions.ts`) did per-line-item sequential currency conversion, which
+can fall through to an external HTTP call (`api.frankfurter.app`, 5s timeout) when no cached official
+rate exists for that date. **FIXED 2026-08-17 (round 2)** — a `conversionCache` Map keyed by
+`(currency, originalValue)` now dedupes repeated conversions within one order-save request, so
+multiple line items in the same currency (the common case) hit the network/RPC at most once total,
+not once per item.
 
-Other real findings, prioritized:
-1. `src/app/dashboard/orders/page.tsx` fires 12 Supabase queries, only 5 batched via `Promise.all` —
-   the other 7 run sequentially even though most are independent. Cheap parallelization win on the
-   second-most-visited page.
+Other findings, all applied 2026-08-17 (round 2) except #2 (SQL, delivered not run):
+1. ~~`src/app/dashboard/orders/page.tsx` fires 12 Supabase queries, only 5 batched~~ **FIXED** — the
+   other 6 (purchaseBills, dispatchInvoices, refunds, etsyLines, ebayTaxLines, amazonLines), which
+   only depend on `orderIds`/`marketplaceOrderNos` and never on each other, now run in one
+   `Promise.all` instead of sequentially.
 2. `ebay_tax_invoice_lines` has zero indexes (its Amazon/Etsy siblings both got matching ones) —
-   queried on every Orders page load, will slow-burn as eBay data accumulates.
-3. `src/app/dashboard/crm/page.tsx`'s order-status-count query has no `.limit()` — fetches every
-   order row for the company just to count in JS, unbounded growth.
+   **migration written** (`db/2026-08-17-ebay-indexes-and-order-status-rpc.sql`, idempotent, dry-run
+   verified) but **not yet run** — deliver-not-execute rule, waiting on the user to run it in Supabase.
+3. ~~`src/app/dashboard/crm/page.tsx`'s order-status-count query has no `.limit()`~~ **FIXED** — new
+   `get_order_status_counts(p_company_id)` SQL function (same migration file as #2) does the `GROUP BY`
+   in the database using the existing `idx_orders_status` index; the page now calls it via
+   `supabase.rpc(...)` instead of pulling every order row into Node to count client-side.
 4. Confirmed Vercel Hobby plan (60s function cap, 2-cron limit) — a plausible contributing factor
-   under load, can't verify further without Vercel function logs.
+   under load, can't verify further without Vercel function logs. Not actionable without a plan
+   upgrade decision — flagged, not fixed.
 
 Checked and confirmed FINE: no N+1 patterns on any read page, `xlsx`/`sharp`/`pdf` libs are all
 server-only or dynamically imported (never in the client bundle), `revalidatePath` scoping is
 appropriate everywhere except the (defensible) company-switch action, pagination/limits are present
 on every other page.
 
-**None of these performance fixes have been applied yet** — audited and documented, not yet
-implemented, pending user confirmation on priority.
+**2026-08-18 — 2 more minor items applied, 1 deliberately skipped:**
+- ~~`bill_pass_register` had no index matching bill-payment/page.tsx's exact query shape~~ **FIXED** —
+  new partial index `idx_bill_pass_company_due_date ON bill_pass_register(company_id, due_date) WHERE
+  balance_due > 0` (`db/2026-08-18-bill-pass-due-date-index.sql`, dry-run verified idempotent).
+- ~~`inventory/page.tsx`'s `finished_stock` query had no `.limit()`~~ **FIXED** — added `.limit(1000)`,
+  defensive only (row count is naturally bounded by SKU×size cardinality today, not order volume).
+- `switchCompanyAction`'s `revalidatePath("/dashboard", "layout")` — **deliberately left alone.**
+  Narrowing this looked easy but isn't actually a fix: switching company legitimately needs to
+  invalidate nearly every page in the app (orders, documents, stock, invoices, CRM, bill payment —
+  all company-scoped), and this exact session already hit multiple real bugs from company-scoping
+  going stale (Party Ledger, Bill Payment, CRM, Orders all had to be fixed for this earlier). A
+  narrower revalidate risks reintroducing that class of bug for a broad-cache-invalidation cost that's
+  cheap in practice. Confirmed with the user's "sabhi" request that this one stays as-is.
+
+**Code-level fixes (1, 3, and the currency cache) are done and typecheck/lint clean — delivered via
+`2026-08-17-security-perf-round2.zip`, pending upload confirmation + re-verify. The index/RPC SQL
+(#2/#3's DB half) is delivered separately for the user to run themselves, per the standing rule.**
 
 ## 8. What shipped 2026-08-17 (this round)
 
@@ -239,7 +268,7 @@ implemented, pending user confirmation on priority.
 - **Security + performance audits** — see §6/§7.
 - **WhatsApp automation (OpenWA) — evaluated, NOT integrated.** See §9.
 
-## 9. Pending decision: WhatsApp automation
+## 9. WhatsApp automation — DECIDED 2026-08-18: do not build
 
 User uploaded `OpenWA` (a NestJS-based, open-source, self-hosted WhatsApp API gateway) and asked what
 could be reused. Findings:
@@ -257,11 +286,12 @@ could be reused. Findings:
   `src/lib/export/export-table.ts`'s `shareOnWhatsApp` use the Web Share API / `wa.me` link pattern —
   manual, human-in-the-loop send, specifically to avoid any WhatsApp API/automation dependency.
 
-**Recommendation, not yet acted on**: don't deploy OpenWA against the real business number without
-the owner explicitly weighing the ban risk against the prior "keep it manual" decision. If automated
-order-status messages to buyers are genuinely wanted, the lower-risk path is Meta's official WhatsApp
-Cloud API (costs money, zero ban risk) rather than an unofficial gateway. Flagged for the user; no
-code written against it yet.
+**User decision (2026-08-18): do NOT integrate OpenWA.** Confirmed keeping the existing manual
+Share/`wa.me` approach — matches the app's own prior precedent (the two deliberate decisions above)
+and avoids the real account-ban risk OpenWA's own README warns about. `OpenWAmain.zip` was reviewed
+and nothing from it was merged into the app; no code was written against it. If automated
+order-status messages to buyers are wanted later, the lower-risk path stays Meta's official WhatsApp
+Cloud API (costs money, zero ban risk) — not revisited unless the user raises it again.
 
 ## 10. Where to find more detail
 
