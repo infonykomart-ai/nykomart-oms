@@ -346,11 +346,26 @@ CREATE TABLE employees (
   family_contact_2_relation       text,
   family_contact_2_number          text,
 
+  -- 2026-08-22: dashboard theme system — per-employee preference (see
+  -- db/2026-08-22-employee-theme-prefs.sql). theme_id is one of the 5
+  -- preset theme keys (see src/lib/theme/themes.ts); custom_accent_color
+  -- is an optional hex override of just the active theme's accent
+  -- variable. Both NULL = using the default theme ('navy-gold') with no
+  -- accent override.
+  theme_id                text,
+  custom_accent_color     text,
+
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (company_id, name)              -- matches old verifyCredentials_()'s (company, name) lookup key
 );
 CREATE INDEX idx_employees_company ON employees(company_id);
 CREATE UNIQUE INDEX idx_employees_code ON employees(employee_code) WHERE employee_code IS NOT NULL;
+ALTER TABLE employees
+  ADD CONSTRAINT employees_theme_id_check
+    CHECK (theme_id IS NULL OR theme_id IN ('navy-gold', 'day', 'eye-comfort', 'night', 'ocean'));
+ALTER TABLE employees
+  ADD CONSTRAINT employees_custom_accent_color_check
+    CHECK (custom_accent_color IS NULL OR custom_accent_color ~ '^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$');
 
 -- 2026-08-05: user confirmed real staff routinely work across all 3
 -- companies from ONE login (not one login per company, which is what a bare
@@ -1034,10 +1049,53 @@ CREATE INDEX idx_finished_stock_movements_order ON finished_stock_movements(orde
 -- "assignment" tables here; everything else is the view in section 9.
 -- =============================================================================
 
+-- Gap 1 (multi-package per order, 2026-08-20) — one row per real AWB used
+-- for an order (an order can now have more than one, or several packages
+-- can share one AWB — see claude/gap1-multipackage-design-2026-08-20.md
+-- and db/2026-08-20-order-shipments-and-packages.sql for the full design).
+-- order_packages (below) is the physical-box breakdown FK'd to whichever
+-- shipment/AWB it travels under. dispatch_invoices stays as an order-level
+-- SUMMARY kept in sync from these by src/lib/order-packages/resync-
+-- dispatch-summary.ts, not restructured.
+CREATE TABLE order_shipments (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id                uuid NOT NULL REFERENCES orders(id),
+  shipment_no             integer NOT NULL,   -- 1-based; "shipment i of N" when an order has >1 AWB
+  courier_name            text,
+  awb_no                  text,
+  delivered_status        delivered_status,
+  delivered_date          date,
+  last_update_date        date,
+  remark                  text,
+  created_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  CHECK (shipment_no > 0),
+  UNIQUE (order_id, shipment_no)
+);
+CREATE INDEX idx_order_shipments_order ON order_shipments(order_id);
+CREATE INDEX idx_order_shipments_awb   ON order_shipments(awb_no);
+
+CREATE TABLE order_packages (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_shipment_id  uuid NOT NULL REFERENCES order_shipments(id),
+  package_no         integer NOT NULL,   -- 1-based within the shipment — "i of N" on the physical label
+  weight_kg          numeric(10,3),
+  length_cm          numeric(10,2),
+  width_cm           numeric(10,2),
+  height_cm          numeric(10,2),
+  volumetric_weight  numeric(10,3),
+  remark             text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  CHECK (package_no > 0),
+  UNIQUE (order_shipment_id, package_no)
+);
+CREATE INDEX idx_order_packages_shipment ON order_packages(order_shipment_id);
+
 CREATE TABLE freight_bill_awb_assignments (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   freight_bill_id   uuid NOT NULL REFERENCES freight_bills(id),
-  order_id           uuid NOT NULL REFERENCES orders(id),   -- via dispatch_invoices.order_id (1 row = 1 AWB = 1 order)
+  order_id           uuid NOT NULL REFERENCES orders(id),   -- denormalized from order_shipment_id for existing joins/display
+  order_shipment_id    uuid NOT NULL REFERENCES order_shipments(id),  -- the actual 1-AWB-per-assignment unit (Gap 1, 2026-08-20)
   bill_weight_kg       numeric(10,3),    -- off the physical courier bill — not derivable from anything on file
   difference_amt         numeric(14,2), -- MANUAL — see comment on freight_bills.gross_total_amt / original author's note
   -- 2026-08-12 (round 10): "Dimensional weight" — present on the real
@@ -1055,14 +1113,16 @@ CREATE TABLE freight_bill_awb_assignments (
   debit_note_date                  date,
   debit_note_amt                     numeric(14,2),
   remark                  text,
-  UNIQUE (order_id)   -- one AWB (= one order/shipment) is billed under exactly one freight invoice
+  UNIQUE (order_shipment_id)   -- one AWB is billed under exactly one freight invoice (Gap 1, 2026-08-20 — was UNIQUE(order_id))
 );
 CREATE INDEX idx_freight_awb_assign_bill ON freight_bill_awb_assignments(freight_bill_id);
+CREATE INDEX idx_freight_awb_assign_shipment ON freight_bill_awb_assignments(order_shipment_id);
 
 CREATE TABLE duty_bill_awb_assignments (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   duty_tax_bill_id   uuid NOT NULL REFERENCES duty_tax_bills(id),
-  order_id            uuid NOT NULL REFERENCES orders(id),
+  order_id            uuid NOT NULL REFERENCES orders(id),   -- denormalized from order_shipment_id for existing joins/display
+  order_shipment_id      uuid NOT NULL REFERENCES order_shipments(id),  -- Gap 1, 2026-08-20 — see freight_bill_awb_assignments above
   duty_tax_amt_usd      numeric(14,2),
   duty_tax_amt_inr        numeric(14,2),
   other_charge              numeric(14,2),
@@ -1076,9 +1136,10 @@ CREATE TABLE duty_bill_awb_assignments (
   debit_note_date                     date,
   debit_note_amt                        numeric(14,2),
   remark                      text,
-  UNIQUE (order_id)
+  UNIQUE (order_shipment_id)
 );
 CREATE INDEX idx_duty_awb_assign_bill ON duty_bill_awb_assignments(duty_tax_bill_id);
+CREATE INDEX idx_duty_awb_assign_shipment ON duty_bill_awb_assignments(order_shipment_id);
 
 -- The recomputed/looked-up part of the old Freight Reconciliation sheet
 -- (everything that was an INDEX/MATCH-by-AWB formula pulling from Dispatch
@@ -1088,6 +1149,22 @@ CREATE INDEX idx_duty_awb_assign_bill ON duty_bill_awb_assignments(duty_tax_bill
 -- lookup is Dispatch & Invoice's SECOND gst column — courier_shipping_
 -- charge_without_gst's paired amount — not the first "GST 18%" used inside
 -- TOTAL AMT; both are modeled as separate columns on dispatch_invoices).
+-- Gap 1 (2026-08-20): awb_no/our_weight/dimensional_weight now pull from
+-- the SPECIFIC order_shipments/order_packages row this assignment points
+-- at (accurate per-AWB), not dispatch_invoices' order-level summary (which
+-- can be a multi-value join once an order has >1 AWB) — di.* stays for the
+-- order-level billing figures (charges, gst, invoice_no), which are out of
+-- scope for the per-package rearchitecture this round.
+--
+-- 2026-08-20 (order-value fix): org_sale_amt_inr is now o.order_value_inr
+-- (orders), not di.org_sale_amt_inr (dispatch_invoices). The latter is a
+-- dead column — nothing in the app writes it, it only ever got a value
+-- from the one-time historical import — so every order dispatched since
+-- then showed a 0.00 Sale Amt / shipping_pct here. order_value_inr is
+-- app-computed on every order insert/edit (see orders table comment
+-- above) and is the one true "order value" everywhere revenue/% is
+-- computed from; sales_invoices.invoice_value_usd/inr stays completely
+-- separate — that's the invoice DOCUMENT's own figure, unrelated to this.
 CREATE VIEW freight_reconciliation_view AS
 SELECT
   a.id                    AS assignment_id,
@@ -1098,24 +1175,25 @@ SELECT
   di.invoice_no,
   ic.name                    AS item_type,
   COALESCE(o.size_label, s.label) AS sizes,
-  di.awb_no,
+  COALESCE(os.awb_no, di.awb_no) AS awb_no,
   di.buyer_country,
-  di.org_sale_amt_inr,
+  o.order_value_inr          AS org_sale_amt_inr,
   di.our_freight_amt         AS our_shipping_amt,
   di.demand_surcharge_other_charge AS other_charges,
   di.total_amt                AS total_shipping_amt,
   di.gst_18pct_amt             AS gst_18pct,   -- Dispatch & Invoice's 2nd GST column — see comment above
   (COALESCE(di.total_amt,0) + COALESCE(di.gst_18pct_amt,0)) AS gross_shipping_amt,
-  di.shipping_weight_kg         AS our_weight,
+  COALESCE((SELECT SUM(op.weight_kg) FROM order_packages op WHERE op.order_shipment_id = os.id), di.shipping_weight_kg)::numeric(10,3) AS our_weight,
   a.bill_weight_kg,
-  di.volumetric_weight           AS dimensional_weight,
+  COALESCE((SELECT SUM(op.volumetric_weight) FROM order_packages op WHERE op.order_shipment_id = os.id), di.volumetric_weight)::numeric(10,3) AS dimensional_weight,
   a.difference_amt,               -- MANUAL, see comment on freight_bill_awb_assignments
-  CASE WHEN COALESCE(di.org_sale_amt_inr, 0) = 0 THEN NULL
-       ELSE (COALESCE(di.total_amt,0) + COALESCE(di.gst_18pct_amt,0)) / di.org_sale_amt_inr END AS shipping_pct,
+  CASE WHEN COALESCE(o.order_value_inr, 0) = 0 THEN NULL
+       ELSE (COALESCE(di.total_amt,0) + COALESCE(di.gst_18pct_amt,0)) / o.order_value_inr END AS shipping_pct,
   a.remark
 FROM freight_bill_awb_assignments a
 JOIN freight_bills fb        ON fb.id = a.freight_bill_id
 JOIN orders o                 ON o.id = a.order_id
+LEFT JOIN order_shipments os   ON os.id = a.order_shipment_id
 LEFT JOIN dispatch_invoices di ON di.order_id = a.order_id
 LEFT JOIN item_categories ic    ON ic.id = o.item_category_id
 LEFT JOIN sizes s                ON s.id = o.size_id;
@@ -1138,6 +1216,9 @@ GROUP BY fb.id, fb.invoice_no, fb.gross_total_amt;
 -- (matched by order_id) exactly as the source pulled it from Freight
 -- Reconciliation!N via AWB match, "so it stays consistent with that sheet
 -- rather than being recomputed" (original comment, still true here).
+-- 2026-08-20 (order-value fix): same fix as freight_reconciliation_view
+-- above — org_sale_amt_inr here is now o.order_value_inr, not the dead
+-- di.org_sale_amt_inr. See that view's comment for the full why.
 CREATE VIEW duty_reconciliation_view AS
 SELECT
   a.id                    AS assignment_id,
@@ -1148,9 +1229,9 @@ SELECT
   di.invoice_no,
   ic.name                      AS item_type,
   COALESCE(o.size_label, s.label) AS sizes,
-  di.awb_no,
+  COALESCE(os.awb_no, di.awb_no) AS awb_no,
   di.buyer_country,
-  di.org_sale_amt_inr,
+  o.order_value_inr AS org_sale_amt_inr,
   frv.gross_shipping_amt         AS shipping_amt,
   a.duty_tax_amt_usd,
   a.duty_tax_amt_inr,
@@ -1158,17 +1239,18 @@ SELECT
   a.gst_18pct,
   (COALESCE(a.duty_tax_amt_inr,0) + COALESCE(a.other_charge,0) + COALESCE(a.gst_18pct,0)) AS duty_gross_amt,
   (COALESCE(frv.gross_shipping_amt,0) + COALESCE(a.duty_tax_amt_inr,0) + COALESCE(a.other_charge,0) + COALESCE(a.gst_18pct,0)) AS shipping_and_duty,
-  CASE WHEN COALESCE(di.org_sale_amt_inr,0) = 0 THEN NULL
-       ELSE (COALESCE(frv.gross_shipping_amt,0) + COALESCE(a.duty_tax_amt_inr,0) + COALESCE(a.other_charge,0) + COALESCE(a.gst_18pct,0)) / di.org_sale_amt_inr
+  CASE WHEN COALESCE(o.order_value_inr,0) = 0 THEN NULL
+       ELSE (COALESCE(frv.gross_shipping_amt,0) + COALESCE(a.duty_tax_amt_inr,0) + COALESCE(a.other_charge,0) + COALESCE(a.gst_18pct,0)) / o.order_value_inr
   END AS shipping_and_duty_pct,
-  CASE WHEN COALESCE(di.org_sale_amt_inr,0) = 0 THEN NULL ELSE frv.gross_shipping_amt / di.org_sale_amt_inr END AS shipping_pct,
-  CASE WHEN COALESCE(di.org_sale_amt_inr,0) = 0 THEN NULL
-       ELSE (COALESCE(a.duty_tax_amt_inr,0) + COALESCE(a.other_charge,0) + COALESCE(a.gst_18pct,0)) / di.org_sale_amt_inr
+  CASE WHEN COALESCE(o.order_value_inr,0) = 0 THEN NULL ELSE frv.gross_shipping_amt / o.order_value_inr END AS shipping_pct,
+  CASE WHEN COALESCE(o.order_value_inr,0) = 0 THEN NULL
+       ELSE (COALESCE(a.duty_tax_amt_inr,0) + COALESCE(a.other_charge,0) + COALESCE(a.gst_18pct,0)) / o.order_value_inr
   END AS duty_pct,
   a.remark
 FROM duty_bill_awb_assignments a
 JOIN duty_tax_bills dtb        ON dtb.id = a.duty_tax_bill_id
 JOIN orders o                   ON o.id = a.order_id
+LEFT JOIN order_shipments os     ON os.id = a.order_shipment_id
 LEFT JOIN dispatch_invoices di   ON di.order_id = a.order_id
 LEFT JOIN item_categories ic      ON ic.id = o.item_category_id
 LEFT JOIN sizes s                  ON s.id = o.size_id
@@ -1703,34 +1785,190 @@ CREATE TABLE sale_profit_ledger (
 CREATE INDEX idx_sale_ledger_company ON sale_profit_ledger(company_id);
 CREATE INDEX idx_sale_ledger_invoice_date ON sale_profit_ledger(invoice_date);
 
-CREATE VIEW pl_dashboard_by_company_view AS
-SELECT
-  c.id AS company_id, c.name AS company_name,
-  SUM(l.total_value_inr)     AS total_sale_value_inr,
-  SUM(l.total_expenses_inr)  AS total_expenses_inr,
-  SUM(l.net_total_value)     AS net_total_value,
-  SUM(l.portal_expenses_25pct) AS portal_expenses_25pct,
-  SUM(l.net_earn)            AS net_earn,
-  (SUM(l.net_earn) / NULLIF(SUM(l.total_value_inr), 0)) AS profit_pct
-FROM companies c
-LEFT JOIN sale_profit_ledger l ON l.company_id = c.id
-GROUP BY c.id, c.name;
+-- 2026-08-20 — Gap 4 of the "5 real gaps" plan (see
+-- claude/five-gaps-implementation-plan-2026-08-20.md and
+-- db/2026-08-20-internal-expenses.sql): office/cash overhead (rent,
+-- electricity, fuel, etc.) not tied to any purchase order or AWB — a
+-- previously-flagged gap (bank-ledger "OFFICE EXP." rows had nowhere to
+-- go). Feeds the two P&L views below as a distinct overhead line, kept
+-- separate from sale_profit_ledger.total_expenses_inr (per-order
+-- marketplace/shipping expense — different meaning) rather than merged
+-- into it. category is plain text (validated in actions.ts against an
+-- app-level Set, not a DB enum) since the category list is open-ended.
+CREATE TABLE internal_expenses (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              uuid NOT NULL REFERENCES companies(id),
+  expense_date            date NOT NULL,
+  category                text NOT NULL,
+  amount_inr              numeric(14,2) NOT NULL CHECK (amount_inr > 0),
+  payment_mode            text,
+  remark                  text,
+  created_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_internal_expenses_company ON internal_expenses(company_id);
+CREATE INDEX idx_internal_expenses_date    ON internal_expenses(expense_date);
 
-CREATE VIEW pl_dashboard_by_month_view AS
+-- 2026-08-20 (order-value fix, part 2 — P&L goes live): user confirmed P&L
+-- should also switch to orders.order_value_inr as its revenue driver
+-- instead of only ever reading the CSV-imported sale_profit_ledger. Per
+-- the user's own decisions this round: (1) expenses = order-tied Courier +
+-- Duty (via freight_reconciliation_view/duty_reconciliation_view, summed
+-- per order) PLUS every purchase_bills row company-wide, whether or not
+-- it's linked to a specific order (g_total_plus_gst, GST-inclusive — same
+-- convention as gross_shipping_amt/duty_gross_amt); (2) month grouping is
+-- now orders.order_date (not an invoice date). Cancelled orders are
+-- excluded from revenue and expense (a cancelled order isn't a real sale)
+-- — Returned stays included, since a return is a fulfilled sale that came
+-- back; refunds are handled by the separate `refunds` table, out of scope
+-- here. This is an assumption, not a confirmed user decision — flag if
+-- Cancelled/Returned handling should differ.
+--
+-- sale_profit_ledger is NOT dropped and NOT ignored: rows with order_id
+-- IS NULL are genuinely historical entries that predate the live `orders`
+-- table (per that table's own comment — the Statement Entry CSV-import
+-- screen still exists for exactly this backfill case) and have no other
+-- source, so they're still added in. Rows WITH an order_id are now
+-- skipped here (the live order they point at is already counted via
+-- `orders` directly) to avoid double-counting the same sale twice.
+CREATE VIEW order_courier_duty_expense_view AS
 SELECT
-  date_trunc('month', l.invoice_date)::date AS month,
-  SUM(l.total_value_inr)     AS total_sale_value_inr,
-  SUM(l.total_expenses_inr)  AS total_expenses_inr,
-  SUM(l.net_earn)            AS net_earn,
-  (SUM(l.net_earn) / NULLIF(SUM(l.total_value_inr), 0)) AS profit_pct
-FROM sale_profit_ledger l
-WHERE l.invoice_date IS NOT NULL
-GROUP BY date_trunc('month', l.invoice_date)
-ORDER BY month DESC;
+  o.id AS order_id, o.company_id, o.order_date, o.status,
+  COALESCE(courier.amt, 0) AS courier_expense_inr,
+  COALESCE(duty.amt, 0)    AS duty_expense_inr
+FROM orders o
+LEFT JOIN (SELECT order_id, SUM(gross_shipping_amt) AS amt FROM freight_reconciliation_view GROUP BY order_id) courier ON courier.order_id = o.id
+LEFT JOIN (SELECT order_id, SUM(duty_gross_amt)      AS amt FROM duty_reconciliation_view    GROUP BY order_id) duty    ON duty.order_id    = o.id;
+COMMENT ON VIEW order_courier_duty_expense_view IS
+  'Per-order Courier+Duty expense (summed across every AWB/shipment on that order), used by the live P&L views '
+  'below. Not itself company-scoped in RLS — inherits from `orders`.';
+
+CREATE VIEW pl_dashboard_by_company_view AS
+WITH order_agg AS (
+  SELECT o.company_id,
+    SUM(o.order_value_inr) FILTER (WHERE o.status <> 'Cancelled')                                            AS total_sale_value_inr,
+    SUM(COALESCE(cd.courier_expense_inr,0) + COALESCE(cd.duty_expense_inr,0)) FILTER (WHERE o.status <> 'Cancelled') AS order_expenses_inr
+  FROM orders o
+  LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
+  GROUP BY o.company_id
+),
+purchase_agg AS (
+  SELECT company_id, SUM(g_total_plus_gst) AS purchase_expenses_inr
+  FROM purchase_bills
+  WHERE company_id IS NOT NULL
+  GROUP BY company_id
+),
+historical_agg AS (
+  -- pre-`orders`-table CSV backfill rows only — see comment above.
+  SELECT company_id, SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
+  FROM sale_profit_ledger
+  WHERE order_id IS NULL
+  GROUP BY company_id
+),
+combined AS (
+  SELECT
+    c.id AS company_id, c.name AS company_name,
+    COALESCE(oa.total_sale_value_inr,0) + COALESCE(ha.hist_sale_inr,0) AS total_sale_value_inr,
+    COALESCE(oa.order_expenses_inr,0) + COALESCE(pa.purchase_expenses_inr,0) + COALESCE(ha.hist_expense_inr,0) AS total_expenses_inr
+  FROM companies c
+  LEFT JOIN order_agg oa      ON oa.company_id = c.id
+  LEFT JOIN purchase_agg pa   ON pa.company_id = c.id
+  LEFT JOIN historical_agg ha ON ha.company_id = c.id
+)
+SELECT
+  combined.company_id, company_name,
+  total_sale_value_inr,
+  total_expenses_inr,
+  (total_sale_value_inr - total_expenses_inr)                          AS net_total_value,
+  (total_sale_value_inr * 0.25)                                        AS portal_expenses_25pct,
+  ((total_sale_value_inr - total_expenses_inr) - (total_sale_value_inr * 0.25)) AS net_earn,
+  (((total_sale_value_inr - total_expenses_inr) - (total_sale_value_inr * 0.25)) / NULLIF(total_sale_value_inr, 0)) AS profit_pct,
+  COALESCE(ie.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
+  (((total_sale_value_inr - total_expenses_inr) - (total_sale_value_inr * 0.25)) - COALESCE(ie.total_internal_expenses_inr, 0)) AS net_earn_after_overhead
+FROM combined
+LEFT JOIN (
+  SELECT company_id, SUM(amount_inr) AS total_internal_expenses_inr
+  FROM internal_expenses GROUP BY company_id
+) ie ON ie.company_id = combined.company_id;
+COMMENT ON VIEW pl_dashboard_by_company_view IS
+  '2026-08-20: rebuilt to be live off orders.order_value_inr + Courier/Duty reconciliation + purchase_bills '
+  '(company-wide) instead of only the CSV-imported sale_profit_ledger — see db/2026-08-20-order-value-fix.sql. '
+  'Pre-`orders`-table historical rows in sale_profit_ledger (order_id IS NULL) are still folded in so old '
+  'history is not lost.';
+
+-- 2026-08-20: rebuilt off a `months` CTE unioning distinct months from
+-- orders.order_date, purchase_bills.vendor_invoice_date, the historical
+-- (order_id IS NULL) sale_profit_ledger rows' invoice_date, and
+-- internal_expenses — so a month with office expenses but zero sales
+-- (e.g. rent paid in a slow month) still appears. Existing 5 columns keep
+-- the same name/order/type as before; the 2 new columns are appended at
+-- the end. See pl_dashboard_by_company_view's comment above for the same
+-- "live orders + company-wide purchase + preserved pre-orders history"
+-- design and the Cancelled/Returned assumption.
+CREATE VIEW pl_dashboard_by_month_view AS
+WITH months AS (
+  SELECT DISTINCT date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
+  UNION
+  SELECT DISTINCT date_trunc('month', vendor_invoice_date)::date AS month FROM purchase_bills WHERE vendor_invoice_date IS NOT NULL
+  UNION
+  SELECT DISTINCT date_trunc('month', invoice_date)::date AS month FROM sale_profit_ledger WHERE order_id IS NULL AND invoice_date IS NOT NULL
+  UNION
+  SELECT DISTINCT date_trunc('month', expense_date)::date AS month FROM internal_expenses
+),
+order_agg AS (
+  SELECT date_trunc('month', o.order_date)::date AS month,
+    SUM(o.order_value_inr)                                                                    AS sale_inr,
+    SUM(COALESCE(cd.courier_expense_inr,0) + COALESCE(cd.duty_expense_inr,0))                  AS order_expense_inr
+  FROM orders o
+  LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY date_trunc('month', o.order_date)
+),
+purchase_agg AS (
+  SELECT date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_inr
+  FROM purchase_bills
+  WHERE vendor_invoice_date IS NOT NULL
+  GROUP BY date_trunc('month', vendor_invoice_date)
+),
+historical_agg AS (
+  SELECT date_trunc('month', invoice_date)::date AS month,
+    SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
+  FROM sale_profit_ledger
+  WHERE order_id IS NULL AND invoice_date IS NOT NULL
+  GROUP BY date_trunc('month', invoice_date)
+),
+expense_agg AS (
+  SELECT date_trunc('month', expense_date)::date AS month, SUM(amount_inr) AS total_internal_expenses_inr
+  FROM internal_expenses
+  GROUP BY date_trunc('month', expense_date)
+),
+combined AS (
+  SELECT
+    m.month,
+    COALESCE(oa.sale_inr, 0) + COALESCE(ha.hist_sale_inr, 0) AS total_sale_value_inr,
+    COALESCE(oa.order_expense_inr, 0) + COALESCE(pa.purchase_expense_inr, 0) + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr
+  FROM months m
+  LEFT JOIN order_agg oa      ON oa.month = m.month
+  LEFT JOIN purchase_agg pa   ON pa.month = m.month
+  LEFT JOIN historical_agg ha ON ha.month = m.month
+)
+SELECT
+  c.month,
+  c.total_sale_value_inr,
+  c.total_expenses_inr,
+  ((c.total_sale_value_inr - c.total_expenses_inr) - (c.total_sale_value_inr * 0.25)) AS net_earn,
+  (((c.total_sale_value_inr - c.total_expenses_inr) - (c.total_sale_value_inr * 0.25)) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
+  COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
+  (((c.total_sale_value_inr - c.total_expenses_inr) - (c.total_sale_value_inr * 0.25)) - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead
+FROM combined c
+LEFT JOIN expense_agg ea ON ea.month = c.month
+ORDER BY c.month DESC;
 COMMENT ON VIEW pl_dashboard_by_month_view IS
   'Old P&L Dashboard''s month-wise block (previously hardcoded to a trailing 24 months via SUMPRODUCT over '
   'YEAR()/MONTH()) — a view naturally covers all history; LIMIT 24 in the application query if only a '
-  'trailing window should be shown.';
+  'trailing window should be shown. 2026-08-20: rebuilt to be live off orders.order_date/order_value_inr + '
+  'Courier/Duty + purchase_bills instead of only sale_profit_ledger — see pl_dashboard_by_company_view''s '
+  'comment and db/2026-08-20-order-value-fix.sql.';
 
 
 -- =============================================================================
@@ -2988,6 +3226,55 @@ CREATE TABLE shipglobal_shipments (
 CREATE INDEX idx_shipglobal_shipments_order ON shipglobal_shipments(order_id);
 CREATE INDEX idx_shipglobal_shipments_tracking ON shipglobal_shipments(tracking_no);
 
+-- =============================================================================
+-- SECTION 17c — FREIGHT COST ESTIMATOR (Gap 5 part 1 of the 5-gaps plan)
+-- 2026-08-20 — see claude/five-gaps-implementation-plan-2026-08-20.md and
+-- db/2026-08-20-freight-rate-card-and-estimator.sql for full reasoning.
+-- Manually-maintained rate card (no courier API — covers Aramex/On Point
+-- Express, unlike ShipGlobal above which has zero pricing logic) + saved
+-- estimates, optionally linked to an order.
+-- =============================================================================
+CREATE TABLE courier_rate_cards (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              uuid NOT NULL REFERENCES companies(id),
+  courier_name            text NOT NULL,
+  zone_label              text NOT NULL,
+  min_weight_kg           numeric(10,3) NOT NULL DEFAULT 0,
+  max_weight_kg           numeric(10,3) NOT NULL,
+  base_rate               numeric(14,2) NOT NULL DEFAULT 0,
+  rate_per_kg             numeric(14,2) NOT NULL DEFAULT 0,
+  fuel_surcharge_pct      numeric(6,3) NOT NULL DEFAULT 0,
+  other_charges           numeric(14,2) NOT NULL DEFAULT 0,
+  currency                text NOT NULL DEFAULT 'INR',
+  remark                  text,
+  entered_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  CHECK (min_weight_kg >= 0),
+  CHECK (max_weight_kg > min_weight_kg)
+);
+CREATE INDEX idx_courier_rate_cards_lookup ON courier_rate_cards(company_id, courier_name, zone_label);
+
+CREATE TABLE freight_cost_estimates (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              uuid NOT NULL REFERENCES companies(id),
+  order_id                uuid REFERENCES orders(id) ON DELETE SET NULL,
+  courier_name            text NOT NULL,
+  zone_label              text NOT NULL,
+  weight_kg               numeric(10,3) NOT NULL CHECK (weight_kg > 0),
+  base_rate               numeric(14,2) NOT NULL,
+  weight_charge           numeric(14,2) NOT NULL,
+  fuel_surcharge_amt      numeric(14,2) NOT NULL,
+  other_charges           numeric(14,2) NOT NULL,
+  estimated_total         numeric(14,2) NOT NULL,
+  currency                text NOT NULL DEFAULT 'INR',
+  rate_card_id            uuid REFERENCES courier_rate_cards(id) ON DELETE SET NULL,
+  remark                  text,
+  created_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_freight_cost_estimates_company ON freight_cost_estimates(company_id);
+CREATE INDEX idx_freight_cost_estimates_order   ON freight_cost_estimates(order_id);
+
 
 -- =============================================================================
 -- SECTION 18 — SEED DATA
@@ -3076,7 +3363,19 @@ INSERT INTO capabilities (code, description) VALUES
   ('shipglobal_shipment', 'Create Shipglobal shipments (real external shipment + label + customs declaration)'),
   -- 2026-08-14: Help Center itself needs NO capability (open to every
   -- signed-in employee) — this one only gates maintaining its content.
-  ('help_center_admin',   'Add/edit/delete Help Center FAQ & guide articles');
+  ('help_center_admin',   'Add/edit/delete Help Center FAQ & guide articles'),
+  -- 2026-08-20: Gap 4 of the 5-gaps plan — see internal_expenses table
+  -- (SECTION 12) and db/2026-08-20-internal-expenses.sql. Same role grant
+  -- as bill_payment (Finance, Admin).
+  ('internal_expense_entry', 'Log office/cash expenses (rent, electricity, fuel, etc.) not tied to any purchase order or AWB'),
+  -- 2026-08-20: Gap 5 part 1 of the 5-gaps plan — see SECTION 17c and
+  -- db/2026-08-20-freight-rate-card-and-estimator.sql.
+  ('freight_rate_admin', 'Maintain the Courier Rate Card (manual freight rate sheet by courier/zone/weight-slab)'),
+  ('freight_estimate',   'Use the Freight Cost Estimator to estimate/compare shipping cost before booking/dispatch'),
+  -- 2026-08-22: Backup Export — see db/2026-08-22-backup-export-admin.sql.
+  -- Deliberately its own capability (not reusing "reports") since this
+  -- bypasses per-company scoping and reads every company's orders at once.
+  ('data_export_admin', 'Export every order + its generated invoice fields (all companies) as one Excel workbook — the Backup Export page');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -3126,10 +3425,15 @@ JOIN (VALUES
   ('Admin',              'order_entry'), ('Admin', 'csv_upload'), ('Admin', 'bill_payment'),
   ('Admin',              'salary_admin'), ('Admin', 'statement_entry'), ('Admin', 'approve_level1'),
   ('Admin',              'approve_level2'), ('Admin', 'shipglobal_shipment'), ('Admin', 'help_center_admin'),
+  ('Finance',            'internal_expense_entry'), ('Admin', 'internal_expense_entry'), -- 2026-08-20: Gap 4, same grant set as bill_payment.
+  ('Finance',            'freight_rate_admin'), ('MD', 'freight_rate_admin'), ('Admin', 'freight_rate_admin'), -- 2026-08-20: Gap 5 part 1, same grant set as exchange_rate_admin.
+  ('Order Entry',        'freight_estimate'), ('Logistics', 'freight_estimate'), ('Finance', 'freight_estimate'),
+  ('MD',                 'freight_estimate'), ('Admin', 'freight_estimate'),
   ('Listing',            'attendance_punch'), ('Listing', 'task_management'),
   ('Photoshop/Graphics', 'attendance_punch'), ('Photoshop/Graphics', 'task_management'),
   ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch'), ('Inventory', 'finished_stock_view'),
-  ('Inventory',          'task_management')
+  ('Inventory',          'task_management'),
+  ('Admin',              'data_export_admin'), ('MD', 'data_export_admin') -- 2026-08-22: Backup Export, Admin/MD only.
 ) AS rc(role_name, cap) ON rc.role_name = r.name;
 
 
