@@ -3,6 +3,7 @@
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { buyerMatchKey } from "@/lib/orders/buyer-match";
+import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/currency";
 import { revalidatePath } from "next/cache";
 
@@ -336,6 +337,17 @@ export async function createOrderCore(
     return pending;
   }
 
+  // 2026-08-22 — "order me address dalte hai vaha se automatic country
+  // fatch ho jaye": derived ONCE per order (buyerNameAddress is the same
+  // across every item in this loop), from the address text the buyer's
+  // name/address field already carries — not a second field to fill in.
+  // See src/lib/geo/parse-country.ts. '' (not null) when the parser can't
+  // confidently resolve one, so Reports' fallback still reads it as
+  // "(unknown)" while the one-time backfill (Admin > Backup Export) can
+  // tell "not yet computed" (NULL, old rows) apart from "computed, no
+  // match" ('') and never re-attempts the same unresolved row forever.
+  const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
+
   for (const item of items) {
     const conversion = await cachedConversion(item.orderCurrency, item.orderValueOriginal);
     siblingCount += 1;
@@ -355,6 +367,7 @@ export async function createOrderCore(
       qty: item.qty,
       item_category_id: item.itemCategoryId,
       buyer_name_address: buyerNameAddress,
+      buyer_country: buyerCountry,
       contact_no: contactNo,
       email_id: emailId,
       tax_id: taxId,

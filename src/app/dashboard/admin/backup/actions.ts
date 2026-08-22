@@ -2,6 +2,7 @@
 
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 
 // Backup Export (2026-08-22) — admin-only, all-companies data export. See
 // db/2026-08-22-backup-export-admin.sql for the capability grant and full
@@ -172,4 +173,78 @@ export async function getBackupExportRows(): Promise<BackupExportRow[]> {
       diDeliveredDate: di?.delivered_date ?? null,
     };
   });
+}
+
+// Buyer Country Backfill (2026-08-22) — one-time (but safely re-runnable)
+// migration button for the ~645 existing orders that predate
+// orders.buyer_country (see db/2026-08-22-orders-buyer-country.sql and
+// src/lib/geo/parse-country.ts). New/edited orders get this computed
+// automatically from now on (createOrderCore/updateOrder) — this is only
+// for the backlog that already existed before that code shipped.
+//
+// Processes ONE bounded batch per call (not the whole backlog in one
+// request) — same reason every other heavy admin operation here respects
+// Vercel's Hobby-plan 60s function cap (see api/cron/*'s own
+// maxDuration comments): thousands of rows × network round-trips could
+// exceed it in a single invocation. The button
+// (buyer-country-backfill-button.tsx) calls this repeatedly until
+// `remaining` reaches 0, so from the admin's perspective it's still one
+// click.
+//
+// Idempotent and safe to re-run: only ever touches rows where
+// buyer_country IS STILL NULL. A row the parser can't resolve is set to
+// '' (empty string), not left NULL — otherwise it would never look
+// "processed" and would be re-selected (and re-fail) every single batch,
+// forever. NULL only ever means "never attempted yet".
+const BACKFILL_BATCH_SIZE = 500;
+const BACKFILL_UPDATE_CONCURRENCY = 25;
+
+export type BackfillBuyerCountryResult = {
+  processedThisBatch: number;
+  matchedThisBatch: number;
+  remaining: number;
+  error: string | null;
+};
+
+export async function backfillBuyerCountry(): Promise<BackfillBuyerCountryResult> {
+  await requireCapability("data_export_admin");
+  const supabase = createServiceRoleClient();
+
+  const { data: batch, error: selectError } = await supabase
+    .from("orders")
+    .select("id, buyer_name_address")
+    .is("buyer_country", null)
+    .not("buyer_name_address", "is", null)
+    .limit(BACKFILL_BATCH_SIZE);
+
+  if (selectError) return { processedThisBatch: 0, matchedThisBatch: 0, remaining: 0, error: selectError.message };
+  if (!batch || batch.length === 0) return { processedThisBatch: 0, matchedThisBatch: 0, remaining: 0, error: null };
+
+  let matchedThisBatch = 0;
+  const updates = batch.map((row) => {
+    const country = parseCountryFromAddress(row.buyer_name_address) ?? "";
+    if (country) matchedThisBatch++;
+    return { id: row.id, country };
+  });
+
+  // Chunked concurrent single-row updates — see header comment on why
+  // this isn't a single bulk upsert (orders has several NOT NULL columns
+  // with no default, which a partial-object upsert would trip over even
+  // though every id here already exists and would really just UPDATE).
+  for (let i = 0; i < updates.length; i += BACKFILL_UPDATE_CONCURRENCY) {
+    const chunk = updates.slice(i, i + BACKFILL_UPDATE_CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map(({ id, country }) => supabase.from("orders").update({ buyer_country: country }).eq("id", id))
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) return { processedThisBatch: 0, matchedThisBatch: 0, remaining: 0, error: failed.error.message };
+  }
+
+  const { count: remaining } = await supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .is("buyer_country", null)
+    .not("buyer_name_address", "is", null);
+
+  return { processedThisBatch: batch.length, matchedThisBatch, remaining: remaining ?? 0, error: null };
 }

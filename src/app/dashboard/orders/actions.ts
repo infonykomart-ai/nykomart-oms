@@ -8,6 +8,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
+import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -95,6 +96,13 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
 
   const conversion = await computeCurrencyConversion(supabase, orderCurrency, orderDate, orderValueOriginal);
 
+  // 2026-08-22 — same auto-derive as createOrderCore (see
+  // src/lib/geo/parse-country.ts): re-derived from whatever address text
+  // is being saved here, so editing the address also refreshes the
+  // country instead of leaving a stale value from before the edit.
+  const buyerNameAddress = strOrNull(formData, "buyer_name_address");
+  const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
+
   const { error } = await supabase
     .from("orders")
     .update({
@@ -112,7 +120,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
       photo_url: strOrNull(formData, "photo_url"),
       tassel_fringes: formData.get("tassel_fringes") === "on",
-      buyer_name_address: strOrNull(formData, "buyer_name_address"),
+      buyer_name_address: buyerNameAddress,
+      buyer_country: buyerCountry,
       contact_no: strOrNull(formData, "contact_no"),
       email_id: strOrNull(formData, "email_id"),
       tax_id: strOrNull(formData, "tax_id"),

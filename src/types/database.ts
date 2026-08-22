@@ -3653,6 +3653,7 @@ export type Database = {
           eori_number: string | null;
           ioss_number: string | null;
           destination_country: string | null;
+          buyer_country: string | null;
           address_type: "Residential" | "Commercial";
           photo_type: "Dispatch" | "Website" | null;
           colour: string | null;
@@ -3704,6 +3705,7 @@ export type Database = {
           eori_number?: string | null;
           ioss_number?: string | null;
           destination_country?: string | null;
+          buyer_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
           colour?: string | null;
@@ -3755,6 +3757,7 @@ export type Database = {
           eori_number?: string | null;
           ioss_number?: string | null;
           destination_country?: string | null;
+          buyer_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
           colour?: string | null;
