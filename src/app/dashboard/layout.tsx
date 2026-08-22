@@ -11,6 +11,8 @@ import { HelpCenterProvider } from "@/components/help-center/help-center-provide
 import { getHelpArticles } from "@/lib/help-center/get-articles";
 import { PresenceProvider } from "@/components/presence/presence-context";
 import { MessageToastProvider } from "@/components/messages/message-toast-provider";
+import { ThemeProvider } from "@/components/theme/theme-provider";
+import { ThemedShell } from "@/components/theme/themed-shell";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   let employee;
@@ -48,7 +50,15 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // enough to run on every dashboard page load, unlike a full reorder-
   // alert-style computation would be.
   const bprClient = createServiceRoleClient();
-  const [helpArticles, { count: unreadMessageCount }, { data: messagingEmployees }, { count: pendingL1Count }, { count: pendingL2Count }, { count: overdueBillsCount }] =
+  const [
+    helpArticles,
+    { count: unreadMessageCount },
+    { data: messagingEmployees },
+    { count: pendingL1Count },
+    { count: pendingL2Count },
+    { count: overdueBillsCount },
+    { data: myThemePrefs },
+  ] =
     await Promise.all([
       getHelpArticles(),
       createServiceRoleClient()
@@ -84,6 +94,16 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             .gt("balance_due", 0)
             .lt("due_date", new Date().toISOString().slice(0, 10))
         : { count: 0 },
+      // 2026-08-22 — this employee's saved theme + custom accent (see
+      // db/2026-08-22-employee-theme-prefs.sql). Fetched here, alongside
+      // every other per-employee layout query, so the very first paint
+      // already renders the saved theme — no flash of the default before
+      // a client-side fetch resolves. Service-role client for consistency
+      // with the rest of this layout's newer reads (same reasoning noted
+      // above for messagingEmployees etc.), though this one is hard-scoped
+      // to the caller's own id regardless.
+      //
+      bprClient.from("employees").select("theme_id, custom_accent_color").eq("id", employee.id).single(),
     ]);
 
   const notificationItems = [
@@ -117,27 +137,29 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     <PresenceProvider meId={employee.id}>
       <CelebrationProvider>
         <HelpCenterProvider articles={helpArticles}>
-          <div className="flex h-screen overflow-hidden bg-slate-100">
-            <DashboardSidebar capabilities={employee.capabilities} />
-            <div className="flex flex-1 flex-col overflow-hidden">
-              <DashboardHeader
-                companyName={currentCompany?.name ?? ""}
-                logoUrl={currentCompany?.logo_url ?? null}
-                employeeName={employee.name}
-                roleName={employee.roleName}
-                companies={companies ?? []}
-                currentCompanyId={employee.currentCompanyId}
-                meId={employee.id}
-                myPhotoUrl={employee.photoUrl}
-                unreadMessageCount={unreadMessageCount ?? 0}
-                notificationItems={notificationItems}
-              />
-              <main className="flex-1 overflow-y-auto p-6">
-                <TodaysCelebrationsBanner celebrations={celebrations} />
-                {children}
-              </main>
-            </div>
-          </div>
+          <ThemeProvider initialThemeId={myThemePrefs?.theme_id ?? null} initialCustomAccent={myThemePrefs?.custom_accent_color ?? null}>
+            <ThemedShell>
+              <DashboardSidebar capabilities={employee.capabilities} />
+              <div className="flex flex-1 flex-col overflow-hidden">
+                <DashboardHeader
+                  companyName={currentCompany?.name ?? ""}
+                  logoUrl={currentCompany?.logo_url ?? null}
+                  employeeName={employee.name}
+                  roleName={employee.roleName}
+                  companies={companies ?? []}
+                  currentCompanyId={employee.currentCompanyId}
+                  meId={employee.id}
+                  myPhotoUrl={employee.photoUrl}
+                  unreadMessageCount={unreadMessageCount ?? 0}
+                  notificationItems={notificationItems}
+                />
+                <main className="flex-1 overflow-y-auto p-6">
+                  <TodaysCelebrationsBanner celebrations={celebrations} />
+                  {children}
+                </main>
+              </div>
+            </ThemedShell>
+          </ThemeProvider>
           <MessageToastProvider meId={employee.id} employeesById={employeesById} />
         </HelpCenterProvider>
       </CelebrationProvider>

@@ -13,6 +13,7 @@ const labelClass = "mb-1 block text-sm font-medium text-slate-700";
 type ItemCategory = { id: string; name: string };
 type Size = { id: string; label: string };
 type Currency = { code: string; name: string };
+type Party = { id: string; name: string };
 
 // 2026-08-07: "Add More Item" — ek order me ek se zyada alag-alag item ho
 // (jute + cotton, same buyer) to har item ka apna block hai. Single item ho
@@ -143,11 +144,13 @@ export function OrderForm({
   itemCategories,
   sizes,
   currencies,
+  parties,
 }: {
   stores: { id: string; name: string }[];
   itemCategories: ItemCategory[];
   sizes: Size[];
   currencies: Currency[];
+  parties: Party[];
 }) {
   const [state, formAction, pending] = useActionState(createOrder, initialState);
   const formRef = useRef<HTMLFormElement>(null);
@@ -245,6 +248,19 @@ export function OrderForm({
           <div>
             <label className={labelClass} htmlFor="delivery_date">Delivery Date</label>
             <input id="delivery_date" name="delivery_date" type="date" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="vendor_party_id">Purchasing From (if known)</label>
+            <select id="vendor_party_id" name="vendor_party_id" defaultValue="" className={inputClass}>
+              <option value="">Not known yet</option>
+              {parties.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-400">
+              Usually unknown at this stage — leave blank and set it later from the Orders hub once the vendor is
+              confirmed. Purely a planning note, not tied to any Purchase Bill yet.
+            </p>
           </div>
         </div>
       </fieldset>

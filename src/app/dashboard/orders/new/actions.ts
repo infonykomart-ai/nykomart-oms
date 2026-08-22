@@ -114,6 +114,17 @@ type CreateOrderInput = {
   eoriNumber: string | null;
   iossNumber: string | null;
   destinationCountry: string | null;
+  // 2026-08-20 — Gap 2 of the 5-gaps plan (see
+  // claude/five-gaps-implementation-plan-2026-08-20.md): which vendor
+  // Party this order's goods are LIKELY being purchased from, filled in at
+  // order-entry time IF already known. Almost always unknown at entry (the
+  // real vendor is usually only confirmed once their bill arrives — see
+  // Purchase Bill's own required order_id link on the Orders hub), so this
+  // stays optional and is more commonly set/edited later via the Orders
+  // hub's inline edit — see order-edit-form.tsx. Column already existed in
+  // schema.sql (orders.vendor_party_id) but was previously unused anywhere
+  // in the app.
+  vendorPartyId: string | null;
 };
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -299,7 +310,7 @@ export async function createOrderCore(
     .eq("ref_no_base", baseRefNo);
   let siblingCount = existingSiblingsToday ?? 0;
 
-  const { poDate, deliveryDate, emailId, taxId, addressType, remark, vatNumber, eoriNumber, iossNumber, destinationCountry } = input;
+  const { poDate, deliveryDate, emailId, taxId, addressType, remark, vatNumber, eoriNumber, iossNumber, destinationCountry, vendorPartyId } = input;
 
   // 2026-08-17 performance fix — computeCurrencyConversion() can fall
   // through to an external HTTP call (api.frankfurter.app, 5s timeout) when
@@ -352,6 +363,7 @@ export async function createOrderCore(
       eori_number: eoriNumber,
       ioss_number: iossNumber,
       destination_country: destinationCountry,
+      vendor_party_id: vendorPartyId,
       photo_type: item.photoType,
       colour: item.colour,
       remark,
@@ -432,6 +444,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     eoriNumber: strOrNull(formData, "eori_number"),
     iossNumber: strOrNull(formData, "ioss_number"),
     destinationCountry: strOrNull(formData, "destination_country"),
+    vendorPartyId: strOrNull(formData, "vendor_party_id"),
   });
 
   if (result.error) return { error: result.error, success: null };
@@ -649,6 +662,7 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       eoriNumber: cellStr(raw, byHeader, "EORI Number") || null,
       iossNumber: cellStr(raw, byHeader, "IOSS Number") || null,
       destinationCountry: cellStr(raw, byHeader, "Destination Country") || null,
+      vendorPartyId: null, // not a CSV column — vendor is set/edited later via the Orders hub, see Gap 2 note above.
       items: [item],
     });
 

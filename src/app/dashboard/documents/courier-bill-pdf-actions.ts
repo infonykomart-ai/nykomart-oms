@@ -35,6 +35,7 @@ export type ParsedShipmentReview = {
   dutyAmt: number | null;
   otherAmt: number | null;
   orderId: string | null;
+  orderShipmentId: string | null;
   orderRefNo: string | null;
   alreadyAssigned: boolean;
 };
@@ -93,6 +94,7 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
       dutyAmt: s.dutyAmt,
       otherAmt: s.otherAmt,
       orderId: match.orderId,
+      orderShipmentId: match.orderShipmentId,
       orderRefNo: match.orderRefNo,
       alreadyAssigned: match.alreadyAssigned,
     });
@@ -126,6 +128,7 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
 export type CommitShipmentInput = {
   trackingNo: string;
   orderId: string | null; // null = skip this row (unmatched or user chose not to fix it)
+  orderShipmentId: string | null; // the specific AWB/shipment this row's tracking no. resolved to
   weightKg: number | null;
   amount: number | null; // duty bills: duty_tax_amt_inr for this shipment
   otherAmt: number | null; // duty bills: other_charge for this shipment
@@ -178,7 +181,7 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
     let assigned = 0;
     let skipped = 0;
     for (const s of input.shipments) {
-      if (!s.orderId) {
+      if (!s.orderId || !s.orderShipmentId) {
         skipped++;
         continue;
       }
@@ -190,6 +193,7 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
       const { error: aErr } = await supabase.from("freight_bill_awb_assignments").insert({
         freight_bill_id: bill.id,
         order_id: s.orderId,
+        order_shipment_id: s.orderShipmentId,
         bill_weight_kg: s.weightKg,
         remark: `Auto-extracted from PDF (tracking ${s.trackingNo})`,
       });
@@ -221,7 +225,7 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
   let assigned = 0;
   let skipped = 0;
   for (const s of input.shipments) {
-    if (!s.orderId) {
+    if (!s.orderId || !s.orderShipmentId) {
       skipped++;
       continue;
     }
@@ -233,6 +237,7 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
     const { error: aErr } = await supabase.from("duty_bill_awb_assignments").insert({
       duty_tax_bill_id: bill.id,
       order_id: s.orderId,
+      order_shipment_id: s.orderShipmentId,
       duty_tax_amt_inr: s.amount,
       other_charge: s.otherAmt,
       remark: `Auto-extracted from PDF (tracking ${s.trackingNo})`,

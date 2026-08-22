@@ -69,6 +69,12 @@ export type OrderLookup = {
     order_value_usd: number | null;
     order_value_inr: number | null;
     invoice_id: string | null;
+    // 2026-08-20 — Gap 2 of the 5-gaps plan: the "planned" vendor set at
+    // order-entry/edit time (orders.vendor_party_id), used by
+    // purchase-bill-form.tsx to PRE-FILL (not lock) the Vendor Party
+    // dropdown when this order is looked up — still just a planning note,
+    // not a guarantee the bill will actually come from this party.
+    vendor_party_id: string | null;
   } | null;
   invoice: { id: string; invoice_no: string; master_invoice_no: string } | null;
   debitNotes: { id: string; debit_note_no: string | null; debit_amount: number }[];
@@ -94,7 +100,7 @@ export async function lookupOrderForEntry(refNo: string): Promise<OrderLookup> {
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, ref_no, company_id, store_id, buyer_name_address, contact_no, order_value_original, order_currency, order_value_usd, order_value_inr, invoice_id"
+      "id, ref_no, company_id, store_id, buyer_name_address, contact_no, order_value_original, order_currency, order_value_usd, order_value_inr, invoice_id, vendor_party_id"
     )
     .ilike("ref_no", trimmed)
     .in("company_id", employee.companyIds)
@@ -1025,19 +1031,37 @@ export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
 
 export type ReconciliationLookup = {
   error: string | null;
-  order: { id: string; ref_no: string; company_id: string } | null;
+  // 2026-08-20 (order-value fix): order_value_inr added here — the
+  // "Sale Amt" this lookup box shows now comes from the order itself
+  // (app-computed, always populated), not dispatch_invoices.org_sale_amt_inr
+  // (dead — nothing writes it post-historical-import). See freight-bills/
+  // [id]/report/page.tsx's comment for the full why.
+  order: { id: string; ref_no: string; company_id: string; order_value_inr: number | null } | null;
+  orderShipmentId: string | null;
   dispatch: {
     awb_no: string | null;
     courier_name: string | null;
     buyer_country: string | null;
     shipping_weight_kg: number | null;
-    org_sale_amt_inr: number | null;
   } | null;
   alreadyAssigned: boolean;
 };
 
-const EMPTY_RECON: ReconciliationLookup = { error: null, order: null, dispatch: null, alreadyAssigned: false };
+const EMPTY_RECON: ReconciliationLookup = { error: null, order: null, orderShipmentId: null, dispatch: null, alreadyAssigned: false };
 
+// Gap 1 (2026-08-20): a courier bill is billed PER AWB, and an order can
+// now have more than one (see claude/gap1-multipackage-design-2026-08-20.md)
+// — so this needs to resolve a specific order_shipments row, not just an
+// order. Two lookup paths:
+//   - by AWB: order_shipments.awb_no is unambiguous by construction (one
+//     real AWB = one order_shipments row) — resolves directly.
+//   - by PO/RF/RG: unambiguous ONLY when that order has exactly one
+//     shipment (true for every order today, and for any order that stays
+//     single-package going forward) — auto-picks it, same zero-friction
+//     behavior as before this change. An order with >1 shipment can't be
+//     resolved by ref_no alone (which AWB would "PO-0001" even mean?), so
+//     that case returns an error asking to search by AWB instead, rather
+//     than silently guessing shipment 1.
 export async function lookupOrderForReconciliation(
   query: string,
   billKind: "freight" | "duty"
@@ -1049,35 +1073,51 @@ export async function lookupOrderForReconciliation(
   if (!trimmed) return { ...EMPTY_RECON, error: "Enter a PO/RF/RG or AWB number." };
 
   let orderId: string | null = null;
-  const { data: byRef } = await supabase
-    .from("orders")
-    .select("id")
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
-    .maybeSingle();
-  orderId = byRef?.id ?? null;
+  let orderShipmentId: string | null = null;
+
+  const { data: byAwb } = await supabase.from("order_shipments").select("id, order_id").ilike("awb_no", trimmed).maybeSingle();
+  if (byAwb) {
+    orderId = byAwb.order_id;
+    orderShipmentId = byAwb.id;
+  }
 
   if (!orderId) {
-    const { data: byAwb } = await supabase.from("dispatch_invoices").select("order_id").ilike("awb_no", trimmed).maybeSingle();
-    if (byAwb) orderId = byAwb.order_id;
+    const { data: byRef } = await supabase
+      .from("orders")
+      .select("id")
+      .ilike("ref_no", trimmed)
+      .in("company_id", employee.companyIds)
+      .maybeSingle();
+    if (byRef) {
+      orderId = byRef.id;
+      const { data: shipments } = await supabase.from("order_shipments").select("id").eq("order_id", byRef.id);
+      if (!shipments || shipments.length === 0) {
+        return { ...EMPTY_RECON, error: `Order "${trimmed}" has no shipment/AWB entered yet — add one first.` };
+      }
+      if (shipments.length > 1) {
+        return { ...EMPTY_RECON, error: `Order "${trimmed}" has ${shipments.length} shipments/AWBs — search by AWB instead to pick the specific one.` };
+      }
+      orderShipmentId = shipments[0].id;
+    }
   }
-  if (!orderId) return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
 
-  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id").eq("id", orderId).maybeSingle();
+  if (!orderId || !orderShipmentId) return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
+
+  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id, order_value_inr").eq("id", orderId).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
   }
 
   const { data: dispatch } = await supabase
     .from("dispatch_invoices")
-    .select("awb_no, courier_name, buyer_country, shipping_weight_kg, org_sale_amt_inr")
+    .select("awb_no, courier_name, buyer_country, shipping_weight_kg")
     .eq("order_id", order.id)
     .maybeSingle();
 
   const table = billKind === "freight" ? "freight_bill_awb_assignments" : "duty_bill_awb_assignments";
-  const { data: existing } = await supabase.from(table).select("id").eq("order_id", order.id).maybeSingle();
+  const { data: existing } = await supabase.from(table).select("id").eq("order_shipment_id", orderShipmentId).maybeSingle();
 
-  return { error: null, order, dispatch: dispatch ?? null, alreadyAssigned: !!existing };
+  return { error: null, order, orderShipmentId, dispatch: dispatch ?? null, alreadyAssigned: !!existing };
 }
 
 type FreightBillParams = {
@@ -1261,8 +1301,9 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
 
   const freightBillId = str(formData, "freight_bill_id");
   const orderId = str(formData, "order_id");
+  const orderShipmentId = str(formData, "order_shipment_id");
   if (!freightBillId) return initialFail("Missing Courier Bill.");
-  if (!orderId) return initialFail("Look up an order by PO/RF/RG or AWB first.");
+  if (!orderId || !orderShipmentId) return initialFail("Look up an order by PO/RF/RG or AWB first.");
 
   const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
@@ -1274,6 +1315,7 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
     .insert({
       freight_bill_id: freightBillId,
       order_id: orderId,
+      order_shipment_id: orderShipmentId,
       bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
       dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
       difference_amt: numOrNull(formData, "difference_amt"),
@@ -1338,7 +1380,7 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
   const results: BulkAwbResult[] = [];
   for (const row of rows) {
     const lookup = await lookupOrderForReconciliation(row.query, "freight");
-    if (lookup.error || !lookup.order) {
+    if (lookup.error || !lookup.order || !lookup.orderShipmentId) {
       results.push({ query: row.query, ok: false, refNo: null, error: lookup.error ?? "Not found." });
       continue;
     }
@@ -1349,6 +1391,7 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
     const { error } = await supabase.from("freight_bill_awb_assignments").insert({
       freight_bill_id: freightBillId,
       order_id: lookup.order.id,
+      order_shipment_id: lookup.orderShipmentId,
       bill_weight_kg: row.billWeightKg,
       dimensional_weight_kg: row.dimensionalWeightKg,
       difference_amt: row.differenceAmt,
@@ -1629,8 +1672,9 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
 
   const dutyTaxBillId = str(formData, "duty_tax_bill_id");
   const orderId = str(formData, "order_id");
+  const orderShipmentId = str(formData, "order_shipment_id");
   if (!dutyTaxBillId) return initialFail("Missing Duty & Tax Bill.");
-  if (!orderId) return initialFail("Look up an order by PO/RF/RG or AWB first.");
+  if (!orderId || !orderShipmentId) return initialFail("Look up an order by PO/RF/RG or AWB first.");
 
   const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
@@ -1642,6 +1686,7 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
     .insert({
       duty_tax_bill_id: dutyTaxBillId,
       order_id: orderId,
+      order_shipment_id: orderShipmentId,
       duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
       duty_tax_amt_inr: numOrNull(formData, "duty_tax_amt_inr"),
       other_charge: numOrNull(formData, "other_charge"),
@@ -1699,7 +1744,7 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
   const results: BulkAwbResult[] = [];
   for (const row of rows) {
     const lookup = await lookupOrderForReconciliation(row.query, "duty");
-    if (lookup.error || !lookup.order) {
+    if (lookup.error || !lookup.order || !lookup.orderShipmentId) {
       results.push({ query: row.query, ok: false, refNo: null, error: lookup.error ?? "Not found." });
       continue;
     }
@@ -1710,6 +1755,7 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
     const { error } = await supabase.from("duty_bill_awb_assignments").insert({
       duty_tax_bill_id: dutyTaxBillId,
       order_id: lookup.order.id,
+      order_shipment_id: lookup.orderShipmentId,
       duty_tax_amt_usd: row.dutyTaxAmtUsd,
       duty_tax_amt_inr: row.dutyTaxAmtInr,
       other_charge: row.otherCharge,

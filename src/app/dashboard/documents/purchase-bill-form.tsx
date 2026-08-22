@@ -27,6 +27,12 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
+  // 2026-08-20 — Gap 2: pre-filled (not locked) from the looked-up order's
+  // "planned" vendor (orders.vendor_party_id), if it has one. Still a
+  // plain controlled <select> the user can freely change — this is only a
+  // convenience default, since the real vendor is only actually confirmed
+  // once their bill is in hand.
+  const [vendorPartyId, setVendorPartyId] = useState("");
   const partyGroups = groupPartyOptions(parties);
 
   // 2026-08-17 — "FT/MTR/INCH/YARD/CM SABHI KA FOURMULA KAAM KARNA CHAHIYE"
@@ -48,6 +54,10 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
 
   function handleFound(r: OrderLookup) {
     setOrderId(r.order?.id ?? "");
+    // Only pre-fill when the order actually has a planned vendor — never
+    // clear a vendor the user already picked just because a subsequent
+    // lookup's order happens to have none set.
+    if (r.order?.vendor_party_id) setVendorPartyId(r.order.vendor_party_id);
   }
 
   if (state.success) {
@@ -73,7 +83,14 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass} htmlFor="pb_party">Vendor Party *</label>
-          <select id="pb_party" name="vendor_party_id" required defaultValue="" className={inputClass}>
+          <select
+            id="pb_party"
+            name="vendor_party_id"
+            required
+            value={vendorPartyId}
+            onChange={(e) => setVendorPartyId(e.target.value)}
+            className={inputClass}
+          >
             <option value="" disabled>Select vendor</option>
             {partyGroups.map((g) => (
               <optgroup key={g.label} label={g.label}>

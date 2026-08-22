@@ -21,6 +21,7 @@ type Row = {
   amount: number | null; // duty bills only — Import Duty portion
   otherAmt: number | null; // duty bills only — service/disbursement fee portion
   orderId: string | null;
+  orderShipmentId: string | null;
   orderRefNo: string | null;
   alreadyAssigned: boolean;
 };
@@ -74,6 +75,7 @@ export function CourierBillPdfSection() {
           amount: s.dutyAmt,
           otherAmt: s.otherAmt,
           orderId: s.alreadyAssigned ? null : s.orderId,
+          orderShipmentId: s.alreadyAssigned ? null : s.orderShipmentId,
           orderRefNo: s.alreadyAssigned ? null : s.orderRefNo,
           alreadyAssigned: s.alreadyAssigned,
         }))
@@ -102,6 +104,7 @@ export function CourierBillPdfSection() {
         shipments: rows.map((r) => ({
           trackingNo: r.trackingNo,
           orderId: r.orderId,
+          orderShipmentId: r.orderShipmentId,
           weightKg: r.weightKg,
           amount: r.amount,
           otherAmt: r.otherAmt,
@@ -331,7 +334,7 @@ function ShipmentRow({
           {row.orderId && !fixing && (
             <button
               type="button"
-              onClick={() => onChange({ orderId: null, orderRefNo: null })}
+              onClick={() => onChange({ orderId: null, orderShipmentId: null, orderRefNo: null })}
               className="rounded border border-red-200 bg-white px-2 py-1.5 font-medium text-red-600 hover:bg-red-50"
             >
               Skip
@@ -343,8 +346,8 @@ function ShipmentRow({
       {fixing && (
         <FixMatchBox
           billKind={billCategory}
-          onPicked={(orderId, orderRefNo) => {
-            onChange({ orderId, orderRefNo });
+          onPicked={(orderId, orderShipmentId, orderRefNo) => {
+            onChange({ orderId, orderShipmentId, orderRefNo });
             setFixing(false);
           }}
         />
@@ -358,7 +361,7 @@ function FixMatchBox({
   onPicked,
 }: {
   billKind: "freight" | "duty";
-  onPicked: (orderId: string, orderRefNo: string) => void;
+  onPicked: (orderId: string, orderShipmentId: string, orderRefNo: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [lookup, setLookup] = useState<ReconciliationLookup | null>(null);
@@ -398,10 +401,10 @@ function FixMatchBox({
             <strong>{lookup.order.ref_no}</strong>
             {lookup.alreadyAssigned && <span className="ml-2 text-amber-600">⚠ Already assigned to a bill</span>}
           </span>
-          {!lookup.alreadyAssigned && (
+          {!lookup.alreadyAssigned && lookup.orderShipmentId && (
             <button
               type="button"
-              onClick={() => onPicked(lookup.order!.id, lookup.order!.ref_no)}
+              onClick={() => onPicked(lookup.order!.id, lookup.orderShipmentId!, lookup.order!.ref_no)}
               className="rounded bg-amber-500 px-2 py-1 font-semibold text-white hover:bg-amber-600"
             >
               Use this order

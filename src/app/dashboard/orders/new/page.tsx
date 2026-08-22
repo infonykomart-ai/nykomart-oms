@@ -8,12 +8,13 @@ export default async function NewOrderPage() {
   const employee = await requireCapability("order_entry");
   const supabase = await createClient();
 
-  const [{ data: stores }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: recentOrders }] =
+  const [{ data: stores }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: parties }, { data: recentOrders }] =
     await Promise.all([
       supabase.from("stores").select("id, name").eq("company_id", employee.currentCompanyId).eq("active", true).order("name"),
       supabase.from("item_categories").select("id, name").order("name"),
       supabase.from("sizes").select("id, label").order("label"),
       supabase.from("currencies").select("code, name").order("code"),
+      supabase.from("parties").select("id, name").order("name"),
       supabase
         .from("orders")
         .select(
@@ -56,6 +57,7 @@ export default async function NewOrderPage() {
             itemCategories={itemCategories ?? []}
             sizes={sizes ?? []}
             currencies={currencies ?? []}
+            parties={parties ?? []}
           />
         </div>
 

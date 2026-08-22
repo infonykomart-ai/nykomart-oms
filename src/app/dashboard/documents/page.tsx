@@ -23,9 +23,13 @@ import { DocumentEntryTabs } from "./document-entry-tabs";
 // left live in production instead of being replaced by this version; that
 // leaked internal file paths to anyone who hit the ForbiddenError path.
 // Fixed by actually shipping this clean version.)
-export default async function DocumentsPage() {
+export default async function DocumentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   try {
-    return await DocumentsPageInner();
+    return await DocumentsPageInner(searchParams);
   } catch (err) {
     if (err instanceof ForbiddenError || err instanceof UnauthorizedError) {
       return (
@@ -39,9 +43,36 @@ export default async function DocumentsPage() {
   }
 }
 
-async function DocumentsPageInner() {
+// 2026-08-22 — filter UI added to the Purchase Bill / Courier (Freight)
+// Bill / Duty & Tax Bill lists specifically (GET-form + searchParams, same
+// pattern as Orders): date range + vendor party. These 3 "Recent" lists had
+// no filter UI at all before — a flat most-recent-8 list, full stop. Since
+// the tab switcher (document-entry-tabs.tsx) is client-only useState (not
+// URL-driven), `tab` is threaded through as its own searchParam so
+// submitting one of these filter forms (a plain GET, full navigation)
+// lands back on the same tab instead of resetting to Credit Note.
+async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: string | string[] | undefined }>) {
   const employee = await requireCapability("doc_entry");
   const supabase = await createClient();
+  const sp = await searchParamsPromise;
+
+  const initialTab = typeof sp.tab === "string" ? sp.tab : "";
+  const pbVendor = typeof sp.pbVendor === "string" ? sp.pbVendor : "";
+  const pbFrom = typeof sp.pbFrom === "string" ? sp.pbFrom : "";
+  const pbTo = typeof sp.pbTo === "string" ? sp.pbTo : "";
+  const fbVendor = typeof sp.fbVendor === "string" ? sp.fbVendor : "";
+  const fbFrom = typeof sp.fbFrom === "string" ? sp.fbFrom : "";
+  const fbTo = typeof sp.fbTo === "string" ? sp.fbTo : "";
+  const dbVendor = typeof sp.dbVendor === "string" ? sp.dbVendor : "";
+  const dbFrom = typeof sp.dbFrom === "string" ? sp.dbFrom : "";
+  const dbTo = typeof sp.dbTo === "string" ? sp.dbTo : "";
+  // Any of these 3 lists' filters active -> raise the normal limit(8) so a
+  // filter that legitimately matches more than 8 rows isn't silently
+  // truncated back down to the unfiltered "recent" page size.
+  const FILTERED_LIMIT = 200;
+  const pbFiltered = !!(pbVendor || pbFrom || pbTo);
+  const fbFiltered = !!(fbVendor || fbFrom || fbTo);
+  const dbFiltered = !!(dbVendor || dbFrom || dbTo);
 
   const [
     { data: companies },
@@ -112,28 +143,46 @@ async function DocumentsPageInner() {
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
-    supabase
-      .from("purchase_bills")
-      .select(
-        "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, total_amount, gst_rate_pct, gst_type, round_off_amt, g_total_plus_gst"
-      )
-      .eq("company_id", employee.currentCompanyId)
-      .order("created_at", { ascending: false })
-      .limit(8),
-    supabase
-      .from("freight_bills")
-      .select(
-        "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, vendor_party_id"
-      )
-      .order("created_at", { ascending: false })
-      .limit(8),
-    supabase
-      .from("duty_tax_bills")
-      .select(
-        "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, vendor_party_id"
-      )
-      .order("created_at", { ascending: false })
-      .limit(8),
+    (() => {
+      let query = supabase
+        .from("purchase_bills")
+        .select(
+          "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, total_amount, gst_rate_pct, gst_type, round_off_amt, g_total_plus_gst"
+        )
+        .eq("company_id", employee.currentCompanyId)
+        .order("created_at", { ascending: false })
+        .limit(pbFiltered ? FILTERED_LIMIT : 8);
+      if (pbVendor) query = query.eq("vendor_party_id", pbVendor);
+      if (pbFrom) query = query.gte("vendor_invoice_date", pbFrom);
+      if (pbTo) query = query.lte("vendor_invoice_date", pbTo);
+      return query;
+    })(),
+    (() => {
+      let query = supabase
+        .from("freight_bills")
+        .select(
+          "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, vendor_party_id"
+        )
+        .order("created_at", { ascending: false })
+        .limit(fbFiltered ? FILTERED_LIMIT : 8);
+      if (fbVendor) query = query.eq("vendor_party_id", fbVendor);
+      if (fbFrom) query = query.gte("invoice_date", fbFrom);
+      if (fbTo) query = query.lte("invoice_date", fbTo);
+      return query;
+    })(),
+    (() => {
+      let query = supabase
+        .from("duty_tax_bills")
+        .select(
+          "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, vendor_party_id"
+        )
+        .order("created_at", { ascending: false })
+        .limit(dbFiltered ? FILTERED_LIMIT : 8);
+      if (dbVendor) query = query.eq("vendor_party_id", dbVendor);
+      if (dbFrom) query = query.gte("invoice_date", dbFrom);
+      if (dbTo) query = query.lte("invoice_date", dbTo);
+      return query;
+    })(),
     supabase
       .from("csb_filings")
       .select(
@@ -365,6 +414,12 @@ async function DocumentsPageInner() {
           })),
         }}
         shipmentChalans={shipmentChalanRows}
+        initialTab={initialTab}
+        billFilters={{
+          purchaseBill: { vendor: pbVendor, from: pbFrom, to: pbTo },
+          freightBill: { vendor: fbVendor, from: fbFrom, to: fbTo },
+          dutyBill: { vendor: dbVendor, from: dbFrom, to: dbTo },
+        }}
       />
     </div>
   );

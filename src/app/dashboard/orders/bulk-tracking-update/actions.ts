@@ -3,6 +3,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { SHIPMENT_STATUSES, DELIVERED_STATUSES } from "./columns";
 
 export type TrackingRowResult = {
@@ -34,10 +35,12 @@ function cellStr(row: Record<string, unknown>, byHeader: Map<string, string>, la
  * match EXISTING orders by Ref No. (PO/RF/RG) — nothing is created here,
  * unlike bulkCreateOrders(). Shipment Status writes to orders.shipment_status
  * directly (the simple status the Orders hub badge shows); AWB/Courier/
- * Delivered Status/Delivered Date/Remark upsert into dispatch_invoices
- * (one row per order — see db/schema.sql SECTION 6), preserving whatever
- * other dispatch_invoices fields already exist on that row (only the
- * columns present in this row's data are written).
+ * Delivered Status/Delivered Date/Remark upsert into order_shipments (Gap 1,
+ * 2026-08-20 — one row per AWB, targeting the optional "Shipment No" column
+ * or defaulting to 1), preserving whatever other fields already exist on
+ * that row (only the columns present in this row's data are written), then
+ * resync dispatch_invoices' order-level summary from it — see
+ * claude/gap1-multipackage-design-2026-08-20.md.
  */
 export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: FormData): Promise<BulkTrackingState> {
   const employee = await requireCapability("order_entry");
@@ -143,13 +146,24 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
     const courierName = cellStr(raw, byHeader, "Courier Name") || null;
     const deliveredDate = cellStr(raw, byHeader, "Delivered Date") || null;
     const remark = cellStr(raw, byHeader, "Remark") || null;
+    // Gap 1 (2026-08-20): defaults to shipment 1 — see the "Shipment No"
+    // column's help text in columns.ts and claude/gap1-multipackage-
+    // design-2026-08-20.md. Writes order_shipments now, not
+    // dispatch_invoices directly, then resyncs the order-level summary.
+    const shipmentNoRaw = cellStr(raw, byHeader, "Shipment No");
+    const shipmentNo = shipmentNoRaw ? parseInt(shipmentNoRaw, 10) : 1;
+    if (!Number.isInteger(shipmentNo) || shipmentNo < 1) {
+      results.push({ row: rowNum, refNo, error: `Shipment No "${shipmentNoRaw}" is not a valid positive whole number.` });
+      continue;
+    }
 
     if (awbNo || courierName || deliveredStatus || deliveredDate || remark) {
       const { error: upsertError } = await supabase
-        .from("dispatch_invoices")
+        .from("order_shipments")
         .upsert(
           {
             order_id: orderId,
+            shipment_no: shipmentNo,
             ...(awbNo ? { awb_no: awbNo } : {}),
             ...(courierName ? { courier_name: courierName } : {}),
             ...(deliveredStatus ? { delivered_status: deliveredStatus as "Delivered" | "NOT Delivered" } : {}),
@@ -157,12 +171,13 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
             ...(remark ? { remark } : {}),
             last_update_date: today,
           },
-          { onConflict: "order_id" }
+          { onConflict: "order_id,shipment_no" }
         );
       if (upsertError) {
         results.push({ row: rowNum, refNo, error: `Failed to update tracking details: ${upsertError.message}` });
         continue;
       }
+      await resyncDispatchSummary(supabase, orderId);
     }
 
     results.push({ row: rowNum, refNo, error: null });

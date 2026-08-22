@@ -75,10 +75,16 @@ export function FreightBillSection({
   bills,
   companies,
   parties,
+  filter,
 }: {
   bills: FreightBillRow[];
   companies: { id: string; name: string }[];
   parties: PartyOption[];
+  // 2026-08-22: current {vendor, from, to} filter values (from page.tsx's
+  // searchParams via document-entry-tabs.tsx) — used only to pre-fill the
+  // filter form below with `defaultValue` after a GET-form round-trip;
+  // `bills` itself already arrives pre-filtered from the server.
+  filter: { vendor: string; from: string; to: string };
 }) {
   const [state, formAction, pending] = useActionState(saveFreightBill, initialFormState);
   const partyGroups = groupPartyOptions(parties);
@@ -168,6 +174,34 @@ export function FreightBillSection({
 
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-slate-700">Recent Courier Bills</h3>
+        <form method="get" action="/dashboard/documents" className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+          <input type="hidden" name="tab" value="courier-bill" />
+          <div>
+            <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="fbVendor">Vendor / Courier</label>
+            <select id="fbVendor" name="fbVendor" defaultValue={filter.vendor} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500">
+              <option value="">All</option>
+              {partyGroups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.parties.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="fbFrom">From</label>
+            <input id="fbFrom" name="fbFrom" type="date" defaultValue={filter.from} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500" />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="fbTo">To</label>
+            <input id="fbTo" name="fbTo" type="date" defaultValue={filter.to} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500" />
+          </div>
+          <button type="submit" className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-700">
+            Filter
+          </button>
+          <a href="/dashboard/documents?tab=courier-bill" className="text-[11px] text-slate-400 underline">Clear</a>
+        </form>
         {bills.map((b) => (
           <FreightBillCard key={b.id} bill={b} companies={companies} parties={parties} />
         ))}
@@ -506,6 +540,7 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
         <form action={formAction} className="mt-3 space-y-2 border-t border-slate-200 pt-3">
           <input type="hidden" name="freight_bill_id" value={freightBillId} />
           <input type="hidden" name="order_id" value={lookup.order.id} />
+          <input type="hidden" name="order_shipment_id" value={lookup.orderShipmentId ?? ""} />
           {state.error && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
           <div className="grid grid-cols-2 gap-2">
             <div>

@@ -72,10 +72,14 @@ export function DutyBillSection({
   bills,
   companies,
   parties,
+  filter,
 }: {
   bills: DutyBillRow[];
   companies: { id: string; name: string }[];
   parties: PartyOption[];
+  // 2026-08-22: current {vendor, from, to} filter values, same as
+  // FreightBillSection's own `filter` prop — see that file's comment.
+  filter: { vendor: string; from: string; to: string };
 }) {
   const [state, formAction, pending] = useActionState(saveDutyBill, initialFormState);
   const partyGroups = groupPartyOptions(parties);
@@ -180,6 +184,34 @@ export function DutyBillSection({
 
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-slate-700">Recent Duty &amp; Tax Bills</h3>
+        <form method="get" action="/dashboard/documents" className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+          <input type="hidden" name="tab" value="duty-tax-bill" />
+          <div>
+            <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="dbVendor">Vendor / Courier</label>
+            <select id="dbVendor" name="dbVendor" defaultValue={filter.vendor} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500">
+              <option value="">All</option>
+              {partyGroups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.parties.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="dbFrom">From</label>
+            <input id="dbFrom" name="dbFrom" type="date" defaultValue={filter.from} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500" />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="dbTo">To</label>
+            <input id="dbTo" name="dbTo" type="date" defaultValue={filter.to} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500" />
+          </div>
+          <button type="submit" className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-700">
+            Filter
+          </button>
+          <a href="/dashboard/documents?tab=duty-tax-bill" className="text-[11px] text-slate-400 underline">Clear</a>
+        </form>
         {bills.map((b) => (
           <DutyBillCard key={b.id} bill={b} companies={companies} parties={parties} />
         ))}
@@ -443,12 +475,12 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
       {lookup?.order && (
         <div className="mt-2 space-y-1 rounded-lg bg-white p-2 text-xs text-slate-600">
           <p>
-            <strong className="text-slate-900">{lookup.order.ref_no}</strong>
+            <strong className="text-slate-900">{lookup.order.ref_no}</strong> · Sale Amt ₹{lookup.order.order_value_inr ?? "—"}
           </p>
           {lookup.dispatch ? (
             <p>
               AWB: {lookup.dispatch.awb_no ?? "—"} · {lookup.dispatch.courier_name ?? "—"} · {lookup.dispatch.buyer_country ?? "—"} ·{" "}
-              {lookup.dispatch.org_sale_amt_inr ?? "—"}
+              {lookup.dispatch.shipping_weight_kg ?? "—"} kg
             </p>
           ) : (
             <p className="text-slate-400">No dispatch record found for this order yet.</p>
@@ -461,6 +493,7 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
         <form action={formAction} className="mt-3 space-y-2 border-t border-slate-200 pt-3">
           <input type="hidden" name="duty_tax_bill_id" value={dutyTaxBillId} />
           <input type="hidden" name="order_id" value={lookup.order.id} />
+          <input type="hidden" name="order_shipment_id" value={lookup.orderShipmentId ?? ""} />
           {state.error && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
           <div className="grid grid-cols-2 gap-2">
             <div>

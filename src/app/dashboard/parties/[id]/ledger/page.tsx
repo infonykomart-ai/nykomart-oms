@@ -101,11 +101,24 @@ async function PartyLedgerInner(
   // invoice, with its payments nested inside" to a real chronological
   // Debit/Credit/Balance ledger — the classic passbook format, same shape
   // as the vendor statements this gets reconciled against (see
-  // claude/onpoint-express-ledger-reconciliation-2026-08-18.md). Every bill
-  // becomes its own Debit line, every credit note becomes its own Credit
-  // line, every payment becomes its own Credit line — all merged into one
-  // list and sorted strictly by date, so debits and credits genuinely
-  // alternate in the order money actually moved, not grouped by invoice.
+  // claude/onpoint-express-ledger-reconciliation-2026-08-18.md).
+  //
+  // 2026-08-20 — Debit/Credit swap ("purchase/courier party se service
+  // lete hain to credit hoga ya debit... mere hisab se credit me jayega"):
+  // every party on this ledger is a vendor/supplier — a Creditor in
+  // standard (Tally-style) bookkeeping. Standard convention posts a bill
+  // (liability increases — we now owe them) to the CREDIT side of the
+  // party's account, and a payment (liability decreases) to the DEBIT
+  // side. The original 2026-08-18 build had these swapped (Bill=Debit,
+  // Payment=Credit) — functionally consistent internally, but backwards
+  // from the standard Dr/Cr convention the user actually expects. Fixed
+  // here: Bill → Credit line, Credit Note → Debit line (it reduces what we
+  // owe, same direction as a payment), Payment → Debit line. The
+  // underlying "amount payable" math is unchanged (still bill amount minus
+  // credit notes minus payments) — only which column each line's amount
+  // lands in, and therefore Total Debit/Total Credit, is swapped. See
+  // `balance` below: now `credit - debit` (was `debit - credit`) so
+  // `closingBalance > 0` still means "we owe the party this much".
   type Txn = {
     date: string;
     particulars: string;
@@ -126,9 +139,9 @@ async function PartyLedgerInner(
       txns.push({
         date: billDate,
         particulars: `${label} ${ref}`,
-        type: "Debit",
-        debit: totalAmt,
-        credit: 0,
+        type: "Credit",
+        debit: 0,
+        credit: totalAmt,
         sortKey: `${billDate}_0`,
       });
     }
@@ -136,9 +149,9 @@ async function PartyLedgerInner(
       txns.push({
         date: billDate,
         particulars: `Credit Note against ${ref}`,
-        type: "Credit",
-        debit: 0,
-        credit: creditNoteAmt,
+        type: "Debit",
+        debit: creditNoteAmt,
+        credit: 0,
         sortKey: `${billDate}_1`,
       });
     }
@@ -146,9 +159,9 @@ async function PartyLedgerInner(
       txns.push({
         date: p.payment_date,
         particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
-        type: "Credit",
-        debit: 0,
-        credit: p.amount,
+        type: "Debit",
+        debit: p.amount,
+        credit: 0,
         sortKey: `${p.payment_date}_2`,
       });
     }
@@ -158,7 +171,7 @@ async function PartyLedgerInner(
   type LedgerLine = Txn & { balance: number };
   const ledgerLines = txns.reduce<LedgerLine[]>((acc, t) => {
     const prevBalance = acc.length ? acc[acc.length - 1].balance : 0;
-    acc.push({ ...t, balance: prevBalance + t.debit - t.credit });
+    acc.push({ ...t, balance: prevBalance + t.credit - t.debit });
     return acc;
   }, []);
 

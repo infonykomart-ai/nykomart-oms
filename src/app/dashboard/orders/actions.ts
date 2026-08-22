@@ -122,6 +122,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       eori_number: strOrNull(formData, "eori_number"),
       ioss_number: strOrNull(formData, "ioss_number"),
       destination_country: strOrNull(formData, "destination_country"),
+      vendor_party_id: strOrNull(formData, "vendor_party_id"),
       remark: strOrNull(formData, "remark"),
       order_currency: orderCurrency,
       order_value_original: orderValueOriginal,

@@ -57,28 +57,39 @@ async function DutyBillReportInner({ id }: { id: string }) {
 
   const { data: assignments } = await supabase
     .from("duty_bill_awb_assignments")
-    .select("id, order_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark")
+    .select("id, order_id, order_shipment_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark")
     .eq("duty_tax_bill_id", id);
 
   const orderIds = (assignments ?? []).map((a) => a.order_id);
-  const [{ data: orders }, { data: dispatches }] = await Promise.all([
+  const shipmentIds = (assignments ?? []).map((a) => a.order_shipment_id);
+  // Gap 1 (2026-08-20): awb_no comes from the SPECIFIC order_shipments row
+  // this assignment points at — see claude/gap1-multipackage-design-
+  // 2026-08-20.md and the identical fix in freight-bills/[id]/report.
+  //
+  // 2026-08-20 (order-value fix): "Sale Amt (INR)" now comes from
+  // orders.order_value_inr, not the dead dispatch_invoices.org_sale_amt_inr
+  // — same fix as freight-bills/[id]/report, see its comment for the why.
+  const [{ data: orders }, { data: dispatches }, { data: shipments }] = await Promise.all([
     orderIds.length
-      ? supabase.from("orders").select("id, ref_no, size_label, item_categories(name)").in("id", orderIds)
+      ? supabase.from("orders").select("id, ref_no, size_label, order_value_inr, item_categories(name)").in("id", orderIds)
       : Promise.resolve({ data: [] }),
     orderIds.length
-      ? supabase.from("dispatch_invoices").select("order_id, awb_no, courier_name, buyer_country, org_sale_amt_inr, our_freight_amt").in("order_id", orderIds)
+      ? supabase.from("dispatch_invoices").select("order_id, buyer_country, our_freight_amt").in("order_id", orderIds)
       : Promise.resolve({ data: [] }),
+    shipmentIds.length ? supabase.from("order_shipments").select("id, awb_no").in("id", shipmentIds) : Promise.resolve({ data: [] }),
   ]);
 
   const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
   const dispatchByOrder = new Map((dispatches ?? []).map((d) => [d.order_id, d]));
+  const shipmentById = new Map((shipments ?? []).map((s) => [s.id, s]));
 
   const rows = (assignments ?? []).map((a, i) => {
     const order = orderById.get(a.order_id);
     const dispatch = dispatchByOrder.get(a.order_id);
+    const shipment = shipmentById.get(a.order_shipment_id);
     const category = order?.item_categories as unknown as { name: string } | { name: string }[] | null;
     const categoryName = Array.isArray(category) ? category[0]?.name ?? "—" : category?.name ?? "—";
-    const orgSale = Number(dispatch?.org_sale_amt_inr ?? 0);
+    const orgSale = Number(order?.order_value_inr ?? 0);
     const shippingAmt = Number(dispatch?.our_freight_amt ?? 0);
     const dutyInr = Number(a.duty_tax_amt_inr ?? 0);
     const otherCharge = Number(a.other_charge ?? 0);
@@ -94,7 +105,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
       refNo: order?.ref_no ?? "—",
       category: categoryName,
       size: order?.size_label ?? "—",
-      awb: dispatch?.awb_no ?? "—",
+      awb: shipment?.awb_no ?? "—",
       buyerCountry: dispatch?.buyer_country ?? "—",
       orgSale,
       shippingAmt,

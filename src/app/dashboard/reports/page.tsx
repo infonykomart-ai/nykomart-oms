@@ -8,6 +8,15 @@ import { OrdersReportTable } from "./orders-report-table";
 // demonstrating the pattern (columns + rows -> <ExportBar />) that every
 // future report (Credit Note, Debit Note, Salary Slip, etc.) should reuse
 // instead of hand-rolling its own export code.
+//
+// 2026-08-22 — Reports hub extended: 3 more report pages (Purchase Bill,
+// Freight/Duty Bill, Party Ledger/Bill Payment Outstanding) added below,
+// each following this exact page's pattern, plus a generic column/section
+// picker (see src/lib/export/use-column-visibility.ts) now available to
+// every report on this pattern, wired into the Orders report here as the
+// first consumer. Returns/Refunds (linked below, unchanged capability)
+// was also ported onto searchParams filters + <ExportBar /> — see
+// returns/page.tsx's header comment.
 export default async function ReportsPage({
   searchParams,
 }: {
@@ -60,15 +69,45 @@ export default async function ReportsPage({
             Orders report — apply filters, then download as CSV/Excel/Word/PDF or send via Email/WhatsApp.
           </p>
         </div>
-        {/* 2026-08-17 — Returns/Refunds report, new. Linked from here since
-            it's conceptually part of the Reports suite (reuses the same
-            `reports` capability rather than a new one). */}
-        <Link
-          href="/dashboard/returns"
-          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-        >
-          ↩️ Returns / Refunds
-        </Link>
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          {/* 2026-08-20 — "top order vali report ke jese ek report or banni
+              chahiye SKU Country Size ke according" — sibling report, same
+              `reports` capability. */}
+          <Link
+            href="/dashboard/reports/sku-country-size"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📊 SKU × Country × Size
+          </Link>
+          {/* 2026-08-17 — Returns/Refunds report, new. Linked from here since
+              it's conceptually part of the Reports suite (reuses the same
+              `reports` capability rather than a new one).
+              2026-08-22 — 3 more report pages added the same way. */}
+          <Link
+            href="/dashboard/returns"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            ↩️ Returns / Refunds
+          </Link>
+          <Link
+            href="/dashboard/reports/purchase-bills"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🧾 Purchase Bill Report
+          </Link>
+          <Link
+            href="/dashboard/reports/freight-duty"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🚚 Freight / Duty Bill Report
+          </Link>
+          <Link
+            href="/dashboard/reports/outstanding"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            💳 Outstanding Balances Report
+          </Link>
+        </div>
       </div>
 
       <OrdersReportTable

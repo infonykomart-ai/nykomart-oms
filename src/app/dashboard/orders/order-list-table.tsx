@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { deleteOrder } from "./actions";
 import { OrderPhotoThumb } from "./order-photo-thumb";
@@ -83,6 +84,7 @@ export function OrderListTable({
   itemCategories,
   sizes,
   currencies,
+  parties,
   statuses,
   purchasesByOrder,
   trackingByOrder,
@@ -95,6 +97,7 @@ export function OrderListTable({
   itemCategories: { id: string; name: string }[];
   sizes: { id: string; label: string }[];
   currencies: { code: string; name: string }[];
+  parties: { id: string; name: string }[];
   statuses: string[];
   purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]>;
   trackingByOrder: Record<string, TrackingInfo>;
@@ -110,6 +113,7 @@ export function OrderListTable({
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
+  const partyName = new Map(parties.map((p) => [p.id, p.name]));
 
   // 2026-08-08 (pending item 5) — "Pending/Late/Dispatched order lists
   // ko print/PDF me export kar sake". Reuses the same universal
@@ -199,6 +203,7 @@ export function OrderListTable({
               itemCategories={itemCategories}
               sizes={sizes}
               currencies={currencies}
+              parties={parties}
               statuses={statuses}
               onDone={() => setEditingId(null)}
             />
@@ -246,6 +251,15 @@ export function OrderListTable({
                 {purchasesByOrder[o.id] ? (
                   <p className="mt-1 text-xs text-purple-700">
                     🛒 Purchased from: {purchasesByOrder[o.id].map((p) => `${p.vendorName} (${p.vendorInvoiceNo})`).join(", ")}
+                  </p>
+                ) : o.vendor_party_id ? (
+                  // 2026-08-20 — Gap 2: a "planned" vendor set at order
+                  // entry or via Edit, before any Purchase Bill exists yet.
+                  // Distinct styling (amber, not purple) from the confirmed
+                  // "🛒 Purchased from" line above so it reads as tentative,
+                  // not as a real recorded purchase.
+                  <p className="mt-1 text-xs text-amber-700">
+                    🏷️ Planned vendor: {partyName.get(o.vendor_party_id) ?? "—"} (no Purchase Bill yet)
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-slate-400">No Purchase Bill linked yet.</p>
@@ -421,6 +435,25 @@ export function OrderListTable({
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2 print:hidden">
                 <div className="flex gap-2">
+                  {/* 2026-08-22 — explicit View/Download, pointing at the new
+                      read-only /dashboard/orders/[id] detail page. "Download"
+                      doesn't print from here — it just gets the user to the
+                      page whose own PrintButton (order-view.tsx) is the real
+                      download mechanism, same convention as Invoices. The
+                      existing inline Edit/Delete behaviour below is
+                      untouched. */}
+                  <Link
+                    href={`/dashboard/orders/${o.id}`}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    View
+                  </Link>
+                  <Link
+                    href={`/dashboard/orders/${o.id}`}
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                  >
+                    Download
+                  </Link>
                   <button
                     type="button"
                     onClick={() => setEditingId(o.id)}

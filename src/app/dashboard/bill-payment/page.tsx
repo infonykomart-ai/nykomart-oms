@@ -12,22 +12,65 @@ import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 // admin with access to all 3 companies saw every company's outstanding
 // bills mixed together regardless of which company was selected up top.
 // Now matches the pattern used by orders/new, shipglobal, attendance, etc.
-export default async function BillPaymentPage() {
+//
+// 2026-08-22 — filter UI added (GET-form + searchParams, same pattern as
+// Orders): Company, Status, Due. This page had zero filter UI before —
+// every unpaid bill for the selected company, full stop. `status` here is
+// a DERIVED condition (there is no stored status column on
+// bill_pass_register — see db/schema.sql), computed from balance_due vs 0
+// and due_date vs today, same idea as Orders' "Late Order" derived filter:
+//   - "" (default)   -> balance_due > 0 (unchanged default behaviour)
+//   - "pending"       -> balance_due > 0 AND due_date >= today (not yet due)
+//   - "overdue"       -> balance_due > 0 AND due_date <  today
+//   - "paid"          -> balance_due <= 0
+export default async function BillPaymentPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const employee = await requireCapability("bill_payment");
   const supabase = createServiceRoleClient();
+  const sp = await searchParams;
 
-  const [{ data: bills }, { data: companies }, { data: parties }] = await Promise.all([
-    supabase
-      .from("bill_pass_register")
-      .select(
-        "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
-      )
-      .eq("company_id", employee.currentCompanyId)
-      .gt("balance_due", 0)
-      .order("due_date", { ascending: true, nullsFirst: false }),
-    supabase.from("companies").select("id, name"),
+  // Same "respect the top-nav company switcher by default, but let an
+  // explicit ?company= (including an explicit blank = All) override it" as
+  // Orders (see that page.tsx's 2026-08-17 comment for the full reasoning).
+  const companyParam = typeof sp.company === "string" ? sp.company : "";
+  const companyParamPresent = "company" in sp;
+  const effectiveCompanyIds = companyParam
+    ? [companyParam]
+    : companyParamPresent
+      ? employee.companyIds
+      : [employee.currentCompanyId];
+  const status = typeof sp.status === "string" ? sp.status : "";
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const [{ data: companies }, { data: parties }] = await Promise.all([
+    supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("parties").select("id, name, party_type, invoice_type"),
   ]);
+
+  let query = supabase
+    .from("bill_pass_register")
+    .select(
+      "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
+    )
+    .in("company_id", effectiveCompanyIds)
+    .order("due_date", { ascending: true, nullsFirst: false });
+
+  if (status === "paid") {
+    query = query.lte("balance_due", 0);
+  } else if (status === "pending") {
+    query = query.gt("balance_due", 0).gte("due_date", todayStr);
+  } else if (status === "overdue") {
+    query = query.gt("balance_due", 0).lt("due_date", todayStr);
+  } else {
+    // Default (no status filter picked yet) — unchanged from before this
+    // filter UI existed: every unpaid/partially-paid bill.
+    query = query.gt("balance_due", 0);
+  }
+
+  const { data: bills } = await query;
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
@@ -65,10 +108,36 @@ export default async function BillPaymentPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">💳 Bill Payment</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Every unpaid/partially-paid Bill Pass Register entry across your companies — record a payment against any
-          of them below. Total outstanding: <span className="font-semibold text-slate-800">₹{totalOutstanding.toFixed(2)}</span>
+          {status === "paid" ? "Paid" : status === "overdue" ? "Overdue" : status === "pending" ? "Not-yet-due" : "Unpaid/partially-paid"}{" "}
+          Bill Pass Register entries — record a payment against any of them below. Total outstanding:{" "}
+          <span className="font-semibold text-slate-800">₹{totalOutstanding.toFixed(2)}</span>
         </p>
       </div>
+
+      <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
+          <select id="company" name="company" defaultValue={companyParamPresent ? companyParam : employee.currentCompanyId} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+            <option value="">All</option>
+            {(companies ?? []).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="status">Status</label>
+          <select id="status" name="status" defaultValue={status} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+            <option value="">All Unpaid (default)</option>
+            <option value="pending">Pending (not yet due)</option>
+            <option value="overdue">Overdue</option>
+            <option value="paid">Paid</option>
+          </select>
+        </div>
+        <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
+          Filter
+        </button>
+        <a href="/dashboard/bill-payment" className="text-xs text-slate-400 underline">Clear</a>
+      </form>
 
       <BillPaymentList bills={rows} parties={parties ?? []} />
     </div>

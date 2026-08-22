@@ -2,6 +2,7 @@
 
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
+import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 
 type OrderRow = {
   id: string;
@@ -52,6 +53,12 @@ export function OrdersReportTable({
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
+  // 2026-08-22 — first consumer of the generic column picker (see
+  // src/lib/export/use-column-visibility.ts). visibleColumns drives BOTH
+  // the <table> below and what <ExportBar /> exports, so hide/show and
+  // every export format agree.
+  const { visibleColumns, hiddenKeys, toggleColumn } = useColumnVisibility(COLUMNS);
+
   return (
     <div className="space-y-4">
       {/* 2026-08-08 (pending item 5) — printAreaId wasn't wired here before,
@@ -99,14 +106,23 @@ export function OrdersReportTable({
 
       <div className="flex items-center justify-between print:hidden">
         <p className="text-sm text-slate-500">{rows.length} orders {rows.length === 1000 && "(showing up to 1000 — narrow the date range for full data)"}</p>
-        <ExportBar title="Orders Report" filenameBase="orders-report" columns={COLUMNS} rows={rows} printAreaId="orders-report-print-area" />
+        <ExportBar
+          title="Orders Report"
+          filenameBase="orders-report"
+          columns={visibleColumns}
+          rows={rows}
+          printAreaId="orders-report-print-area"
+          allColumns={COLUMNS}
+          hiddenKeys={hiddenKeys}
+          onToggleColumn={toggleColumn}
+        />
       </div>
 
       <div id="orders-report-print-area" className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              {COLUMNS.map((c) => (
+              {visibleColumns.map((c) => (
                 <th key={c.key} className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">{c.label}</th>
               ))}
             </tr>
@@ -114,14 +130,14 @@ export function OrdersReportTable({
           <tbody className="divide-y divide-slate-100">
             {rows.map((r) => (
               <tr key={r.id} className="hover:bg-slate-50">
-                {COLUMNS.map((c) => (
+                {visibleColumns.map((c) => (
                   <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">{String(c.value(r) ?? "")}</td>
                 ))}
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={COLUMNS.length} className="px-3 py-8 text-center text-slate-400">No orders found for this filter.</td>
+                <td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-slate-400">No orders found for this filter.</td>
               </tr>
             )}
           </tbody>

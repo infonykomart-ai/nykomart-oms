@@ -40,6 +40,11 @@ export type EditableOrder = {
   eori_number: string | null;
   ioss_number: string | null;
   destination_country: string | null;
+  // 2026-08-20 — Gap 2 of the 5-gaps plan. See order-list-table.tsx's
+  // "Planned vendor" badge and new/order-form.tsx's own field for the
+  // full note — this is the primary place it gets set/corrected, since
+  // the real vendor is usually only known after order entry.
+  vendor_party_id: string | null;
 };
 
 // Inline edit panel for one order row (order-list-table.tsx renders this in
@@ -52,6 +57,7 @@ export function OrderEditForm({
   itemCategories,
   sizes,
   currencies,
+  parties,
   statuses,
   onDone,
 }: {
@@ -59,6 +65,7 @@ export function OrderEditForm({
   itemCategories: { id: string; name: string }[];
   sizes: { id: string; label: string }[];
   currencies: { code: string; name: string }[];
+  parties: { id: string; name: string }[];
   statuses: string[];
   onDone: () => void;
 }) {
@@ -181,6 +188,15 @@ export function OrderEditForm({
         <div>
           <label className={labelClass} htmlFor={`destination_country-${order.id}`}>Destination Country</label>
           <input id={`destination_country-${order.id}`} name="destination_country" defaultValue={order.destination_country ?? ""} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor={`vendor_party_id-${order.id}`}>Purchasing From (if known)</label>
+          <select id={`vendor_party_id-${order.id}`} name="vendor_party_id" defaultValue={order.vendor_party_id ?? ""} className={inputClass}>
+            <option value="">Not known yet</option>
+            {parties.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
         </div>
         {/* 2026-08-11: replaces the old single generic Tax ID field (still
             in the DB for old orders, just no longer edited here) with 3

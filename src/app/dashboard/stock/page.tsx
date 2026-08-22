@@ -26,25 +26,54 @@ function daysAgoIso(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export default async function StockPage() {
+// 2026-08-22 — filter UI added (GET-form + searchParams, same pattern as
+// Orders). Before this, Stock had no filter UI at all — Stock In / Stock
+// Out each showed a plain "most recent RECENT_LIMIT rows" list with
+// nothing to narrow it down. Applies to both stock ledger entries (Stock
+// In's in_date, Stock Out's out_date) — party (source_party_id) and sku
+// (sku_code) are the same columns on both tables so one filter form covers
+// both tabs.
+export default async function StockPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   await requireCapability("stock_entry");
   const supabase = await createClient();
+  const sp = await searchParams;
+
+  const partyFilter = typeof sp.party === "string" ? sp.party : "";
+  const skuFilter = typeof sp.sku === "string" ? sp.sku : "";
+  const fromDate = typeof sp.from === "string" ? sp.from : "";
+  const toDate = typeof sp.to === "string" ? sp.to : "";
+
+  let stockInQuery = supabase
+    .from("stock_in")
+    .select(
+      "id, source_party_id, sku_code, product_name, chalan_no, in_date, quantity_in, rate_per_qty, party_chalan_no, our_chalan_no, bill_no, bill_date, paid_date, remark, created_at"
+    )
+    .order("created_at", { ascending: false })
+    .limit(RECENT_LIMIT);
+  if (partyFilter) stockInQuery = stockInQuery.eq("source_party_id", partyFilter);
+  if (skuFilter) stockInQuery = stockInQuery.eq("sku_code", skuFilter);
+  if (fromDate) stockInQuery = stockInQuery.gte("in_date", fromDate);
+  if (toDate) stockInQuery = stockInQuery.lte("in_date", toDate);
+
+  let stockOutQuery = supabase
+    .from("stock_out")
+    .select("id, source_party_id, sku_code, product_name, chalan_no, chalan_id, out_date, quantity_out, remark, created_at")
+    .order("created_at", { ascending: false })
+    .limit(RECENT_LIMIT);
+  if (partyFilter) stockOutQuery = stockOutQuery.eq("source_party_id", partyFilter);
+  if (skuFilter) stockOutQuery = stockOutQuery.eq("sku_code", skuFilter);
+  if (fromDate) stockOutQuery = stockOutQuery.gte("out_date", fromDate);
+  if (toDate) stockOutQuery = stockOutQuery.lte("out_date", toDate);
 
   const [{ data: parties }, { data: stockIn }, { data: stockOut }, { data: currentStock }, { data: materialOutChalans }, { data: recentConsumption }] =
     await Promise.all([
     supabase.from("parties").select("id, name").order("name"),
-    supabase
-      .from("stock_in")
-      .select(
-        "id, source_party_id, sku_code, product_name, chalan_no, in_date, quantity_in, rate_per_qty, party_chalan_no, our_chalan_no, bill_no, bill_date, paid_date, remark, created_at"
-      )
-      .order("created_at", { ascending: false })
-      .limit(RECENT_LIMIT),
-    supabase
-      .from("stock_out")
-      .select("id, source_party_id, sku_code, product_name, chalan_no, chalan_id, out_date, quantity_out, remark, created_at")
-      .order("created_at", { ascending: false })
-      .limit(RECENT_LIMIT),
+    stockInQuery,
+    stockOutQuery,
     supabase
       .from("stock_current_view")
       .select("source_party_id, sku_code, product_name, current_stock")
@@ -167,6 +196,39 @@ export default async function StockPage() {
           📤 Bulk Upload (CSV)
         </Link>
       </div>
+
+      <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="party">Source (Party)</label>
+          <select id="party" name="party" defaultValue={partyFilter} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+            <option value="">All</option>
+            {(parties ?? []).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="sku">SKU</label>
+          <select id="sku" name="sku" defaultValue={skuFilter} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+            <option value="">All</option>
+            {skuOptions.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">From</label>
+          <input id="from" name="from" type="date" defaultValue={fromDate} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="to">To</label>
+          <input id="to" name="to" type="date" defaultValue={toDate} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500" />
+        </div>
+        <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
+          Filter
+        </button>
+        <a href="/dashboard/stock" className="text-xs text-slate-400 underline">Clear</a>
+      </form>
 
       <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
         <h2 className="mb-1 text-sm font-semibold text-slate-800">🔔 Reorder Alerts</h2>

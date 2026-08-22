@@ -38,6 +38,17 @@ export default async function CrmOverviewPage({
   // `pl_dashboard_by_month_view` aggregates `sale_profit_ledger` straight
   // to month with no per-company breakdown in the view itself, so it
   // can't be scoped without a schema/view change; flagged, not fixed here.
+  //
+  // 2026-08-20 — Gap 4 (office/cash expenses, see
+  // claude/five-gaps-implementation-plan-2026-08-20.md and
+  // db/2026-08-20-internal-expenses.sql): both views gained
+  // total_internal_expenses_inr + net_earn_after_overhead, sourced from the
+  // new `internal_expenses` table. Deliberately kept as a SEPARATE line
+  // from total_expenses_inr (which is per-order marketplace/shipping
+  // expense from sale_profit_ledger) rather than merged into it — office
+  // overhead and order-level expense are different things. plByMonth can
+  // now also show a month with expenses but zero sales (e.g. rent paid in
+  // a slow month), which plByMonth previously never surfaced at all.
   const [
     { data: orderStatusCountRows },
     { data: attendanceRows },
@@ -55,8 +66,8 @@ export default async function CrmOverviewPage({
     supabase.rpc("get_order_status_counts", { p_company_id: employee.currentCompanyId }),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
-    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct").limit(24),
+    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead").in("company_id", employee.companyIds),
+    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead").limit(24),
     query
       ? supabase
           .from("orders")
@@ -235,6 +246,8 @@ export default async function CrmOverviewPage({
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Expenses (INR)</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Profit %</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Internal Expenses (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn (After Overhead)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -245,6 +258,8 @@ export default async function CrmOverviewPage({
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_expenses_inr ?? 0).toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn ?? 0).toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
@@ -263,11 +278,13 @@ export default async function CrmOverviewPage({
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Expenses (INR)</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Profit %</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Internal Expenses (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn (After Overhead)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {(plByMonth ?? []).length === 0 && (
-                <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
               )}
               {(plByMonth ?? []).map((r) => (
                 <tr key={r.month}>
@@ -276,6 +293,8 @@ export default async function CrmOverviewPage({
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_expenses_inr ?? 0).toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn ?? 0).toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>

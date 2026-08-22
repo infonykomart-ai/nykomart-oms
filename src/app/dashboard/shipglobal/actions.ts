@@ -9,6 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import {
   shipglobalLogin,
   shipglobalAddOrder,
@@ -354,24 +355,60 @@ export async function createShipglobalShipment(
 
     if (manifested.trackingNo) {
       const carrierName = SHIPGLOBAL_SERVICES.find((s) => s.code === service)?.carrier ?? service;
-      await supabase.from("dispatch_invoices").upsert(
-        {
-          order_id: orderId,
-          awb_no: manifested.trackingNo,
-          courier_name: `${carrierName} (Shipglobal)`,
-          buyer_name: `${input.shipping.firstname} ${input.shipping.lastname}`.trim(),
-          buyer_mail: input.shipping.email,
-          buyer_contact: input.shipping.mobile,
-          buyer_country: input.shipping.countryCode,
-          hsn_no: input.item.hsn,
-          length_cm: input.packageLengthCm,
-          width_cm: input.packageBreadthCm,
-          height_cm: input.packageHeightCm,
-          shipping_weight_kg: input.packageWeightG / 1000,
-          last_update_date: new Date().toISOString().slice(0, 10),
-        },
-        { onConflict: "order_id" }
-      );
+      // Gap 1 (2026-08-20): writes order_shipments (shipment_no=1) +
+      // order_packages (package_no=1) instead of dispatch_invoices
+      // directly, then resyncs the order-level summary — see
+      // claude/gap1-multipackage-design-2026-08-20.md. Shipglobal itself
+      // only ever manifests one shipment per call, so this always targets
+      // shipment_no 1 (a Shipglobal-manifested order that separately also
+      // has manually-entered extra packages/shipments is an edge case not
+      // handled specially here — shipment 1 stays Shipglobal's own).
+      const { data: shipment } = await supabase
+        .from("order_shipments")
+        .upsert(
+          {
+            order_id: orderId,
+            shipment_no: 1,
+            awb_no: manifested.trackingNo,
+            courier_name: `${carrierName} (Shipglobal)`,
+            last_update_date: new Date().toISOString().slice(0, 10),
+            created_by_employee_id: employee.id,
+          },
+          { onConflict: "order_id,shipment_no" }
+        )
+        .select("id")
+        .single();
+
+      if (shipment) {
+        await supabase.from("order_packages").upsert(
+          {
+            order_shipment_id: shipment.id,
+            package_no: 1,
+            length_cm: input.packageLengthCm,
+            width_cm: input.packageBreadthCm,
+            height_cm: input.packageHeightCm,
+            weight_kg: input.packageWeightG / 1000,
+          },
+          { onConflict: "order_shipment_id,package_no" }
+        );
+        await resyncDispatchSummary(supabase, orderId);
+        // buyer_name/mail/contact/hsn_no aren't part of the shipment/package
+        // summary resync (those stay dispatch_invoices-only fields, out of
+        // scope for this round) — write them directly, same as before.
+        await supabase
+          .from("dispatch_invoices")
+          .upsert(
+            {
+              order_id: orderId,
+              buyer_name: `${input.shipping.firstname} ${input.shipping.lastname}`.trim(),
+              buyer_mail: input.shipping.email,
+              buyer_contact: input.shipping.mobile,
+              buyer_country: input.shipping.countryCode,
+              hsn_no: input.item.hsn,
+            },
+            { onConflict: "order_id" }
+          );
+      }
       await supabase.from("orders").update({ shipment_status: "Shipped" }).eq("id", orderId);
     }
 

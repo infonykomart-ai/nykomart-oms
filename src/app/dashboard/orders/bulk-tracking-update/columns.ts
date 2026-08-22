@@ -35,6 +35,16 @@ export const DELIVERED_STATUSES = ["Delivered", "NOT Delivered"] as const;
 export const TRACKING_COLUMNS: TrackingColumn[] = [
   { label: "Ref No", example: "PO-0001", required: true, help: "The exact PO/RF/RG number (with any -1/2 suffix if applicable)." },
   { label: "Shipment Status", example: "In Transit", required: false, help: SHIPMENT_STATUSES.join(" / ") },
+  {
+    label: "Shipment No",
+    example: "",
+    required: false,
+    // Gap 1 (2026-08-20): an order can now have more than one AWB/shipment
+    // — see claude/gap1-multipackage-design-2026-08-20.md. Leave blank for
+    // the (still overwhelmingly common) single-shipment order; this
+    // targets shipment 1 automatically, same as before this column existed.
+    help: "Leave blank for a single-shipment order (defaults to 1). Only set this if the order has multiple AWBs.",
+  },
   { label: "AWB No", example: "", required: false },
   { label: "Courier Name", example: "", required: false },
   { label: "Delivered Status", example: "", required: false, help: DELIVERED_STATUSES.join(" / ") },

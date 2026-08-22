@@ -56,7 +56,7 @@ export default async function OrdersPage({
   let query = supabase
     .from("orders")
     .select(
-      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country"
+      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, vendor_party_id"
     )
     .in("company_id", effectiveCompanyIds)
     .order("entry_timestamp", { ascending: false })
@@ -437,7 +437,7 @@ export default async function OrdersPage({
         <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
           Filter
         </button>
-        <a href="/dashboard/orders" className="text-xs text-slate-400 underline">Clear</a>
+        <Link href="/dashboard/orders" className="text-xs text-slate-400 underline">Clear</Link>
       </form>
 
       <OrderListTable
@@ -445,6 +445,7 @@ export default async function OrdersPage({
         itemCategories={itemCategories ?? []}
         sizes={sizes ?? []}
         currencies={currencies ?? []}
+        parties={parties ?? []}
         statuses={STATUSES}
         purchasesByOrder={purchasesByOrder}
         trackingByOrder={trackingByOrder}

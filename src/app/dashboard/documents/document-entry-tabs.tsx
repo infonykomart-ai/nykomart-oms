@@ -71,6 +71,18 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
+// 2026-08-22 — one {vendor, from, to} bundle per filtered list (Purchase
+// Bill / Courier (Freight) Bill / Duty & Tax Bill), threaded down from
+// page.tsx's searchParams so each filter form's <input>/<select> can show
+// its current value (`defaultValue`) after a GET-form submit round-trips
+// through the server.
+type BillFilter = { vendor: string; from: string; to: string };
+type BillFilters = { purchaseBill: BillFilter; freightBill: BillFilter; dutyBill: BillFilter };
+
+function isTabKey(v: string): v is TabKey {
+  return TABS.some((t) => t.key === v);
+}
+
 // 2026-08-07: "edit modify deleat sabhi section me rahega" — same edit/
 // delete pattern as the Orders hub, applied to each of the 4 Document Entry
 // types. Doc numbers (cn_no/debit_note_no/chalan_no/invoice_no) are never
@@ -84,6 +96,8 @@ export function DocumentEntryTabs({
   currencies,
   recent,
   shipmentChalans,
+  initialTab,
+  billFilters,
 }: {
   companies: Company[];
   parties: Party[];
@@ -91,8 +105,15 @@ export function DocumentEntryTabs({
   currencies: Currency[];
   recent: Recent;
   shipmentChalans: ShipmentChalanRow[];
+  // 2026-08-22: this tab switcher is client-only useState, not URL-driven —
+  // `initialTab` (read from ?tab= by page.tsx) is what lets the Purchase
+  // Bill / Courier Bill / Duty & Tax Bill filter forms below submit a plain
+  // GET (full navigation) and land back on the same tab instead of
+  // resetting to Credit Note.
+  initialTab: string;
+  billFilters: BillFilters;
 }) {
-  const [tab, setTab] = useState<TabKey>("credit-note");
+  const [tab, setTab] = useState<TabKey>(isTabKey(initialTab) ? initialTab : "credit-note");
   // 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
   // JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — Purchase Bill now
   // has 2 modes: the original single-order form, and a new multi-order
@@ -125,8 +146,12 @@ export function DocumentEntryTabs({
     return (
       <div>
         {tabBar}
-        {tab === "courier-bill" && <FreightBillSection bills={recent.freightBills} companies={companies} parties={parties} />}
-        {tab === "duty-tax-bill" && <DutyBillSection bills={recent.dutyBills} companies={companies} parties={parties} />}
+        {tab === "courier-bill" && (
+          <FreightBillSection bills={recent.freightBills} companies={companies} parties={parties} filter={billFilters.freightBill} />
+        )}
+        {tab === "duty-tax-bill" && (
+          <DutyBillSection bills={recent.dutyBills} companies={companies} parties={parties} filter={billFilters.dutyBill} />
+        )}
         {tab === "courier-bill-pdf" && <CourierBillPdfSection />}
       </div>
     );
@@ -269,6 +294,7 @@ export function DocumentEntryTabs({
           onDelete={deleteInternalInvoice}
           renderEdit={(r, onDone) => <InternalInvoiceEditForm invoice={r} onDone={onDone} />}
         />
+        <PurchaseBillFilterForm parties={parties} filter={billFilters.purchaseBill} />
         <DocList
           title="Recent Purchase Bills"
           rows={recent.purchaseBills.map((r) => ({
@@ -314,6 +340,39 @@ export function DocumentEntryTabs({
         </PrintArea>
       </div>
     </div>
+  );
+}
+
+// 2026-08-22 — GET-form + searchParams filter for the Recent Purchase Bills
+// list (date range + vendor party), same pattern as Orders. `tab` is a
+// hidden field so submitting lands back on the Purchase Bill tab (see the
+// `initialTab` comment above) instead of resetting to Credit Note.
+function PurchaseBillFilterForm({ parties, filter }: { parties: Party[]; filter: BillFilter }) {
+  return (
+    <form method="get" action="/dashboard/documents" className="mb-2 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 print:hidden">
+      <input type="hidden" name="tab" value="purchase-bill" />
+      <div>
+        <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="pbVendor">Vendor</label>
+        <select id="pbVendor" name="pbVendor" defaultValue={filter.vendor} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500">
+          <option value="">All</option>
+          {parties.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="pbFrom">From</label>
+        <input id="pbFrom" name="pbFrom" type="date" defaultValue={filter.from} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500" />
+      </div>
+      <div>
+        <label className="mb-0.5 block text-[11px] font-medium text-slate-500" htmlFor="pbTo">To</label>
+        <input id="pbTo" name="pbTo" type="date" defaultValue={filter.to} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-amber-500" />
+      </div>
+      <button type="submit" className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-700">
+        Filter
+      </button>
+      <a href="/dashboard/documents?tab=purchase-bill" className="text-[11px] text-slate-400 underline">Clear</a>
+    </form>
   );
 }
 
