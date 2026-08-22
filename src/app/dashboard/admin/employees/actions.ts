@@ -11,6 +11,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 
 export type EmployeeFormState = {
   error: string | null;
@@ -48,6 +49,42 @@ function profileFields(formData: FormData) {
     family_contact_2_relation: strOrNull(formData, "family_contact_2_relation"),
     family_contact_2_number: strOrNull(formData, "family_contact_2_number"),
   };
+}
+
+// 2026-08-22 — "URL ki jagah upload ka option kar do": Photo field used to
+// be a plain paste-a-link text input (same limitation orders.photo_url had
+// before 2026-08-18 — see db/2026-08-18-order-photos-bucket.sql for that
+// precedent). This is the employee-photos equivalent: uploads go to the
+// 'employee-photos' Storage bucket (db/2026-08-22-employee-photos-bucket.sql,
+// public — reads need no auth, writes only ever happen through this
+// service-role action, gated the same as every other action in this file)
+// and the resulting public URL is what actually gets saved into
+// employees.photo_url by createEmployee/updateEmployeeDetails below — the
+// column itself didn't change, only how it gets filled in.
+const EMPLOYEE_PHOTO_BUCKET = "employee-photos";
+const MAX_EMPLOYEE_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB — matches order-photos' cap
+
+export async function uploadEmployeePhoto(formData: FormData): Promise<{ url: string | null; error: string | null }> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { url: null, error: "No file selected." };
+  if (file.size > MAX_EMPLOYEE_PHOTO_BYTES) return { url: null, error: "File is too large — max 10MB." };
+  if (!file.type.startsWith("image/")) return { url: null, error: "Please upload an image file." };
+
+  const safeName = file.name.replace(/[^\w.\- ]/g, "_").slice(0, 150);
+  const path = `${randomUUID()}-${safeName}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const { error: uploadError } = await supabase.storage.from(EMPLOYEE_PHOTO_BUCKET).upload(path, buffer, {
+    contentType: file.type,
+    upsert: false,
+  });
+  if (uploadError) return { url: null, error: `Upload failed: ${uploadError.message}` };
+
+  const { data } = supabase.storage.from(EMPLOYEE_PHOTO_BUCKET).getPublicUrl(path);
+  return { url: data.publicUrl, error: null };
 }
 
 /**
