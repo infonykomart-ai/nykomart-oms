@@ -24,3 +24,133 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * 2026-08-22 — Dashboard theme system tokens.
+ *
+ * Applied via a `data-theme="<id>"` attribute on the dashboard's top-level
+ * shell wrapper (src/components/theme/themed-shell.tsx) — NOT on <html>,
+ * so this only ever affects the logged-in dashboard, never the /login
+ * page. CSS custom properties inherit to every descendant regardless of
+ * which property consumes them, so any component under the shell can
+ * reference e.g. `bg-[var(--oms-surface)]` and pick up the active theme
+ * automatically.
+ *
+ * `--oms-accent` is the one variable the separate custom-accent-color
+ * picker overrides — it does so via an inline `style` on the same shell
+ * element (higher specificity than these attribute-selector rules), which
+ * is why the accent is broken out as its own variable instead of being
+ * baked into e.g. `--oms-sidebar-tile-active-bg` directly. Keep it that
+ * way — every place that wants "the accent color" should reference
+ * `var(--oms-accent)`, never a literal.
+ *
+ * `navy-gold`'s values are NOT invented — they're the app's own existing
+ * hardcoded colors, reused: sidebar dark navy (#0f172a / slate-900, see
+ * dashboard-sidebar.tsx before this change), gold accent (#f59e0b /
+ * amber-500, used across buttons/active-tile/focus-rings app-wide), and
+ * light content area (bg-white / bg-slate-100, today's default look) — so
+ * selecting this theme is a visual no-op versus the pre-theme-system app.
+ * The HR certificate's deeper navy (#0a0a1a) / pale gold (#f2d99b) /
+ * border gold (#d9a441) — see certificate-form.tsx — inform the *swatch*
+ * preview shown in the picker (src/lib/theme/themes.ts) and the sidebar's
+ * even-darker shade here, for a more distinctly "branded" feel than plain
+ * slate-900 alone.
+ *
+ * Keep src/lib/theme/themes.ts's THEME_META swatch colors in sync by hand
+ * with whatever changes here — see that file's header comment.
+ */
+[data-theme] {
+  --oms-canvas: #f1f5f9; /* slate-100 */
+  --oms-header-bg: #ffffff;
+  --oms-header-border: #e2e8f0; /* slate-200 */
+  --oms-sidebar-bg: #0f172a; /* slate-900 */
+  --oms-sidebar-border: #1e293b; /* slate-800 */
+  --oms-sidebar-tile-bg: rgba(30, 41, 59, 0.6); /* slate-800/60 */
+  --oms-sidebar-tile-border: #1e293b;
+  --oms-sidebar-text: #ffffff;
+  --oms-sidebar-text-muted: #cbd5e1; /* slate-300 */
+  --oms-surface: #ffffff;
+  --oms-surface-border: #e2e8f0;
+  --oms-text: #0f172a; /* slate-900 */
+  --oms-text-muted: #64748b; /* slate-500 */
+  --oms-accent: #f59e0b; /* amber-500 */
+  --oms-accent-contrast: #ffffff;
+}
+
+[data-theme="navy-gold"] {
+  --oms-sidebar-bg: #0a0a1a; /* HR certificate navy */
+  --oms-accent: #d9a441; /* HR certificate gold border */
+  --oms-accent-contrast: #1a1200;
+}
+
+[data-theme="day"] {
+  --oms-canvas: #f8fafc; /* slate-50 */
+  --oms-header-bg: #ffffff;
+  --oms-header-border: #e2e8f0;
+  --oms-sidebar-bg: #ffffff;
+  --oms-sidebar-border: #e2e8f0;
+  --oms-sidebar-tile-bg: #f1f5f9;
+  --oms-sidebar-tile-border: #e2e8f0;
+  --oms-sidebar-text: #0f172a;
+  --oms-sidebar-text-muted: #475569; /* slate-600 */
+  --oms-surface: #ffffff;
+  --oms-surface-border: #e2e8f0;
+  --oms-text: #0f172a;
+  --oms-text-muted: #64748b;
+  --oms-accent: #2563eb; /* blue-600 */
+  --oms-accent-contrast: #ffffff;
+}
+
+[data-theme="eye-comfort"] {
+  --oms-canvas: #f3e9d6;
+  --oms-header-bg: #faf3e2;
+  --oms-header-border: #e6d7b8;
+  --oms-sidebar-bg: #453a29;
+  --oms-sidebar-border: #574a35;
+  --oms-sidebar-tile-bg: rgba(87, 74, 53, 0.6);
+  --oms-sidebar-tile-border: #574a35;
+  --oms-sidebar-text: #f5ead2;
+  --oms-sidebar-text-muted: #cbb98f;
+  --oms-surface: #fdf8ee;
+  --oms-surface-border: #e6d7b8;
+  --oms-text: #3a3226;
+  --oms-text-muted: #8a7c66;
+  --oms-accent: #c97b4a; /* muted terracotta */
+  --oms-accent-contrast: #ffffff;
+}
+
+[data-theme="night"] {
+  --oms-canvas: #0b0f19;
+  --oms-header-bg: #11151f;
+  --oms-header-border: #232838;
+  --oms-sidebar-bg: #05070c;
+  --oms-sidebar-border: #1c212e;
+  --oms-sidebar-tile-bg: rgba(28, 33, 46, 0.6);
+  --oms-sidebar-tile-border: #232838;
+  --oms-sidebar-text: #f1f5f9;
+  --oms-sidebar-text-muted: #94a3b8;
+  --oms-surface: #161b26;
+  --oms-surface-border: #232838;
+  --oms-text: #e5e7eb;
+  --oms-text-muted: #94a3b8;
+  --oms-accent: #38bdf8; /* sky-400 */
+  --oms-accent-contrast: #05070c;
+}
+
+[data-theme="ocean"] {
+  --oms-canvas: #eef6f8;
+  --oms-header-bg: #ffffff;
+  --oms-header-border: #d3e6ec;
+  --oms-sidebar-bg: #0c344a;
+  --oms-sidebar-border: #124a68;
+  --oms-sidebar-tile-bg: rgba(18, 74, 104, 0.6);
+  --oms-sidebar-tile-border: #124a68;
+  --oms-sidebar-text: #ffffff;
+  --oms-sidebar-text-muted: #a9cbd8;
+  --oms-surface: #ffffff;
+  --oms-surface-border: #d3e6ec;
+  --oms-text: #0f2e3d;
+  --oms-text-muted: #5b7a89;
+  --oms-accent: #0ea5a4; /* teal-500 */
+  --oms-accent-contrast: #ffffff;
+}
