@@ -246,6 +246,20 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
 
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/admin/employees");
+  // 2026-08-22 — "photo upload horahi lekin profile/messaging/header me
+  // preview nahi aa raha": this update can change photo_url (or any other
+  // profile field) for an employee OTHER than the admin submitting the
+  // form. Two more places read employee photo_url independently of this
+  // page: the shared dashboard layout's header avatar + its messaging
+  // employee list (dashboard/layout.tsx — only refreshed by revalidating
+  // "/dashboard" itself, "layout" mode, same pattern switch-company.ts
+  // already uses for this exact reason), and the Messages page's own
+  // separate employee query (messages/page.tsx). Without revalidating
+  // those too, Next's client router cache keeps showing the pre-edit photo
+  // on every page except the one just saved from, until an unrelated hard
+  // reload happens to flush it.
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/dashboard/messages");
   return { error: null, success: true };
 }
 

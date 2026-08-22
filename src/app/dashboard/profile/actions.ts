@@ -58,5 +58,16 @@ export async function updateMyProfile(_prev: MyProfileFormState, formData: FormD
   if (error) return { error: error.message, success: false };
 
   revalidatePath("/dashboard/profile");
+  // 2026-08-22 — "photo upload horahi lekin profile/messaging/header me
+  // preview nahi aa raha": same fix as updateEmployeeDetails (admin/
+  // employees/actions.ts) — this can change photo_url, which two other
+  // places read independently: the shared dashboard layout's header avatar
+  // (dashboard/layout.tsx, only refreshed by revalidating "/dashboard"
+  // itself in "layout" mode — same pattern switch-company.ts already uses)
+  // and the Messages page's own separate employee query
+  // (messages/page.tsx). Without these, Next's client router cache keeps
+  // showing the pre-edit photo everywhere except the page just saved from.
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/dashboard/messages");
   return { error: null, success: true };
 }

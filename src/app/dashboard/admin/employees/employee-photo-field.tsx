@@ -10,7 +10,7 @@
 // explicit "dono option rakho" request). The uploaded file's public URL is
 // still what's submitted as `photo_url` (a hidden input), so
 // actions.ts/profileFields() needs no changes downstream.
-import { useRef, useState, type ChangeEvent } from "react";
+import { useId, useRef, useState, type ChangeEvent } from "react";
 import { uploadEmployeePhoto } from "./actions";
 
 export function EmployeePhotoField({ defaultValue }: { defaultValue?: string | null }) {
@@ -19,6 +19,20 @@ export function EmployeePhotoField({ defaultValue }: { defaultValue?: string | n
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 2026-08-22 hotfix — "photo upload purane employee ke form me kar rahe
+  // hai or photo upload new employee form me hora": this field renders
+  // TWICE on the same /dashboard/admin/employees page at once — once inside
+  // "Create New Employee / Login", once inside an expanded "Edit Details"
+  // row — both via the same shared ProfileFields. A hardcoded
+  // id="photo_upload" here meant BOTH instances shared one id. Duplicate
+  // ids are invalid HTML, and a <label htmlFor> (or the browser's own
+  // getElementById-based association) resolves to whichever matching id
+  // comes FIRST in the DOM — the "Create New Employee" form, since it's
+  // above the employee list — so clicking "Upload Photo" inside an
+  // existing employee's Edit Details form was actually opening/filling the
+  // NEW employee form's hidden file input instead of this one. useId()
+  // gives every instance its own guaranteed-unique id.
+  const inputId = useId();
 
   async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -45,7 +59,7 @@ export function EmployeePhotoField({ defaultValue }: { defaultValue?: string | n
 
   return (
     <div>
-      <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="photo_upload">
+      <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor={inputId}>
         Photo
       </label>
       <input type="hidden" name="photo_url" value={url} />
@@ -65,13 +79,13 @@ export function EmployeePhotoField({ defaultValue }: { defaultValue?: string | n
           </div>
         )}
         <label
-          htmlFor="photo_upload"
+          htmlFor={inputId}
           className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           {uploading ? "Uploading…" : url ? "📁 Change Photo" : "📁 Upload Photo"}
           <input
             ref={fileInputRef}
-            id="photo_upload"
+            id={inputId}
             type="file"
             accept="image/*"
             className="hidden"
