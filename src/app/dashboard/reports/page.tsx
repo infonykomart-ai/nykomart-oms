@@ -107,6 +107,27 @@ export default async function ReportsPage({
           >
             💳 Outstanding Balances Report
           </Link>
+          {/* 2026-08-22 — 3 more reports added after "Reports hub —
+              remaining scope": Party/Vendor Ledger, Sale & Profit,
+              Salary/Attendance (see each page's own header comment). */}
+          <Link
+            href="/dashboard/reports/party-ledger"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📒 Party / Vendor Ledger Report
+          </Link>
+          <Link
+            href="/dashboard/reports/sale-profit"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            💹 Sale & Profit Report
+          </Link>
+          <Link
+            href="/dashboard/reports/salary"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🧑‍💼 Salary / Attendance Report
+          </Link>
         </div>
       </div>
 

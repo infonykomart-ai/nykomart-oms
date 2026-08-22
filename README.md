@@ -1,101 +1,63 @@
-# Nyko Mart / Rugara / CASA ARRA — Order Management System
+# Reports Hub — 3 naye reports (2026-08-22)
 
-Full rewrite of the original Google Sheets + Apps Script OMS into a real
-web app: **Next.js (App Router, TypeScript) + PostgreSQL via Supabase**,
-deployed on Vercel. Replaces `gscript/Code.gs` + `gscript/Index.html` in the
-repo root (kept there for reference during the migration, not deleted).
+"NEXT" pooche jaane par jo option chuna tha ("Reports hub — remaining scope"), phir jo 3 reports
+chune the — sabhi ban gaye:
 
-## Why this exists
+## 1. 📒 Party / Vendor Ledger Report (`/dashboard/reports/party-ledger`)
 
-The Sheets version works but degrades as data grows — live formulas
-recalculating across thousands of rows, SUMPRODUCT/array formulas, and the
-cell-count ceiling all get worse with scale. This rewrite keeps every
-business rule from the old system (see `db/SCHEMA_NOTES.md` for the full
-sheet → table mapping) on a real database instead.
+Sabhi parties (ya ek party chuno) ka Debit/Credit/Balance ledger — company-wide, ek jagah. Ye
+wahi ledger hai jo har party ke apne page pe already tha (Party Master → uss party ka Ledger),
+lekin ab sabhi parties ka ek saath, filter + download/send ke saath.
 
-## Status
+- Filter: Company, Party (ya "All parties"), From/To date, Type (Debit/Credit)
+- Balance har party ka apna-apna alag chalta hai (agar ek saath kai parties dikh rahi hain to har
+  party ki apni history se balance banta hai, doosri party se mix nahi hota)
 
-Early build — see the project's task list for what's done vs. pending.
-**"Poori parity" is the target**: nothing is considered launch-ready until
-every module from the old system (order entry, dispatch, stock, bill pass,
-P&L dashboard, HR/attendance, document generation, CRM, etc.) has a working
-equivalent here.
+## 2. 💹 Sale & Profit Report (`/dashboard/reports/sale-profit`)
 
-## Stack
+Har order ka apna Revenue vs Expense — Order Value minus us order ka Courier + Duty expense,
+minus 25% portal expense (wahi standard assumption jo CRM ke P&L Dashboard me bhi hai).
 
-- **Frontend + Backend**: Next.js 16 (App Router, Server Actions, Turbopack)
-- **Database**: PostgreSQL via [Supabase](https://supabase.com) (also
-  provides auth + file storage)
-- **Hosting**: [Vercel](https://vercel.com), auto-deploys from `main`
+**Zaroori note**: Purchase Bill ka kharcha isme SHAMIL NAHI hai — kyunki wo poori company ka ek
+saath hota hai, kisi ek order se seedha nahi juda hota, isliye is per-order report me daalna
+galat hoga. Poora company-level profit (Purchase Bill ke saath) CRM Overview → P&L Dashboard me
+already hai. Report ke upar hi ye baat amber note me likhi hai taaki koi confuse na ho.
 
-## Local setup
+- Filter: Company, From/To date (Order Date)
+- Purane CSV-import wale records (jo `orders` table se pehle ke hain) bhi isme shamil hain,
+  taaki purani history na chhute
 
-```bash
-npm install
-cp .env.example .env.local   # fill in your Supabase project's URL + keys
-npm run dev
-```
+## 3. 🧑‍💼 Salary / Attendance Report (`/dashboard/reports/salary`)
 
-Open [http://localhost:3000](http://localhost:3000).
+Har active employee ka mahine ka payroll summary — Salary/Payroll page (`/dashboard/salary`) jo
+formula use karta hai, wahi formula, bas ab export/send ke layak.
 
-## Database schema
+- Filter: Company, Month
+- Present, Half Day, Leave, Absent, Deduction, Net Pay, aur "Paid?" (salary di ja chuki hai ya
+  nahi is mahine)
 
-`db/schema.sql` is the full PostgreSQL schema (45 tables, 11 views,
-trigger-based document numbering) — apply it to a fresh Supabase project via
-the SQL Editor, or `psql "$SUPABASE_DB_URL" -f db/schema.sql`. Read
-`db/SCHEMA_NOTES.md` first — it explains every design decision and lists
-open questions (most now resolved; a few genuinely deferred to a later
-migration step).
+## Sabhi 3 reports me common (jo pehle se ban chuka tha)
 
-### Local schema checks (no Supabase needed)
+Sabhi teeno Reports hub ke standard pattern pe bane hain — jaisa Outstanding/Purchase Bill/
+Freight-Duty report pehle se hai:
 
-This repo's schema/type changes are validated against a local disposable
-Postgres instead of a live Supabase project, so schema mistakes get caught
-before ever touching real data:
+- CSV, Excel, Word, PDF/Print, Email, WhatsApp — ek click me
+- 🧩 Columns button — jo column nahi dekhna wo chhupa sakte ho, export bhi usi hisaab se hoga
+- Reports hub (`/dashboard/reports`) ke top pe 3 naye buttons add ho gaye hain in teeno report
+  tak jaane ke liye
 
-```bash
-createdb oms_test
-psql -d oms_test -f db/schema.sql        # should apply with zero errors
-GEN_TYPES_DB_URL="postgresql://postgres:postgres@localhost:5432/oms_test" \
-  node scripts/gen-types.mjs             # regenerates src/types/database.ts
-npx tsc --noEmit                          # type-check
-npm run build                             # full production build
-```
+## 7 files (koi SQL nahi)
 
-`scripts/gen-types.mjs` is a stand-in for `supabase gen types typescript`
-(that CLI subcommand needs a working Docker daemon, which this sandbox
-didn't have) — re-run it after every `db/schema.sql` change.
+- `src/app/dashboard/reports/page.tsx` — Reports hub me 3 naye buttons add hue
+- `src/app/dashboard/reports/party-ledger/page.tsx` + `party-ledger-report-table.tsx` — naya
+- `src/app/dashboard/reports/sale-profit/page.tsx` + `sale-profit-report-table.tsx` — naya
+- `src/app/dashboard/reports/salary/page.tsx` + `salary-report-table.tsx` — naya
 
-## Project structure
+Local machine pe `tsc`, `eslint`, aur full `npm run build` — teeno clean chale, koi error nahi.
 
-```
-src/
-  app/                 App Router pages (one route per module)
-  components/          Shared UI (dashboard header/sidebar, form primitives)
-  lib/
-    supabase/           Browser + server Supabase clients
-    auth/                requireCapability() — server-side capability gate,
-                          the direct port of the old requireCapability_()
-    capability-info.ts   Dashboard tile metadata (icons/labels/routes)
-  types/database.ts     Generated from db/schema.sql — do not hand-edit
-db/
-  schema.sql             Full PostgreSQL schema
-  SCHEMA_NOTES.md         Design rationale + old-sheet -> new-table mapping
-scripts/
-  gen-types.mjs           Local type generator (see above)
-```
+## Karne ka order
 
-## Business rules ported from the old system
-
-Every rule the user explicitly asked for is preserved — see comments in
-`db/schema.sql`'s "BUSINESS RULES ENFORCED IN APPLICATION CODE" block and
-`src/lib/auth/require-capability.ts`:
-
-- No stock movement without a Chalan No.
-- Duplicate-order detection: same buyer + same Order No. already dispatched
-  reuses the existing PO/RF/RG No. instead of creating a new one.
-- PO/RF/RG numbers and document numbers (Credit Note, Debit Note, etc.) are
-  reserved atomically, only at actual save time — never at form-preview
-  time — so no permanent gaps in the sequence.
-- Capability-based access control re-checked server-side on every
-  privileged action, never trusting a client-side check alone.
+1. GitHub pe is zip ke andar wale `src` folder ko drag-drop se upload karo.
+2. Commit karo — Vercel khud deploy kar dega.
+3. `/dashboard/reports` khol ke test kar lena — 3 naye button dikhne chahiye, har ek pe click
+   karke apna-apna report khulna chahiye.
