@@ -8,7 +8,14 @@ import { todayIST } from "@/lib/attendance/ist-date";
 
 export type SwitchCompanyState = { success: boolean; error: string | null };
 
-export const initialSwitchCompanyState: SwitchCompanyState = { success: false, error: null };
+// NOTE: `initialSwitchCompanyState` deliberately does NOT live here. A
+// "use server" file may only export async functions — every other export
+// gets wrapped as a callable server reference, and a plain object export
+// fails hard at runtime ("A 'use server' file can only export async
+// functions, found object"), which took down every dashboard page tonight
+// (2026-08-22) since CompanySwitcher is rendered in the layout shell. Fixed
+// by moving the constant into company-switcher.tsx itself, the only
+// consumer — see it there instead.
 
 /**
  * Sets "which company is this login currently acting as" — see the cookie's

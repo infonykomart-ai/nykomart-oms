@@ -11,31 +11,12 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { EXPENSE_CATEGORIES } from "./categories";
 
-export const EXPENSE_CATEGORIES = [
-  "Rent",
-  "Electricity",
-  "Fuel",
-  "Internet/Phone",
-  "Office Supplies",
-  "Repairs & Maintenance",
-  "Salary/Wages (Cash)",
-  "Travel/Conveyance",
-  "Bank/Card Charges",
-  // 2026-08-20 — added per user request: P&L formula is
-  // "sale value - (purchase + freight + duty + washing + store expense)
-  // = net amount". Washing (rug/product washing before dispatch) and
-  // Store Expense (day-to-day store/office running costs) had no home
-  // anywhere in the schema — purchase_bills has zero rows for either,
-  // and this internal_expenses table (the obvious fit — company-wide,
-  // already subtracted in pl_dashboard_by_company_view/
-  // pl_dashboard_by_month_view as total_internal_expenses_inr) was
-  // completely empty. User confirmed: log both here going forward: no
-  // SQL/view change needed, the P&L views already fold this table in.
-  "Washing",
-  "Store Expense",
-  "Other",
-] as const;
+// NOTE: EXPENSE_CATEGORIES itself now lives in ./categories.ts, not here —
+// see that file's header note (a "use server" file may only export async
+// functions; this was a hard crash on every /dashboard/expenses load until
+// fixed 2026-08-22). Imported here for the validation check below.
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();

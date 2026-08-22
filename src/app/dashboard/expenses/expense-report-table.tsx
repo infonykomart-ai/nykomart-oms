@@ -2,7 +2,7 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { ExportBar } from "@/components/export-bar";
-import { EXPENSE_CATEGORIES } from "./actions";
+import { EXPENSE_CATEGORIES } from "./categories";
 
 export type ExpenseReportRow = {
   id: string;

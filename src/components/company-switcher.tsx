@@ -1,7 +1,13 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { switchCompanyAction, initialSwitchCompanyState } from "@/lib/auth/switch-company";
+import { switchCompanyAction, type SwitchCompanyState } from "@/lib/auth/switch-company";
+
+// Lives here, not in switch-company.ts: a "use server" file may only export
+// async functions (every other export becomes a callable server reference),
+// so a plain object export there crashes at runtime. See that file's header
+// note. This is the only consumer.
+const initialSwitchCompanyState: SwitchCompanyState = { success: false, error: null };
 
 /**
  * Header dropdown for logins that work across more than one company (see

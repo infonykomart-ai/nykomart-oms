@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { saveExpenseAction, deleteExpenseAction, EXPENSE_CATEGORIES, type ExpenseFormState } from "./actions";
+import { saveExpenseAction, deleteExpenseAction, type ExpenseFormState } from "./actions";
+import { EXPENSE_CATEGORIES } from "./categories";
 
 const initialState: ExpenseFormState = { error: null, success: false };
 const inputClass =
