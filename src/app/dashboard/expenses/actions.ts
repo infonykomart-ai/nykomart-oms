@@ -11,6 +11,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { logAudit } from "@/lib/audit/log-audit";
 import { EXPENSE_CATEGORIES } from "./categories";
 
 // NOTE: EXPENSE_CATEGORIES itself now lives in ./categories.ts, not here —
@@ -78,7 +79,7 @@ export async function deleteExpenseAction(id: string): Promise<SimpleResult> {
   const employee = await requireCapability("internal_expense_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: row } = await supabase.from("internal_expenses").select("id, company_id").eq("id", id).maybeSingle();
+  const { data: row } = await supabase.from("internal_expenses").select("id, company_id, category, amount_inr").eq("id", id).maybeSingle();
   if (!row) return { error: "Entry not found." };
   if (!employee.companyIds.includes(row.company_id)) {
     return { error: "You do not have access to this entry." };
@@ -86,6 +87,17 @@ export async function deleteExpenseAction(id: string): Promise<SimpleResult> {
 
   const { error } = await supabase.from("internal_expenses").delete().eq("id", id);
   if (error) return { error: error.message };
+
+  await logAudit(supabase, {
+    companyId: row.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "internal_expense.deleted",
+    entityType: "internal_expense",
+    entityId: id,
+    entityLabel: `${row.category} — ₹${row.amount_inr}`,
+  });
+
   revalidatePath("/dashboard/expenses");
   revalidatePath("/dashboard/crm");
   return { error: null };

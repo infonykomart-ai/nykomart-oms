@@ -9,6 +9,8 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
+import { logAudit } from "@/lib/audit/log-audit";
+import { fireEvent } from "@/lib/automation/engine";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -223,7 +225,7 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id").eq("id", orderId).single();
+  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id, ref_no, status").eq("id", orderId).single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
@@ -234,6 +236,26 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   const { error } = await supabase.from("orders").update({ status: "Hold" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
 
+  // 2026-08-24: audit log + automation trigger — see
+  // db/2026-08-24-audit-log.sql / db/2026-08-24-automation-rules.sql.
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "order.status_changed",
+    entityType: "order",
+    entityId: order.id,
+    entityLabel: order.ref_no,
+    changes: { status: { from: order.status, to: "Hold" } },
+  });
+  await fireEvent(supabase, "order.status_changed", {
+    orderId: order.id,
+    companyId: order.company_id,
+    refNo: order.ref_no,
+    oldStatus: order.status,
+    newStatus: "Hold",
+  });
+
   revalidatePath("/dashboard/orders");
   return { error: null, success: true };
 }
@@ -243,13 +265,31 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).single();
+  const { data: order } = await supabase.from("orders").select("id, company_id, ref_no, status").eq("id", orderId).single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
   const { error } = await supabase.from("orders").update({ status: "Cancelled" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
+
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "order.status_changed",
+    entityType: "order",
+    entityId: order.id,
+    entityLabel: order.ref_no,
+    changes: { status: { from: order.status, to: "Cancelled" } },
+  });
+  await fireEvent(supabase, "order.status_changed", {
+    orderId: order.id,
+    companyId: order.company_id,
+    refNo: order.ref_no,
+    oldStatus: order.status,
+    newStatus: "Cancelled",
+  });
 
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/invoices");

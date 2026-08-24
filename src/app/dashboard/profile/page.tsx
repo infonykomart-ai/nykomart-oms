@@ -1,6 +1,8 @@
 import { getAuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { MyProfileForm } from "./my-profile-form";
+import { TwoFactorSection } from "./two-factor-section";
+import { getTwoFactorStatus } from "./two-factor-actions";
 
 // 2026-08-12: "My Profile" — self-service edit of one's own personal-info
 // fields, open to any signed-in employee (no capability gate, matching the
@@ -13,7 +15,7 @@ export default async function MyProfilePage() {
   const employee = await getAuthedEmployee();
   const supabase = createServiceRoleClient();
 
-  const [{ data: me }, { data: role }, { data: company }] = await Promise.all([
+  const [{ data: me }, { data: role }, { data: company }, twoFactorStatus] = await Promise.all([
     supabase
       .from("employees")
       .select(
@@ -23,6 +25,7 @@ export default async function MyProfilePage() {
       .single(),
     supabase.from("roles").select("name").eq("id", employee.roleId).single(),
     supabase.from("companies").select("name").eq("id", employee.homeCompanyId).single(),
+    getTwoFactorStatus(),
   ]);
 
   if (!me) {
@@ -73,6 +76,8 @@ export default async function MyProfilePage() {
       </div>
 
       <MyProfileForm defaults={me} />
+
+      <TwoFactorSection initialStatus={twoFactorStatus} />
     </div>
   );
 }

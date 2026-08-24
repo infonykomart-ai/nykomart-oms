@@ -76,35 +76,73 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
   const byHeader = new Map<string, string>();
   for (const k of headerKeys) byHeader.set(normalizeHeader(k), k);
 
-  const results: TrackingRowResult[] = [];
+  // results is pre-sized and filled by index so row order in the report
+  // matches the file, regardless of the concurrency order writes finish in
+  // below (2026-08-24 perf fix — see the batched lookup + chunked write
+  // comments further down).
+  const results: TrackingRowResult[] = new Array(rows.length);
   const today = new Date().toISOString().slice(0, 10);
 
+  // 2026-08-24 perf fix (perf-audit-round2-new-features-2026-08-24.md): this
+  // used to run one `orders` lookup PER ROW inside the loop below — at
+  // MAX_ROWS=500 that's up to 500 sequential round-trips just to resolve Ref
+  // No -> order id. Resolve them all in one batched query first, keyed by
+  // ref_no, same "ambiguous if >1 match" rule as before (a ref_no can
+  // collide across the employee's accessible companies).
+  const allRefNos = Array.from(
+    new Set(rows.map((raw) => cellStr(raw, byHeader, "Ref No")).filter((r): r is string => !!r))
+  );
+  const ordersByRefNo = new Map<string, { id: string }[]>();
+  if (allRefNos.length > 0) {
+    const { data: orderMatches, error: lookupError } = await supabase
+      .from("orders")
+      .select("id, ref_no")
+      .in("ref_no", allRefNos)
+      .in("company_id", employee.companyIds);
+    if (lookupError) {
+      return { error: `Order lookup failed: ${lookupError.message}`, results: null };
+    }
+    for (const o of orderMatches ?? []) {
+      const list = ordersByRefNo.get(o.ref_no) ?? [];
+      list.push({ id: o.id });
+      ordersByRefNo.set(o.ref_no, list);
+    }
+  }
+
+  type RowPlan = {
+    index: number;
+    rowNum: number;
+    refNo: string;
+    orderId: string;
+    shipmentStatus: string | null;
+    awbNo: string | null;
+    courierName: string | null;
+    deliveredStatus: "Delivered" | "NOT Delivered" | null;
+    deliveredDate: string | null;
+    remark: string | null;
+    shipmentNo: number;
+  };
+  const plans: RowPlan[] = [];
+
+  // Pass 1 — pure validation, no awaits (order ids come from the map built
+  // above), so this whole pass is synchronous.
   for (let i = 0; i < rows.length; i++) {
     const raw = rows[i];
     const rowNum = i + 2; // header is row 1 in the file
     const refNo = cellStr(raw, byHeader, "Ref No");
 
     if (!refNo) {
-      results.push({ row: rowNum, refNo: "", error: "Ref No is required." });
+      results[i] = { row: rowNum, refNo: "", error: "Ref No is required." };
       continue;
     }
 
-    const { data: matches, error: findError } = await supabase
-      .from("orders")
-      .select("id")
-      .eq("ref_no", refNo)
-      .in("company_id", employee.companyIds);
-
-    if (findError) {
-      results.push({ row: rowNum, refNo, error: `Lookup failed: ${findError.message}` });
-      continue;
-    }
-    if (!matches || matches.length === 0) {
-      results.push({ row: rowNum, refNo, error: "No order found with this Ref No." });
+    const matches = ordersByRefNo.get(refNo) ?? [];
+    if (matches.length === 0) {
+      results[i] = { row: rowNum, refNo, error: "No order found with this Ref No." };
       continue;
     }
     if (matches.length > 1) {
-      results.push({ row: rowNum, refNo, error: "Ambiguous — more than one order matched this Ref No. across your companies." });
+      results[i] = { row: rowNum, refNo, error: "Ambiguous — more than one order matched this Ref No. across your companies." };
       continue;
     }
     const orderId = matches[0].id;
@@ -112,34 +150,23 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
     const shipmentStatusRaw = cellStr(raw, byHeader, "Shipment Status");
     const shipmentStatus = (SHIPMENT_STATUSES as readonly string[]).includes(shipmentStatusRaw) ? shipmentStatusRaw : null;
     if (shipmentStatusRaw && !shipmentStatus) {
-      results.push({
+      results[i] = {
         row: rowNum,
         refNo,
         error: `Shipment Status "${shipmentStatusRaw}" is not valid — allowed: ${SHIPMENT_STATUSES.join(", ")}.`,
-      });
+      };
       continue;
     }
 
     const deliveredStatusRaw = cellStr(raw, byHeader, "Delivered Status");
     const deliveredStatus = (DELIVERED_STATUSES as readonly string[]).includes(deliveredStatusRaw) ? deliveredStatusRaw : null;
     if (deliveredStatusRaw && !deliveredStatus) {
-      results.push({
+      results[i] = {
         row: rowNum,
         refNo,
         error: `Delivered Status "${deliveredStatusRaw}" is not valid — must be "Delivered" or "NOT Delivered".`,
-      });
+      };
       continue;
-    }
-
-    if (shipmentStatus) {
-      const { error: statusError } = await supabase
-        .from("orders")
-        .update({ shipment_status: shipmentStatus as "Order Placed" | "In Production" | "Ready to Ship" | "Shipped" | "In Transit" | "Delivered" | "Returned" | "Cancelled" })
-        .eq("id", orderId);
-      if (statusError) {
-        results.push({ row: rowNum, refNo, error: `Failed to update Shipment Status: ${statusError.message}` });
-        continue;
-      }
     }
 
     const awbNo = cellStr(raw, byHeader, "AWB No") || null;
@@ -153,34 +180,74 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
     const shipmentNoRaw = cellStr(raw, byHeader, "Shipment No");
     const shipmentNo = shipmentNoRaw ? parseInt(shipmentNoRaw, 10) : 1;
     if (!Number.isInteger(shipmentNo) || shipmentNo < 1) {
-      results.push({ row: rowNum, refNo, error: `Shipment No "${shipmentNoRaw}" is not a valid positive whole number.` });
+      results[i] = { row: rowNum, refNo, error: `Shipment No "${shipmentNoRaw}" is not a valid positive whole number.` };
       continue;
     }
 
-    if (awbNo || courierName || deliveredStatus || deliveredDate || remark) {
-      const { error: upsertError } = await supabase
-        .from("order_shipments")
-        .upsert(
-          {
-            order_id: orderId,
-            shipment_no: shipmentNo,
-            ...(awbNo ? { awb_no: awbNo } : {}),
-            ...(courierName ? { courier_name: courierName } : {}),
-            ...(deliveredStatus ? { delivered_status: deliveredStatus as "Delivered" | "NOT Delivered" } : {}),
-            ...(deliveredDate ? { delivered_date: deliveredDate } : {}),
-            ...(remark ? { remark } : {}),
-            last_update_date: today,
-          },
-          { onConflict: "order_id,shipment_no" }
-        );
-      if (upsertError) {
-        results.push({ row: rowNum, refNo, error: `Failed to update tracking details: ${upsertError.message}` });
-        continue;
-      }
-      await resyncDispatchSummary(supabase, orderId);
-    }
+    plans.push({
+      index: i,
+      rowNum,
+      refNo,
+      orderId,
+      shipmentStatus,
+      awbNo,
+      courierName,
+      deliveredStatus: deliveredStatus as "Delivered" | "NOT Delivered" | null,
+      deliveredDate,
+      remark,
+      shipmentNo,
+    });
+  }
 
-    results.push({ row: rowNum, refNo, error: null });
+  // Pass 2 — the actual writes. Each row still needs its own
+  // update/upsert/resync (they touch different orders, can't be merged into
+  // one query), but rows no longer wait on each other: processed in
+  // bounded-concurrency chunks instead of one full sequential loop, same
+  // pattern backfillBuyerCountry uses for its update batches.
+  const CHUNK_SIZE = 20;
+  for (let c = 0; c < plans.length; c += CHUNK_SIZE) {
+    const chunk = plans.slice(c, c + CHUNK_SIZE);
+    await Promise.all(
+      chunk.map(async (plan) => {
+        const { index, rowNum, refNo, orderId, shipmentStatus, awbNo, courierName, deliveredStatus, deliveredDate, remark, shipmentNo } = plan;
+
+        if (shipmentStatus) {
+          const { error: statusError } = await supabase
+            .from("orders")
+            .update({ shipment_status: shipmentStatus as "Order Placed" | "In Production" | "Ready to Ship" | "Shipped" | "In Transit" | "Delivered" | "Returned" | "Cancelled" })
+            .eq("id", orderId);
+          if (statusError) {
+            results[index] = { row: rowNum, refNo, error: `Failed to update Shipment Status: ${statusError.message}` };
+            return;
+          }
+        }
+
+        if (awbNo || courierName || deliveredStatus || deliveredDate || remark) {
+          const { error: upsertError } = await supabase
+            .from("order_shipments")
+            .upsert(
+              {
+                order_id: orderId,
+                shipment_no: shipmentNo,
+                ...(awbNo ? { awb_no: awbNo } : {}),
+                ...(courierName ? { courier_name: courierName } : {}),
+                ...(deliveredStatus ? { delivered_status: deliveredStatus } : {}),
+                ...(deliveredDate ? { delivered_date: deliveredDate } : {}),
+                ...(remark ? { remark } : {}),
+                last_update_date: today,
+              },
+              { onConflict: "order_id,shipment_no" }
+            );
+          if (upsertError) {
+            results[index] = { row: rowNum, refNo, error: `Failed to update tracking details: ${upsertError.message}` };
+            return;
+          }
+          await resyncDispatchSummary(supabase, orderId);
+        }
+
+        results[index] = { row: rowNum, refNo, error: null };
+      })
+    );
   }
 
   revalidatePath("/dashboard/orders");

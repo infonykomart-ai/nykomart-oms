@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { getAuthedEmployee } from "@/lib/auth/require-capability";
+import { getAuthedEmployee, MfaRequiredError } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
@@ -18,7 +18,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   let employee;
   try {
     employee = await getAuthedEmployee();
-  } catch {
+  } catch (e) {
+    // 2026-08-24 — 2FA: the password WAS correct, just the second factor
+    // hasn't been verified this session yet, so send them to the code
+    // challenge instead of back to the plain login form.
+    if (e instanceof MfaRequiredError) redirect("/login/verify-2fa");
     redirect("/login");
   }
 

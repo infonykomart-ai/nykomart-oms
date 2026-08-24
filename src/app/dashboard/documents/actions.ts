@@ -35,6 +35,8 @@
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
+import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -1009,16 +1011,29 @@ export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
   // 2026-08-12 (round 11 security review): see updatePurchaseBill's identical comment above.
-  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id").eq("id", id).single();
+  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id, vendor_invoice_no").eq("id", id).single();
   if (!existingBill) return { error: "Purchase Bill not found.", success: false };
+  let companyId: string | null = null;
   if (existingBill.order_id) {
     const { data: order } = await supabase.from("orders").select("company_id").eq("id", existingBill.order_id).single();
     if (!order || !employee.companyIds.includes(order.company_id)) {
       return { error: "You don't have access to this bill's company.", success: false };
     }
+    companyId = order.company_id;
   }
   const { error } = await supabase.from("purchase_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+
+  await logAudit(supabase, {
+    companyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "purchase_bill.deleted",
+    entityType: "purchase_bill",
+    entityId: id,
+    entityLabel: existingBill.vendor_invoice_no,
+  });
+
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -1084,7 +1099,7 @@ export async function lookupOrderForReconciliation(
   if (!orderId) {
     const { data: byRef } = await supabase
       .from("orders")
-      .select("id")
+      .select("id, ref_no, company_id, order_value_inr")
       .ilike("ref_no", trimmed)
       .in("company_id", employee.companyIds)
       .maybeSingle();
@@ -1092,7 +1107,11 @@ export async function lookupOrderForReconciliation(
       orderId = byRef.id;
       const { data: shipments } = await supabase.from("order_shipments").select("id").eq("order_id", byRef.id);
       if (!shipments || shipments.length === 0) {
-        return { ...EMPTY_RECON, error: `Order "${trimmed}" has no shipment/AWB entered yet — add one first.` };
+        // 2026-08-24: return the order (not just the error) so the caller
+        // can offer an inline "add shipment" box right here instead of a
+        // dead end — see createShipmentForMatch below and
+        // claude/tracking-manual-match-no-shipment-gap-2026-08-24.md.
+        return { ...EMPTY_RECON, order: byRef, error: `Order "${trimmed}" has no shipment/AWB entered yet — add one below.` };
       }
       if (shipments.length > 1) {
         return { ...EMPTY_RECON, error: `Order "${trimmed}" has ${shipments.length} shipments/AWBs — search by AWB instead to pick the specific one.` };
@@ -1118,6 +1137,61 @@ export async function lookupOrderForReconciliation(
   const { data: existing } = await supabase.from(table).select("id").eq("order_shipment_id", orderShipmentId).maybeSingle();
 
   return { error: null, order, orderShipmentId, dispatch: dispatch ?? null, alreadyAssigned: !!existing };
+}
+
+export type CreateShipmentResult = { error: string | null; orderShipmentId: string | null };
+
+/**
+ * 2026-08-24: inline "add shipment/AWB" escape hatch for the Courier Bill /
+ * Duty & Tax Bill manual-match screens (hand-entry AssignAwbForm and the
+ * PDF-upload FixMatchBox). Gap 1 (2026-08-20) made
+ * lookupOrderForReconciliation require an existing order_shipments row
+ * before a bill can be matched to an order, but the only way to create
+ * that row was a separate, unlinked page (Order Shipments & Packages) —
+ * confirmed to be the root cause behind the user's "manual ka option nahi
+ * hai" report (see claude/tracking-manual-match-no-shipment-gap-2026-08-24.md).
+ * This lets staff create the shipment right here instead. Deliberately
+ * minimal (Shipment No / AWB / Courier only) — full package/weight detail
+ * is still entered via Order Shipments & Packages.
+ */
+export async function createShipmentForMatch(_prev: CreateShipmentResult, formData: FormData): Promise<CreateShipmentResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const orderId = str(formData, "order_id");
+  const shipmentNoRaw = str(formData, "shipment_no");
+  const shipmentNo = shipmentNoRaw ? parseInt(shipmentNoRaw, 10) : 1;
+  if (!orderId) return { error: "Missing order.", orderShipmentId: null };
+  if (!Number.isInteger(shipmentNo) || shipmentNo < 1) {
+    return { error: "Shipment No. must be a positive whole number.", orderShipmentId: null };
+  }
+
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "That order is not accessible — look it up again.", orderShipmentId: null };
+  }
+
+  const { data, error } = await supabase
+    .from("order_shipments")
+    .upsert(
+      {
+        order_id: orderId,
+        shipment_no: shipmentNo,
+        awb_no: strOrNull(formData, "awb_no"),
+        courier_name: strOrNull(formData, "courier_name"),
+        created_by_employee_id: employee.id,
+      },
+      { onConflict: "order_id,shipment_no" }
+    )
+    .select("id")
+    .single();
+  if (error || !data) return { error: error?.message ?? "Could not save shipment.", orderShipmentId: null };
+
+  await resyncDispatchSummary(supabase, orderId);
+  revalidatePath("/dashboard/order-packages");
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/documents");
+  return { error: null, orderShipmentId: data.id };
 }
 
 type FreightBillParams = {
@@ -1281,7 +1355,7 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
 }
 
 export async function deleteFreightBill(id: string): Promise<SimpleResult> {
-  await requireCapability("doc_entry");
+  const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
   const { data: assigned } = await supabase.from("freight_bill_awb_assignments").select("id").eq("freight_bill_id", id).limit(1).maybeSingle();
@@ -1289,8 +1363,19 @@ export async function deleteFreightBill(id: string): Promise<SimpleResult> {
   const { data: inFinance } = await supabase.from("bill_pass_register").select("id").eq("source", "freight_bill").eq("source_id", id).limit(1).maybeSingle();
   if (inFinance) return { error: "This Courier Bill is already in the Finance ledger (Bill Pass Register) — remove that entry first.", success: false };
 
+  const { data: bill } = await supabase.from("freight_bills").select("invoice_no").eq("id", id).maybeSingle();
   const { error } = await supabase.from("freight_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+
+  await logAudit(supabase, {
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "freight_bill.deleted",
+    entityType: "freight_bill",
+    entityId: id,
+    entityLabel: bill?.invoice_no ?? null,
+  });
+
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -1652,7 +1737,7 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
 }
 
 export async function deleteDutyBill(id: string): Promise<SimpleResult> {
-  await requireCapability("doc_entry");
+  const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
   const { data: assigned } = await supabase.from("duty_bill_awb_assignments").select("id").eq("duty_tax_bill_id", id).limit(1).maybeSingle();
@@ -1660,8 +1745,19 @@ export async function deleteDutyBill(id: string): Promise<SimpleResult> {
   const { data: inFinance } = await supabase.from("bill_pass_register").select("id").eq("source", "duty_tax_bill").eq("source_id", id).limit(1).maybeSingle();
   if (inFinance) return { error: "This Duty & Tax Bill is already in the Finance ledger (Bill Pass Register) — remove that entry first.", success: false };
 
+  const { data: bill } = await supabase.from("duty_tax_bills").select("invoice_no").eq("id", id).maybeSingle();
   const { error } = await supabase.from("duty_tax_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+
+  await logAudit(supabase, {
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "duty_tax_bill.deleted",
+    entityType: "duty_tax_bill",
+    entityId: id,
+    entityLabel: bill?.invoice_no ?? null,
+  });
+
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }

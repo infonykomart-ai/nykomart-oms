@@ -7,6 +7,7 @@ import {
   type ParsedBillReview,
 } from "./courier-bill-pdf-actions";
 import { lookupOrderForReconciliation, type ReconciliationLookup } from "./actions";
+import { InlineAddShipmentBox } from "./inline-add-shipment";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -411,6 +412,9 @@ function FixMatchBox({
             </button>
           )}
         </div>
+      )}
+      {lookup?.order && !lookup.orderShipmentId && !lookup.alreadyAssigned && (
+        <InlineAddShipmentBox orderId={lookup.order.id} refNo={lookup.order.ref_no} onSaved={handleLookup} />
       )}
     </div>
   );

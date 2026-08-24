@@ -634,6 +634,7 @@ CREATE TABLE orders (
   -- ordering replaces it.
 
   remark                   text,
+  automation_tag           text,      -- 2026-08-24: set by the automation rules engine's "set_tag" action (see db/2026-08-24-automation-rules.sql) — free text, purely informational
   order_date               date NOT NULL,
 
   -- PO NO. / RF NO. / RG NO. — company-specific label (see companies.ref_prefix),
@@ -1090,6 +1091,50 @@ CREATE TABLE order_packages (
   UNIQUE (order_shipment_id, package_no)
 );
 CREATE INDEX idx_order_packages_shipment ON order_packages(order_shipment_id);
+
+-- 2026-08-24: audit log + automation rules engine — see
+-- db/2026-08-24-audit-log.sql and db/2026-08-24-automation-rules.sql for
+-- the full design rationale.
+CREATE TABLE audit_log (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id    uuid REFERENCES companies(id),
+  employee_id   uuid REFERENCES employees(id),
+  employee_name text NOT NULL,
+  action        text NOT NULL,
+  entity_type   text NOT NULL,
+  entity_id     uuid,
+  entity_label  text,
+  changes       jsonb,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_audit_log_company_date ON audit_log(company_id, created_at DESC);
+CREATE INDEX idx_audit_log_entity        ON audit_log(entity_type, entity_id);
+CREATE INDEX idx_audit_log_employee      ON audit_log(employee_id, created_at DESC);
+
+CREATE TABLE automation_rules (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id             uuid REFERENCES companies(id),
+  name                   text NOT NULL,
+  trigger_type           text NOT NULL,
+  enabled                boolean NOT NULL DEFAULT true,
+  conditions             jsonb NOT NULL DEFAULT '[]'::jsonb,
+  actions                jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_by_employee_id uuid REFERENCES employees(id),
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  fire_count             integer NOT NULL DEFAULT 0,
+  last_fired_at          timestamptz
+);
+CREATE INDEX idx_automation_rules_trigger ON automation_rules(trigger_type) WHERE enabled = true;
+
+CREATE TABLE automation_rule_logs (
+  id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  rule_id  uuid NOT NULL REFERENCES automation_rules(id) ON DELETE CASCADE,
+  order_id uuid REFERENCES orders(id),
+  fired_at timestamptz NOT NULL DEFAULT now(),
+  result   text NOT NULL,
+  detail   text
+);
+CREATE INDEX idx_automation_rule_logs_rule ON automation_rule_logs(rule_id, fired_at DESC);
 
 CREATE TABLE freight_bill_awb_assignments (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3375,7 +3420,11 @@ INSERT INTO capabilities (code, description) VALUES
   -- 2026-08-22: Backup Export — see db/2026-08-22-backup-export-admin.sql.
   -- Deliberately its own capability (not reusing "reports") since this
   -- bypasses per-company scoping and reads every company's orders at once.
-  ('data_export_admin', 'Export every order + its generated invoice fields (all companies) as one Excel workbook — the Backup Export page');
+  ('data_export_admin', 'Export every order + its generated invoice fields (all companies) as one Excel workbook — the Backup Export page'),
+  -- 2026-08-24: see db/2026-08-24-audit-log.sql and
+  -- db/2026-08-24-automation-rules.sql.
+  ('audit_log_view',   'View the audit log — who changed/deleted what, and when'),
+  ('automation_admin', 'Create/manage automation rules (trigger -> condition -> action) — the Automation Rules screen');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -3433,7 +3482,9 @@ JOIN (VALUES
   ('Photoshop/Graphics', 'attendance_punch'), ('Photoshop/Graphics', 'task_management'),
   ('Inventory',          'stock_entry'), ('Inventory', 'attendance_punch'), ('Inventory', 'finished_stock_view'),
   ('Inventory',          'task_management'),
-  ('Admin',              'data_export_admin'), ('MD', 'data_export_admin') -- 2026-08-22: Backup Export, Admin/MD only.
+  ('Admin',              'data_export_admin'), ('MD', 'data_export_admin'), -- 2026-08-22: Backup Export, Admin/MD only.
+  ('Admin',              'audit_log_view'), ('MD', 'audit_log_view'), -- 2026-08-24: Audit log, Admin/MD only to start.
+  ('Admin',              'automation_admin'), ('MD', 'automation_admin') -- 2026-08-24: Automation rules engine, Admin/MD only to start.
 ) AS rc(role_name, cap) ON rc.role_name = r.name;
 
 

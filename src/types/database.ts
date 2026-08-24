@@ -3562,6 +3562,159 @@ export type Database = {
           },
         ];
       };
+      audit_log: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          employee_id: string | null;
+          employee_name: string;
+          action: string;
+          entity_type: string;
+          entity_id: string | null;
+          entity_label: string | null;
+          changes: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          employee_id?: string | null;
+          employee_name: string;
+          action: string;
+          entity_type: string;
+          entity_id?: string | null;
+          entity_label?: string | null;
+          changes?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          employee_id?: string | null;
+          employee_name?: string;
+          action?: string;
+          entity_type?: string;
+          entity_id?: string | null;
+          entity_label?: string | null;
+          changes?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "audit_log_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      automation_rules: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          name: string;
+          trigger_type: string;
+          enabled: boolean;
+          conditions: Json;
+          actions: Json;
+          created_by_employee_id: string | null;
+          created_at: string;
+          fire_count: number;
+          last_fired_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          name: string;
+          trigger_type: string;
+          enabled?: boolean;
+          conditions?: Json;
+          actions?: Json;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          fire_count?: number;
+          last_fired_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          name?: string;
+          trigger_type?: string;
+          enabled?: boolean;
+          conditions?: Json;
+          actions?: Json;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          fire_count?: number;
+          last_fired_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "automation_rules_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "automation_rules_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      automation_rule_logs: {
+        Row: {
+          id: string;
+          rule_id: string;
+          order_id: string | null;
+          fired_at: string;
+          result: string;
+          detail: string | null;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          order_id?: string | null;
+          fired_at?: string;
+          result: string;
+          detail?: string | null;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          order_id?: string | null;
+          fired_at?: string;
+          result?: string;
+          detail?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "automation_rule_logs_rule_id_fkey";
+            columns: ["rule_id"];
+            isOneToOne: false;
+            referencedRelation: "automation_rules";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "automation_rule_logs_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       order_shipments: {
         Row: {
           id: string;
@@ -3625,6 +3778,7 @@ export type Database = {
           company_id: string;
           store_id: string;
           remark: string | null;
+          automation_tag: string | null;
           order_date: string;
           ref_no: string;
           ref_no_base: string | null;
@@ -3677,6 +3831,7 @@ export type Database = {
           company_id: string;
           store_id: string;
           remark?: string | null;
+          automation_tag?: string | null;
           order_date: string;
           ref_no: string;
           ref_no_base?: string | null;
@@ -3729,6 +3884,7 @@ export type Database = {
           company_id?: string;
           store_id?: string;
           remark?: string | null;
+          automation_tag?: string | null;
           order_date?: string;
           ref_no?: string;
           ref_no_base?: string | null;

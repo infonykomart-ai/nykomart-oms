@@ -14,6 +14,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -163,7 +164,7 @@ export async function deleteOrderShipment(id: string): Promise<SimpleResult> {
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: shipment } = await supabase.from("order_shipments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: shipment } = await supabase.from("order_shipments").select("id, order_id, shipment_no, awb_no").eq("id", id).maybeSingle();
   if (!shipment) return { error: "Shipment not found." };
   const accessError = await assertOrderAccess(supabase, employee.companyIds, shipment.order_id);
   if (accessError) return { error: accessError };
@@ -183,6 +184,18 @@ export async function deleteOrderShipment(id: string): Promise<SimpleResult> {
   if (error) return { error: error.message };
 
   await resyncDispatchSummary(supabase, shipment.order_id);
+
+  const { data: order } = await supabase.from("orders").select("company_id, ref_no").eq("id", shipment.order_id).maybeSingle();
+  await logAudit(supabase, {
+    companyId: order?.company_id ?? null,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "order_shipment.deleted",
+    entityType: "order_shipment",
+    entityId: id,
+    entityLabel: order ? `${order.ref_no} — shipment ${shipment.shipment_no}${shipment.awb_no ? ` (AWB ${shipment.awb_no})` : ""}` : null,
+  });
+
   revalidatePath("/dashboard/order-packages");
   revalidatePath("/dashboard/orders");
   return { error: null };

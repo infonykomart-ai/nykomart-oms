@@ -88,6 +88,12 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // scoping and reads every company's orders at once).
   { code: "data_export_admin", label: "Backup Export", icon: "💾", href: "/dashboard/admin/backup",
     description: "Export every order + its generated invoice fields (all companies) as one Excel workbook." },
+  // 2026-08-24: see db/2026-08-24-audit-log.sql and
+  // db/2026-08-24-automation-rules.sql.
+  { code: "audit_log_view", label: "Audit Log", icon: "🕵️", href: "/dashboard/admin/audit-log",
+    description: "Who changed or deleted what, and when — order status changes, bill/expense/shipment deletions." },
+  { code: "automation_admin", label: "Automation Rules", icon: "🤖", href: "/dashboard/admin/automation",
+    description: "Trigger → condition → action rules that run automatically on order status changes (internal-only actions, no customer messaging)." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

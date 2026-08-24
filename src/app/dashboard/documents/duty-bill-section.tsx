@@ -18,6 +18,7 @@ import {
 } from "./actions";
 import { SendToFinanceForm } from "./freight-bill-section";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { InlineAddShipmentBox } from "./inline-add-shipment";
 
 const initialFormState: DocFormState = { error: null, success: null };
 const initialSimple: SimpleResult = { error: null, success: false };
@@ -489,7 +490,11 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
         </div>
       )}
 
-      {lookup?.order && !lookup.alreadyAssigned && (
+      {lookup?.order && !lookup.orderShipmentId && !lookup.alreadyAssigned && (
+        <InlineAddShipmentBox orderId={lookup.order.id} refNo={lookup.order.ref_no} onSaved={handleLookup} />
+      )}
+
+      {lookup?.order && lookup.orderShipmentId && !lookup.alreadyAssigned && (
         <form action={formAction} className="mt-3 space-y-2 border-t border-slate-200 pt-3">
           <input type="hidden" name="duty_tax_bill_id" value={dutyTaxBillId} />
           <input type="hidden" name="order_id" value={lookup.order.id} />

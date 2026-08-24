@@ -18,6 +18,22 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * 2026-08-24 — thrown when the signed-in user has a verified 2FA (TOTP)
+ * factor enrolled but the current session hasn't completed that second
+ * factor yet (Supabase's "AAL1 but AAL2 required" state — see
+ * src/app/dashboard/profile/two-factor-actions.ts for enrollment and
+ * src/app/login/verify-2fa/ for the challenge step). Distinct from
+ * UnauthorizedError so callers can redirect to the 2FA challenge page
+ * instead of back to the plain login form — the password WAS correct.
+ */
+export class MfaRequiredError extends Error {
+  constructor(message = "Two-factor verification required.") {
+    super(message);
+    this.name = "MfaRequiredError";
+  }
+}
+
 export class ForbiddenError extends Error {
   constructor(capability: string) {
     super(`Your role does not have the "${capability}" capability.`);
@@ -60,6 +76,18 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
   } = await supabase.auth.getUser();
 
   if (!user) throw new UnauthorizedError();
+
+  // 2026-08-24 — 2FA enforcement. A password-only sign-in leaves the
+  // session at AAL1; if this account has since enrolled a verified TOTP
+  // factor, Supabase reports nextLevel: "aal2" until the second factor is
+  // also verified this session. Every /dashboard page goes through
+  // getAuthedEmployee() (this function), so this is the single choke point
+  // — see dashboard/layout.tsx for where MfaRequiredError is caught and
+  // redirected to the challenge page.
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    throw new MfaRequiredError();
+  }
 
   // Plain queries rather than embedded-resource joins (`roles(name)`) — the
   // hand-rolled Database type (scripts/gen-types.mjs, used because this
