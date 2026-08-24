@@ -34,7 +34,7 @@
 // (how long the work is expected to take) and Time Consumed (how long it
 // actually took). ✔ Submit Report still finalizes the row the same way.
 import { useEffect, useRef, useState } from "react";
-import { upsertDailyLog, deleteDailyLog, submitDailyLog } from "./actions";
+import { upsertDailyLog, deleteDailyLog, saveAndSubmitDailyLog } from "./actions";
 import { formatDuration, formatISTTime } from "@/lib/attendance/timer";
 
 // 2026-08-17 — "TEAM WORK REPORT ME YE WORK OR UPDATE KARNE HAI" added a
@@ -306,15 +306,36 @@ export function DailyReportForm({
   }
 
   async function handleSubmit(clientId: string) {
-    // 2026-08-11 (round 3 review fix): always flush any pending
-    // (debounced or blur-triggered) edit first, whether or not this row
-    // already has an id — otherwise a field edited just before clicking
-    // Submit could lose its race against submitDailyLog and get finalized
-    // with a stale value.
-    const id = await saveRow(clientId);
-    if (!id) return; // nothing to submit yet (empty description)
+    const row = rowsRef.current.find((r) => r.clientId === clientId);
+    if (!row || !row.description.trim()) return; // nothing to submit
+    // 2026-08-24 — "submit button single click me work karna chahiye bahut
+    // hang hota hai" fix, client half: disable the button and flip its
+    // label to "Submitting…" THE INSTANT it's clicked, before any network
+    // call starts (previously this only happened after a first full
+    // save-request had already resolved, leaving a window where a second
+    // click fired a duplicate, overlapping submit). Also cancel any pending
+    // debounced auto-save for this row — saveAndSubmitDailyLog below sends
+    // the row's current values itself in one combined request, so the old
+    // separate saveRow() flush is no longer needed here.
+    if (debounceTimers.current[clientId]) {
+      clearTimeout(debounceTimers.current[clientId]);
+      delete debounceTimers.current[clientId];
+    }
     setSubmitPendingIds((prev) => new Set(prev).add(clientId));
-    const result = await submitDailyLog(id);
+    const estimatedTotal = hmToMinutes(row.estimatedHours, row.estimatedMinutes);
+    const consumedTotal = hmToMinutes(row.consumedHours, row.consumedMinutes);
+    const result = await saveAndSubmitDailyLog({
+      id: row.id ?? undefined,
+      logDate: row.logDate,
+      category: row.category,
+      description: row.description,
+      targetQty: row.targetQty,
+      qtyDone: row.qtyDone,
+      workStatus: row.workStatus,
+      remarkSku: row.remarkSku,
+      estimatedTimeMinutes: estimatedTotal ? String(estimatedTotal) : "",
+      timeSpentMinutes: consumedTotal ? String(consumedTotal) : "",
+    });
     setSubmitPendingIds((prev) => {
       const next = new Set(prev);
       next.delete(clientId);
@@ -322,7 +343,9 @@ export function DailyReportForm({
     });
     if (!result.error) {
       setRows((prev) =>
-        prev.map((r) => (r.clientId === clientId ? { ...r, submittedAt: result.submittedAt } : r))
+        prev.map((r) =>
+          r.clientId === clientId ? { ...r, id: result.id ?? r.id, submittedAt: result.submittedAt } : r
+        )
       );
       setRowErrors((prev) => {
         if (!(clientId in prev)) return prev;
@@ -354,8 +377,8 @@ export function DailyReportForm({
               <div><span className="text-slate-400">Qty Done:</span> {row.qtyDone || "—"}</div>
               <div><span className="text-slate-400">Status:</span> {row.workStatus}</div>
               <div><span className="text-slate-400">Remark/SKU:</span> {row.remarkSku || "—"}</div>
-              <div><span className="text-slate-400">Estimated Time:</span> {formatDuration(hmToMinutes(row.estimatedHours, row.estimatedMinutes) * 60)}</div>
-              <div><span className="text-slate-400">Time Consumed:</span> {formatDuration(hmToMinutes(row.consumedHours, row.consumedMinutes) * 60)}</div>
+              <div><span className="text-slate-400">Estimated Time (guess, not counted):</span> {formatDuration(hmToMinutes(row.estimatedHours, row.estimatedMinutes) * 60)}</div>
+              <div><span className="text-slate-400">Time Consumed (counted):</span> {formatDuration(hmToMinutes(row.consumedHours, row.consumedMinutes) * 60)}</div>
             </div>
             <p className="mt-2 whitespace-pre-line text-xs text-slate-700">{row.description}</p>
           </div>
@@ -433,8 +456,17 @@ export function DailyReportForm({
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
               <div className="mb-1.5 text-xs font-medium text-amber-800">⏱ Time</div>
               <div className="flex flex-wrap items-end gap-4 text-xs">
+                {/* 2026-08-24 — "estimate time sirf ek anuman hai, isko kahi
+                    count nahi karna" (estimated time is just a guess, never
+                    count it anywhere) — it genuinely never is, in any total
+                    or report (only time_spent_seconds/"Time Consumed" ever
+                    gets summed — see page.tsx's todaysConsumedMinutes and
+                    admin/page.tsx's perfTotalMinutes). The confusion was the
+                    two fields sitting side-by-side with no visual
+                    distinction; these captions make that explicit right on
+                    the entry form, not just in submitted-report cards. */}
                 <HourMinuteField
-                  label="Estimated Time"
+                  label="Estimated Time (guess — not counted)"
                   hours={row.estimatedHours}
                   minutes={row.estimatedMinutes}
                   onChangeHours={(v) => updateRow(row.clientId, { estimatedHours: v })}
@@ -442,7 +474,7 @@ export function DailyReportForm({
                   onBlur={() => saveRow(row.clientId)}
                 />
                 <HourMinuteField
-                  label="Time Consumed"
+                  label="Time Consumed (this is what's counted)"
                   hours={row.consumedHours}
                   minutes={row.consumedMinutes}
                   onChangeHours={(v) => updateRow(row.clientId, { consumedHours: v })}
@@ -462,7 +494,7 @@ export function DailyReportForm({
                     onClick={() => handleSubmit(row.clientId)}
                     className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    ✔ Submit Report
+                    {submitPendingIds.has(row.clientId) ? "Submitting…" : "✔ Submit Report"}
                   </button>
                 ) : (
                   <button

@@ -11,10 +11,27 @@ import type { Database } from "@/types/database";
 // carries forward again the day after — same as literally re-marking it,
 // which is exactly what a repeatedly-postponed item should do.
 //
+// 2026-08-24 — "jis work ko net day par likhe to submit to ho jaye lekin
+// next day pending work me aajaye autometic, pending & in progress bhi ese
+// hi aaye" (an item logged one day should automatically show up in the
+// NEXT day's pending work too — Pending and In Progress should carry
+// forward the same way "Next Day Carry On" already does). Previously this
+// only matched the one special "Next Day Carry On" status, so a plain
+// "Pending" or "In Progress" row — the normal case, since Submit itself is
+// only available once a row is marked Completed (see submitDailyLog /
+// saveAndSubmitDailyLog) — just sat there and silently vanished from every
+// screen once its day passed (My Recent Reports / Report History both only
+// show submitted_at IS NOT NULL rows, and this was the only place ANY
+// unfinished row was ever re-surfaced). Broadened to any not-yet-finished
+// status so the employee doesn't have to remember to pick a special 4th
+// status just to keep unfinished work visible.
+//
 // Deliberately a plain function (not a "use server" action) called
 // directly from the Attendance page (a Server Component) before its own
 // queries run, using the service-role client — same "server re-check,
 // never trust the client" posture as everywhere else in this module.
+const CARRY_FORWARD_STATUSES = ["Pending", "In Progress", "Next Day Carry On"];
+
 export async function carryOverPendingDailyLogs(
   supabase: SupabaseClient<Database>,
   employeeId: string,
@@ -24,8 +41,14 @@ export async function carryOverPendingDailyLogs(
     .from("daily_work_logs")
     .select("id, company_id, category, description, target_qty, remark_sku")
     .eq("employee_id", employeeId)
-    .eq("work_status", "Next Day Carry On")
+    .in("work_status", CARRY_FORWARD_STATUSES)
     .eq("carried_forward", false)
+    // Defense in depth: none of these 3 statuses can actually be submitted
+    // today (Submit/saveAndSubmitDailyLog requires Completed), so this is
+    // always true in practice — but explicit here so a future change to
+    // that rule can't accidentally start re-copying an already-finalized
+    // report forward.
+    .is("submitted_at", null)
     .lt("log_date", todayStr);
 
   if (!pending || pending.length === 0) return;

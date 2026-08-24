@@ -295,7 +295,7 @@ export default async function AttendancePage({
 
       <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white p-4">
         <div>
-          <div className="text-xs text-slate-400">Today&apos;s Work</div>
+          <div className="text-xs text-slate-400">Today&apos;s Work (Time Consumed only — estimates are never counted)</div>
           <div className="text-lg font-semibold text-slate-900">{formatHM(todaysConsumedMinutes)}</div>
         </div>
         <div>

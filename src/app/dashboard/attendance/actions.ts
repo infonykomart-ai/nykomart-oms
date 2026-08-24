@@ -209,3 +209,80 @@ export async function submitDailyLog(id: string): Promise<SubmitActionResult> {
   revalidatePath("/dashboard/attendance/admin");
   return { error: null, submittedAt: data.submitted_at };
 }
+
+// 2026-08-24 — "submit button single click me work karna chahiye bahut hang
+// hota hai" (submit button should work in one click, it hangs a lot). ROOT
+// CAUSE: the form's handleSubmit() previously called saveRow() (→
+// upsertDailyLog, a full request) THEN submitDailyLog(id) (a SECOND full
+// request) sequentially, and each of those independently re-resolves
+// getAuthedEmployee() — which itself does ~8-9 Supabase round trips
+// (auth.getUser, MFA AAL check, employees, roles, role_capabilities,
+// employee_company_access, employee_store_access, leave_coverage_assignments,
+// and sometimes a stores lookup). One click was paying that identity-
+// resolution cost TWICE, back to back, plus two separate network
+// round-trips for the actual upsert+finalize — easily a multi-second wait
+// on a slow connection, which reads as "hanging". This single combined
+// action does the save-and-finalize as ONE request (one getAuthedEmployee()
+// call, one DB write), replacing the saveRow()+submitDailyLog() pair for
+// the Submit button specifically (the separate "Update" button/auto-save
+// path for non-Completed rows still uses upsertDailyLog as before — no
+// change there). The other half of the fix is on the client: the button
+// now disables itself the INSTANT it's clicked, before this request even
+// starts, instead of only after the first of the two old requests resolved
+// — see daily-report-form.tsx's handleSubmit.
+export async function saveAndSubmitDailyLog(input: DailyLogInput): Promise<{ error: string | null; id: string | null; submittedAt: string | null }> {
+  // Same business rule as submitDailyLog: only a row marked Completed can
+  // be finalized. Checked directly against the input here (this action
+  // writes exactly that work_status), rather than writing first and
+  // re-fetching to check, the way the old two-call flow had to.
+  if (input.workStatus !== "Completed") {
+    return { error: "Mark Work Status as Completed before submitting.", id: null, submittedAt: null };
+  }
+
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  const nowIso = new Date().toISOString();
+
+  const row = {
+    employee_id: employee.id,
+    company_id: employee.currentCompanyId,
+    log_date: input.logDate || todayIST(),
+    category: input.category || null,
+    description: input.description,
+    target_qty: input.targetQty || null,
+    qty_done: input.qtyDone || null,
+    work_status: input.workStatus || null,
+    remark_sku: input.remarkSku || null,
+    estimated_time_minutes: input.estimatedTimeMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.estimatedTimeMinutes, 10) || 0)) : null,
+    time_spent_seconds: input.timeSpentMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.timeSpentMinutes, 10) || 0)) * 60 : 0,
+    updated_at: nowIso,
+    submitted_at: nowIso,
+  };
+
+  if (input.id) {
+    // Same .is("submitted_at", null) guard as upsertDailyLog/submitDailyLog
+    // — can't overwrite an already-finalized row, whether this is a true
+    // double-click race or a stale tab.
+    const { data, error } = await supabase
+      .from("daily_work_logs")
+      .update(row)
+      .eq("id", input.id)
+      .eq("employee_id", employee.id)
+      .is("submitted_at", null)
+      .select("id, submitted_at")
+      .single();
+    if (error || !data) {
+      const message = error?.code === "PGRST116" ? "This report has already been submitted." : (error?.message ?? "Could not submit.");
+      return { error: message, id: null, submittedAt: null };
+    }
+    revalidatePath("/dashboard/attendance");
+    revalidatePath("/dashboard/attendance/admin");
+    return { error: null, id: data.id, submittedAt: data.submitted_at };
+  }
+
+  const { data, error } = await supabase.from("daily_work_logs").insert(row).select("id, submitted_at").single();
+  if (error) return { error: error.message, id: null, submittedAt: null };
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
+  return { error: null, id: data.id, submittedAt: data.submitted_at };
+}

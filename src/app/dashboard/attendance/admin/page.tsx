@@ -288,7 +288,9 @@ export default async function AttendanceAdminPage({
               <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
               <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
               {l.estimated_time_minutes ? (
-                <span className="ml-2 text-slate-400">Est {formatDuration(l.estimated_time_minutes * 60)}</span>
+                <span className="ml-2 text-slate-400" title="Just an estimate — never counted in any total">
+                  Est {formatDuration(l.estimated_time_minutes * 60)} (not counted)
+                </span>
               ) : null}
               <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
               <p className="mt-0.5 text-slate-600">{l.description}</p>
@@ -306,7 +308,9 @@ export default async function AttendanceAdminPage({
         <p className="mb-3 text-xs text-slate-500">
           Pick an employee and a date range (default: last 7 days) to see submitted reports and time worked vs. expected —{" "}
           {formatHM(EXPECTED_WORK_MINUTES)}/day, based on {OFFICE_START_LABEL}–{OFFICE_END_LABEL} minus a {" "}
-          30-min lunch and 15-min tea break.
+          30-min lunch and 15-min tea break. All time figures below (Total Time, Avg/Working Day, Time Worked) are
+          built only from what the employee entered as &quot;Time Consumed&quot; on each row — Estimated Time is
+          never added into these numbers.
         </p>
         <form method="get" className="mb-4 flex flex-wrap items-end gap-3">
           <input type="hidden" name="company" value={selectedCompanyId} />
