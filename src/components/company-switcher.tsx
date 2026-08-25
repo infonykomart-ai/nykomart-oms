@@ -19,30 +19,40 @@ const initialSwitchCompanyState: SwitchCompanyState = { success: false, error: n
  * Bug fixes (2026-08-22, per owner's repeated "switcher still has problems"
  * reports):
  *  1. switchCompanyAction() used to fail completely silently when the
- *     requested company wasn't actually accessible — the <select> is
- *     uncontrolled, so nothing here ever reset it, and the only visible
- *     symptom was the page eventually looking like the switch "didn't
- *     take". The action now always returns {success, error}; on error we
- *     show it inline AND snap the dropdown back to the real current
- *     company (it can't be trusted to revert itself — see `selected`
- *     below).
+ *     requested company wasn't actually accessible. The action now always
+ *     returns {success, error}; shown inline as `state.error` below.
  *  2. No pending state at all — a slow request looked identical to "did
  *     nothing". useActionState's own pending flag now disables the select
  *     and swaps its label to "Switching…" while the request is in flight.
  *
- * 3. (2026-08-25, live-debugged against the owner's own real session after
- *    another "switch abhi bhi problem kar raha hai" report) The dashboard
- *    sidebar's ~30 tiles were all speculatively prefetching their full page
- *    data on every load (see dashboard-sidebar.tsx), which occasionally
- *    swamps the deployment and makes THIS action's own POST 503 along with
- *    everything else. It still finishes correctly a few seconds later once
- *    the burst clears, but with zero feedback that was indistinguishable
- *    from "broken" — the header/company mismatch the owner screenshotted
- *    was this: the dropdown sitting on the picked value while the real
- *    switch was still (successfully, just slowly) in flight. Fixed the
- *    prefetch storm at the source, and added a "still switching" hint here
- *    with a one-click refresh so a slow response no longer reads as a dead
- *    one.
+ * 3. (2026-08-25, live-debugged against the owner's own real session, 3
+ *    rounds — see claude/company-switcher-root-cause-2026-08-25.md in the
+ *    project for the full trail) Found and fixed a request-storm causing
+ *    intermittent 503s (dashboard-sidebar.tsx's and dashboard/page.tsx's
+ *    tile grids were both speculatively prefetching all ~20-30 module
+ *    routes' full data on every load), added a "still switching" hint for
+ *    when a switch is genuinely slow, and — the part that took 3 live
+ *    rounds to actually pin down — rewrote how the dropdown's displayed
+ *    value is derived.
+ *
+ *    Every earlier version here stored the picked value in its own
+ *    useState (`selected`) and tried to resync it back to the truth
+ *    (`currentCompanyId`) via various render-time conditions — on a clean
+ *    error response, then unconditionally when `pending` finished. Both
+ *    versions still went stale live: after a switch that took a bumpy path
+ *    (a 503, a retry, a delayed revalidation), the dropdown would settle on
+ *    some earlier value — not the old company, not the new one, not even a
+ *    real company id in one observed case, which made the native <select>
+ *    silently fall back to its first listed option. The header (driven
+ *    fresh from the `currentCompanyId` prop every render, no stored copy)
+ *    never had this problem — which is the actual fix: stop storing a
+ *    "last known good" copy of the server value at all. `displayValue`
+ *    below is a plain expression, recomputed every render directly from
+ *    `currentCompanyId` whenever a switch isn't actively in flight, so
+ *    there is no stale copy left to resync in the first place. The only
+ *    thing kept in state is `optimisticPick` — the just-clicked value,
+ *    used solely to label the single "Switching…" placeholder option while
+ *    `pending` is true, and never read once it's false.
  */
 export function CompanySwitcher({
   companies,
@@ -54,18 +64,16 @@ export function CompanySwitcher({
   const [state, formAction, pending] = useActionState(switchCompanyAction, initialSwitchCompanyState);
   const router = useRouter();
 
-  // 2026-08-25: "switch abhi bhi problem kar raha hai" — live-debugged with
-  // the owner's own browser session. Root cause: the dashboard sidebar's
-  // ~30 tiles were all prefetching their full page data on every load (see
-  // dashboard-sidebar.tsx's 2026-08-25 note), which occasionally causes the
-  // switch action's own POST to get caught in that self-inflicted burst and
-  // 503. It usually still completes a few seconds later once the burst
-  // clears — Next re-fetches the layout via revalidatePath() regardless —
-  // but until now the dropdown just sat on "Switching…" with zero
-  // indication anything was still happening, which reads as "broken" long
-  // before it actually is. This is a genuine side effect (a wall-clock
-  // timer), not state derived from props, so a plain useEffect is the
-  // correct tool here per the project's own render-time-adjustment rule.
+  // Only ever read while `pending` is true (see `displayValue` below) — so
+  // it never needs resyncing back to truth; there's no window where a
+  // stale copy of it can be shown.
+  const [optimisticPick, setOptimisticPick] = useState(currentCompanyId);
+
+  // "Still switching" hint after 3s of no response — see 2026-08-25 note
+  // above. A real timer/subscription is the canonical valid useEffect use;
+  // it never calls setState synchronously in the effect body itself (only
+  // inside the timer callback), so it doesn't trip the project's
+  // set-state-in-effect lint rule.
   const [slow, setSlow] = useState(false);
   const [prevPending, setPrevPending] = useState(pending);
   if (pending !== prevPending) {
@@ -73,72 +81,36 @@ export function CompanySwitcher({
     if (!pending) setSlow(false);
   }
   useEffect(() => {
-    // Effect body only starts/clears a timer (a real external subscription,
-    // the canonical valid useEffect use) — it never calls setState directly
-    // in the body itself; the reset-to-false above happens at render time
-    // instead, same convention as `selected`'s reset further down.
     if (!pending) return;
     const timer = window.setTimeout(() => setSlow(true), 3000);
     return () => window.clearTimeout(timer);
   }, [pending]);
 
-  // The <select> has to be controlled: on a denied/failed switch the
-  // employee's real currentCompanyId prop doesn't change (the cookie was
-  // never set), so nothing forces the DOM back to it on its own — it would
-  // just sit on whatever the employee picked, looking like the switch
-  // silently "worked" until something else reloads the page.
-  //
-  // Reset it during render rather than in a useEffect (React's own
-  // recommended "adjusting state when a prop changes" pattern —
-  // https://react.dev/learn/you-might-not-need-an-effect — and this
-  // project's lint rules forbid setState-in-effect anyway): track what
-  // currentCompanyId/pending were last rendered with, and if either moved,
-  // resync `selected` right here before paint instead of one render later.
-  //
-  // 2026-08-25 (found on the SAME live re-test as fix #3 above, after the
-  // prefetch-storm 503s were gone): this used to only resync on a clean
-  // `state.error` response — `if (state.error) setSelected(currentCompanyId)`.
-  // A 503 on the switch's own POST never produces that clean shape (it's an
-  // HTTP/infra-level failure, not a normal action return), so `state` never
-  // changed and that branch never ran — even though the switch had, by then,
-  // actually succeeded server-side (confirmed live: header showed the new
-  // company correctly) the dropdown stayed stuck on whatever was selected
-  // *before* the attempt. There's no scenario where `selected` should stay
-  // out of sync with `currentCompanyId` once `pending` goes back to false —
-  // it exists only to show the pick instantly *during* the request — so the
-  // resync below is unconditional on `pending` finishing, not gated on
-  // `state.error` at all.
-  const [selected, setSelected] = useState(currentCompanyId);
-  const [prevCompanyId, setPrevCompanyId] = useState(currentCompanyId);
-
-  if (currentCompanyId !== prevCompanyId) {
-    setPrevCompanyId(currentCompanyId);
-    setSelected(currentCompanyId);
-  }
-  if (pending !== prevPending) {
-    // prevPending is already tracked above for the `slow` timer — reuse it
-    // rather than a second copy of the same prev-value bookkeeping.
-    if (!pending) setSelected(currentCompanyId);
-  }
-
   if (companies.length <= 1) return null;
+
+  // The one true displayed value. Not stored, not resynced — just derived
+  // fresh every render: the optimistic pick while a switch is in flight,
+  // otherwise always exactly `currentCompanyId` (this render's real prop,
+  // the same value the header text above is built from). There is no
+  // "previous" copy of this to go stale, which is the whole point.
+  const displayValue = pending ? optimisticPick : currentCompanyId;
 
   return (
     <div className="relative">
       <form action={formAction}>
         <select
           name="company_id"
-          value={selected}
+          value={displayValue}
           disabled={pending}
           onChange={(e) => {
-            setSelected(e.target.value);
+            setOptimisticPick(e.target.value);
             e.currentTarget.form?.requestSubmit();
           }}
           className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-amber-500 disabled:cursor-wait disabled:opacity-60"
           aria-label="Switch company"
           aria-busy={pending}
         >
-          {pending && <option value={selected}>Switching…</option>}
+          {pending && <option value={optimisticPick}>Switching…</option>}
           {!pending &&
             companies.map((c) => (
               <option key={c.id} value={c.id}>
