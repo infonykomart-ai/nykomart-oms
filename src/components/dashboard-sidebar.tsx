@@ -136,6 +136,18 @@ function SidebarTile({
   return (
     <Link
       href={href}
+      // 2026-08-25: prefetch={false} — every one of the ~30 tiles here sits
+      // in the viewport at once, so Next.js's default link-prefetching was
+      // firing a full layout+page data-fetch (getAuthedEmployee() + ~8 more
+      // Supabase queries, per dashboard/layout.tsx) for EVERY tile on every
+      // dashboard load — a self-inflicted burst of 20-30 concurrent
+      // serverless invocations. Confirmed live (2026-08-25 company-switcher
+      // investigation) as the source of intermittent 503s across unrelated
+      // routes, including the switchCompanyAction POST itself getting
+      // caught in its own prefetch storm. A tile click is still an instant
+      // client-side navigation either way — this only removes the
+      // speculative fetch that happened before any click.
+      prefetch={false}
       className={`group flex flex-col items-center justify-center gap-1.5 rounded-xl border px-2 py-4 text-center transition ${
         active
           ? "border-[var(--oms-accent)] bg-[var(--oms-accent)] text-[var(--oms-accent-contrast)] shadow-md shadow-[var(--oms-accent)]/20"

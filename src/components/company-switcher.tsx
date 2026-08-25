@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { switchCompanyAction, type SwitchCompanyState } from "@/lib/auth/switch-company";
 
 // Lives here, not in switch-company.ts: a "use server" file may only export
@@ -28,6 +29,20 @@ const initialSwitchCompanyState: SwitchCompanyState = { success: false, error: n
  *  2. No pending state at all — a slow request looked identical to "did
  *     nothing". useActionState's own pending flag now disables the select
  *     and swaps its label to "Switching…" while the request is in flight.
+ *
+ * 3. (2026-08-25, live-debugged against the owner's own real session after
+ *    another "switch abhi bhi problem kar raha hai" report) The dashboard
+ *    sidebar's ~30 tiles were all speculatively prefetching their full page
+ *    data on every load (see dashboard-sidebar.tsx), which occasionally
+ *    swamps the deployment and makes THIS action's own POST 503 along with
+ *    everything else. It still finishes correctly a few seconds later once
+ *    the burst clears, but with zero feedback that was indistinguishable
+ *    from "broken" — the header/company mismatch the owner screenshotted
+ *    was this: the dropdown sitting on the picked value while the real
+ *    switch was still (successfully, just slowly) in flight. Fixed the
+ *    prefetch storm at the source, and added a "still switching" hint here
+ *    with a one-click refresh so a slow response no longer reads as a dead
+ *    one.
  */
 export function CompanySwitcher({
   companies,
@@ -37,6 +52,35 @@ export function CompanySwitcher({
   currentCompanyId: string;
 }) {
   const [state, formAction, pending] = useActionState(switchCompanyAction, initialSwitchCompanyState);
+  const router = useRouter();
+
+  // 2026-08-25: "switch abhi bhi problem kar raha hai" — live-debugged with
+  // the owner's own browser session. Root cause: the dashboard sidebar's
+  // ~30 tiles were all prefetching their full page data on every load (see
+  // dashboard-sidebar.tsx's 2026-08-25 note), which occasionally causes the
+  // switch action's own POST to get caught in that self-inflicted burst and
+  // 503. It usually still completes a few seconds later once the burst
+  // clears — Next re-fetches the layout via revalidatePath() regardless —
+  // but until now the dropdown just sat on "Switching…" with zero
+  // indication anything was still happening, which reads as "broken" long
+  // before it actually is. This is a genuine side effect (a wall-clock
+  // timer), not state derived from props, so a plain useEffect is the
+  // correct tool here per the project's own render-time-adjustment rule.
+  const [slow, setSlow] = useState(false);
+  const [prevPending, setPrevPending] = useState(pending);
+  if (pending !== prevPending) {
+    setPrevPending(pending);
+    if (!pending) setSlow(false);
+  }
+  useEffect(() => {
+    // Effect body only starts/clears a timer (a real external subscription,
+    // the canonical valid useEffect use) — it never calls setState directly
+    // in the body itself; the reset-to-false above happens at render time
+    // instead, same convention as `selected`'s reset further down.
+    if (!pending) return;
+    const timer = window.setTimeout(() => setSlow(true), 3000);
+    return () => window.clearTimeout(timer);
+  }, [pending]);
 
   // The <select> has to be controlled: on a denied/failed switch the
   // employee's real currentCompanyId prop doesn't change (the cookie was
@@ -89,6 +133,24 @@ export function CompanySwitcher({
             ))}
         </select>
       </form>
+      {slow && (
+        <p
+          role="status"
+          className="absolute right-0 top-full z-10 mt-1 w-64 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 shadow-md"
+        >
+          Still switching — the server is slow to respond right now. It
+          usually finishes on its own in a few seconds; if this sits for a
+          while,{" "}
+          <button
+            type="button"
+            onClick={() => router.refresh()}
+            className="font-semibold underline underline-offset-2"
+          >
+            click here to refresh
+          </button>{" "}
+          and check.
+        </p>
+      )}
       {state.error && (
         <p
           role="alert"
