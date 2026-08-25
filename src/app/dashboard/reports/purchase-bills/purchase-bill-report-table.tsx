@@ -1,6 +1,7 @@
 "use client";
 
 import { ExportBar } from "@/components/export-bar";
+import { PrintArea } from "@/components/print-view";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 
@@ -64,13 +65,6 @@ export function PurchaseBillReportTable({
 
   return (
     <div className="space-y-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #purchase-bill-report-print-area, #purchase-bill-report-print-area * { visibility: visible; }
-          #purchase-bill-report-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">From</label>
@@ -120,7 +114,7 @@ export function PurchaseBillReportTable({
         />
       </div>
 
-      <div id="purchase-bill-report-print-area" className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <PrintArea id="purchase-bill-report-print-area"><div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -144,7 +138,7 @@ export function PurchaseBillReportTable({
             )}
           </tbody>
         </table>
-      </div>
+      </div></PrintArea>
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
+import { PrintArea } from "@/components/print-view";
 
 export type AdSpendDailyRow = {
   storeId: string;
@@ -73,13 +74,6 @@ export function AdSpendReportTable({
 
   return (
     <div className="space-y-6">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #ad-spend-print-area, #ad-spend-print-area * { visibility: visible; }
-          #ad-spend-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
         <input type="hidden" name="tab" value="report" />
         <div>
@@ -101,7 +95,7 @@ export function AdSpendReportTable({
         <a href="/dashboard/ad-spend?tab=report" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
-      <div id="ad-spend-print-area" className="space-y-8">
+      <PrintArea id="ad-spend-print-area"><div className="space-y-8">
         <section>
           <div className="mb-2 flex items-center justify-between print:hidden">
             <h2 className="text-sm font-semibold text-slate-700">Monthly Roll-up — {filters.month}</h2>
@@ -179,7 +173,7 @@ export function AdSpendReportTable({
             </table>
           </div>
         </section>
-      </div>
+      </div></PrintArea>
     </div>
   );
 }

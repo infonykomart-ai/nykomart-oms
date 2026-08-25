@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { PrintArea } from "@/components/print-view";
 
 type Employee = { id: string; name: string; company_id: string; designation: string | null };
 type Company = { id: string; name: string; logo_url: string | null };
@@ -91,14 +92,6 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #certificate-print-area, #certificate-print-area * { visibility: visible; }
-          #certificate-print-area { position: fixed; inset: 0; width: 100%; height: 100%; }
-        }
-      `}</style>
-
       <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden">
         <h2 className="text-sm font-semibold text-slate-900">Certificate Details</h2>
 
@@ -180,14 +173,14 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
           disabled={!employeeId || !companyId}
           className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-40"
         >
-          Print / Save as PDF
+          🖨️ Print / Save as PDF
         </button>
         {(!employeeId || !companyId) && <p className="text-xs text-slate-400">Select an employee and company first.</p>}
       </div>
 
       <div style={{ containerType: "inline-size" }}>
+        <PrintArea id="certificate-print-area">
         <div
-          id="certificate-print-area"
           className="relative mx-auto aspect-[1200/850] w-full overflow-hidden rounded-lg"
           style={{ background: "#0a0a1a", fontFamily: "Georgia, 'Times New Roman', serif" }}
         >
@@ -252,6 +245,7 @@ export function CertificateForm({ employees, companies }: { employees: Employee[
             </div>
           </div>
         </div>
+        </PrintArea>
       </div>
     </div>
   );

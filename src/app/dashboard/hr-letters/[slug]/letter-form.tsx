@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { renderTemplate, todayFormatted, type LetterTemplate } from "@/lib/hr-letters/templates";
+import { PrintArea } from "@/components/print-view";
+import { downloadLetterDoc, mailtoLetterLink, shareLetterOnWhatsApp } from "@/lib/hr-letters/letter-export";
 
 type Employee = {
   id: string;
@@ -87,16 +89,23 @@ export function LetterForm({
 
   const subject = renderTemplate(template.subject, fieldValues);
 
+  // Shared shape for Word/Email/WhatsApp — same content the print area
+  // renders, built once here so all three "send" buttons and the print
+  // area stay in sync with whatever's currently in the editable fields.
+  const letterDocInput = {
+    companyName: company?.name ?? "Select company",
+    refNo,
+    dateIssued,
+    toLine: template.toWhomsoever ? "TO WHOMSOEVER IT MAY CONCERN" : `To,\n${employeeName || "Employee Name"}${employeeAddress ? `\n${employeeAddress}` : ""}`,
+    subjectLine: !template.toWhomsoever && subject ? `Subject: ${subject}` : undefined,
+    bodyText: bodyText || "",
+    signatoryName,
+    signatoryDesignation,
+  };
+  const filenameBase = `${template.slug}-${(employeeName || "letter").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #letter-print-area, #letter-print-area * { visibility: visible; }
-          #letter-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
-
       <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden">
         <h2 className="text-sm font-semibold text-slate-900">Details</h2>
 
@@ -202,12 +211,46 @@ export function LetterForm({
           disabled={!hasGenerated}
           className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-40"
         >
-          Print / Save as PDF
+          🖨️ Print / Save as PDF
         </button>
+
+        {/* 2026-08-25 — "file ko print, save in PDF, WORD email whatsapp ka
+            option kyu nahi aara": Print/PDF already covered PDF (the
+            browser's own print dialog has a Save-as-PDF destination) but
+            these three didn't exist. Same send-a-real-file idea as the
+            Universal Reports Export/Send system, just for one letter's
+            free text instead of a rows/columns table — see
+            lib/hr-letters/letter-export.ts. */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => downloadLetterDoc(filenameBase, letterDocInput)}
+            disabled={!hasGenerated}
+            className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+          >
+            ⬇️ Word
+          </button>
+          <a
+            href={hasGenerated ? mailtoLetterLink(subject || template.title, letterDocInput) : undefined}
+            aria-disabled={!hasGenerated}
+            className={`flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-center text-xs font-medium text-slate-700 transition hover:bg-slate-50 ${!hasGenerated ? "pointer-events-none opacity-40" : ""}`}
+          >
+            ✉️ Email
+          </a>
+          <button
+            type="button"
+            onClick={() => shareLetterOnWhatsApp(filenameBase, subject || template.title, letterDocInput)}
+            disabled={!hasGenerated}
+            className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+          >
+            📱 WhatsApp
+          </button>
+        </div>
       </div>
 
       <div>
-        <div id="letter-print-area" className="mx-auto min-h-[1000px] w-full bg-white p-10 text-sm text-slate-900 shadow-sm" style={{ fontFamily: "Georgia, serif" }}>
+        <PrintArea id="letter-print-area">
+        <div className="mx-auto min-h-[1000px] w-full bg-white p-10 text-sm text-slate-900 shadow-sm" style={{ fontFamily: "Georgia, serif" }}>
           <div className="mb-6 flex items-center gap-4 border-b border-slate-300 pb-4">
             {company?.logo_url && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -249,6 +292,7 @@ export function LetterForm({
             <div className="text-xs text-slate-500">({signatoryDesignation})</div>
           </div>
         </div>
+        </PrintArea>
       </div>
     </div>
   );

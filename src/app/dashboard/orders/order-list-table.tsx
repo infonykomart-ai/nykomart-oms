@@ -9,6 +9,7 @@ import { OrderHoldCancelActions } from "./order-hold-cancel-actions";
 import { CustomerWhatsAppButton } from "./customer-whatsapp-button";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
+import { PrintArea } from "@/components/print-view";
 
 type OrderRow = EditableOrder & {
   whatsapp_sent_at: string | null;
@@ -177,13 +178,6 @@ export function OrderListTable({
 
   return (
     <div>
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #orders-print-area, #orders-print-area * { visibility: visible; }
-          #orders-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <div className="mb-3 flex items-center justify-between print:hidden">
         <p className="text-sm text-slate-500">{orders.length} order{orders.length === 1 ? "" : "s"}</p>
         <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
@@ -191,7 +185,7 @@ export function OrderListTable({
       {orders.length === 0 ? (
         <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">No orders found.</p>
       ) : (
-      <div id="orders-print-area" className="space-y-3">
+      <PrintArea id="orders-print-area"><div className="space-y-3">
       {orders.map((o) => (
         <div
           key={o.id}
@@ -498,7 +492,7 @@ export function OrderListTable({
           )}
         </div>
       ))}
-      </div>
+      </div></PrintArea>
       )}
     </div>
   );

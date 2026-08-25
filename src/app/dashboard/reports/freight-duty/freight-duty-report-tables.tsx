@@ -1,6 +1,7 @@
 "use client";
 
 import { ExportBar } from "@/components/export-bar";
+import { PrintArea } from "@/components/print-view";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 
@@ -56,13 +57,6 @@ export function FreightReportTable({ rows }: { rows: FreightReportRow[] }) {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #freight-report-print-area, #freight-report-print-area * { visibility: visible; }
-          #freight-report-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">🚚 Freight (Courier) Bills — per shipment</h2>
@@ -79,7 +73,8 @@ export function FreightReportTable({ rows }: { rows: FreightReportRow[] }) {
           onToggleColumn={toggleColumn}
         />
       </div>
-      <div id="freight-report-print-area" className="overflow-x-auto">
+      <PrintArea id="freight-report-print-area">
+      <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -104,6 +99,7 @@ export function FreightReportTable({ rows }: { rows: FreightReportRow[] }) {
           </tbody>
         </table>
       </div>
+      </PrintArea>
     </div>
   );
 }
@@ -150,13 +146,6 @@ export function DutyReportTable({ rows }: { rows: DutyReportRow[] }) {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #duty-report-print-area, #duty-report-print-area * { visibility: visible; }
-          #duty-report-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">📦 Duty &amp; Tax Bills — per shipment</h2>
@@ -173,7 +162,8 @@ export function DutyReportTable({ rows }: { rows: DutyReportRow[] }) {
           onToggleColumn={toggleColumn}
         />
       </div>
-      <div id="duty-report-print-area" className="overflow-x-auto">
+      <PrintArea id="duty-report-print-area">
+      <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -198,6 +188,7 @@ export function DutyReportTable({ rows }: { rows: DutyReportRow[] }) {
           </tbody>
         </table>
       </div>
+      </PrintArea>
     </div>
   );
 }

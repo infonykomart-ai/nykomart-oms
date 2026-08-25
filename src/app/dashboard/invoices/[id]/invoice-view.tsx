@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { PrintArea } from "@/components/print-view";
 import { updateInvoiceFields, deleteInvoice } from "../actions";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 import { itemCostForOrder } from "@/lib/invoices/value-breakdown";
@@ -256,14 +257,6 @@ export function InvoiceView({
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #invoice-print-area, #invoice-print-area * { visibility: visible; }
-          #invoice-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
-
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm print:hidden">
         <h2 className="text-sm font-semibold text-slate-900">Edit before printing</h2>
         {saved && <p className="text-xs text-slate-500">{saved}</p>}
@@ -565,7 +558,8 @@ export function InvoiceView({
       </div>
 
       <div>
-        <div id="invoice-print-area" className="mx-auto min-h-[1100px] w-full bg-white p-8 text-xs text-slate-900" style={{ fontFamily: "Arial, sans-serif" }}>
+        <PrintArea id="invoice-print-area">
+        <div className="mx-auto min-h-[1100px] w-full bg-white p-8 text-xs text-slate-900" style={{ fontFamily: "Arial, sans-serif" }}>
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-bold tracking-wide">{invoice.csb_type} - INVOICE</span>
             <span className="rounded border border-slate-400 px-2 py-0.5 text-[10px] font-semibold">E-COM</span>
@@ -858,6 +852,7 @@ export function InvoiceView({
             </div>
           </div>
         </div>
+        </PrintArea>
       </div>
     </div>
   );

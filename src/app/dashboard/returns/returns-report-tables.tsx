@@ -3,6 +3,7 @@
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
+import { PrintArea } from "@/components/print-view";
 
 // 2026-08-22 — Returns/Refunds ported onto the Reports hub pattern (see
 // src/app/dashboard/reports/orders-report-table.tsx's header comment: "the
@@ -43,13 +44,6 @@ export function StoreRateReportTable({ rows }: { rows: StoreRateRow[] }) {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #store-rate-print-area, #store-rate-print-area * { visibility: visible; }
-          #store-rate-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">Return / Cancel Rate by Store</h2>
@@ -66,7 +60,7 @@ export function StoreRateReportTable({ rows }: { rows: StoreRateRow[] }) {
           onToggleColumn={toggleColumn}
         />
       </div>
-      <div id="store-rate-print-area" className="overflow-x-auto">
+      <PrintArea id="store-rate-print-area"><div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -90,7 +84,7 @@ export function StoreRateReportTable({ rows }: { rows: StoreRateRow[] }) {
             )}
           </tbody>
         </table>
-      </div>
+      </div></PrintArea>
     </div>
   );
 }
@@ -134,13 +128,6 @@ export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #order-refunds-print-area, #order-refunds-print-area * { visibility: visible; }
-          #order-refunds-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-800">Order Refunds (live — company-scoped, most recent 300)</h2>
         <ExportBar
@@ -154,7 +141,7 @@ export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
           onToggleColumn={toggleColumn}
         />
       </div>
-      <div id="order-refunds-print-area" className="overflow-x-auto">
+      <PrintArea id="order-refunds-print-area"><div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -178,7 +165,7 @@ export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
             )}
           </tbody>
         </table>
-      </div>
+      </div></PrintArea>
     </div>
   );
 }
@@ -213,13 +200,6 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #historical-refunds-print-area, #historical-refunds-print-area * { visibility: visible; }
-          #historical-refunds-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-800">Historical Marketplace Refunds (company-scoped, most recent 300)</h2>
         <ExportBar
@@ -233,7 +213,7 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
           onToggleColumn={toggleColumn}
         />
       </div>
-      <div id="historical-refunds-print-area" className="overflow-x-auto">
+      <PrintArea id="historical-refunds-print-area"><div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -259,7 +239,7 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
             )}
           </tbody>
         </table>
-      </div>
+      </div></PrintArea>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { ExportBar } from "@/components/export-bar";
+import { PrintArea } from "@/components/print-view";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 
@@ -56,13 +57,6 @@ export function PartyLedgerReportTable({
 
   return (
     <div className="space-y-4">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #party-ledger-report-print-area, #party-ledger-report-print-area * { visibility: visible; }
-          #party-ledger-report-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
@@ -129,7 +123,8 @@ export function PartyLedgerReportTable({
         that party&apos;s own history, never a mix across parties.
       </p>
 
-      <div id="party-ledger-report-print-area" className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <PrintArea id="party-ledger-report-print-area">
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -154,6 +149,7 @@ export function PartyLedgerReportTable({
           </tbody>
         </table>
       </div>
+      </PrintArea>
     </div>
   );
 }

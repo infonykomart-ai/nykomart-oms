@@ -1,6 +1,7 @@
 "use client";
 
 import { ExportBar } from "@/components/export-bar";
+import { PrintArea } from "@/components/print-view";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 
@@ -64,13 +65,6 @@ export function OrdersReportTable({
       {/* 2026-08-08 (pending item 5) — printAreaId wasn't wired here before,
           so the PDF/Print button never actually appeared (ExportBar hides
           it without one). */}
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #orders-report-print-area, #orders-report-print-area * { visibility: visible; }
-          #orders-report-print-area { position: fixed; inset: 0; width: 100%; }
-        }
-      `}</style>
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">From</label>
@@ -118,7 +112,7 @@ export function OrdersReportTable({
         />
       </div>
 
-      <div id="orders-report-print-area" className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <PrintArea id="orders-report-print-area"><div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -142,7 +136,7 @@ export function OrdersReportTable({
             )}
           </tbody>
         </table>
-      </div>
+      </div></PrintArea>
     </div>
   );
 }
