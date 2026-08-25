@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
-import { OrderRefundsReportTable, HistoricalRefundsReportTable } from "./returns-report-tables";
+import { OrderRefundsReportTable, HistoricalRefundsReportTable, StoreRateReportTable } from "./returns-report-tables";
 
 // 2026-08-17 — dedicated Returns/Refunds report. Gap identified in a
 // system-wide OMS-features audit: "Refunds/order_refunds tables hain
@@ -55,6 +55,24 @@ export default async function ReturnsPage({
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("stores").select("id, name, company_id").in("company_id", scopedCompanyIds),
   ]);
+
+  // 2026-08-25 — "kis store par return ka % kitna chal raha, cancel ka
+  // kitna chal raha" — per-store Return-rate / Cancel-rate. Uses the SAME
+  // from/to filter as the refund tables below, applied to order_date (the
+  // refund tables filter by refund_date — a different date field, so a
+  // store can legitimately show up in one table's range and not the
+  // other's; both are documented in the table's own header). Selects only
+  // id/store_id/status/order_date — no heavy columns — since this only
+  // needs per-store counts, aggregated in JS below. Capped at 20,000 orders
+  // (generous for this app's real volume) rather than left unbounded.
+  let storeStatusQuery = supabase
+    .from("orders")
+    .select("id, store_id, status, order_date")
+    .in("company_id", scopedCompanyIds)
+    .limit(20000);
+  if (fromDate) storeStatusQuery = storeStatusQuery.gte("order_date", fromDate);
+  if (toDate) storeStatusQuery = storeStatusQuery.lte("order_date", toDate);
+  const { data: storeStatusOrders } = await storeStatusQuery;
 
   let orderRefundsQuery = supabase
     .from("order_refunds")
@@ -157,6 +175,31 @@ export default async function ReturnsPage({
     refund_date: r.refund_date,
   }));
 
+  // 2026-08-25 — per-store Return %/Cancel % (see storeStatusQuery above).
+  // Orders with no store_id (shouldn't happen — store_id is NOT NULL on
+  // orders — kept defensively) are skipped rather than lumped into an
+  // "Unknown" row.
+  const storeTotals = new Map<string, { total: number; cancelled: number; returned: number }>();
+  for (const o of storeStatusOrders ?? []) {
+    if (!o.store_id) continue;
+    const entry = storeTotals.get(o.store_id) ?? { total: 0, cancelled: 0, returned: 0 };
+    entry.total += 1;
+    if (o.status === "Cancelled") entry.cancelled += 1;
+    if (o.status === "Returned") entry.returned += 1;
+    storeTotals.set(o.store_id, entry);
+  }
+  const storeRateRows = Array.from(storeTotals.entries())
+    .map(([storeId, t]) => ({
+      id: storeId,
+      store_name: storeName.get(storeId) ?? "—",
+      total_orders: t.total,
+      cancelled_count: t.cancelled,
+      cancelled_pct: t.total > 0 ? (t.cancelled / t.total) * 100 : 0,
+      returned_count: t.returned,
+      returned_pct: t.total > 0 ? (t.returned / t.total) * 100 : 0,
+    }))
+    .sort((a, b) => b.total_orders - a.total_orders);
+
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
@@ -222,6 +265,7 @@ export default async function ReturnsPage({
         </div>
       </div>
 
+      <StoreRateReportTable rows={storeRateRows} />
       <OrderRefundsReportTable rows={orderRefundRows} />
       <HistoricalRefundsReportTable rows={historicalRefundRows} />
     </div>

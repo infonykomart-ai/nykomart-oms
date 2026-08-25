@@ -14,6 +14,87 @@ import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 // different shapes (see returns/page.tsx's header comment) and merging
 // their columns would either lose fields or pad both tables with blanks.
 
+// 2026-08-25 — "kis store par return ka % kitna chal raha, cancel ka kitna
+// chal raha" — per-store Return-rate/Cancel-rate, computed in page.tsx from
+// a plain orders(store_id, status) query (not from order_refunds — a
+// Cancelled/Returned order's STATUS is the source of truth here, whether or
+// not a refund row was ever added against it).
+export type StoreRateRow = {
+  id: string;
+  store_name: string;
+  total_orders: number;
+  cancelled_count: number;
+  cancelled_pct: number;
+  returned_count: number;
+  returned_pct: number;
+};
+
+const STORE_RATE_COLUMNS: ExportColumn<StoreRateRow>[] = [
+  { key: "store_name", label: "Store", value: (r) => r.store_name },
+  { key: "total_orders", label: "Total Orders", value: (r) => r.total_orders },
+  { key: "cancelled_count", label: "Cancelled", value: (r) => r.cancelled_count },
+  { key: "cancelled_pct", label: "Cancelled %", value: (r) => `${r.cancelled_pct.toFixed(1)}%` },
+  { key: "returned_count", label: "Returned", value: (r) => r.returned_count },
+  { key: "returned_pct", label: "Returned %", value: (r) => `${r.returned_pct.toFixed(1)}%` },
+];
+
+export function StoreRateReportTable({ rows }: { rows: StoreRateRow[] }) {
+  const { visibleColumns, hiddenKeys, toggleColumn } = useColumnVisibility(STORE_RATE_COLUMNS);
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #store-rate-print-area, #store-rate-print-area * { visibility: visible; }
+          #store-rate-print-area { position: fixed; inset: 0; width: 100%; }
+        }
+      `}</style>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Return / Cancel Rate by Store</h2>
+          <p className="text-xs text-slate-400">Based on order status (order_date filter above) — not the refund tables below, which filter by refund date.</p>
+        </div>
+        <ExportBar
+          title="Return/Cancel Rate by Store"
+          filenameBase="store-return-cancel-rate"
+          columns={visibleColumns}
+          rows={rows}
+          printAreaId="store-rate-print-area"
+          allColumns={STORE_RATE_COLUMNS}
+          hiddenKeys={hiddenKeys}
+          onToggleColumn={toggleColumn}
+        />
+      </div>
+      <div id="store-rate-print-area" className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              {visibleColumns.map((c) => (
+                <th key={c.key} className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((r) => (
+              <tr key={r.id} className="hover:bg-slate-50">
+                {visibleColumns.map((c) => (
+                  <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">{String(c.value(r) ?? "")}</td>
+                ))}
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-slate-400">No orders found for this filter.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export type OrderRefundRow = {
   id: string;
   ref_no: string;

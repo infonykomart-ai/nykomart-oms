@@ -39,7 +39,30 @@ const REFUND_PERCENT_OPTIONS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 // dropdown + separate Shipping/Duty fields, auto-summed) ahead of the
 // amount field. It only ever SUGGESTS a number into that field — the field
 // stays a normal editable input, so "case-by-case decide karna padta hai"
-// is still the last word.
+// is still the last word. User's own confirmation: "Full refund ka matlab
+// hai order value 100% refund" — the % dropdown is against order value
+// ONLY; Shipping/Duty are always separate add-ons on top, never folded into
+// the percentage itself.
+//
+// 2026-08-25, same round, second clarification — a refund doesn't always
+// mean the order was returned at all: "kai baar hota hai ki country policy
+// ke acording duty & taxes lag jata hai to buyer deny karta hai is vajh se
+// bhi refund karte hai" (destination customs charges an unexpected duty,
+// buyer balks, so a PARTIAL DUTY-ONLY refund is negotiated — e.g. 20 EUR
+// duty becomes a 10 EUR refund — as a goodwill gesture so the buyer keeps
+// the order). That's neither a Cancel nor a Return: the order stays exactly
+// where it is (Dispatched/Delivered), only money moves. So "💸 Add Refund"
+// now also opens directly on Dispatched/Delivered orders, with no status
+// change and no Cancel/Return click needed first — set the % dropdown to
+// Manual (or 0), type only the Duty amount, save. The Cancel/Return buttons
+// stay for when the order's OWN status genuinely needs to change.
+//
+// Also: no longer blocks a second refund entry on the same order once one
+// exists (previously `!hasExistingRefund` hid the button entirely) — a
+// duty-only goodwill refund now and a full Return refund later on the same
+// order is a real sequence this flow needs to allow. Every prior refund on
+// this order is already listed inline above these buttons (order-list-
+// table.tsx), so nothing about refund history is hidden by allowing more.
 export function OrderHoldCancelActions({
   order,
   hasExistingRefund,
@@ -78,6 +101,24 @@ export function OrderHoldCancelActions({
     if (nextBasisPercent || Number(nextShipping) > 0 || Number(nextDuty) > 0) {
       setRefundAmount(total ? total.toFixed(2) : "");
     }
+  }
+
+  // 2026-08-25 — a successful save used to replace this ENTIRE component
+  // with just the "Refund saved" line (see the removed early-return below),
+  // permanently hiding Hold/Cancel/Return/Add-Refund for that order row for
+  // as long as the page stayed open. That was harmless when only one refund
+  // per order was ever allowed, but now that a second later refund is a
+  // real case (duty goodwill now, a full return later), permanently hiding
+  // the buttons would block exactly that. Close the form instead — the
+  // server-refreshed refund list above (order-list-table.tsx) already shows
+  // the authoritative saved row; this is just closing the now-done form.
+  // Adjusted during render (project convention, see company-switcher.tsx's
+  // prevPending — the react-hooks/set-state-in-effect lint rule forbids a
+  // synchronous setState inside a useEffect body), not inside a useEffect.
+  const [prevRefundSuccess, setPrevRefundSuccess] = useState(refundState.success);
+  if (refundState.success !== prevRefundSuccess) {
+    setPrevRefundSuccess(refundState.success);
+    if (refundState.success) setShowRefundForm(false);
   }
 
   function openWhatsApp(text: string) {
@@ -124,18 +165,21 @@ export function OrderHoldCancelActions({
   // Return & Refund is the post-delivery counterpart — only once it's
   // actually shipped, per the user's clarification above.
   const canReturn = ["Dispatched", "Delivered"].includes(order.status);
-  const canAddRefund = (order.status === "Cancelled" || order.status === "Returned") && !hasExistingRefund;
-
-  if (refundState.success) {
-    return (
-      <p className="rounded-lg bg-green-50 px-2.5 py-1.5 text-xs text-green-800">
-        Refund saved{refundState.success.creditNoteNo ? ` — Credit Note ${refundState.success.creditNoteNo} auto-generated.` : "."}
-      </p>
-    );
-  }
+  // "💸 Add Refund" is deliberately broader than Cancel/Return: also opens
+  // directly on Dispatched/Delivered orders with NO status change, for a
+  // goodwill/partial refund (e.g. duty-only) where the order itself isn't
+  // being cancelled or sent back — see header comment. No longer blocked by
+  // an existing refund, either — a second refund later on the same order is
+  // a real sequence (duty goodwill now, a full return later).
+  const canAddRefund = ["Cancelled", "Returned", "Dispatched", "Delivered"].includes(order.status);
 
   return (
     <div className="flex flex-col items-end gap-1.5">
+      {refundState.success && !showRefundForm && (
+        <p className="rounded-lg bg-green-50 px-2.5 py-1.5 text-xs text-green-800">
+          Refund saved{refundState.success.creditNoteNo ? ` — Credit Note ${refundState.success.creditNoteNo} auto-generated.` : "."}
+        </p>
+      )}
       <div className="flex shrink-0 gap-2">
         {canHold && (
           <button
@@ -172,9 +216,14 @@ export function OrderHoldCancelActions({
           <button
             type="button"
             onClick={() => setShowRefundForm(true)}
+            title={
+              order.status === "Dispatched" || order.status === "Delivered"
+                ? "Goodwill/partial refund (e.g. duty & taxes) — order status stays unchanged"
+                : undefined
+            }
             className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100"
           >
-            💸 Add Refund
+            💸 {hasExistingRefund ? "Add Another Refund" : "Add Refund"}
           </button>
         )}
       </div>

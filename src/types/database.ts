@@ -3512,6 +3512,8 @@ export type Database = {
           order_value_refund_amount: number;
           shipping_refund_amount: number;
           duty_refund_amount: number;
+          refund_amount_inr: number | null;
+          refund_amount_usd: number | null;
         };
         Insert: {
           id?: string;
@@ -3527,6 +3529,8 @@ export type Database = {
           order_value_refund_amount?: number;
           shipping_refund_amount?: number;
           duty_refund_amount?: number;
+          refund_amount_inr?: number | null;
+          refund_amount_usd?: number | null;
         };
         Update: {
           id?: string;
@@ -3542,6 +3546,8 @@ export type Database = {
           order_value_refund_amount?: number;
           shipping_refund_amount?: number;
           duty_refund_amount?: number;
+          refund_amount_inr?: number | null;
+          refund_amount_usd?: number | null;
         };
         Relationships: [
           {

@@ -49,7 +49,12 @@ This handbook outlines the general Human Resource policies applicable to all emp
 - Full and final settlement will be processed within 45 days of the last working day
 - Exit interview and clearance (IT, Admin, Finance) is mandatory before relieving
 
-8.8 Amendments
+8.8 Confidentiality Undertaking (Post-Employment)
+I confirm and undertake that I shall maintain complete confidentiality of all company data, documents, customer information, business information, and other confidential material that came into my possession during the course of my employment with ${companyName}. I shall not copy, share, disclose, misuse, or leak any such company data to any person or third party, either during or after my employment.
+I further agree that I shall not knowingly participate in, assist, or facilitate any activity that unlawfully misuses or causes harm to the company's confidential information or business interests.
+I understand that these obligations shall survive the termination of my employment and shall continue to bind me as stated in the Company's letter(s) to me, and that any breach on my part may attract civil and/or criminal liability under applicable Indian law, including the Digital Personal Data Protection Act, 2023 and the Information Technology Act, 2000.
+
+8.9 Amendments
 ${companyName} reserves the right to amend, modify, or withdraw any policy stated in this handbook at its sole discretion, with or without prior notice, as per business requirements and applicable law.
 
 Acknowledged & Accepted by:

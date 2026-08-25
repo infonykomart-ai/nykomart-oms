@@ -389,6 +389,17 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   if (!Number.isFinite(refundAmount) || refundAmount < 0) return { error: "Refund amount must be a valid number.", success: null };
   if (!refundDate) return { error: "Refund date is required.", success: null };
 
+  // 2026-08-25 — INR/USD equivalent of this refund, via the SAME
+  // official-rate/live-fallback logic every order value is converted with
+  // (see saveOrderRefund's header comment + this file's computeCurrencyConversion
+  // import). Used to net refunded revenue in the P&L views and the Sale &
+  // Profit report — irrelevant to the refund itself, so a conversion
+  // failure here must never block saving the refund.
+  const refundConversion =
+    refundAmount > 0
+      ? await computeCurrencyConversion(supabase, refundCurrency, refundDate, refundAmount)
+      : { usd: 0, inr: 0 };
+
   // Human-readable breakdown, prepended to the Credit Note remark / kept
   // alongside the reason — purely informational (the reason field itself is
   // still whatever the employee typed), so a later reader can see AT A
@@ -404,7 +415,7 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, company_id, store_id, buyer_name_address, invoice_id, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label"
+      "id, company_id, store_id, status, buyer_name_address, invoice_id, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label"
     )
     .eq("id", orderId)
     .single();
@@ -456,6 +467,8 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
     order_value_refund_amount: orderValueRefundAmount,
     shipping_refund_amount: shippingRefundAmount,
     duty_refund_amount: dutyRefundAmount,
+    refund_amount_inr: refundConversion.inr,
+    refund_amount_usd: refundConversion.usd,
   });
   if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
 
@@ -465,7 +478,18 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   // fires when a purchase_bills row already exists against this order;
   // the purchased qty (not the order's own qty) is what flows into stock,
   // since that's the amount actually paid for and sitting in hand.
-  const { data: purchases } = await supabase.from("purchase_bills").select("qty").eq("order_id", order.id);
+  //
+  // 2026-08-25 — gated on order.status now (Cancelled/Returned only). A
+  // refund no longer always means "the goods are back in hand" — the new
+  // goodwill/duty-only refund path (order-hold-cancel-actions.tsx) saves a
+  // refund against a Dispatched/Delivered order that the buyer KEEPS (e.g.
+  // "20 EUR duty ho rahi thi, 10 EUR refund kar diya" so they'd accept
+  // delivery). Auto-restocking finished_stock for that case would be wrong
+  // — the item was never returned, it's still with the buyer.
+  const orderGoodsReturned = order.status === "Cancelled" || order.status === "Returned";
+  const { data: purchases } = orderGoodsReturned
+    ? await supabase.from("purchase_bills").select("qty").eq("order_id", order.id)
+    : { data: [] as { qty: number }[] };
   const purchasedQty = (purchases ?? []).reduce((sum, p) => sum + Number(p.qty || 0), 0);
   if (purchasedQty > 0) {
     const skuLabel = order.sku_label ?? "";
@@ -505,5 +529,11 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
 
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/documents");
+  // 2026-08-25 — refunds now net against revenue on these two report pages
+  // (pl_dashboard_by_company_view / pl_dashboard_by_month_view, Sale &
+  // Profit) — revalidate so a just-saved refund's effect isn't stale there.
+  revalidatePath("/dashboard/reports");
+  revalidatePath("/dashboard/reports/sale-profit");
+  revalidatePath("/dashboard/returns");
   return { error: null, success: { creditNoteNo } };
 }

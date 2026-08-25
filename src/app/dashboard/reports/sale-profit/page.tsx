@@ -72,12 +72,21 @@ export default async function SaleProfitReportPage({
   // its two underlying already-typed views directly and sums them the
   // same way that view does (SUM(gross_shipping_amt)/SUM(duty_gross_amt)
   // per order_id) rather than adding an untyped `.from()` call.
-  const [{ data: freightRows }, { data: dutyRows }] = orderIds.length
+  // 2026-08-25 — refund_amount_inr per order, netted out of revenue below.
+  // User confirmed ("ha kar do isko bhi") this report should treat a
+  // refunded order the same way pl_dashboard_by_company_view /
+  // pl_dashboard_by_month_view now do — see those views' schema.sql
+  // comment for the full reasoning. Covers Returned orders AND the
+  // goodwill/duty-only refund on an order that stays Dispatched/Delivered
+  // (order-hold-cancel-actions.tsx) — any money actually refunded reduces
+  // recognized revenue here, regardless of which button entered it.
+  const [{ data: freightRows }, { data: dutyRows }, { data: refundRows }] = orderIds.length
     ? await Promise.all([
         finSupabase.from("freight_reconciliation_view").select("order_id, gross_shipping_amt").in("order_id", orderIds),
         finSupabase.from("duty_reconciliation_view").select("order_id, duty_gross_amt").in("order_id", orderIds),
+        finSupabase.from("order_refunds").select("order_id, refund_amount_inr").in("order_id", orderIds),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }];
   const courierByOrder = new Map<string, number>();
   for (const r of freightRows ?? []) {
     if (!r.order_id) continue;
@@ -88,11 +97,17 @@ export default async function SaleProfitReportPage({
     if (!r.order_id) continue;
     dutyByOrder.set(r.order_id, (dutyByOrder.get(r.order_id) ?? 0) + Number(r.duty_gross_amt ?? 0));
   }
+  const refundByOrder = new Map<string, number>();
+  for (const r of refundRows ?? []) {
+    if (r.refund_amount_inr == null) continue;
+    refundByOrder.set(r.order_id, (refundByOrder.get(r.order_id) ?? 0) + Number(r.refund_amount_inr));
+  }
 
   const liveRows: SaleProfitRow[] = (orders ?? []).map((o) => {
     const courier = courierByOrder.get(o.id) ?? 0;
     const duty = dutyByOrder.get(o.id) ?? 0;
-    const orderValue = Number(o.order_value_inr ?? 0);
+    const refunded = refundByOrder.get(o.id) ?? 0;
+    const orderValue = Number(o.order_value_inr ?? 0) - refunded;
     const netTotalValue = orderValue - courier - duty;
     const portalExpenses = orderValue * 0.25;
     const netEarn = netTotalValue - portalExpenses;

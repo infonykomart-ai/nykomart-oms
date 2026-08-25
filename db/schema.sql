@@ -1450,6 +1450,16 @@ CREATE TABLE order_refunds (
   order_value_refund_amount numeric(14,2) NOT NULL DEFAULT 0,
   shipping_refund_amount    numeric(14,2) NOT NULL DEFAULT 0,
   duty_refund_amount        numeric(14,2) NOT NULL DEFAULT 0,
+  -- App-computed at save time via the SAME computeCurrencyConversion()
+  -- every order's own order_value_usd/order_value_inr uses (official
+  -- Exchange Rate Master rate as of refund_date, live-rate fallback, else
+  -- left NULL) — regardless of refund_currency, so a refund in EUR (or any
+  -- other currency) still nets correctly against INR-denominated revenue.
+  -- Used by pl_dashboard_by_company_view / pl_dashboard_by_month_view /
+  -- the Sale & Profit report to net a refunded order's revenue against its
+  -- refund(s) — 2026-08-25, user confirmed ("ha kar do isko bhi").
+  refund_amount_inr         numeric(14,2),
+  refund_amount_usd         numeric(14,2),
   created_at                timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_order_refunds_order ON order_refunds(order_id);
@@ -1891,20 +1901,11 @@ CREATE INDEX idx_internal_expenses_date    ON internal_expenses(expense_date);
 -- here. This is an assumption, not a confirmed user decision — flag if
 -- Cancelled/Returned handling should differ.
 --
--- 2026-08-25 UPDATE: this assumption is now more load-bearing than when it
--- was written. Until today, a post-delivery return/refund was recorded by
--- marking the order 'Cancelled' (the only status the refund UI unlocked),
--- so it WAS excluded from revenue here. Now that returns get their own
--- 'Returned' status (order-hold-cancel-actions.tsx's Return & Refund
--- button, via the new returnOrder action) while still generating a real
--- Credit Note, a Returned-and-refunded order's FULL order_value_inr keeps
--- counting as revenue here even though money went back to the buyer — this
--- view does not net out credit_notes.refund_amount. Still unresolved,
--- flagged again: does the user want Returned-order revenue here netted
--- against its Credit Note(s), or is "sale happened, refund is a separate
--- line" the intended treatment? Same open question applies to
--- src/app/dashboard/reports/sale-profit/page.tsx's `.neq("status",
--- "Cancelled")` order query, which has the identical assumption.
+-- 2026-08-25 RESOLVED: user confirmed ("ha kar do isko bhi") — Returned
+-- (and any other refunded, non-Cancelled) order's revenue here now nets
+-- against its refund(s). See `order_refund_totals` in
+-- pl_dashboard_by_company_view / pl_dashboard_by_month_view below, and the
+-- same fix in src/app/dashboard/reports/sale-profit/page.tsx.
 --
 -- sale_profit_ledger is NOT dropped and NOT ignored: rows with order_id
 -- IS NULL are genuinely historical entries that predate the live `orders`
@@ -1925,13 +1926,32 @@ COMMENT ON VIEW order_courier_duty_expense_view IS
   'Per-order Courier+Duty expense (summed across every AWB/shipment on that order), used by the live P&L views '
   'below. Not itself company-scoped in RLS — inherits from `orders`.';
 
+-- 2026-08-25: resolves the "flag if Cancelled/Returned handling should
+-- differ" note above — user confirmed Returned-order revenue SHOULD be
+-- netted against its refund(s). `order_refund_totals` sums
+-- order_refunds.refund_amount_inr (app-computed at save time via the same
+-- computeCurrencyConversion() every order value uses — see
+-- saveOrderRefund, orders/actions.ts) per order, and total_sale_value_inr
+-- below now subtracts it. This covers every refund, not just Returned
+-- orders' — including the new goodwill/duty-only refund on an order that
+-- stays Dispatched/Delivered (see order-hold-cancel-actions.tsx) — since
+-- any money actually paid back to a buyer should reduce recognized
+-- revenue regardless of which status button was clicked. Cancelled orders
+-- are unaffected either way: their FULL order_value_inr is already
+-- excluded by the FILTER below, refund or not.
 CREATE VIEW pl_dashboard_by_company_view AS
-WITH order_agg AS (
+WITH order_refund_totals AS (
+  SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr
+  FROM order_refunds
+  GROUP BY order_id
+),
+order_agg AS (
   SELECT o.company_id,
-    SUM(o.order_value_inr) FILTER (WHERE o.status <> 'Cancelled')                                            AS total_sale_value_inr,
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) FILTER (WHERE o.status <> 'Cancelled')               AS total_sale_value_inr,
     SUM(COALESCE(cd.courier_expense_inr,0) + COALESCE(cd.duty_expense_inr,0)) FILTER (WHERE o.status <> 'Cancelled') AS order_expenses_inr
   FROM orders o
   LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
+  LEFT JOIN order_refund_totals ort            ON ort.order_id = o.id
   GROUP BY o.company_id
 ),
 purchase_agg AS (
@@ -1987,6 +2007,8 @@ COMMENT ON VIEW pl_dashboard_by_company_view IS
 -- the end. See pl_dashboard_by_company_view's comment above for the same
 -- "live orders + company-wide purchase + preserved pre-orders history"
 -- design and the Cancelled/Returned assumption.
+-- 2026-08-25: same refund-netting as pl_dashboard_by_company_view above —
+-- see that view's comment for the full reasoning.
 CREATE VIEW pl_dashboard_by_month_view AS
 WITH months AS (
   SELECT DISTINCT date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
@@ -1997,12 +2019,18 @@ WITH months AS (
   UNION
   SELECT DISTINCT date_trunc('month', expense_date)::date AS month FROM internal_expenses
 ),
+order_refund_totals AS (
+  SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr
+  FROM order_refunds
+  GROUP BY order_id
+),
 order_agg AS (
   SELECT date_trunc('month', o.order_date)::date AS month,
-    SUM(o.order_value_inr)                                                                    AS sale_inr,
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0))                                 AS sale_inr,
     SUM(COALESCE(cd.courier_expense_inr,0) + COALESCE(cd.duty_expense_inr,0))                  AS order_expense_inr
   FROM orders o
   LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
+  LEFT JOIN order_refund_totals ort            ON ort.order_id = o.id
   WHERE o.status <> 'Cancelled'
   GROUP BY date_trunc('month', o.order_date)
 ),
