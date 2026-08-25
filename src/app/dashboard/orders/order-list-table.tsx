@@ -471,7 +471,13 @@ export function OrderListTable({
                   </button>
                 </div>
                 <OrderHoldCancelActions
-                  order={{ id: o.id, ref_no: o.ref_no, status: o.status, order_currency: o.order_currency }}
+                  order={{
+                    id: o.id,
+                    ref_no: o.ref_no,
+                    status: o.status,
+                    order_currency: o.order_currency,
+                    order_value_original: Number(o.order_value_original || 0),
+                  }}
                   hasExistingRefund={(refundsByOrder[o.id] ?? []).length > 0}
                   currencies={currencies}
                 />

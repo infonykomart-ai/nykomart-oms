@@ -3508,6 +3508,10 @@ export type Database = {
           credit_note_id: string | null;
           entry_by_employee_id: string;
           created_at: string;
+          refund_basis_percent: number | null;
+          order_value_refund_amount: number;
+          shipping_refund_amount: number;
+          duty_refund_amount: number;
         };
         Insert: {
           id?: string;
@@ -3519,6 +3523,10 @@ export type Database = {
           credit_note_id?: string | null;
           entry_by_employee_id: string;
           created_at?: string;
+          refund_basis_percent?: number | null;
+          order_value_refund_amount?: number;
+          shipping_refund_amount?: number;
+          duty_refund_amount?: number;
         };
         Update: {
           id?: string;
@@ -3530,6 +3538,10 @@ export type Database = {
           credit_note_id?: string | null;
           entry_by_employee_id?: string;
           created_at?: string;
+          refund_basis_percent?: number | null;
+          order_value_refund_amount?: number;
+          shipping_refund_amount?: number;
+          duty_refund_amount?: number;
         };
         Relationships: [
           {

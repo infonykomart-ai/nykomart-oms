@@ -59,7 +59,7 @@ export default async function ReturnsPage({
   let orderRefundsQuery = supabase
     .from("order_refunds")
     .select(
-      "id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, entry_by_employee_id, created_at, orders(ref_no, company_id, buyer_name_address, status)"
+      "id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, entry_by_employee_id, created_at, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, orders(ref_no, company_id, buyer_name_address, status)"
     )
     .order("refund_date", { ascending: false })
     .limit(300);
@@ -103,6 +103,10 @@ export default async function ReturnsPage({
     refund_date: string;
     reason: string | null;
     credit_note_id: string | null;
+    refund_basis_percent: number | null;
+    order_value_refund_amount: number | null;
+    shipping_refund_amount: number | null;
+    duty_refund_amount: number | null;
     orders: { ref_no: string; company_id: string; buyer_name_address: string | null; status: string } | null;
   }[];
 
@@ -134,6 +138,10 @@ export default async function ReturnsPage({
     refund_date: r.refund_date,
     reason: r.reason,
     category: r.credit_note_id ? "Dispatch & Refund" : "No Dispatch & Refund",
+    refund_basis_percent: r.refund_basis_percent != null ? Number(r.refund_basis_percent) : null,
+    order_value_refund_amount: r.order_value_refund_amount != null ? Number(r.order_value_refund_amount) : null,
+    shipping_refund_amount: r.shipping_refund_amount != null ? Number(r.shipping_refund_amount) : null,
+    duty_refund_amount: r.duty_refund_amount != null ? Number(r.duty_refund_amount) : null,
   }));
 
   const historicalRefundRows = historicalRefunds.map((r) => ({

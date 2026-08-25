@@ -296,16 +296,74 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   return { error: null, success: true };
 }
 
+/**
+ * Sets an order to Returned — the post-delivery counterpart to cancelOrder
+ * above, added 2026-08-25 per the user's own clarification: an order that
+ * was invoiced/dispatched/delivered, and which the buyer then sends back
+ * for a customer-satisfaction refund, was never actually cancelled —
+ * "order to dispatch kar diya cancel thodi hua hai" — so marking it
+ * 'Cancelled' just to unlock the refund screen was the wrong label. This
+ * gives that path its own status (order_status already has 'Returned' —
+ * also used by courier-webhook RTO handling) while the Refund step (via
+ * saveOrderRefund below, unchanged) still runs exactly the same way and
+ * still auto-generates a Credit Note whenever the order has an invoice.
+ */
+export async function returnOrder(orderId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: order } = await supabase.from("orders").select("id, company_id, ref_no, status").eq("id", orderId).single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("orders").update({ status: "Returned" }).eq("id", orderId);
+  if (error) return { error: error.message, success: false };
+
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "order.status_changed",
+    entityType: "order",
+    entityId: order.id,
+    entityLabel: order.ref_no,
+    changes: { status: { from: order.status, to: "Returned" } },
+  });
+  await fireEvent(supabase, "order.status_changed", {
+    orderId: order.id,
+    companyId: order.company_id,
+    refNo: order.ref_no,
+    oldStatus: order.status,
+    newStatus: "Returned",
+  });
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/invoices");
+  return { error: null, success: true };
+}
+
 export type OrderRefundState = { error: string | null; success: { creditNoteNo: string | null } | null };
 
 /**
- * Records a refund against a (normally already-Cancelled) order. Amount is
- * always manually typed — "case-by-case decide karna padta hai", no fixed
- * refund-% rule exists to compute it from. If the order already has an
- * invoice, this ALSO auto-generates a Credit Note for the same amount
- * (the "dispatched+invoiced" automatic path); otherwise it's just the
- * order_refunds row (the "not-yet-dispatched" path — its own small screen,
- * no invoice/Credit Note to tie it to yet).
+ * Records a refund against a (normally already-Cancelled OR Returned)
+ * order. The total amount is always the authoritative, manually-editable
+ * field — "case-by-case decide karna padta hai" — but 2026-08-25 adds an
+ * optional calculator feeding it: a 10-100%-of-order-value dropdown plus
+ * separate Shipping Cost and Duty & Taxes amounts, auto-summed on the
+ * client (order-hold-cancel-actions.tsx) into refund_amount before submit.
+ * The three breakdown pieces are stored alongside the total purely for
+ * reporting/audit — recomputing or validating the sum server-side is
+ * deliberately NOT done, since the total field can always be hand-
+ * overridden after the calculator suggests a number and the breakdown
+ * fields are then just "what the calculator started from", not a promise
+ * that they still sum to the final total.
+ *
+ * If the order already has an invoice, this ALSO auto-generates a Credit
+ * Note for the same amount (the "dispatched+invoiced" automatic path,
+ * covering both the Cancel-before-dispatch-but-already-invoiced case and
+ * the new post-delivery Return case); otherwise it's just the
+ * order_refunds row (the "not-yet-dispatched, never invoiced" path).
  */
 export async function saveOrderRefund(_prev: OrderRefundState, formData: FormData): Promise<OrderRefundState> {
   const employee = await requireCapability("order_entry");
@@ -317,9 +375,31 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   const refundDate = str(formData, "refund_date");
   const reason = strOrNull(formData, "reason");
 
+  // 2026-08-25 — optional breakdown from the refund calculator (see this
+  // function's header comment). All three default to 0 and basisPercent to
+  // null when the calculator wasn't used (plain manual amount entry, the
+  // original behavior) — none of this is required.
+  const basisPercentRaw = str(formData, "refund_basis_percent");
+  const basisPercent = basisPercentRaw ? Number(basisPercentRaw) : null;
+  const orderValueRefundAmount = Number(str(formData, "order_value_refund_amount") || "0") || 0;
+  const shippingRefundAmount = Number(str(formData, "shipping_refund_amount") || "0") || 0;
+  const dutyRefundAmount = Number(str(formData, "duty_refund_amount") || "0") || 0;
+
   if (!orderId) return { error: "Order missing.", success: null };
   if (!Number.isFinite(refundAmount) || refundAmount < 0) return { error: "Refund amount must be a valid number.", success: null };
   if (!refundDate) return { error: "Refund date is required.", success: null };
+
+  // Human-readable breakdown, prepended to the Credit Note remark / kept
+  // alongside the reason — purely informational (the reason field itself is
+  // still whatever the employee typed), so a later reader can see AT A
+  // GLANCE how the total was made up without opening order_refunds' raw
+  // columns. Blank when the calculator wasn't used at all.
+  const breakdownParts: string[] = [];
+  if (basisPercent != null) breakdownParts.push(`Order value @ ${basisPercent}% = ${orderValueRefundAmount.toFixed(2)}`);
+  if (shippingRefundAmount > 0) breakdownParts.push(`Shipping ${shippingRefundAmount.toFixed(2)}`);
+  if (dutyRefundAmount > 0) breakdownParts.push(`Duty & Taxes ${dutyRefundAmount.toFixed(2)}`);
+  const breakdownSummary = breakdownParts.length ? `Refund breakdown: ${breakdownParts.join(" + ")}.` : null;
+  const remarkWithBreakdown = [breakdownSummary, reason].filter(Boolean).join(" ") || null;
 
   const { data: order } = await supabase
     .from("orders")
@@ -353,7 +433,7 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
         refund_amt_inr: refundCurrency === "INR" ? refundAmount : null,
         refund_type: refundAmount >= Number(order.order_value_original) ? "FULL REFUND" : "PARTIAL REFUND",
         created_by_employee_id: employee.id,
-        remark: reason,
+        remark: remarkWithBreakdown,
       })
       .select("id, cn_no")
       .single();
@@ -372,6 +452,10 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
     reason,
     credit_note_id: creditNoteId,
     entry_by_employee_id: employee.id,
+    refund_basis_percent: basisPercent,
+    order_value_refund_amount: orderValueRefundAmount,
+    shipping_refund_amount: shippingRefundAmount,
+    duty_refund_amount: dutyRefundAmount,
   });
   if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
 

@@ -24,6 +24,13 @@ export type OrderRefundRow = {
   refund_date: string;
   reason: string | null;
   category: string;
+  // 2026-08-25 — optional refund-calculator breakdown (see order-hold-
+  // cancel-actions.tsx). Null/0 for rows entered before this or via plain
+  // manual amount entry.
+  refund_basis_percent: number | null;
+  order_value_refund_amount: number | null;
+  shipping_refund_amount: number | null;
+  duty_refund_amount: number | null;
 };
 
 const ORDER_REFUND_COLUMNS: ExportColumn<OrderRefundRow>[] = [
@@ -32,6 +39,10 @@ const ORDER_REFUND_COLUMNS: ExportColumn<OrderRefundRow>[] = [
   { key: "order_status", label: "Order Status", value: (r) => r.order_status },
   { key: "refund_amount", label: "Refund Amount", value: (r) => r.refund_amount },
   { key: "refund_currency", label: "Currency", value: (r) => r.refund_currency },
+  { key: "refund_basis_percent", label: "Refund %", value: (r) => (r.refund_basis_percent != null ? `${r.refund_basis_percent}%` : "") },
+  { key: "order_value_refund_amount", label: "Order Value Refund", value: (r) => (r.order_value_refund_amount || null) },
+  { key: "shipping_refund_amount", label: "Shipping Refund", value: (r) => (r.shipping_refund_amount || null) },
+  { key: "duty_refund_amount", label: "Duty & Tax Refund", value: (r) => (r.duty_refund_amount || null) },
   { key: "refund_date", label: "Refund Date", value: (r) => r.refund_date },
   { key: "reason", label: "Reason", value: (r) => r.reason },
   { key: "category", label: "Category", value: (r) => r.category },

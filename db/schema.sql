@@ -1416,19 +1416,41 @@ CREATE TRIGGER credit_notes_before_insert BEFORE INSERT ON credit_notes
 
 -- Order Hold/Cancel/Refund (pending item 2, 2026-08-08) — see
 -- db/2026-08-08-order-hold-cancel-refund.sql for the full design. One row
--- per refund entered against a cancelled order; credit_note_id is set only
--- for the dispatched-and-invoiced path (application logic decides that,
--- not a DB trigger).
+-- per refund entered against a cancelled OR returned order (see
+-- db/2026-08-25-return-status-and-refund-breakdown.sql); credit_note_id is
+-- set only for the dispatched-and-invoiced path (application logic decides
+-- that, not a DB trigger).
+--
+-- 2026-08-25 — user's own clarification, verbatim: an order with no work
+-- done on it that gets cancelled needs no Credit Note, just a row here
+-- (order.status stays 'Cancelled'). An order that WAS invoiced/dispatched/
+-- delivered, and the buyer returns it post-delivery for a customer-
+-- satisfaction refund, is NOT a cancellation — "order to dispatch kar diya
+-- cancel thodi hua hai" — so that path now sets order.status to 'Returned'
+-- instead (see the returnOrder action, orders/actions.ts) while still
+-- generating a Credit Note exactly like the Cancel path does, keyed off the
+-- same order.invoice_id check. `refund_basis_percent`/`*_refund_amount`
+-- below capture the optional %-of-order-value + shipping + duty/tax
+-- breakdown the refund calculator now offers — `refund_amount` (above)
+-- stays the single authoritative total (auto-filled from the breakdown,
+-- but always manually editable — "case-by-case decide karna padta hai"
+-- remains the rule, this is a convenience calculator, not a rigid formula).
 CREATE TABLE order_refunds (
-  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_id              uuid NOT NULL REFERENCES orders(id),
-  refund_amount         numeric(14,2) NOT NULL CHECK (refund_amount >= 0),
-  refund_currency       varchar(3) NOT NULL REFERENCES currencies(code),
-  refund_date           date NOT NULL,
-  reason                text,
-  credit_note_id        uuid REFERENCES credit_notes(id),
-  entry_by_employee_id  uuid NOT NULL REFERENCES employees(id),
-  created_at            timestamptz NOT NULL DEFAULT now()
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id                  uuid NOT NULL REFERENCES orders(id),
+  refund_amount             numeric(14,2) NOT NULL CHECK (refund_amount >= 0),
+  refund_currency           varchar(3) NOT NULL REFERENCES currencies(code),
+  refund_date               date NOT NULL,
+  reason                    text,
+  credit_note_id            uuid REFERENCES credit_notes(id),
+  entry_by_employee_id      uuid NOT NULL REFERENCES employees(id),
+  -- NULL = fully manual entry, calculator not used. Otherwise the % of
+  -- order_value_original picked from the 10–100% dropdown.
+  refund_basis_percent      numeric(5,2),
+  order_value_refund_amount numeric(14,2) NOT NULL DEFAULT 0,
+  shipping_refund_amount    numeric(14,2) NOT NULL DEFAULT 0,
+  duty_refund_amount        numeric(14,2) NOT NULL DEFAULT 0,
+  created_at                timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_order_refunds_order ON order_refunds(order_id);
 
@@ -1868,6 +1890,21 @@ CREATE INDEX idx_internal_expenses_date    ON internal_expenses(expense_date);
 -- back; refunds are handled by the separate `refunds` table, out of scope
 -- here. This is an assumption, not a confirmed user decision — flag if
 -- Cancelled/Returned handling should differ.
+--
+-- 2026-08-25 UPDATE: this assumption is now more load-bearing than when it
+-- was written. Until today, a post-delivery return/refund was recorded by
+-- marking the order 'Cancelled' (the only status the refund UI unlocked),
+-- so it WAS excluded from revenue here. Now that returns get their own
+-- 'Returned' status (order-hold-cancel-actions.tsx's Return & Refund
+-- button, via the new returnOrder action) while still generating a real
+-- Credit Note, a Returned-and-refunded order's FULL order_value_inr keeps
+-- counting as revenue here even though money went back to the buyer — this
+-- view does not net out credit_notes.refund_amount. Still unresolved,
+-- flagged again: does the user want Returned-order revenue here netted
+-- against its Credit Note(s), or is "sale happened, refund is a separate
+-- line" the intended treatment? Same open question applies to
+-- src/app/dashboard/reports/sale-profit/page.tsx's `.neq("status",
+-- "Cancelled")` order query, which has the identical assumption.
 --
 -- sale_profit_ledger is NOT dropped and NOT ignored: rows with order_id
 -- IS NULL are genuinely historical entries that predate the live `orders`
