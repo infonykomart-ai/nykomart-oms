@@ -99,6 +99,22 @@ export function CompanySwitcher({
     <div className="relative">
       <form action={formAction}>
         <select
+          // 2026-08-25 (round 5 — even the fully-derived `displayValue`
+          // above still showed a stale value live, despite being computed
+          // fresh from `currentCompanyId` every render with no stored copy
+          // at all: verified via raw server HTML that the SERVER was
+          // already correctly rendering the new company while this exact
+          // <select> node in the live browser kept showing the old one).
+          // That points at a DOM-level issue, not a React state/logic one
+          // — likely how the browser applies a new `.value` to a <select>
+          // in the same commit its <option> children also change (1
+          // "Switching…" option swapping for the full 3-option list).
+          // `key` forces React to throw away and recreate the DOM node
+          // instead of patching it whenever the settled value changes, so
+          // the correct value is always what the node is BORN with, never
+          // something applied after the fact — sidesteps the ordering
+          // issue entirely rather than trying to out-think it.
+          key={pending ? `pending-${optimisticPick}` : currentCompanyId}
           name="company_id"
           value={displayValue}
           disabled={pending}
