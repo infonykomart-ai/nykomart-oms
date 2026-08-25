@@ -92,19 +92,33 @@ export function CompanySwitcher({
   // recommended "adjusting state when a prop changes" pattern —
   // https://react.dev/learn/you-might-not-need-an-effect — and this
   // project's lint rules forbid setState-in-effect anyway): track what
-  // currentCompanyId/state were last rendered with, and if either moved,
+  // currentCompanyId/pending were last rendered with, and if either moved,
   // resync `selected` right here before paint instead of one render later.
+  //
+  // 2026-08-25 (found on the SAME live re-test as fix #3 above, after the
+  // prefetch-storm 503s were gone): this used to only resync on a clean
+  // `state.error` response — `if (state.error) setSelected(currentCompanyId)`.
+  // A 503 on the switch's own POST never produces that clean shape (it's an
+  // HTTP/infra-level failure, not a normal action return), so `state` never
+  // changed and that branch never ran — even though the switch had, by then,
+  // actually succeeded server-side (confirmed live: header showed the new
+  // company correctly) the dropdown stayed stuck on whatever was selected
+  // *before* the attempt. There's no scenario where `selected` should stay
+  // out of sync with `currentCompanyId` once `pending` goes back to false —
+  // it exists only to show the pick instantly *during* the request — so the
+  // resync below is unconditional on `pending` finishing, not gated on
+  // `state.error` at all.
   const [selected, setSelected] = useState(currentCompanyId);
   const [prevCompanyId, setPrevCompanyId] = useState(currentCompanyId);
-  const [prevState, setPrevState] = useState(state);
 
   if (currentCompanyId !== prevCompanyId) {
     setPrevCompanyId(currentCompanyId);
     setSelected(currentCompanyId);
   }
-  if (state !== prevState) {
-    setPrevState(state);
-    if (state.error) setSelected(currentCompanyId);
+  if (pending !== prevPending) {
+    // prevPending is already tracked above for the `slow` timer — reuse it
+    // rather than a second copy of the same prev-value bookkeeping.
+    if (!pending) setSelected(currentCompanyId);
   }
 
   if (companies.length <= 1) return null;
