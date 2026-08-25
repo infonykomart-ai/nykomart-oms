@@ -1,0 +1,75 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Nyko Mart, Rugara, and CASA ARRA. All rights reserved.
+
+  Nyko Mart    — D-489, Sector-29, Pratap Nagar, Jaipur-302033, Rajasthan, India
+                 GSTIN 08CVAPS0200H1Z0 · IEC CVAPS0200H
+  Rugara       — D-489, Sector-29, Pratap Nagar, Jaipur-302033, Rajasthan, India
+                 GSTIN 08BDHPL8126K1Z6 · IEC BDHPL8126K
+  CASA ARRA    — Plot No. 80, Ashadeep Green Vatika, Sanganer, Bagru,
+                 Jaipur, RJ-303905, India
+                 GSTIN 08AUXPR4630C1ZA
+
+This software, including its source code, database schema, and all associated
+documentation (collectively, the "Software"), was developed exclusively for
+the internal business operations of Nyko Mart, Rugara, and CASA ARRA
+(collectively, the "Companies") — order management, dispatch and shipment
+tracking, accounting and vendor/bill management, inventory, HR and
+attendance, reporting, and related back-office functions.
+
+1. GRANT OF USE
+
+   The Companies, and employees or contractors authorized by the Companies,
+   may install, run, and use the Software solely for the internal business
+   purposes of the Companies. No other right, license, or permission is
+   granted under this license.
+
+2. RESTRICTIONS
+
+   Except as expressly permitted in Section 1, no person or entity may copy,
+   modify, merge, publish, distribute, sublicense, sell, rent, lease, or
+   otherwise make the Software or any portion of it available to any third
+   party, in source or compiled form, without the prior written consent of
+   an authorized representative of the Companies.
+
+   This restriction applies regardless of how a copy of this repository or
+   the Software was obtained, including via any code-hosting platform on
+   which it may be stored for the Companies' own development and deployment
+   purposes.
+
+3. CONFIDENTIALITY
+
+   The Software embeds and processes confidential and proprietary business
+   information belonging to the Companies, including but not limited to
+   order, vendor, financial, and employee data, business logic, and pricing
+   and vendor terms. Access to the Software's source code does not grant any
+   right to access, retain, or disclose the Companies' underlying business
+   data, which remains confidential regardless of this license.
+
+4. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+5. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE COMPANIES OR ANY CONTRIBUTOR TO THE SOFTWARE BE
+   LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF,
+   OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+6. TERMINATION
+
+   Any use of the Software outside the scope of Section 1, or any breach of
+   Section 2 or 3, automatically terminates the rights granted under this
+   license.
+
+---
+
+This license was drafted as a working default for internal use and has not
+been reviewed by a lawyer. If this repository or the Software will ever be
+shared outside the Companies, licensed to a third party, or used as the
+basis of a dispute, have this license reviewed by a qualified attorney
+before relying on it, and confirm the correct legal entity name(s) to use
+as the named copyright holder(s).
