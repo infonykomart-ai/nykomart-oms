@@ -30,6 +30,15 @@ export default async function DashboardHome() {
           <Link
             key={tile.code}
             href={tile.href}
+            // 2026-08-25: same fix as dashboard-sidebar.tsx's tiles, and the
+            // one actually missed on the first pass — THIS is the /dashboard
+            // route itself, so its own ~20-30 module cards were still
+            // auto-prefetching (full layout+page data per card) on every
+            // single dashboard load even after the sidebar was fixed. Live
+            // Chrome re-test after that first fix showed the identical
+            // request storm/503s, unchanged — this grid was the other half
+            // of it.
+            prefetch={false}
             className="group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
           >
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-xl">
