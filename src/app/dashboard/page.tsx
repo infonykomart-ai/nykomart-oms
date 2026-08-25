@@ -1,6 +1,6 @@
 import { getAuthedEmployee } from "@/lib/auth/require-capability";
 import { CAPABILITY_INFO } from "@/lib/capability-info";
-import Link from "next/link";
+import { NavTile, NavTileGrid } from "@/components/nav-tile";
 
 /**
  * Post-login landing view — a work-summary tile grid of everything the
@@ -25,11 +25,14 @@ export default async function DashboardHome() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {tiles.map((tile) => (
-          <Link
+      <NavTileGrid>
+        {tiles.map((tile, i) => (
+          <NavTile
             key={tile.code}
             href={tile.href}
+            icon={tile.icon}
+            label={tile.label}
+            index={i}
             // 2026-08-25: same fix as dashboard-sidebar.tsx's tiles, and the
             // one actually missed on the first pass — THIS is the /dashboard
             // route itself, so its own ~20-30 module cards were still
@@ -39,18 +42,9 @@ export default async function DashboardHome() {
             // request storm/503s, unchanged — this grid was the other half
             // of it.
             prefetch={false}
-            className="group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-xl">
-              {tile.icon}
-            </div>
-            <h3 className="font-semibold text-slate-900 group-hover:text-amber-600">
-              {tile.label}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">{tile.description}</p>
-          </Link>
+          />
         ))}
-      </div>
+      </NavTileGrid>
 
       {tiles.length === 0 && (
         <p className="text-sm text-slate-500">

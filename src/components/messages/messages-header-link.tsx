@@ -59,7 +59,7 @@ export function MessagesHeaderLink({ meId, initialUnreadCount }: { meId: string;
   }, [supabase, meId]);
 
   return (
-    <Link href="/dashboard/messages" className="relative flex h-9 w-9 items-center justify-center rounded-full text-lg transition hover:bg-slate-100" title="Messages">
+    <Link href="/dashboard/messages" className="oms-icon-btn relative flex h-9 w-9 items-center justify-center rounded-full text-lg" title="Messages">
       💬
       {count > 0 && (
         <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">

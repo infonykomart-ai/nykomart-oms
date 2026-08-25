@@ -68,7 +68,7 @@ export function DashboardHeader({
             Help Center just below (see capability-info.ts). */}
         <Link
           href="/dashboard/settings/theme"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-lg hover:bg-[var(--oms-canvas)]"
+          className="oms-icon-btn flex h-9 w-9 items-center justify-center rounded-lg text-lg"
           title="Theme settings"
         >
           🎨
@@ -78,7 +78,7 @@ export function DashboardHeader({
         {/* 2026-08-12: "sabhi ko apni profile update karne ka option ho" —
             the name/avatar is now a link to the self-service My Profile
             page, open to every signed-in employee. */}
-        <Link href="/dashboard/profile" className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-right transition hover:bg-[var(--oms-canvas)]" title="My Profile">
+        <Link href="/dashboard/profile" className="oms-icon-btn flex items-center gap-2 rounded-lg px-1.5 py-1 text-right" title="My Profile">
           <div>
             <div className="text-sm font-medium leading-tight text-[var(--oms-text)]">{employeeName}</div>
             <div className="text-xs leading-tight text-[var(--oms-text-muted)]">{roleName}</div>

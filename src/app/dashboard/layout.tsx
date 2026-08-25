@@ -13,6 +13,7 @@ import { PresenceProvider } from "@/components/presence/presence-context";
 import { MessageToastProvider } from "@/components/messages/message-toast-provider";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { ThemedShell } from "@/components/theme/themed-shell";
+import { PageTransition } from "@/components/page-transition";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   let employee;
@@ -159,7 +160,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                 />
                 <main className="flex-1 overflow-y-auto p-6">
                   <TodaysCelebrationsBanner celebrations={celebrations} />
-                  {children}
+                  <PageTransition>{children}</PageTransition>
                 </main>
               </div>
             </ThemedShell>

@@ -21,7 +21,7 @@ export function LogoutButton() {
         router.push("/login");
         router.refresh();
       }}
-      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+      className="oms-icon-btn rounded-lg border border-[var(--oms-surface-border)] px-3 py-1.5 text-sm font-medium text-[var(--oms-text-muted)] hover:text-[var(--oms-text)]"
     >
       Logout
     </button>

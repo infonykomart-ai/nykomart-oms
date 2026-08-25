@@ -154,3 +154,149 @@ body {
   --oms-accent: #0ea5a4; /* teal-500 */
   --oms-accent-contrast: #ffffff;
 }
+
+/*
+ * 2026-08-25 — Motion & interaction system.
+ *
+ * User feedback (verbatim, Hinglish, with a screenshot of the home-page
+ * module grid marked up in red): the description line under every nav
+ * tile/button made the whole app look unpolished ("anadi") — "button ki
+ * description jahabhi likhi ho usko remove karna hai", plus a request for
+ * proper button/page motion, inspired by two reference dashboards
+ * (AdminKit's Bootstrap admin theme, Bankdash's MUI fintech dashboard) —
+ * both read as clean, icon-forward, minimally-worded, and give real hover/
+ * click feedback. This section is the shared, theme-aware (every rule
+ * below reads `--oms-*` tokens, so it looks correct in all 5 dashboard
+ * themes, not just the light default) building blocks for that pass:
+ *   - src/components/nav-tile.tsx (new) — the redesigned tile/card used by
+ *     the home dashboard and the HR Letters hub, replacing the old
+ *     hardcoded-slate-and-amber cards that showed a description under
+ *     every title.
+ *   - src/components/page-transition.tsx (new) — wraps the routed page
+ *     content in dashboard/layout.tsx; keyed by pathname so every
+ *     navigation gets the same subtle fade/rise-in below.
+ *   - .oms-icon-btn — the header's small icon buttons (notifications,
+ *     messages, theme, logout) now share one hover/press treatment instead
+ *     of each hand-rolling its own hover-only, non-theme-aware color.
+ *
+ * All motion respects prefers-reduced-motion: reduce (last rule below) —
+ * every animation/transition collapses to an instant, static state for
+ * anyone who's asked their OS for that.
+ */
+
+@keyframes oms-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.oms-page-enter {
+  animation: oms-page-enter 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes oms-tile-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Staggered by --oms-tile-i (set inline per tile, see nav-tile.tsx) so a
+   grid of tiles animates in like a ripple rather than all at once. Capped
+   so a long grid doesn't leave the last row waiting a visible beat. */
+.oms-tile-enter {
+  animation: oms-tile-enter 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: calc(min(var(--oms-tile-i, 0), 10) * 30ms);
+}
+
+.oms-tile {
+  display: block;
+  border-radius: 0.875rem;
+  border: 1px solid var(--oms-surface-border);
+  background: var(--oms-surface);
+  padding: 1.1rem;
+  transition:
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.oms-tile:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--oms-accent) 45%, var(--oms-surface-border));
+  box-shadow: 0 12px 24px -12px color-mix(in srgb, var(--oms-accent) 35%, transparent);
+}
+
+.oms-tile:active {
+  transform: translateY(-1px) scale(0.99);
+  transition-duration: 80ms;
+}
+
+.oms-tile-icon {
+  display: inline-flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  font-size: 1.25rem;
+  background: color-mix(in srgb, var(--oms-accent) 14%, var(--oms-surface));
+  color: var(--oms-accent);
+  transition:
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background 180ms ease;
+}
+
+.oms-tile:hover .oms-tile-icon {
+  transform: scale(1.08);
+  background: color-mix(in srgb, var(--oms-accent) 22%, var(--oms-surface));
+}
+
+/* Shared hover/press treatment for the header's small icon buttons
+   (notifications, messages, theme settings, logout) — same tokens .oms-tile
+   uses, so header and content read as one system instead of the header
+   being hardcoded slate regardless of the active theme. */
+.oms-icon-btn {
+  transition:
+    background-color 150ms ease,
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.oms-icon-btn:hover {
+  background-color: var(--oms-canvas);
+}
+
+.oms-icon-btn:active {
+  transform: scale(0.92);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oms-page-enter,
+  .oms-tile-enter {
+    animation: none;
+  }
+
+  .oms-tile,
+  .oms-tile-icon,
+  .oms-icon-btn {
+    transition: none;
+  }
+
+  .oms-tile:hover,
+  .oms-tile:active {
+    transform: none;
+  }
+
+  .oms-icon-btn:active {
+    transform: none;
+  }
+}
