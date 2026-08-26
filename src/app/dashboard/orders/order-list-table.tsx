@@ -70,32 +70,63 @@ function statusBadgeClass(status: string): string {
 
 const NON_LATE_STATUSES = ["Dispatched", "Delivered", "Cancelled", "Returned"];
 
+// Persisted in the browser (per-device, not synced) so "which columns are
+// hidden" survives a reload — same spirit as an Excel workbook remembering
+// which columns you last hid.
+const COLUMN_VISIBILITY_KEY = "oms-orders-table-hidden-columns-v1";
+
 // Every <td>/<th> in the grid shares this so the gridlines read as one
 // consistent "excel jaisa" sheet instead of a patchwork of borders.
 const CELL = "border border-slate-200 px-2 py-1.5 align-top";
 const HEAD_CELL =
-  "sticky top-0 z-10 border border-amber-200 bg-amber-100 px-2 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-amber-900 whitespace-nowrap";
+  "border border-amber-200 bg-amber-100 px-2 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-amber-900 whitespace-nowrap";
+const FILTER_CELL = "border border-slate-200 bg-white px-1 py-1 align-top";
+const FILTER_INPUT =
+  "w-full min-w-[64px] rounded border border-slate-300 px-1 py-0.5 text-[10px] font-normal normal-case text-slate-700 outline-none focus:border-amber-500";
+
+type ColumnDef = {
+  key: string;
+  label: string;
+  headClass?: string;
+  tdClass?: string;
+  filter: "text" | "select" | "none";
+  filterOptions?: string[];
+  filterValue: (o: OrderRow) => string;
+  cell: (o: OrderRow, idx: number) => React.ReactNode;
+  cellTitle?: (o: OrderRow) => string;
+};
 
 // 2026-08-26 — "isme jo ye order hai jo formate deraha hu us formate me
 // dikhe to ache lage na excel jese": redone from a stack of cards into a
 // real, dense <table> whose columns mirror the spreadsheet layout the user
 // shared (Sn No / Store Name / Remark / Order Date / PO No / PO Date /
 // Delivery Date / Order No / Status / Dispatch Date / Photo / SKU / Sizes /
-// Qty / Item / Vendor / Vendor Date / Recv. Date / Estimated Dispatch Date /
-// Late Order / Buyer Name & Address / Contact No / Email ID / VAT-IOSS & Tax
-// ID / Order Value / Address Type). Everything the old card view could do
-// (inline edit, delete, Hold/Cancel/Refund, WhatsApp notify, per-order
-// Etsy/eBay/Amazon fee-match detail, tracking, refund history, purchased-
-// from) still exists — it's just moved into a collapsible detail row
-// (toggled per-order via the ▾ button in the Actions column) so the main
-// grid itself stays one line per order, exactly like the reference sheet.
+// Qty / Item / Vendor / Buyer Name & Address / Contact No / Email ID /
+// VAT-IOSS & Tax ID / Order Value / Address Type / Late Order). Inline edit,
+// delete, Hold/Cancel/Refund, WhatsApp notify, tracking, refund history and
+// the Etsy/eBay/Amazon fee-match detail all still work — tucked behind a
+// per-row expand toggle so the main grid stays one line per order.
+//
+// 2026-08-26 (same day, round 2) — "ISKO FREEZ KARO OR JO RED MARK KIYA HAI
+// SABHI ME FILTER KA OPTION DO OR EK FILTER SECTION BANAO JISME SABHI COLOM
+// HO LEKIN AGAR USKO HIDE RAKHNA HO TO VO HIDE RAHE": (1) the header is now
+// frozen — the table sits in its own scrollable box (`max-h-[75vh]`) with a
+// `sticky top-0` <thead>, so the column headers stay visible while scrolling
+// through up to 300 rows, exactly like Excel's "Freeze Panes". (2) every
+// column got its own filter box in a second header row (a text box for most
+// columns, a dropdown for Status/Item/Late Order) — these filter the rows
+// client-side, on top of whatever the page-level search/date/status form
+// above already narrowed down. (3) a "Columns" panel (checkboxes, one per
+// column) lets any column be hidden — chosen columns stay hidden across
+// reloads (saved to this browser's localStorage), matching "agar usko hide
+// rakhna ho to vo hide rahe".
 //
 // Three of the reference columns don't have a matching field anywhere in
 // this app's schema — "Vendor Date", "Recv. Date" and "Estimated Dispatch
-// Date" are shown as "—" rather than invented. If these should actually
-// track something real (e.g. the date a Purchase Bill was raised, or a
-// separate ETA distinct from Dispatch Date), that needs its own field
-// added to `orders` first.
+// Date" were left out rather than invented. If these should actually track
+// something real (e.g. the date a Purchase Bill was raised, or a separate
+// ETA distinct from Dispatch Date), that needs its own field added to
+// `orders` first.
 export function OrderListTable({
   orders,
   itemCategories,
@@ -134,11 +165,306 @@ export function OrderListTable({
   const [expandedAmazonFeesId, setExpandedAmazonFeesId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [showColumnPanel, setShowColumnPanel] = useState(false);
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem(COLUMN_VISIBILITY_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? new Set(arr) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
   const partyName = new Map(parties.map((p) => [p.id, p.name]));
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
+  const categoryOptions = Array.from(new Set(itemCategories.map((c) => c.name))).sort();
 
-  const COLUMN_COUNT = 23; // data columns in the main row (excludes the trailing Actions column) — keep in sync with the <th> list below
+  function persistHidden(next: Set<string>) {
+    setHiddenKeys(next);
+    try {
+      window.localStorage.setItem(COLUMN_VISIBILITY_KEY, JSON.stringify(Array.from(next)));
+    } catch {
+      // localStorage can throw in private-browsing/blocked-storage contexts —
+      // the panel still works for this page view, it just won't persist.
+    }
+  }
+  function toggleColumn(key: string) {
+    const next = new Set(hiddenKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    persistHidden(next);
+  }
+
+  function vendorText(o: OrderRow): string {
+    if (purchasesByOrder[o.id]) return purchasesByOrder[o.id].map((p) => p.vendorName).join(", ");
+    if (o.vendor_party_id) return `${partyName.get(o.vendor_party_id) ?? "—"} (planned)`;
+    return "";
+  }
+
+  function vatIossTax(o: OrderRow): string {
+    const parts = [
+      o.tax_id ? `Tax ${o.tax_id}` : "",
+      o.vat_number ? `VAT ${o.vat_number}` : "",
+      o.ioss_number ? `IOSS ${o.ioss_number}` : "",
+      o.eori_number ? `EORI ${o.eori_number}` : "",
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : "";
+  }
+
+  function isLate(o: OrderRow): boolean {
+    return !!o.dispatch_date && o.dispatch_date < todayStr && !NON_LATE_STATUSES.includes(o.status);
+  }
+
+  // Column definitions drive the header row, the per-column filter row, the
+  // Columns show/hide panel, and every data cell — one source of truth so
+  // "add/hide/filter a column" never needs touching 3 different places.
+  const ALL_COLUMNS: ColumnDef[] = [
+    {
+      key: "sn",
+      label: "Sn No.",
+      filter: "none",
+      tdClass: "text-slate-400",
+      filterValue: () => "",
+      cell: (_o, idx) => idx + 1,
+    },
+    {
+      key: "store",
+      label: "Store Name",
+      filter: "text",
+      tdClass: "whitespace-nowrap font-medium text-slate-700",
+      filterValue: (o) => companyName.get(o.company_id) ?? "",
+      cell: (o) => companyName.get(o.company_id) ?? "—",
+    },
+    {
+      key: "remark",
+      label: "Remark",
+      filter: "text",
+      tdClass: "max-w-[160px] truncate",
+      filterValue: (o) => o.remark ?? "",
+      cellTitle: (o) => o.remark ?? "",
+      cell: (o) => o.remark || "—",
+    },
+    {
+      key: "orderDate",
+      label: "Order Date",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.order_date ?? "",
+      cell: (o) => o.order_date,
+    },
+    {
+      key: "poNo",
+      label: "PO No.",
+      filter: "text",
+      tdClass: "whitespace-nowrap font-semibold text-slate-900",
+      filterValue: (o) => o.ref_no ?? "",
+      cell: (o) => o.ref_no,
+    },
+    {
+      key: "poDate",
+      label: "PO Date",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.po_date ?? "",
+      cell: (o) => o.po_date || "—",
+    },
+    {
+      key: "deliveryDate",
+      label: "Delivery Date",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.delivery_date ?? "",
+      cell: (o) => o.delivery_date || "—",
+    },
+    {
+      key: "orderNo",
+      label: "Order No.",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.marketplace_order_no ?? "",
+      cell: (o) => o.marketplace_order_no || "—",
+    },
+    {
+      key: "status",
+      label: "Status",
+      headClass: "bg-sky-100 text-sky-900",
+      filter: "select",
+      filterOptions: statuses,
+      filterValue: (o) => o.status,
+      cell: (o) => (
+        <div className="flex flex-col items-start gap-1">
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(o.status)}`}>{o.status}</span>
+          {o.whatsapp_sent_at && (
+            <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">✓ WA sent</span>
+          )}
+          {o.invoice_id && <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">Invoiced</span>}
+          {o.shipment_status && o.shipment_status !== "Order Placed" && (
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${shipmentBadgeClass(o.shipment_status)}`}>
+              🚚 {o.shipment_status}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "dispatchDate",
+      label: "Dispatch Date",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.dispatch_date ?? "",
+      cell: (o) => o.dispatch_date || "—",
+    },
+    {
+      key: "photo",
+      label: "Photo",
+      filter: "none",
+      tdClass: "print:hidden",
+      filterValue: () => "",
+      cell: (o) => <OrderPhotoThumb photoUrl={o.photo_url} className="h-10 w-10" />,
+    },
+    {
+      key: "sku",
+      label: "SKU",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.sku_label ?? "",
+      cell: (o) => o.sku_label || "—",
+    },
+    {
+      key: "sizes",
+      label: "Sizes",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.size_label ?? "",
+      cell: (o) => o.size_label || "—",
+    },
+    {
+      key: "qty",
+      label: "Qty",
+      filter: "text",
+      tdClass: "text-right",
+      filterValue: (o) => String(o.qty),
+      cell: (o) => o.qty,
+    },
+    {
+      key: "item",
+      label: "Item",
+      filter: "select",
+      filterOptions: categoryOptions,
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => categoryName.get(o.item_category_id) ?? "",
+      cell: (o) => categoryName.get(o.item_category_id) ?? "—",
+    },
+    {
+      key: "vendor",
+      label: "Vendor",
+      filter: "text",
+      tdClass: "max-w-[160px] truncate",
+      filterValue: vendorText,
+      cell: (o) => vendorText(o) || "—",
+    },
+    {
+      key: "buyer",
+      label: "Buyer Name & Address",
+      filter: "text",
+      tdClass: "max-w-[200px] truncate",
+      filterValue: (o) => o.buyer_name_address ?? "",
+      cellTitle: (o) => o.buyer_name_address ?? "",
+      cell: (o) => o.buyer_name_address || "—",
+    },
+    {
+      key: "contact",
+      label: "Contact No.",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.contact_no ?? "",
+      cell: (o) => o.contact_no || "—",
+    },
+    {
+      key: "email",
+      label: "Email ID",
+      filter: "text",
+      tdClass: "max-w-[160px] truncate",
+      filterValue: (o) => o.email_id ?? "",
+      cell: (o) => o.email_id || "—",
+    },
+    {
+      key: "vatTax",
+      label: "VAT/IOSS & Tax ID",
+      filter: "text",
+      tdClass: "max-w-[160px] truncate",
+      filterValue: vatIossTax,
+      cellTitle: (o) => vatIossTax(o) || "—",
+      cell: (o) => vatIossTax(o) || "—",
+    },
+    {
+      key: "orderValue",
+      label: "Order Value",
+      filter: "text",
+      tdClass: "whitespace-nowrap text-right",
+      filterValue: (o) => `${o.order_value_original} ${o.order_currency}`,
+      cell: (o) => `${o.order_value_original} ${o.order_currency}`,
+    },
+    {
+      key: "addressType",
+      label: "Address Type",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.address_type ?? "",
+      cell: (o) => o.address_type || "—",
+    },
+    {
+      key: "lateOrder",
+      label: "Late Order",
+      headClass: "bg-red-100 text-red-900",
+      filter: "select",
+      filterOptions: ["Late", "Not Late"],
+      filterValue: (o) => (isLate(o) ? "Late" : "Not Late"),
+      cell: (o) =>
+        isLate(o) ? (
+          <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">⚠️ Late</span>
+        ) : (
+          <span className="text-slate-300">—</span>
+        ),
+    },
+  ];
+
+  const visibleColumns = ALL_COLUMNS.filter((c) => !hiddenKeys.has(c.key));
+  const activeFilterCount = Object.values(filters).filter(Boolean).length + (globalSearch.trim() ? 1 : 0);
+
+  function clearFilters() {
+    setFilters({});
+    setGlobalSearch("");
+  }
+
+  // 2026-08-26 — "SEARCH BAAR BHI JISME ORDER SE RELATED KUCH BHI SUCH KARO
+  // US SE RELATED DATA NIKAL KE AAJAYE": one search box that matches ANY
+  // column's value (buyer, PO no, SKU, vendor, email, remark, whatever) —
+  // reuses every column's own filterValue() so this never drifts out of
+  // sync with what the column filters below already know how to read off
+  // an order. Column filters still narrow further on top of this.
+  const matchesGlobalSearch = (o: OrderRow): boolean => {
+    const term = globalSearch.trim().toLowerCase();
+    if (!term) return true;
+    return ALL_COLUMNS.some((c) => c.filter !== "none" && c.filterValue(o).toLowerCase().includes(term));
+  };
+
+  const filteredOrders = orders.filter(
+    (o) =>
+      matchesGlobalSearch(o) &&
+      ALL_COLUMNS.every((c) => {
+        if (c.filter === "none") return true;
+        const val = filters[c.key];
+        if (!val) return true;
+        const fv = c.filterValue(o);
+        if (c.filter === "select") return fv === val;
+        return fv.toLowerCase().includes(val.toLowerCase());
+      })
+  );
 
   type ExportRow = {
     ref_no: string;
@@ -154,7 +480,7 @@ export function OrderListTable({
     dispatch_date: string | null;
     purchased_from: string;
   };
-  const exportRows: ExportRow[] = orders.map((o) => ({
+  const exportRows: ExportRow[] = filteredOrders.map((o) => ({
     ref_no: o.ref_no,
     order_date: o.order_date,
     status: o.status,
@@ -194,20 +520,6 @@ export function OrderListTable({
     });
   }
 
-  function vatIossTax(o: OrderRow): string {
-    const parts = [
-      o.tax_id ? `Tax ${o.tax_id}` : "",
-      o.vat_number ? `VAT ${o.vat_number}` : "",
-      o.ioss_number ? `IOSS ${o.ioss_number}` : "",
-      o.eori_number ? `EORI ${o.eori_number}` : "",
-    ].filter(Boolean);
-    return parts.length ? parts.join(" · ") : "—";
-  }
-
-  function isLate(o: OrderRow): boolean {
-    return !!o.dispatch_date && o.dispatch_date < todayStr && !NON_LATE_STATUSES.includes(o.status);
-  }
-
   const hasExtraDetail = (o: OrderRow) =>
     !!(
       purchasesByOrder[o.id] ||
@@ -221,46 +533,137 @@ export function OrderListTable({
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between print:hidden">
-        <p className="text-sm text-slate-500">{orders.length} order{orders.length === 1 ? "" : "s"}</p>
-        <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 print:hidden">
+        <p className="text-sm text-slate-500">
+          {filteredOrders.length === orders.length
+            ? `${orders.length} order${orders.length === 1 ? "" : "s"}`
+            : `${filteredOrders.length} of ${orders.length} orders (filtered)`}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">🔍</span>
+            <input
+              type="text"
+              value={globalSearch}
+              onChange={(e) => setGlobalSearch(e.target.value)}
+              placeholder="Search anything — buyer, PO no, SKU, vendor, email…"
+              className="w-72 rounded-lg border border-slate-300 bg-white py-1.5 pl-7 pr-7 text-xs outline-none focus:border-amber-500"
+            />
+            {globalSearch && (
+              <button
+                type="button"
+                onClick={() => setGlobalSearch("")}
+                title="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowColumnPanel((v) => !v)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${
+              showColumnPanel ? "border-amber-300 bg-amber-100 text-amber-700" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            🧱 Columns{hiddenKeys.size ? ` (${hiddenKeys.size} hidden)` : ""}
+          </button>
+          {activeFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100"
+            >
+              ✕ Clear Filters ({activeFilterCount})
+            </button>
+          )}
+          <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
+        </div>
       </div>
+
+      {showColumnPanel && (
+        <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3 print:hidden">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-600">Show / hide columns — hidden columns stay hidden next time too</p>
+            <button type="button" onClick={() => persistHidden(new Set())} className="text-[11px] font-medium text-amber-700 underline">
+              Show all
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {ALL_COLUMNS.map((c) => (
+              <label key={c.key} className="flex items-center gap-1.5 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={!hiddenKeys.has(c.key)}
+                  onChange={() => toggleColumn(c.key)}
+                  className="h-3.5 w-3.5 rounded border-slate-300"
+                />
+                {c.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {orders.length === 0 ? (
         <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">No orders found.</p>
       ) : (
         <PrintArea id="orders-print-area">
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
+          {/* max-h + overflow-auto turns this into its own scroll box so the
+              sticky <thead> below acts as a frozen header row/pane, like
+              Excel's Freeze Panes — "ISKO FREEZ KARO". */}
+          <div className="oms-scroll max-h-[75vh] overflow-auto rounded-xl border border-slate-200">
             <table className="w-full min-w-[2200px] border-collapse text-xs">
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr>
-                  <th className={HEAD_CELL}>Sn No.</th>
-                  <th className={HEAD_CELL}>Store Name</th>
-                  <th className={HEAD_CELL}>Remark</th>
-                  <th className={HEAD_CELL}>Order Date</th>
-                  <th className={HEAD_CELL}>PO No.</th>
-                  <th className={HEAD_CELL}>PO Date</th>
-                  <th className={HEAD_CELL}>Delivery Date</th>
-                  <th className={HEAD_CELL}>Order No.</th>
-                  <th className={`${HEAD_CELL} bg-sky-100 text-sky-900`}>Status</th>
-                  <th className={HEAD_CELL}>Dispatch Date</th>
-                  <th className={HEAD_CELL}>Photo</th>
-                  <th className={HEAD_CELL}>SKU</th>
-                  <th className={HEAD_CELL}>Sizes</th>
-                  <th className={HEAD_CELL}>Qty</th>
-                  <th className={HEAD_CELL}>Item</th>
-                  <th className={HEAD_CELL}>Vendor</th>
-                  <th className={HEAD_CELL}>Buyer Name &amp; Address</th>
-                  <th className={HEAD_CELL}>Contact No.</th>
-                  <th className={HEAD_CELL}>Email ID</th>
-                  <th className={HEAD_CELL}>VAT/IOSS &amp; Tax ID</th>
-                  <th className={HEAD_CELL}>Order Value</th>
-                  <th className={HEAD_CELL}>Address Type</th>
-                  <th className={`${HEAD_CELL} bg-red-100 text-red-900`}>Late Order</th>
+                  {visibleColumns.map((c) => (
+                    <th key={c.key} className={`${HEAD_CELL} ${c.headClass ?? ""}`}>
+                      {c.label}
+                    </th>
+                  ))}
                   <th className={`${HEAD_CELL} print:hidden`}>Actions</th>
+                </tr>
+                <tr>
+                  {visibleColumns.map((c) => (
+                    <th key={c.key} className={FILTER_CELL}>
+                      {c.filter === "text" && (
+                        <input
+                          type="text"
+                          value={filters[c.key] ?? ""}
+                          onChange={(e) => setFilters((prev) => ({ ...prev, [c.key]: e.target.value }))}
+                          placeholder="Filter…"
+                          className={FILTER_INPUT}
+                        />
+                      )}
+                      {c.filter === "select" && (
+                        <select
+                          value={filters[c.key] ?? ""}
+                          onChange={(e) => setFilters((prev) => ({ ...prev, [c.key]: e.target.value }))}
+                          className={FILTER_INPUT}
+                        >
+                          <option value="">All</option>
+                          {(c.filterOptions ?? []).map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </th>
+                  ))}
+                  <th className={`${FILTER_CELL} print:hidden`} />
                 </tr>
               </thead>
               <tbody>
-                {orders.map((o, idx) => {
+                {filteredOrders.length === 0 && (
+                  <tr>
+                    <td className={CELL} colSpan={visibleColumns.length + 1}>
+                      <p className="p-2 text-center text-slate-400">No orders match the current search / column filters.</p>
+                    </td>
+                  </tr>
+                )}
+                {filteredOrders.map((o, idx) => {
                   const late = isLate(o);
                   const rowBg = o.whatsapp_sent_at
                     ? "bg-green-50"
@@ -273,7 +676,7 @@ export function OrderListTable({
                     <FragmentRow key={o.id}>
                       {editingId === o.id ? (
                         <tr>
-                          <td className={CELL} colSpan={COLUMN_COUNT + 1}>
+                          <td className={CELL} colSpan={visibleColumns.length + 1}>
                             <OrderEditForm
                               order={o}
                               itemCategories={itemCategories}
@@ -287,68 +690,15 @@ export function OrderListTable({
                         </tr>
                       ) : (
                         <tr className={`${rowBg} hover:bg-amber-50/60`}>
-                          <td className={`${CELL} text-slate-400`}>{idx + 1}</td>
-                          <td className={`${CELL} whitespace-nowrap font-medium text-slate-700`}>
-                            {companyName.get(o.company_id) ?? "—"}
-                          </td>
-                          <td className={`${CELL} max-w-[160px] truncate`} title={o.remark ?? ""}>
-                            {o.remark || "—"}
-                          </td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.order_date}</td>
-                          <td className={`${CELL} whitespace-nowrap font-semibold text-slate-900`}>{o.ref_no}</td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.po_date || "—"}</td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.delivery_date || "—"}</td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.marketplace_order_no || "—"}</td>
-                          <td className={CELL}>
-                            <div className="flex flex-col items-start gap-1">
-                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(o.status)}`}>{o.status}</span>
-                              {o.whatsapp_sent_at && (
-                                <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">✓ WA sent</span>
-                              )}
-                              {o.invoice_id && (
-                                <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">Invoiced</span>
-                              )}
-                              {o.shipment_status && o.shipment_status !== "Order Placed" && (
-                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${shipmentBadgeClass(o.shipment_status)}`}>
-                                  🚚 {o.shipment_status}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.dispatch_date || "—"}</td>
-                          <td className={`${CELL} print:hidden`}>
-                            <OrderPhotoThumb photoUrl={o.photo_url} className="h-10 w-10" />
-                          </td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.sku_label || "—"}</td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.size_label || "—"}</td>
-                          <td className={`${CELL} text-right`}>{o.qty}</td>
-                          <td className={`${CELL} whitespace-nowrap`}>{categoryName.get(o.item_category_id) ?? "—"}</td>
-                          <td className={`${CELL} max-w-[160px] truncate`}>
-                            {purchasesByOrder[o.id]
-                              ? purchasesByOrder[o.id].map((p) => p.vendorName).join(", ")
-                              : o.vendor_party_id
-                                ? `${partyName.get(o.vendor_party_id) ?? "—"} (planned)`
-                                : "—"}
-                          </td>
-                          <td className={`${CELL} max-w-[200px] truncate`} title={o.buyer_name_address ?? ""}>
-                            {o.buyer_name_address || "—"}
-                          </td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.contact_no || "—"}</td>
-                          <td className={`${CELL} max-w-[160px] truncate`}>{o.email_id || "—"}</td>
-                          <td className={`${CELL} max-w-[160px] truncate`} title={vatIossTax(o)}>
-                            {vatIossTax(o)}
-                          </td>
-                          <td className={`${CELL} whitespace-nowrap text-right`}>
-                            {o.order_value_original} {o.order_currency}
-                          </td>
-                          <td className={`${CELL} whitespace-nowrap`}>{o.address_type || "—"}</td>
-                          <td className={CELL}>
-                            {late ? (
-                              <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">⚠️ Late</span>
-                            ) : (
-                              <span className="text-slate-300">—</span>
-                            )}
-                          </td>
+                          {visibleColumns.map((c) => (
+                            <td
+                              key={c.key}
+                              className={`${CELL} ${c.tdClass ?? ""}`}
+                              title={c.cellTitle ? c.cellTitle(o) : undefined}
+                            >
+                              {c.cell(o, idx)}
+                            </td>
+                          ))}
                           <td className={`${CELL} print:hidden`}>
                             <div className="flex items-center gap-1 whitespace-nowrap">
                               <Link
@@ -395,7 +745,7 @@ export function OrderListTable({
 
                       {expandedId === o.id && editingId !== o.id && (
                         <tr className={rowBg}>
-                          <td className={`${CELL} print:hidden`} colSpan={COLUMN_COUNT + 1}>
+                          <td className={`${CELL} print:hidden`} colSpan={visibleColumns.length + 1}>
                             <div className="flex flex-wrap items-start justify-between gap-4 p-2">
                               <div className="min-w-0 flex-1 space-y-1.5">
                                 {purchasesByOrder[o.id] ? (
