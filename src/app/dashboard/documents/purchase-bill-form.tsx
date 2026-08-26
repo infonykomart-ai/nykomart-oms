@@ -8,6 +8,7 @@ import { groupPartyOptions, type PartyOption } from "./party-options";
 import { UnitSelect } from "@/components/unit-select";
 import { toFeet, type LengthUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
+import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -48,6 +49,12 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   const [sqFeetInput, setSqFeetInput] = useState("");
   const [sqFeetUnit, setSqFeetUnit] = useState<LengthUnit>("FT");
   const sqFeetConverted = sqFeetInput ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
+
+  // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
+  // below can fill both in directly; still freely editable by hand same as
+  // before.
+  const [qtyInput, setQtyInput] = useState("1");
+  const [unitRateInput, setUnitRateInput] = useState("");
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
@@ -111,8 +118,24 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
         </div>
         <div>
           <label className={labelClass} htmlFor="pb_qty">Qty</label>
-          <input id="pb_qty" name="qty" type="number" defaultValue={1} className={inputClass} />
+          <input
+            id="pb_qty"
+            name="qty"
+            type="number"
+            value={qtyInput}
+            onChange={(e) => setQtyInput(e.target.value)}
+            className={inputClass}
+          />
         </div>
+        <PurchaseBillRateHelper
+          qty={Number(qtyInput) || 0}
+          unitIsFt={sqFeetUnit === "FT"}
+          onApply={(sqFeet, unitRate) => {
+            setSqFeetInput(String(sqFeet));
+            setUnitRateInput(String(unitRate));
+          }}
+          idPrefix="pb"
+        />
         <div>
           <label className={labelClass} htmlFor="pb_sqfeet">Sq. Feet</label>
           <div className="flex gap-1.5">
@@ -134,7 +157,15 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
         </div>
         <div>
           <label className={labelClass} htmlFor="pb_rate">Unit Rate {sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
-          <input id="pb_rate" name="unit_rate" type="number" step="0.01" className={inputClass} />
+          <input
+            id="pb_rate"
+            name="unit_rate"
+            type="number"
+            step="0.01"
+            value={unitRateInput}
+            onChange={(e) => setUnitRateInput(e.target.value)}
+            className={inputClass}
+          />
         </div>
         <div className="col-span-2">
           <label className={labelClass} htmlFor="pb_desc">Work Description</label>

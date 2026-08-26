@@ -139,7 +139,12 @@ export function parseSizeToSqFt(raw: string | null | undefined): SizeParseResult
   if (!s) return { sqFt: null, reason: "empty-after-strip" };
 
   const globalUnit = findGlobalUnit(s);
-  const parts = s.split(/\s*x\s*/i).filter((p) => p.trim() !== "");
+  // 2026-08-26: some vendor purchase bills write the dimension with "*"
+  // instead of "x" (e.g. "3*90 FT", straight from a real bill) — accepted
+  // alongside "x"/"X"/"×" as the same separator, purely additive (no
+  // historical Size value used "*", so this can't change any existing
+  // result, only recognize a new one).
+  const parts = s.split(/\s*[x×*]\s*/i).filter((p) => p.trim() !== "");
 
   if (parts.length === 2) {
     const d1 = parseToken(parts[0], globalUnit);
