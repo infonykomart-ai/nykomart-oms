@@ -860,7 +860,59 @@ export async function lookupOrderForPurchaseBill(refNo: string): Promise<Purchas
   };
 }
 
-export type PurchaseBillMultiLine = { orderId: string; qty: number; sqFeet: number };
+// 2026-08-26 — "PO NO select karne ka option nahi aata ek ek kar ke karna
+// padta hai jisse kaafi time consume hota hai" — the multi-PO picker above
+// required typing the FULL exact ref_no (lookupOrderForPurchaseBill uses
+// plain ILIKE, no wildcards — exact match only) with no way to browse or
+// autocomplete. This is the typeahead search behind that: partial ref_no,
+// several candidates back, so the picker can show a dropdown to click
+// instead of needing the whole number memorized. Deliberately lightweight
+// (no existingBillCount/suggested_sq_feet here — those still come from
+// lookupOrderForPurchaseBill once a specific result is actually picked,
+// reusing that already-proven lookup rather than duplicating its logic).
+export type PurchaseOrderSearchHit = {
+  id: string;
+  ref_no: string;
+  size_label: string | null;
+  item_category_name: string | null;
+};
+
+export async function searchOrdersForPurchaseBill(query: string): Promise<PurchaseOrderSearchHit[]> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const { data } = await supabase
+    .from("orders")
+    .select("id, ref_no, size_label, item_categories(name)")
+    .ilike("ref_no", `%${trimmed}%`)
+    .in("company_id", employee.companyIds)
+    .order("ref_no")
+    .limit(15);
+
+  return (data ?? []).map((order) => {
+    const category = order.item_categories as unknown as { name: string } | { name: string }[] | null;
+    return {
+      id: order.id,
+      ref_no: order.ref_no,
+      size_label: order.size_label,
+      item_category_name: Array.isArray(category) ? category[0]?.name ?? null : category?.name ?? null,
+    };
+  });
+}
+
+// 2026-08-26 — "purchase party ek baar choose kar ke invoice no daal de
+// invoice date daal de PO NO select karne ka option aaye har PO me alag
+// alag rate aayegi baaki fourmula vahi rahega" — Unit Rate used to be ONE
+// value shared across every order on the invoice (2026-08-17 decision, see
+// this form's own header comment); real vendor invoices don't always price
+// every PO the same per sq ft, so rate is now per-line like Qty/Sq. Feet
+// already were. qty_unit stays shared (still just one FT/MTR/etc across
+// the whole invoice) — that part of the original 2026-08-17 fix (don't mix
+// units under one invoice) is unrelated to this and still holds.
+export type PurchaseBillMultiLine = { orderId: string; qty: number; sqFeet: number; unitRate: number };
 export type PurchaseBillMultiState = {
   error: string | null;
   results: { orderId: string; ok: boolean; docNo: string | null; error: string | null }[] | null;
@@ -874,11 +926,10 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
   const vendorInvoiceNo = str(formData, "vendor_invoice_no");
   const vendorInvoiceDate = strOrNull(formData, "vendor_invoice_date");
   const workDescription = strOrNull(formData, "work_description");
-  const unitRate = numOrZero(formData, "unit_rate");
-  // 2026-08-17 — ONE shared unit for the whole invoice (see
-  // purchase-bill-multi-form.tsx's header comment): unit_rate above is a
-  // single rate shared across every line, so every line's qty must be in
-  // the same unit that rate was quoted in — not a per-line choice.
+  // 2026-08-26 — unit_rate is no longer shared (see PurchaseBillMultiLine's
+  // comment above) — each line carries its own rate now. qty_unit is still
+  // shared: ONE unit for the whole invoice, so every line's Sq. Feet stays
+  // comparable (see purchase-bill-multi-form.tsx's header comment).
   const qtyUnit = str(formData, "qty_unit") || "FT";
   const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
   const gstType = strOrNull(formData, "gst_type");
@@ -906,7 +957,7 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
       sqFeet: line.sqFeet || 0,
       qtyUnit,
       workDescription,
-      unitRate,
+      unitRate: line.unitRate || 0,
       orderId: line.orderId,
       gstRatePct,
       gstType,
@@ -1108,8 +1159,53 @@ export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
     }
     companyId = order.company_id;
   }
+
+  // 2026-08-26 — "koi entry delete kar de to jaha jaha reflect hui hai
+  // vaha se automatic hat jaye": deleting a Purchase Bill left its
+  // auto-mirrored bill_pass_register row (source='purchase_bill',
+  // savePurchaseBillCore) behind untouched — the bill vanished from
+  // Documents but kept showing in Bill Payment / Party Ledger forever,
+  // pointing at a purchase_bills row that no longer existed. updatePurchaseBill
+  // already re-syncs this mirror on EDIT (2026-08-18 fix); delete never got
+  // the equivalent fix until now.
+  //
+  // Not a blind cascade, though: bill_pass_register_payments references
+  // this mirror ON DELETE CASCADE, and there is no UI anywhere in this app
+  // to remove a recorded payment — so if money has actually been paid
+  // against this bill, silently deleting the mirror would silently erase
+  // real payment history with it. That case blocks instead, same
+  // "unlink first" convention deleteCreditNote already uses for its own
+  // bill_pass_register link — except here there's genuinely nothing to
+  // unlink from the UI yet, so the message says so plainly rather than
+  // sending the user looking for a button that doesn't exist.
+  const { data: mirrorRow } = await supabase
+    .from("bill_pass_register")
+    .select("id, total_paid")
+    .eq("source", "purchase_bill")
+    .eq("source_id", id)
+    .maybeSingle();
+
+  if (mirrorRow) {
+    const { count: paymentCount } = await supabase
+      .from("bill_pass_register_payments")
+      .select("id", { count: "exact", head: true })
+      .eq("bill_pass_register_id", mirrorRow.id);
+
+    if ((paymentCount ?? 0) > 0 || Number(mirrorRow.total_paid) > 0) {
+      return {
+        error:
+          "This Purchase Bill has payment(s) already recorded against it in Bill Payment — it can't be deleted without also losing that payment history. Contact an admin to resolve the Finance entry first.",
+        success: false,
+      };
+    }
+  }
+
   const { error } = await supabase.from("purchase_bills").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+
+  if (mirrorRow) {
+    await supabase.from("bill_pass_register").delete().eq("id", mirrorRow.id);
+  }
 
   await logAudit(supabase, {
     companyId,
@@ -1122,6 +1218,7 @@ export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
   });
 
   revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };
 }
 

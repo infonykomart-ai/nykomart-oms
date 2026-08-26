@@ -4,14 +4,33 @@
 // PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE ORDER ME PATA CHAL RHA HAI
 // KI KITNE SQ FT MAAL HUA AGAR CM ME HAI TO USKO DEKHE... RATE MANUAL KAR
 // DO" — one vendor invoice commonly covers several PO/RF/RG orders. Search
-// and add as many orders as the invoice covers, fill the vendor/invoice/
-// rate ONCE (shared across all of them), and get one purchase_bills row
-// per order. sq ft is suggested from each order's own Size field via
+// and add as many orders as the invoice covers, fill the vendor/invoice
+// ONCE (shared across all of them), and get one purchase_bills row per
+// order. sq ft is suggested from each order's own Size field via
 // src/lib/size-parser.ts (handles ft/in/cm/m + mixed compound notation)
 // but stays a plain editable number — never silently trusted.
-import { useState, useTransition } from "react";
+//
+// 2026-08-26 — two real complaints on this form: (1) "PO NO select karne
+// ka option nahi aata ek ek kar ke karna padta hai jisse kaafi time
+// consume hota hai" — adding an order required typing its FULL exact
+// ref_no (lookupOrderForPurchaseBill is an exact ILIKE match, no
+// wildcards); now typing 2+ characters shows a dropdown of matches to
+// click instead of needing the whole number memorized. (2) "har PO me alag
+// alag rate aayegi baaki fourmula vahi rahega" — Unit Rate used to be ONE
+// value shared across every order (see the 2026-08-17 note below, now
+// superseded); real vendor invoices don't always price every PO the same
+// per sq ft, so each order now gets its own rate. qty_unit is still
+// shared — that part of the 2026-08-17 fix (don't silently mix units
+// under one shared invoice) is a separate concern and still holds.
+import { useRef, useState, useTransition } from "react";
 import { useActionState } from "react";
-import { lookupOrderForPurchaseBill, savePurchaseBillMulti, type PurchaseBillMultiState } from "./actions";
+import {
+  lookupOrderForPurchaseBill,
+  savePurchaseBillMulti,
+  searchOrdersForPurchaseBill,
+  type PurchaseBillMultiState,
+  type PurchaseOrderSearchHit,
+} from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { UnitSelect } from "@/components/unit-select";
 import type { LengthUnit } from "@/lib/length-units";
@@ -30,6 +49,7 @@ type PickedOrder = {
   qty: number;
   sqFeetAuto: boolean; // true while sqFeetDisplay still reflects the parser's own suggestion, not a manual edit
   sqFeetDisplay: string; // the quantity as typed, in the form's ONE shared unit (see sharedUnit below)
+  unitRateInput: string; // 2026-08-26 — per-order now, no longer one shared rate
   alreadyBilled: number;
 };
 
@@ -39,23 +59,58 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
   const [query, setQuery] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [isLooking, startLookup] = useTransition();
+  const [isSearching, startSearch] = useTransition();
+  const [searchResults, setSearchResults] = useState<PurchaseOrderSearchHit[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [orders, setOrders] = useState<PickedOrder[]>([]);
-  // 2026-08-17 — ONE shared unit for the whole invoice, not per-line: Unit
-  // Rate below is a SINGLE rate shared across every order on this invoice
-  // (that's the whole point of the multi-PO form — one vendor bill covers
-  // many orders), and a rate only means one thing if every line's quantity
-  // is in the same unit that rate was quoted in. Real bug found live (see
-  // db/2026-08-17-purchase-bills-qty-unit.sql): letting each line pick its
-  // own unit while sharing one rate silently mixed units under one price.
+  // 2026-08-17 — ONE shared unit for the whole invoice, not per-line: every
+  // order's Sq. Feet quantity is in this same unit — mixing units under one
+  // invoice silently produced wrong totals before this was shared (real bug
+  // found live, see db/2026-08-17-purchase-bills-qty-unit.sql). Unit Rate
+  // itself is no longer shared (2026-08-26) — only the unit is.
   const [sharedUnit, setSharedUnit] = useState<LengthUnit>("FT");
-  // GST is also shared across the whole invoice, same reasoning as rate/unit.
+  // GST is also shared across the whole invoice, same reasoning as unit.
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
+  const [bulkRate, setBulkRate] = useState("");
 
-  function handleAdd() {
+  function addOrder(order: {
+    id: string;
+    ref_no: string;
+    size_label: string | null;
+    qty: number;
+    item_category_name: string | null;
+    suggested_sq_feet: number | null;
+  }, existingBillCount: number) {
+    // suggested_sq_feet comes from the order's own Size field, parsed in
+    // FEET (src/lib/size-parser.ts) — only usable as-is when the shared
+    // unit is still FT; if the invoice's unit is something else, it's
+    // not a safe auto-fill (the vendor's MTR/INCH/etc figure isn't the
+    // same number as the order's feet-parsed size), so leave it blank
+    // for a manual entry instead of quietly suggesting the wrong unit.
+    const suggestedSqFeet = sharedUnit === "FT" ? order.suggested_sq_feet ?? 0 : 0;
+    setOrders((prev) => [
+      ...prev,
+      {
+        orderId: order.id,
+        refNo: order.ref_no,
+        sizeLabel: order.size_label,
+        categoryName: order.item_category_name,
+        qty: order.qty || 1,
+        sqFeetAuto: sharedUnit === "FT" && order.suggested_sq_feet != null,
+        sqFeetDisplay: suggestedSqFeet ? String(suggestedSqFeet) : "",
+        unitRateInput: "",
+        alreadyBilled: existingBillCount,
+      },
+    ]);
+  }
+
+  function handleAdd(refNoParam?: string) {
     if (isLooking) return; // guard against a fast double-Enter firing two overlapping lookups for the same PO
-    const q = query.trim();
+    const q = (refNoParam ?? query).trim();
     if (!q) return;
+    setShowDropdown(false);
     startLookup(async () => {
       const r = await lookupOrderForPurchaseBill(q);
       if (r.error || !r.order) {
@@ -67,28 +122,29 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         return;
       }
       setLookupError(null);
-      // suggested_sq_feet comes from the order's own Size field, parsed in
-      // FEET (src/lib/size-parser.ts) — only usable as-is when the shared
-      // unit is still FT; if the invoice's unit is something else, it's
-      // not a safe auto-fill (the vendor's MTR/INCH/etc figure isn't the
-      // same number as the order's feet-parsed size), so leave it blank
-      // for a manual entry instead of quietly suggesting the wrong unit.
-      const suggestedSqFeet = sharedUnit === "FT" ? r.order!.suggested_sq_feet ?? 0 : 0;
-      setOrders((prev) => [
-        ...prev,
-        {
-          orderId: r.order!.id,
-          refNo: r.order!.ref_no,
-          sizeLabel: r.order!.size_label,
-          categoryName: r.order!.item_category_name,
-          qty: r.order!.qty || 1,
-          sqFeetAuto: sharedUnit === "FT" && r.order!.suggested_sq_feet != null,
-          sqFeetDisplay: suggestedSqFeet ? String(suggestedSqFeet) : "",
-          alreadyBilled: r.existingBillCount,
-        },
-      ]);
+      addOrder(r.order, r.existingBillCount);
       setQuery("");
+      setSearchResults([]);
     });
+  }
+
+  function handleQueryChange(value: string) {
+    setQuery(value);
+    setLookupError(null);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const trimmed = value.trim();
+    if (trimmed.length < 2) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    searchTimer.current = setTimeout(() => {
+      startSearch(async () => {
+        const hits = await searchOrdersForPurchaseBill(trimmed);
+        setSearchResults(hits);
+        setShowDropdown(true);
+      });
+    }, 300);
   }
 
   function updateLine(orderId: string, patch: Partial<PickedOrder>) {
@@ -99,8 +155,18 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
     setOrders((prev) => prev.filter((o) => o.orderId !== orderId));
   }
 
+  function applyBulkRate() {
+    if (!bulkRate.trim()) return;
+    setOrders((prev) => prev.map((o) => ({ ...o, unitRateInput: bulkRate })));
+  }
+
   const linesJson = JSON.stringify(
-    orders.map((o) => ({ orderId: o.orderId, qty: o.qty, sqFeet: Number(o.sqFeetDisplay) || 0 }))
+    orders.map((o) => ({
+      orderId: o.orderId,
+      qty: o.qty,
+      sqFeet: Number(o.sqFeetDisplay) || 0,
+      unitRate: Number(o.unitRateInput) || 0,
+    }))
   );
 
   return (
@@ -120,18 +186,56 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
       <input type="hidden" name="qty_unit" value={sharedUnit} />
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <label className="mb-1 block text-xs font-medium text-slate-500">Add PO/RF/RG orders covered by this one vendor invoice</label>
-        <div className="flex gap-2">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAdd())}
-            placeholder="e.g. PO-0001"
-            className={inputClass}
-          />
+        <div className="mb-1 flex items-center justify-between">
+          <label className="block text-xs font-medium text-slate-500">Add PO/RF/RG orders covered by this one vendor invoice</label>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500">
+            Sq. Feet unit for all orders below
+            <UnitSelect value={sharedUnit} onChange={setSharedUnit} />
+          </div>
+        </div>
+        <div className="relative flex gap-2">
+          <div className="relative flex-1">
+            <input
+              value={query}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAdd())}
+              onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+              placeholder="Type 2+ letters of a PO/RF/RG no. — e.g. A525"
+              className={inputClass}
+            />
+            {showDropdown && (
+              <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                {isSearching && <p className="px-3 py-2 text-xs text-slate-400">Searching...</p>}
+                {!isSearching && searchResults.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-slate-400">No matching orders.</p>
+                )}
+                {!isSearching &&
+                  searchResults.map((hit) => (
+                    <button
+                      key={hit.id}
+                      type="button"
+                      // onMouseDown (not onClick) fires before the input's onBlur closes the dropdown
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleAdd(hit.ref_no);
+                      }}
+                      disabled={orders.some((o) => o.orderId === hit.id)}
+                      className="block w-full border-b border-slate-100 px-3 py-1.5 text-left text-xs last:border-b-0 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <span className="font-semibold text-slate-900">{hit.ref_no}</span>{" "}
+                      <span className="text-slate-400">
+                        — {hit.item_category_name ?? "—"} — {hit.size_label ?? "no size"}
+                        {orders.some((o) => o.orderId === hit.id) ? " (already added)" : ""}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
           <button
             type="button"
-            onClick={handleAdd}
+            onClick={() => handleAdd()}
             disabled={isLooking}
             className="shrink-0 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
           >
@@ -140,6 +244,27 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         </div>
         {lookupError && <p className="mt-1 text-xs text-red-600">{lookupError}</p>}
       </div>
+
+      {orders.length > 1 && (
+        <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50/60 p-2">
+          <label className="text-[11px] text-slate-500 shrink-0">Fill the same rate on every order below</label>
+          <input
+            type="number"
+            step="0.01"
+            value={bulkRate}
+            onChange={(e) => setBulkRate(e.target.value)}
+            placeholder="e.g. 26.5"
+            className={inputClass}
+          />
+          <button
+            type="button"
+            onClick={applyBulkRate}
+            className="shrink-0 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+          >
+            Apply to all
+          </button>
+        </div>
+      )}
 
       {orders.length > 0 && (
         <div className="space-y-2">
@@ -154,7 +279,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
               {o.alreadyBilled > 0 && (
                 <p className="mt-0.5 text-amber-700">⚠ This order already has {o.alreadyBilled} Purchase Bill(s) — a new one under a different invoice no. is fine.</p>
               )}
-              <div className="mt-1.5 grid grid-cols-2 gap-2">
+              <div className="mt-1.5 grid grid-cols-3 gap-2">
                 <div>
                   <label className="mb-0.5 block text-[11px] text-slate-400">Qty</label>
                   <input
@@ -173,6 +298,16 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
                     step="0.01"
                     value={o.sqFeetDisplay}
                     onChange={(e) => updateLine(o.orderId, { sqFeetDisplay: e.target.value, sqFeetAuto: false })}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="mb-0.5 block text-[11px] text-slate-400">Unit Rate (per {sharedUnit})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={o.unitRateInput}
+                    onChange={(e) => updateLine(o.orderId, { unitRateInput: e.target.value })}
                     className={inputClass}
                   />
                 </div>
@@ -203,14 +338,6 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         <div>
           <label className={labelClass} htmlFor="pbm_inv_date">Vendor Invoice Date</label>
           <input id="pbm_inv_date" name="vendor_invoice_date" type="date" className={inputClass} />
-        </div>
-        <div>
-          <label className={labelClass} htmlFor="pbm_rate">Unit Rate (shared across all orders above)</label>
-          <div className="flex gap-1.5">
-            <input id="pbm_rate" name="unit_rate" type="number" step="0.01" className={inputClass} />
-            <UnitSelect value={sharedUnit} onChange={setSharedUnit} />
-          </div>
-          <p className="mt-0.5 text-[11px] text-slate-400">Rate is per {sharedUnit} — every order&apos;s Qty above is in the same unit.</p>
         </div>
         <div className="col-span-2">
           <label className={labelClass} htmlFor="pbm_desc">Work Description</label>
