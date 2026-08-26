@@ -446,7 +446,9 @@ export default async function OrdersPage({
         sizes={sizes ?? []}
         currencies={currencies ?? []}
         parties={parties ?? []}
+        companies={companies ?? []}
         statuses={STATUSES}
+        todayStr={todayStr}
         purchasesByOrder={purchasesByOrder}
         trackingByOrder={trackingByOrder}
         refundsByOrder={refundsByOrder}
