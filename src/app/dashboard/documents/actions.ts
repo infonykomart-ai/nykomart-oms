@@ -922,6 +922,93 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
   return { error: null, results };
 }
 
+// =============================================================================
+// PURCHASE BILL — MULTI-ITEM, ONE INVOICE. 2026-08-26: "agar purchase me ek
+// se jyada item ho ... item name Plain rug 3*90 ft qty 1 price/unit 7155,
+// item name Plain rug 3*50 ft qty 1 price/unit ..." — one vendor invoice
+// with several DIFFERENT items on it (each its own size, its own price,
+// so each its own rate/sq ft — unlike Multiple-Orders above, where every
+// line intentionally shares ONE rate). Not order-linked — this is the
+// general-stock case (see savePurchaseBillCore's own comment on
+// order_id being optional): each item becomes its own purchase_bills row
+// with order_id NULL, vendor + invoice + date + GST entered once and
+// shared. Multiple NULL order_id rows under the same (vendor,
+// invoice_no) don't collide — UNIQUE(vendor_party_id, vendor_invoice_no,
+// order_id) treats each NULL as distinct, same as this project's
+// existing single-order-less Purchase Bill entry already relies on.
+// =============================================================================
+
+export type PurchaseBillMultiItemLine = {
+  workDescription: string | null;
+  qty: number;
+  sqFeet: number;
+  qtyUnit: string;
+  unitRate: number;
+};
+export type PurchaseBillMultiItemsState = {
+  error: string | null;
+  results: { index: number; label: string; ok: boolean; docNo: string | null; error: string | null }[] | null;
+};
+
+export async function savePurchaseBillMultiItems(
+  _prev: PurchaseBillMultiItemsState,
+  formData: FormData
+): Promise<PurchaseBillMultiItemsState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const vendorPartyId = str(formData, "vendor_party_id");
+  const vendorInvoiceNo = str(formData, "vendor_invoice_no");
+  const vendorInvoiceDate = strOrNull(formData, "vendor_invoice_date");
+  const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
+  const gstType = strOrNull(formData, "gst_type");
+  const itemsRaw = str(formData, "items_json");
+
+  if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
+  if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", results: null };
+  if (!itemsRaw) return { error: "Add at least one item.", results: null };
+
+  let items: PurchaseBillMultiItemLine[];
+  try {
+    items = JSON.parse(itemsRaw);
+  } catch {
+    return { error: "Could not read the item rows — try re-adding them.", results: null };
+  }
+  if (!Array.isArray(items) || items.length === 0) return { error: "Add at least one item.", results: null };
+
+  const results: PurchaseBillMultiItemsState["results"] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const result = await savePurchaseBillCore(employee, supabase, {
+      vendorPartyId,
+      vendorInvoiceNo,
+      vendorInvoiceDate,
+      qty: item.qty || 1,
+      sqFeet: item.sqFeet || 0,
+      qtyUnit: item.qtyUnit || "FT",
+      workDescription: item.workDescription,
+      unitRate: item.unitRate,
+      orderId: null,
+      gstRatePct,
+      gstType,
+      // Round Off isn't offered here, same reasoning as Multiple-Orders
+      // above — one shared invoice becomes several rows; a single
+      // round-off figure can't be unambiguously split across them.
+      roundOffAmt: 0,
+    });
+    results!.push({
+      index: i,
+      label: item.workDescription?.trim() || `Item ${i + 1}`,
+      ok: !result.error,
+      docNo: result.docNo,
+      error: result.error,
+    });
+  }
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, results };
+}
+
 export async function updatePurchaseBill(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();

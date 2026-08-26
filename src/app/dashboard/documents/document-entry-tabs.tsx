@@ -15,6 +15,7 @@ import { WashingEntryEditForm, type EditableWashingEntry } from "./washing-entry
 import { InternalInvoiceEditForm, type EditableInternalInvoice } from "./internal-invoice-edit-form";
 import { PurchaseBillEditForm, type EditablePurchaseBill } from "./purchase-bill-edit-form";
 import { PurchaseBillMultiForm } from "./purchase-bill-multi-form";
+import { PurchaseBillMultiItemsForm } from "./purchase-bill-multi-items-form";
 import { CsbFilingForm } from "./csb-filing-form";
 import { CsbFilingEditForm, type EditableCsbFiling } from "./csb-filing-edit-form";
 import { ShipmentHandoverChalanForm } from "./shipment-handover-chalan-form";
@@ -118,7 +119,7 @@ export function DocumentEntryTabs({
   // JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — Purchase Bill now
   // has 2 modes: the original single-order form, and a new multi-order
   // picker for one vendor invoice covering several POs at once.
-  const [pbMode, setPbMode] = useState<"single" | "multi">("single");
+  const [pbMode, setPbMode] = useState<"single" | "multi" | "multi-items">("single");
 
   const tabBar = (
     <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
@@ -201,8 +202,17 @@ export function DocumentEntryTabs({
                 >
                   Multiple Orders, One Invoice
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setPbMode("multi-items")}
+                  className={`rounded-full px-3 py-1 ${pbMode === "multi-items" ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"}`}
+                >
+                  Multiple Items, One Invoice
+                </button>
               </div>
-              {pbMode === "single" ? <PurchaseBillForm parties={parties} /> : <PurchaseBillMultiForm parties={parties} />}
+              {pbMode === "single" && <PurchaseBillForm parties={parties} />}
+              {pbMode === "multi" && <PurchaseBillMultiForm parties={parties} />}
+              {pbMode === "multi-items" && <PurchaseBillMultiItemsForm parties={parties} />}
             </div>
           )}
           {tab === "csb-filing" && (
