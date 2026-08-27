@@ -38,6 +38,7 @@ import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
+import { saveOrderRefundCore } from "../orders/actions";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -2703,6 +2704,52 @@ export async function bulkSaveDebitNotes(_prev: BulkDocState, formData: FormData
   }
 
   if (results.some((r) => !r.error)) revalidatePath("/dashboard/documents");
+  return { error: null, results };
+}
+
+// ---- Refund ---------------------------------------------------------------
+
+// 2026-08-27 — "jese order ki sheet bani hai vesi har section ki sheet
+// banegi ... refund and any other all": the one true gap in the "every
+// section gets a bulk-upload sheet like Orders has" ask — everything else
+// named (Invoice generation, Credit Note, Debit Note, Freight/Courier
+// Bill, Duty & Tax Bill, Purchase Bill) already had one. Drives the exact
+// same saveOrderRefundCore (orders/actions.ts) the manual Cancel refund
+// screen uses — nothing approximated for bulk.
+export async function bulkSaveRefunds(_prev: BulkDocState, formData: FormData): Promise<BulkDocState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { error: fileError, rows, byHeader } = await readBulkFile(formData);
+  if (fileError) return { error: fileError, results: null };
+
+  const results: BulkDocResult[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const raw = rows[i];
+    const rowNum = i + 2;
+    const refNo = cellStr(raw, byHeader, "PO/RF/RG No");
+    const { error: lookupError, order } = await resolveOrderByRefNo(supabase, employee, refNo);
+    if (lookupError || !order) {
+      results.push({ row: rowNum, label: refNo, docNo: null, error: lookupError });
+      continue;
+    }
+
+    const result = await saveOrderRefundCore(employee, supabase, {
+      orderId: order.id,
+      refundAmount: Number(cellStr(raw, byHeader, "Refund Amount")) || 0,
+      refundCurrency: cellStr(raw, byHeader, "Refund Currency").toUpperCase() || "USD",
+      refundDate: cellStr(raw, byHeader, "Refund Date"),
+      reason: cellStr(raw, byHeader, "Reason") || null,
+    });
+
+    results.push({ row: rowNum, label: refNo, docNo: result.success?.creditNoteNo ?? "Refund recorded", error: result.error });
+  }
+
+  if (results.some((r) => !r.error)) {
+    revalidatePath("/dashboard/orders");
+    revalidatePath("/dashboard/documents");
+    revalidatePath("/dashboard/inventory");
+  }
   return { error: null, results };
 }
 

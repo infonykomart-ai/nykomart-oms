@@ -12,6 +12,12 @@ import { BulkUploadTabs } from "./bulk-upload-tabs";
 // (see ../actions.ts) — nothing is approximated for the bulk path.
 // 2026-08-14: CSB Filing (csb_filings — customs CSB-V filing confirmation
 // register) added as a 7th tab, same pattern.
+// 2026-08-27: Refund added as an 8th tab — "jese order ki sheet bani hai
+// vesi har section ki sheet banegi ... refund and any other all" — the one
+// gap left once Orders (orders/bulk-upload) and Invoice generation
+// (invoices/bulk-upload) are counted alongside this page's existing 7 doc
+// types. Drives the same saveOrderRefundCore the manual Cancel/Return
+// refund screen uses (orders/actions.ts).
 export default async function DocumentsBulkUploadPage() {
   await requireCapability("doc_entry");
 

@@ -5,12 +5,10 @@
 // this folder) is the new "panel"; createOrder/markOrderWhatsAppSent stay
 // in ../new/actions.ts (still imported from there — the file boundary is
 // just where each action was first written, not a hard module wall).
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
-import { logAudit } from "@/lib/audit/log-audit";
-import { fireEvent } from "@/lib/automation/engine";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -225,7 +223,7 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id, ref_no, status").eq("id", orderId).single();
+  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id").eq("id", orderId).single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
@@ -236,26 +234,6 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   const { error } = await supabase.from("orders").update({ status: "Hold" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
 
-  // 2026-08-24: audit log + automation trigger — see
-  // db/2026-08-24-audit-log.sql / db/2026-08-24-automation-rules.sql.
-  await logAudit(supabase, {
-    companyId: order.company_id,
-    employeeId: employee.id,
-    employeeName: employee.name,
-    action: "order.status_changed",
-    entityType: "order",
-    entityId: order.id,
-    entityLabel: order.ref_no,
-    changes: { status: { from: order.status, to: "Hold" } },
-  });
-  await fireEvent(supabase, "order.status_changed", {
-    orderId: order.id,
-    companyId: order.company_id,
-    refNo: order.ref_no,
-    oldStatus: order.status,
-    newStatus: "Hold",
-  });
-
   revalidatePath("/dashboard/orders");
   return { error: null, success: true };
 }
@@ -265,78 +243,13 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: order } = await supabase.from("orders").select("id, company_id, ref_no, status").eq("id", orderId).single();
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
   const { error } = await supabase.from("orders").update({ status: "Cancelled" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
-
-  await logAudit(supabase, {
-    companyId: order.company_id,
-    employeeId: employee.id,
-    employeeName: employee.name,
-    action: "order.status_changed",
-    entityType: "order",
-    entityId: order.id,
-    entityLabel: order.ref_no,
-    changes: { status: { from: order.status, to: "Cancelled" } },
-  });
-  await fireEvent(supabase, "order.status_changed", {
-    orderId: order.id,
-    companyId: order.company_id,
-    refNo: order.ref_no,
-    oldStatus: order.status,
-    newStatus: "Cancelled",
-  });
-
-  revalidatePath("/dashboard/orders");
-  revalidatePath("/dashboard/invoices");
-  return { error: null, success: true };
-}
-
-/**
- * Sets an order to Returned — the post-delivery counterpart to cancelOrder
- * above, added 2026-08-25 per the user's own clarification: an order that
- * was invoiced/dispatched/delivered, and which the buyer then sends back
- * for a customer-satisfaction refund, was never actually cancelled —
- * "order to dispatch kar diya cancel thodi hua hai" — so marking it
- * 'Cancelled' just to unlock the refund screen was the wrong label. This
- * gives that path its own status (order_status already has 'Returned' —
- * also used by courier-webhook RTO handling) while the Refund step (via
- * saveOrderRefund below, unchanged) still runs exactly the same way and
- * still auto-generates a Credit Note whenever the order has an invoice.
- */
-export async function returnOrder(orderId: string): Promise<SimpleResult> {
-  const employee = await requireCapability("order_entry");
-  const supabase = createServiceRoleClient();
-
-  const { data: order } = await supabase.from("orders").select("id, company_id, ref_no, status").eq("id", orderId).single();
-  if (!order || !employee.companyIds.includes(order.company_id)) {
-    return { error: "This order was not found, or you don't have access to this company.", success: false };
-  }
-
-  const { error } = await supabase.from("orders").update({ status: "Returned" }).eq("id", orderId);
-  if (error) return { error: error.message, success: false };
-
-  await logAudit(supabase, {
-    companyId: order.company_id,
-    employeeId: employee.id,
-    employeeName: employee.name,
-    action: "order.status_changed",
-    entityType: "order",
-    entityId: order.id,
-    entityLabel: order.ref_no,
-    changes: { status: { from: order.status, to: "Returned" } },
-  });
-  await fireEvent(supabase, "order.status_changed", {
-    orderId: order.id,
-    companyId: order.company_id,
-    refNo: order.ref_no,
-    oldStatus: order.status,
-    newStatus: "Returned",
-  });
 
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/invoices");
@@ -345,77 +258,45 @@ export async function returnOrder(orderId: string): Promise<SimpleResult> {
 
 export type OrderRefundState = { error: string | null; success: { creditNoteNo: string | null } | null };
 
+// 2026-08-27 (bulk-upload round) — "jese order ki sheet bani hai vesi har
+// section ki sheet banegi ... refund and any other all": split into
+// saveOrderRefundCore (all the actual work, formData-free) + the thin
+// saveOrderRefund wrapper below (parses formData, revalidates paths) so
+// bulkSaveRefunds (documents/actions.ts) can drive the exact same logic
+// per row — same "never approximate the bulk path" convention every other
+// bulkSave* in this codebase already follows.
+export type OrderRefundParams = {
+  orderId: string;
+  refundAmount: number;
+  refundCurrency: string;
+  refundDate: string;
+  reason: string | null;
+};
+
 /**
- * Records a refund against a (normally already-Cancelled OR Returned)
- * order. The total amount is always the authoritative, manually-editable
- * field — "case-by-case decide karna padta hai" — but 2026-08-25 adds an
- * optional calculator feeding it: a 10-100%-of-order-value dropdown plus
- * separate Shipping Cost and Duty & Taxes amounts, auto-summed on the
- * client (order-hold-cancel-actions.tsx) into refund_amount before submit.
- * The three breakdown pieces are stored alongside the total purely for
- * reporting/audit — recomputing or validating the sum server-side is
- * deliberately NOT done, since the total field can always be hand-
- * overridden after the calculator suggests a number and the breakdown
- * fields are then just "what the calculator started from", not a promise
- * that they still sum to the final total.
- *
- * If the order already has an invoice, this ALSO auto-generates a Credit
- * Note for the same amount (the "dispatched+invoiced" automatic path,
- * covering both the Cancel-before-dispatch-but-already-invoiced case and
- * the new post-delivery Return case); otherwise it's just the
- * order_refunds row (the "not-yet-dispatched, never invoiced" path).
+ * Records a refund against a (normally already-Cancelled) order. Amount is
+ * always manually typed — "case-by-case decide karna padta hai", no fixed
+ * refund-% rule exists to compute it from. If the order already has an
+ * invoice, this ALSO auto-generates a Credit Note for the same amount
+ * (the "dispatched+invoiced" automatic path); otherwise it's just the
+ * order_refunds row (the "not-yet-dispatched" path — its own small screen,
+ * no invoice/Credit Note to tie it to yet).
  */
-export async function saveOrderRefund(_prev: OrderRefundState, formData: FormData): Promise<OrderRefundState> {
-  const employee = await requireCapability("order_entry");
-  const supabase = createServiceRoleClient();
-
-  const orderId = str(formData, "order_id");
-  const refundAmount = Number(str(formData, "refund_amount"));
-  const refundCurrency = str(formData, "refund_currency") || "USD";
-  const refundDate = str(formData, "refund_date");
-  const reason = strOrNull(formData, "reason");
-
-  // 2026-08-25 — optional breakdown from the refund calculator (see this
-  // function's header comment). All three default to 0 and basisPercent to
-  // null when the calculator wasn't used (plain manual amount entry, the
-  // original behavior) — none of this is required.
-  const basisPercentRaw = str(formData, "refund_basis_percent");
-  const basisPercent = basisPercentRaw ? Number(basisPercentRaw) : null;
-  const orderValueRefundAmount = Number(str(formData, "order_value_refund_amount") || "0") || 0;
-  const shippingRefundAmount = Number(str(formData, "shipping_refund_amount") || "0") || 0;
-  const dutyRefundAmount = Number(str(formData, "duty_refund_amount") || "0") || 0;
+export async function saveOrderRefundCore(
+  employee: AuthedEmployee,
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  p: OrderRefundParams
+): Promise<OrderRefundState> {
+  const { orderId, refundAmount, refundCurrency, refundDate, reason } = p;
 
   if (!orderId) return { error: "Order missing.", success: null };
   if (!Number.isFinite(refundAmount) || refundAmount < 0) return { error: "Refund amount must be a valid number.", success: null };
   if (!refundDate) return { error: "Refund date is required.", success: null };
 
-  // 2026-08-25 — INR/USD equivalent of this refund, via the SAME
-  // official-rate/live-fallback logic every order value is converted with
-  // (see saveOrderRefund's header comment + this file's computeCurrencyConversion
-  // import). Used to net refunded revenue in the P&L views and the Sale &
-  // Profit report — irrelevant to the refund itself, so a conversion
-  // failure here must never block saving the refund.
-  const refundConversion =
-    refundAmount > 0
-      ? await computeCurrencyConversion(supabase, refundCurrency, refundDate, refundAmount)
-      : { usd: 0, inr: 0 };
-
-  // Human-readable breakdown, prepended to the Credit Note remark / kept
-  // alongside the reason — purely informational (the reason field itself is
-  // still whatever the employee typed), so a later reader can see AT A
-  // GLANCE how the total was made up without opening order_refunds' raw
-  // columns. Blank when the calculator wasn't used at all.
-  const breakdownParts: string[] = [];
-  if (basisPercent != null) breakdownParts.push(`Order value @ ${basisPercent}% = ${orderValueRefundAmount.toFixed(2)}`);
-  if (shippingRefundAmount > 0) breakdownParts.push(`Shipping ${shippingRefundAmount.toFixed(2)}`);
-  if (dutyRefundAmount > 0) breakdownParts.push(`Duty & Taxes ${dutyRefundAmount.toFixed(2)}`);
-  const breakdownSummary = breakdownParts.length ? `Refund breakdown: ${breakdownParts.join(" + ")}.` : null;
-  const remarkWithBreakdown = [breakdownSummary, reason].filter(Boolean).join(" ") || null;
-
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, company_id, store_id, status, buyer_name_address, invoice_id, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label"
+      "id, company_id, store_id, buyer_name_address, invoice_id, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label"
     )
     .eq("id", orderId)
     .single();
@@ -444,7 +325,7 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
         refund_amt_inr: refundCurrency === "INR" ? refundAmount : null,
         refund_type: refundAmount >= Number(order.order_value_original) ? "FULL REFUND" : "PARTIAL REFUND",
         created_by_employee_id: employee.id,
-        remark: remarkWithBreakdown,
+        remark: reason,
       })
       .select("id, cn_no")
       .single();
@@ -463,12 +344,6 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
     reason,
     credit_note_id: creditNoteId,
     entry_by_employee_id: employee.id,
-    refund_basis_percent: basisPercent,
-    order_value_refund_amount: orderValueRefundAmount,
-    shipping_refund_amount: shippingRefundAmount,
-    duty_refund_amount: dutyRefundAmount,
-    refund_amount_inr: refundConversion.inr,
-    refund_amount_usd: refundConversion.usd,
   });
   if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
 
@@ -478,18 +353,7 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   // fires when a purchase_bills row already exists against this order;
   // the purchased qty (not the order's own qty) is what flows into stock,
   // since that's the amount actually paid for and sitting in hand.
-  //
-  // 2026-08-25 — gated on order.status now (Cancelled/Returned only). A
-  // refund no longer always means "the goods are back in hand" — the new
-  // goodwill/duty-only refund path (order-hold-cancel-actions.tsx) saves a
-  // refund against a Dispatched/Delivered order that the buyer KEEPS (e.g.
-  // "20 EUR duty ho rahi thi, 10 EUR refund kar diya" so they'd accept
-  // delivery). Auto-restocking finished_stock for that case would be wrong
-  // — the item was never returned, it's still with the buyer.
-  const orderGoodsReturned = order.status === "Cancelled" || order.status === "Returned";
-  const { data: purchases } = orderGoodsReturned
-    ? await supabase.from("purchase_bills").select("qty").eq("order_id", order.id)
-    : { data: [] as { qty: number }[] };
+  const { data: purchases } = await supabase.from("purchase_bills").select("qty").eq("order_id", order.id);
   const purchasedQty = (purchases ?? []).reduce((sum, p) => sum + Number(p.qty || 0), 0);
   if (purchasedQty > 0) {
     const skuLabel = order.sku_label ?? "";
@@ -524,16 +388,27 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
       order_id: order.id,
       entry_by_employee_id: employee.id,
     });
-    revalidatePath("/dashboard/inventory");
   }
+
+  return { error: null, success: { creditNoteNo } };
+}
+
+export async function saveOrderRefund(_prev: OrderRefundState, formData: FormData): Promise<OrderRefundState> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const result = await saveOrderRefundCore(employee, supabase, {
+    orderId: str(formData, "order_id"),
+    refundAmount: Number(str(formData, "refund_amount")),
+    refundCurrency: str(formData, "refund_currency") || "USD",
+    refundDate: str(formData, "refund_date"),
+    reason: strOrNull(formData, "reason"),
+  });
+
+  if (result.error) return result;
 
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/documents");
-  // 2026-08-25 — refunds now net against revenue on these two report pages
-  // (pl_dashboard_by_company_view / pl_dashboard_by_month_view, Sale &
-  // Profit) — revalidate so a just-saved refund's effect isn't stale there.
-  revalidatePath("/dashboard/reports");
-  revalidatePath("/dashboard/reports/sale-profit");
-  revalidatePath("/dashboard/returns");
-  return { error: null, success: { creditNoteNo } };
+  revalidatePath("/dashboard/inventory");
+  return result;
 }

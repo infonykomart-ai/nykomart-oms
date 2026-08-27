@@ -5,6 +5,7 @@ import { BulkDocUploadForm } from "./bulk-doc-upload-form";
 import {
   bulkSaveCreditNotes,
   bulkSaveDebitNotes,
+  bulkSaveRefunds,
   bulkSaveWashingEntries,
   bulkSavePurchaseBills,
   bulkSaveFreightBills,
@@ -14,6 +15,7 @@ import {
 import {
   CREDIT_NOTE_COLUMNS,
   DEBIT_NOTE_COLUMNS,
+  REFUND_COLUMNS,
   WASHING_ENTRY_COLUMNS,
   PURCHASE_BILL_COLUMNS,
   COURIER_BILL_COLUMNS,
@@ -24,6 +26,7 @@ import {
 const TABS = [
   { key: "credit-note", label: "Credit Note" },
   { key: "debit-note", label: "Debit Note" },
+  { key: "refund", label: "Refund" },
   { key: "washing-entry", label: "Washing Entry" },
   { key: "purchase-bill", label: "Purchase Bill" },
   { key: "courier-bill", label: "Courier Bill" },
@@ -73,6 +76,15 @@ export function BulkUploadTabs() {
           filenameBase="bulk-debit-note"
           columns={DEBIT_NOTE_COLUMNS}
           action={bulkSaveDebitNotes}
+        />
+      )}
+      {tab === "refund" && (
+        <BulkDocUploadForm
+          docLabel="Refund"
+          refLabel="PO/RF/RG No"
+          filenameBase="bulk-refund"
+          columns={REFUND_COLUMNS}
+          action={bulkSaveRefunds}
         />
       )}
       {tab === "washing-entry" && (

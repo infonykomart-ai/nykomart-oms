@@ -18,6 +18,18 @@ export const CREDIT_NOTE_COLUMNS: BulkDocColumn[] = [
   { label: "Remark", example: "", required: false },
 ];
 
+// Refund (2026-08-27) — "jese order ki sheet bani hai vesi har section ki
+// sheet banegi ... refund and any other all": drives the exact same
+// saveOrderRefundCore the manual Cancel/Return refund screen uses — see
+// bulkSaveRefunds in ../actions.ts.
+export const REFUND_COLUMNS: BulkDocColumn[] = [
+  { label: "PO/RF/RG No", example: "PO-0001", required: true, help: "Must match an existing order." },
+  { label: "Refund Amount", example: "50", required: true },
+  { label: "Refund Currency", example: "USD", required: false, help: "USD or INR — defaults to USD." },
+  { label: "Refund Date", example: "2026-08-27", required: true, help: "YYYY-MM-DD" },
+  { label: "Reason", example: "", required: false },
+];
+
 export const DEBIT_NOTE_COLUMNS: BulkDocColumn[] = [
   { label: "Company Name", example: "Nyko Mart", required: true },
   { label: "Party Name", example: "", required: true, help: "Must match an existing Party Master entry." },
