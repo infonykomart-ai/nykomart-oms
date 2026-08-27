@@ -15,10 +15,11 @@ import {
   type ReconciliationLookup,
   type SimpleResult,
   type BulkAwbResult,
+  type RelatedNote,
 } from "./actions";
 import { SendToFinanceForm } from "./freight-bill-section";
 import { groupPartyOptions, type PartyOption } from "./party-options";
-import { InlineAddShipmentBox } from "./inline-add-shipment";
+import { RelatedNotesBadge } from "./related-notes-badge";
 
 const initialFormState: DocFormState = { error: null, success: null };
 const initialSimple: SimpleResult = { error: null, success: false };
@@ -62,6 +63,9 @@ export type DutyBillRow = {
   // freight-bill-section.tsx's comment.
   vendor_party_id: string | null;
   vendor_name: string | null;
+  // 2026-08-27 (later same day) — see freight-bill-section.tsx's
+  // FreightBillRow.related_notes comment — same real linked-note preview.
+  related_notes: RelatedNote[];
 };
 
 // Duty & Tax Bill (duty_tax_bills) — exact mirror of Courier Bill's shape:
@@ -252,7 +256,10 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
     <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs">
       <div className="flex items-center justify-between">
         <div>
-          <div className="font-medium text-slate-900">{bill.invoice_no}</div>
+          <div className="flex items-center gap-1.5 font-medium text-slate-900">
+            {bill.invoice_no}
+            <RelatedNotesBadge notes={bill.related_notes} />
+          </div>
           <div className="text-slate-400">
             {bill.invoice_date ?? "—"} · {bill.assignments.length} AWB(s) assigned
             {bill.sentToFinance && <span className="ml-1 text-green-700">· ✓ in Bill Pass Register</span>}
@@ -490,11 +497,7 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
         </div>
       )}
 
-      {lookup?.order && !lookup.orderShipmentId && !lookup.alreadyAssigned && (
-        <InlineAddShipmentBox orderId={lookup.order.id} refNo={lookup.order.ref_no} onSaved={handleLookup} />
-      )}
-
-      {lookup?.order && lookup.orderShipmentId && !lookup.alreadyAssigned && (
+      {lookup?.order && !lookup.alreadyAssigned && (
         <form action={formAction} className="mt-3 space-y-2 border-t border-slate-200 pt-3">
           <input type="hidden" name="duty_tax_bill_id" value={dutyTaxBillId} />
           <input type="hidden" name="order_id" value={lookup.order.id} />

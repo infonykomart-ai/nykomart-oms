@@ -1818,6 +1818,14 @@ ALTER TABLE credit_notes
   ADD COLUMN bill_pass_register_id uuid REFERENCES bill_pass_register(id);
 CREATE INDEX idx_credit_notes_bill_pass_register ON credit_notes(bill_pass_register_id);
 
+-- 2026-08-27 (later same day) — "esa hi credite note me karo esa hi
+-- courior ke credit note debit note me karo": vendor-side party link for
+-- Credit Note, mirroring debit_notes.party_id — see
+-- db/2026-08-27-credit-note-party-link.sql.
+ALTER TABLE credit_notes
+  ADD COLUMN party_id uuid REFERENCES parties(id);
+CREATE INDEX idx_credit_notes_party ON credit_notes(party_id);
+
 -- 2026-08-27 — cross-invoice Debit/Credit Note adjustments. "kisi bill me
 -- agar credit debit adjust karna pade kisi dusre invoice me to vo bhi
 -- hona chahiye" — a note's amount can reduce a DIFFERENT invoice's

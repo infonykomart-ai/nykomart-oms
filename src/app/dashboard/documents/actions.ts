@@ -151,6 +151,16 @@ type CreditNoteParams = {
   refundType: string | null;
   debitNoteId: string | null;
   remark: string | null;
+  // 2026-08-27 (later same day) — "esa hi credite note me karo esa hi
+  // courior ke credit note debit note me karo": vendor-side link, mirroring
+  // DebitNoteParams below. partyId is optional here (unlike Debit Note's
+  // required partyId) since Credit Note is still ALSO used for the
+  // original sales/buyer-refund flow, which has no vendor party at all.
+  partyId: string | null;
+  billPassRegisterId: string | null;
+  adjustTargetBillPassRegisterId: string | null;
+  adjustAmount: number | null;
+  adjustRemark: string | null;
 };
 
 async function saveCreditNoteCore(
@@ -161,6 +171,9 @@ async function saveCreditNoteCore(
   if (!p.companyId) return { error: "Select a company.", id: null, docNo: null };
   if (!employee.companyIds.includes(p.companyId)) return { error: "You do not have access to this company.", id: null, docNo: null };
   if (!p.creditNoteDate) return { error: "Credit Note Date is required.", id: null, docNo: null };
+  if (p.adjustTargetBillPassRegisterId && (!p.adjustAmount || p.adjustAmount <= 0)) {
+    return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
+  }
 
   const { data, error } = await supabase
     .from("credit_notes")
@@ -183,6 +196,8 @@ async function saveCreditNoteCore(
       credit_note_status: p.creditNoteStatus,
       refund_type: p.refundType as never,
       debit_note_id: p.debitNoteId,
+      party_id: p.partyId,
+      bill_pass_register_id: p.billPassRegisterId,
       created_by_employee_id: employee.id,
       remark: p.remark,
     })
@@ -190,6 +205,26 @@ async function saveCreditNoteCore(
     .single();
 
   if (error || !data) return { error: `Failed to save Credit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
+
+  if (p.adjustTargetBillPassRegisterId && p.adjustAmount) {
+    const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert({
+      bill_pass_register_id: p.adjustTargetBillPassRegisterId,
+      credit_note_id: data.id,
+      amount: p.adjustAmount,
+      remark: p.adjustRemark,
+      created_by_employee_id: employee.id,
+    });
+    if (adjError) {
+      // Same "don't roll back what already succeeded" approach as
+      // saveDebitNoteCore's own adjustment-insert failure handling.
+      return {
+        error: null,
+        id: data.id,
+        docNo: `${data.cn_no ?? ""} (saved, but the invoice adjustment failed: ${adjError.message} — apply it manually)`,
+      };
+    }
+  }
+
   return { error: null, id: data.id, docNo: data.cn_no ?? "" };
 }
 
@@ -217,10 +252,18 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
     refundType: strOrNull(formData, "refund_type"),
     debitNoteId: strOrNull(formData, "debit_note_id"),
     remark: strOrNull(formData, "remark"),
+    partyId: strOrNull(formData, "party_id"),
+    billPassRegisterId: strOrNull(formData, "bill_pass_register_id"),
+    adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
+    adjustAmount: numOrNull(formData, "adjust_amount"),
+    adjustRemark: strOrNull(formData, "adjust_remark"),
   });
 
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/approvals/l1");
+  revalidatePath("/dashboard/approvals/l2");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
 }
 
@@ -286,6 +329,188 @@ export async function searchBillsForNote(query: string): Promise<BillSearchHit[]
       balanceDue: g.bills.reduce((sum, b) => sum + Number(b.balance_due ?? 0), 0),
     };
   });
+}
+
+// 2026-08-27 (follow-up) — "party select karte hi uske invocie no drop
+// down aajaye us invoice me kya itme hai ya kis item par debit lagana
+// ahi": typing into searchBillsForNote's box was still an extra step —
+// once Company + Party are picked on the form, their bills should just
+// appear as a plain dropdown with no typing, AND for a multi-item invoice
+// (grouped — see src/lib/bill-grouping.ts) show WHICH item the debit
+// actually belongs to, not just the invoice as a whole, so it attaches to
+// the correct bill_pass_register row (the specific item), not an
+// arbitrary "first member" pick.
+export type PartyBillItem = {
+  billPassRegisterId: string;
+  description: string;
+  qty: number | null;
+  qtyUnit: string | null;
+  unitRate: number | null;
+  amount: number;
+  balanceDue: number;
+};
+
+export type PartyBillOption = {
+  key: string;
+  label: string;
+  totalAmt: number;
+  balanceDue: number;
+  isGroup: boolean;
+  items: PartyBillItem[];
+};
+
+export async function listBillsForParty(companyId: string, partyId: string): Promise<PartyBillOption[]> {
+  const employee = await requireCapability("doc_entry");
+  if (!companyId || !partyId || !employee.companyIds.includes(companyId)) return [];
+  const supabase = createServiceRoleClient();
+
+  const { data: bills } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, source, source_id, total_amt, balance_due")
+    .eq("company_id", companyId)
+    .eq("party_id", partyId)
+    .order("invoice_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const purchaseBillIds = (bills ?? []).filter((b) => b.source === "purchase_bill" && b.source_id).map((b) => b.source_id as string);
+  const itemDetail = new Map<string, { work_description: string | null; qty: number; qty_unit: string; unit_rate: number }>();
+  if (purchaseBillIds.length > 0) {
+    const { data: purchaseBills } = await supabase
+      .from("purchase_bills")
+      .select("id, work_description, qty, qty_unit, unit_rate")
+      .in("id", purchaseBillIds);
+    for (const pb of purchaseBills ?? []) {
+      itemDetail.set(pb.id, { work_description: pb.work_description, qty: pb.qty, qty_unit: pb.qty_unit, unit_rate: Number(pb.unit_rate) });
+    }
+  }
+
+  return groupBills(bills ?? []).map((g) => {
+    const first = g.bills[0];
+    const ref = first.vendor_invoice_no ?? first.invoice_no ?? "—";
+    return {
+      key: g.key,
+      label: `${ref}${first.invoice_date ? ` · ${first.invoice_date}` : ""}${g.isGroup ? ` (${g.bills.length} items)` : ""} — ${first.invoice_type ?? ""}`.trim(),
+      totalAmt: g.bills.reduce((sum, b) => sum + Number(b.total_amt), 0),
+      balanceDue: g.bills.reduce((sum, b) => sum + Number(b.balance_due ?? 0), 0),
+      isGroup: g.isGroup,
+      items: g.bills.map((b) => {
+        const detail = b.source === "purchase_bill" && b.source_id ? itemDetail.get(b.source_id) : undefined;
+        return {
+          billPassRegisterId: b.id,
+          description: detail?.work_description || ref,
+          qty: detail?.qty ?? null,
+          qtyUnit: detail?.qty_unit ?? null,
+          unitRate: detail?.unit_rate ?? null,
+          amount: Number(b.total_amt),
+          balanceDue: Number(b.balance_due ?? 0),
+        };
+      }),
+    };
+  });
+}
+
+// 2026-08-27 (later same day) — "jese invoice ka preview hota hai vese hi
+// credit note debit note show hone chahiye / purchase bill ho ya kisi bhi
+// party ka bill ho agar apni trf se ho ya samne party ki traf se ho
+// credite note ya debit note agar us invoice se related ho to vaha dikhna
+// cahiye sath hi link bhi hona chahiye": one call covering a whole page's
+// worth of bill_pass_register rows at once (never call this per-row — see
+// every call site below, which always passes the full visible id list).
+// A note is "related" to a bill two ways: RAISED_AGAINST (its own
+// bill_pass_register_id link) or ADJUSTED_AGAINST (a
+// bill_pass_register_adjustments row targeting it — see
+// db/2026-08-27-note-linking-and-adjustments.sql). Both show, since both
+// answer "is there a credit/debit note connected to this invoice."
+export type RelatedNote = {
+  billPassRegisterId: string;
+  id: string;
+  kind: "debit" | "credit";
+  docNo: string | null;
+  date: string | null;
+  amount: number;
+  relation: "raised_against" | "adjusted_against";
+};
+
+export async function listRelatedNotesForBills(billPassRegisterIds: string[]): Promise<RelatedNote[]> {
+  const ids = Array.from(new Set(billPassRegisterIds.filter(Boolean)));
+  if (ids.length === 0) return [];
+  const supabase = createServiceRoleClient();
+
+  const [{ data: dn }, { data: cn }, { data: adj }] = await Promise.all([
+    supabase
+      .from("debit_notes")
+      .select("id, debit_note_no, debit_note_date, debit_amount, bill_pass_register_id")
+      .in("bill_pass_register_id", ids),
+    supabase
+      .from("credit_notes")
+      .select("id, cn_no, credit_note_date, refund_amount, bill_pass_register_id")
+      .in("bill_pass_register_id", ids),
+    supabase.from("bill_pass_register_adjustments").select("bill_pass_register_id, amount, debit_note_id, credit_note_id").in("bill_pass_register_id", ids),
+  ]);
+
+  const notes: RelatedNote[] = [
+    ...(dn ?? []).map((d) => ({
+      billPassRegisterId: d.bill_pass_register_id as string,
+      id: d.id,
+      kind: "debit" as const,
+      docNo: d.debit_note_no,
+      date: d.debit_note_date,
+      amount: Number(d.debit_amount),
+      relation: "raised_against" as const,
+    })),
+    ...(cn ?? []).map((c) => ({
+      billPassRegisterId: c.bill_pass_register_id as string,
+      id: c.id,
+      kind: "credit" as const,
+      docNo: c.cn_no,
+      date: c.credit_note_date,
+      amount: Number(c.refund_amount),
+      relation: "raised_against" as const,
+    })),
+  ];
+
+  const adjRows = adj ?? [];
+  const adjDebitIds = Array.from(new Set(adjRows.filter((a) => a.debit_note_id).map((a) => a.debit_note_id as string)));
+  const adjCreditIds = Array.from(new Set(adjRows.filter((a) => a.credit_note_id).map((a) => a.credit_note_id as string)));
+  const [{ data: adjDebitNotes }, { data: adjCreditNotes }] = await Promise.all([
+    adjDebitIds.length
+      ? supabase.from("debit_notes").select("id, debit_note_no, debit_note_date").in("id", adjDebitIds)
+      : Promise.resolve({ data: [] as { id: string; debit_note_no: string | null; debit_note_date: string }[] }),
+    adjCreditIds.length
+      ? supabase.from("credit_notes").select("id, cn_no, credit_note_date").in("id", adjCreditIds)
+      : Promise.resolve({ data: [] as { id: string; cn_no: string | null; credit_note_date: string }[] }),
+  ]);
+  const debitById = new Map((adjDebitNotes ?? []).map((d) => [d.id, d]));
+  const creditById = new Map((adjCreditNotes ?? []).map((c) => [c.id, c]));
+
+  for (const a of adjRows) {
+    if (a.debit_note_id) {
+      const d = debitById.get(a.debit_note_id);
+      notes.push({
+        billPassRegisterId: a.bill_pass_register_id,
+        id: a.debit_note_id,
+        kind: "debit",
+        docNo: d?.debit_note_no ?? null,
+        date: d?.debit_note_date ?? null,
+        amount: Number(a.amount),
+        relation: "adjusted_against",
+      });
+    } else if (a.credit_note_id) {
+      const c = creditById.get(a.credit_note_id);
+      notes.push({
+        billPassRegisterId: a.bill_pass_register_id,
+        id: a.credit_note_id,
+        kind: "credit",
+        docNo: c?.cn_no ?? null,
+        date: c?.credit_note_date ?? null,
+        amount: Number(a.amount),
+        relation: "adjusted_against",
+      });
+    }
+  }
+
+  return notes;
 }
 
 type DebitNoteParams = {
@@ -2388,6 +2613,14 @@ export async function bulkSaveCreditNotes(_prev: BulkDocState, formData: FormDat
       refundType,
       debitNoteId: null,
       remark: cellStr(raw, byHeader, "Remark") || null,
+      // Bulk import is the sales/buyer-refund flow (Amazon/Etsy report rows
+      // resolved by PO/RF/RG No.) — no vendor party or bill dropdown here,
+      // same reasoning as bulkSaveDebitNotes below.
+      partyId: null,
+      billPassRegisterId: null,
+      adjustTargetBillPassRegisterId: null,
+      adjustAmount: null,
+      adjustRemark: null,
     });
 
     results.push({ row: rowNum, label: refNo, docNo: result.docNo, error: result.error });

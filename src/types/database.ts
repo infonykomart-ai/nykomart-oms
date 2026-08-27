@@ -771,6 +771,7 @@ export type Database = {
           refund_type: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id: string | null;
           bill_pass_register_id: string | null;
+          party_id: string | null;
           created_by_employee_id: string | null;
           remark: string | null;
           created_at: string;
@@ -798,6 +799,7 @@ export type Database = {
           refund_type?: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id?: string | null;
           bill_pass_register_id?: string | null;
+          party_id?: string | null;
           created_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
@@ -825,11 +827,19 @@ export type Database = {
           refund_type?: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id?: string | null;
           bill_pass_register_id?: string | null;
+          party_id?: string | null;
           created_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "credit_notes_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "credit_notes_company_id_fkey";
             columns: ["company_id"];

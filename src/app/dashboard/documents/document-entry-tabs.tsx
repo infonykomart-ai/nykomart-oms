@@ -29,9 +29,11 @@ import {
   deleteCsbFiling,
   deleteShipmentHandoverChalan,
   type SimpleResult,
+  type RelatedNote,
 } from "./actions";
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { RelatedNotesBadge } from "./related-notes-badge";
 
 type Company = { id: string; name: string };
 type Party = PartyOption;
@@ -51,7 +53,7 @@ type Recent = {
   debitNotes: (EditableDebitNote & { companyName: string })[];
   washingEntries: (EditableWashingEntry & { companyName: string; amount: number })[];
   internalInvoices: (EditableInternalInvoice & { fromCompanyName: string; toCompanyName: string; total_amount: number })[];
-  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number; g_total_plus_gst: number | null })[];
+  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number; g_total_plus_gst: number | null; related_notes: RelatedNote[] })[];
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
@@ -181,7 +183,7 @@ export function DocumentEntryTabs({
         {tabBar}
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          {tab === "credit-note" && <CreditNoteForm companies={companies} stores={stores} />}
+          {tab === "credit-note" && <CreditNoteForm companies={companies} stores={stores} parties={parties} />}
           {tab === "debit-note" && <DebitNoteForm companies={companies} parties={parties} />}
           {tab === "washing-entry" && <WashingEntryForm companies={companies} parties={parties} stores={stores} />}
           {tab === "internal-invoice" && <InternalInvoiceForm companies={companies} />}
@@ -330,6 +332,7 @@ export function DocumentEntryTabs({
                     ).toFixed(2)}`
                   : `₹${r.total_amount}`,
             record: r,
+            notes: r.related_notes,
           }))}
           onDelete={deletePurchaseBill}
           renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
@@ -438,7 +441,11 @@ function DocList<T extends { id: string }>({
   onDelete,
 }: {
   title: string;
-  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T }[];
+  // 2026-08-27 (later same day) — optional `notes`: when a caller passes
+  // real linked Credit/Debit Note records (see actions.ts's
+  // listRelatedNotesForBills), show the same RelatedNotesBadge preview
+  // used on Bill Payment / Courier Bill / Duty & Tax Bill.
+  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[] }[];
   renderEdit: (record: T, onDone: () => void) => ReactNode;
   onDelete: (id: string) => Promise<SimpleResult>;
 }) {
@@ -466,7 +473,10 @@ function DocList<T extends { id: string }>({
             <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-medium text-slate-900">{r.no}</div>
+                  <div className="flex items-center gap-1.5 font-medium text-slate-900">
+                    {r.no}
+                    {r.notes && r.notes.length > 0 && <RelatedNotesBadge notes={r.notes} />}
+                  </div>
                   <div className="text-slate-400">{r.sub}</div>
                 </div>
                 <div className="text-right">

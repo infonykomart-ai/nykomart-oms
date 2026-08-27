@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
+import { listRelatedNotesForBills } from "../documents/actions";
 
 // Bill Payment (round 11) — see actions.ts header comment. Lists every
 // bill_pass_register row (any invoice_type — vendor/courier/duty/salary/
@@ -81,6 +82,18 @@ export default async function BillPaymentPage({
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
+  // 2026-08-27 (later same day) — "credite note ya debit note agar us
+  // invoice se related ho to vaha dikhna cahiye": one batched lookup for
+  // every bill on this page, then fanned back out per row below — never
+  // call listRelatedNotesForBills per-row (see its own comment).
+  const relatedNotes = await listRelatedNotesForBills((bills ?? []).map((b) => b.id));
+  const notesByBillId = new Map<string, typeof relatedNotes>();
+  for (const n of relatedNotes) {
+    const list = notesByBillId.get(n.billPassRegisterId) ?? [];
+    list.push(n);
+    notesByBillId.set(n.billPassRegisterId, list);
+  }
+
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
     company_id: b.company_id,
@@ -106,6 +119,7 @@ export default async function BillPaymentPage({
     total_paid: Number(b.total_paid),
     balance_due: Number(b.balance_due),
     remark: b.remark,
+    related_notes: notesByBillId.get(b.id) ?? [],
   }));
 
   const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);

@@ -32,6 +32,8 @@ import {
   type EditBillState,
 } from "./actions";
 import { groupPartyOptions, type PartyOption } from "../documents/party-options";
+import { RelatedNotesBadge } from "../documents/related-notes-badge";
+import type { RelatedNote } from "../documents/actions";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -59,6 +61,7 @@ export type PayableBillRow = {
   total_paid: number;
   balance_due: number;
   remark: string | null;
+  related_notes: RelatedNote[];
 };
 
 export function BillPaymentList({ bills, parties }: { bills: PayableBillRow[]; parties: PartyOption[] }) {
@@ -242,6 +245,7 @@ function GroupRow({
                 {group.bills.length} items · 1 invoice
               </span>
             )}
+            <RelatedNotesBadge notes={group.bills.flatMap((b) => b.related_notes)} />
           </div>
         </td>
         <td className="whitespace-nowrap px-3 py-2 text-slate-600">{first.invoice_type ?? "—"}</td>

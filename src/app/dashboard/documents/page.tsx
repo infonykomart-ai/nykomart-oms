@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { DocumentEntryTabs } from "./document-entry-tabs";
+import { listRelatedNotesForBills } from "./actions";
 
 // Document Entry module (2026-08-07) — the dashboard's "Document Entry"
 // tile has pointed at /dashboard/documents since the Invoice round, but
@@ -213,7 +214,8 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   // PO/RF/RG number.
   const freightBillIds = (recentFreightBills ?? []).map((b) => b.id);
   const dutyBillIds = (recentDutyBills ?? []).map((b) => b.id);
-  const [{ data: freightAssignments }, { data: dutyAssignments }, { data: financeLinks }] = await Promise.all([
+  const purchaseBillIds = (recentPurchaseBills ?? []).map((b) => b.id);
+  const [{ data: freightAssignments }, { data: dutyAssignments }, { data: financeLinks }, { data: purchaseFinanceLinks }] = await Promise.all([
     freightBillIds.length
       ? supabase
           .from("freight_bill_awb_assignments")
@@ -233,16 +235,49 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     // 2026-08-12 (round 10): which of these bills already have a "Send to
     // Bill Pass Register" entry, so the button can hide/grey out instead
     // of allowing a double-post.
+    // 2026-08-27 (later same day): `id` added too — Credit/Debit Notes link
+    // to a specific bill_pass_register ROW (debit_notes.bill_pass_register_id
+    // etc.), not to the freight_bill/duty_tax_bill row itself, so this id
+    // is what listRelatedNotesForBills below actually needs.
     freightBillIds.length || dutyBillIds.length
       ? supabase
           .from("bill_pass_register")
-          .select("source, source_id")
+          .select("id, source, source_id")
           .in("source", ["freight_bill", "duty_tax_bill"])
           .in("source_id", [...freightBillIds, ...dutyBillIds])
+      : Promise.resolve({ data: [] }),
+    purchaseBillIds.length
+      ? supabase.from("bill_pass_register").select("id, source_id").eq("source", "purchase_bill").in("source_id", purchaseBillIds)
       : Promise.resolve({ data: [] }),
   ]);
   const sentFreightBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => f.source_id));
   const sentDutyBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => f.source_id));
+
+  // 2026-08-27 (later same day) — "purchase bill ho ya kisi bhi party ka
+  // bill ho ... credite note ya debit note agar us invoice se related ho
+  // to vaha dikhna cahiye sath hi link bhi hona chahiye": ONE batched
+  // listRelatedNotesForBills call covering every Purchase Bill/Courier
+  // Bill/Duty & Tax Bill on this page (never per-row — see that function's
+  // own comment), keyed back to each bill's own id via its
+  // bill_pass_register row (source_id -> bill_pass_register.id map).
+  const bprIdByFreightBillId = new Map((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => [f.source_id, f.id]));
+  const bprIdByDutyBillId = new Map((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => [f.source_id, f.id]));
+  const bprIdByPurchaseBillId = new Map((purchaseFinanceLinks ?? []).map((f) => [f.source_id, f.id]));
+  const allBprIds = [
+    ...bprIdByFreightBillId.values(),
+    ...bprIdByDutyBillId.values(),
+    ...bprIdByPurchaseBillId.values(),
+  ];
+  const relatedNotesForBills = await listRelatedNotesForBills(allBprIds);
+  const notesByBprId = new Map<string, typeof relatedNotesForBills>();
+  for (const n of relatedNotesForBills) {
+    const list = notesByBprId.get(n.billPassRegisterId) ?? [];
+    list.push(n);
+    notesByBprId.set(n.billPassRegisterId, list);
+  }
+  function notesFor(bprId: string | undefined) {
+    return bprId ? notesByBprId.get(bprId) ?? [] : [];
+  }
 
   const assignmentOrderIds = Array.from(
     new Set([...(freightAssignments ?? []).map((a) => a.order_id), ...(dutyAssignments ?? []).map((a) => a.order_id)])
@@ -345,6 +380,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             round_off_amt: Number(r.round_off_amt ?? 0),
             g_total_plus_gst: r.g_total_plus_gst != null ? Number(r.g_total_plus_gst) : null,
             vendorName: partyName.get(r.vendor_party_id) ?? "",
+            related_notes: notesFor(bprIdByPurchaseBillId.get(r.id)),
           })),
           csbFilings: (recentCsbFilings ?? []).map((r) => ({
             ...r,
@@ -364,6 +400,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             sentToFinance: sentFreightBillIds.has(b.id),
             vendor_party_id: b.vendor_party_id,
             vendor_name: b.vendor_party_id ? partyName.get(b.vendor_party_id) ?? null : null,
+            related_notes: notesFor(bprIdByFreightBillId.get(b.id)),
             assignments: (freightAssignments ?? [])
               .filter((a) => a.freight_bill_id === b.id)
               .map((a) => ({
@@ -394,6 +431,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             sentToFinance: sentDutyBillIds.has(b.id),
             vendor_party_id: b.vendor_party_id,
             vendor_name: b.vendor_party_id ? partyName.get(b.vendor_party_id) ?? null : null,
+            related_notes: notesFor(bprIdByDutyBillId.get(b.id)),
             assignments: (dutyAssignments ?? [])
               .filter((a) => a.duty_tax_bill_id === b.id)
               .map((a) => ({

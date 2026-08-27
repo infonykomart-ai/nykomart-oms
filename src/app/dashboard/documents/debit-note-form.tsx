@@ -4,6 +4,7 @@ import { useActionState, useMemo, useState } from "react";
 import { saveDebitNote, type DocFormState, type OrderLookup, type BillSearchHit } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
 import { BillLookupSelect } from "./bill-lookup-select";
+import { PartyBillPicker } from "./party-bill-picker";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialState: DocFormState = { error: null, success: null };
@@ -15,15 +16,20 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
   const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(saveDebitNote, initialState);
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
+  const [partyId, setPartyId] = useState("");
   const [orderId, setOrderId] = useState("");
 
   // 2026-08-27 — "credite note ya debit note agar us invoice se related ho
-  // to vaha dikhna cahiye sath hi link bhi hona chahiye": raisedAgainstBill
-  // is the real bill_pass_register link (dropdown, per user's confirmed
-  // choice — see BillLookupSelect/searchBillsForNote). The pre-existing
-  // free-text "Against Invoice/Bill No." field stays too, for a bill that
-  // doesn't exist in the system yet — it's supplementary now, not the link.
-  const [raisedAgainstBill, setRaisedAgainstBill] = useState<BillSearchHit | null>(null);
+  // to vaha dikhna cahiye sath hi link bhi hona chahiye", follow-up:
+  // "party select karte hi uske invocie no drop down aajaye us invoice me
+  // kya itme hai ya kis item par debit lagana ahi" — raisedAgainstBillId is
+  // the real bill_pass_register link, now populated from a plain dropdown
+  // (PartyBillPicker) scoped to the selected Company+Party, with a second
+  // dropdown for WHICH item on a multi-item invoice, instead of a
+  // free-typed search. The pre-existing free-text "Against Invoice/Bill
+  // No." field stays too, for a bill that doesn't exist in the system yet
+  // — it's supplementary now, not the link.
+  const [raisedAgainstBillId, setRaisedAgainstBillId] = useState("");
 
   // "kisi bill me agar credit debit adjust karna pade kisi dusre invocie me
   // to vo bhi hona chahiye" — optional: apply this note's amount to REDUCE
@@ -58,21 +64,11 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
     <form action={formAction} className="space-y-3">
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
-      <input type="hidden" name="bill_pass_register_id" value={raisedAgainstBill?.primaryBillId ?? ""} />
+      <input type="hidden" name="bill_pass_register_id" value={raisedAgainstBillId} />
       <input type="hidden" name="adjust_target_bill_pass_register_id" value={applyAdjustment ? adjustTargetBill?.primaryBillId ?? "" : ""} />
       <input type="hidden" name="adjust_amount" value={applyAdjustment ? adjustAmount : ""} />
 
       <OrderLookupBox label="Find order by PO/RF/RG No. (optional)" onFound={handleFound} />
-
-      <div>
-        <label className={labelClass}>Raised against bill/invoice (optional — search by vendor/invoice no.)</label>
-        <BillLookupSelect
-          label=""
-          selected={raisedAgainstBill}
-          onSelect={setRaisedAgainstBill}
-          onClear={() => setRaisedAgainstBill(null)}
-        />
-      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -85,7 +81,7 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
         </div>
         <div>
           <label className={labelClass} htmlFor="dn_party">Party (Vendor) *</label>
-          <select id="dn_party" name="party_id" required defaultValue="" className={inputClass}>
+          <select id="dn_party" name="party_id" required value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputClass}>
             <option value="" disabled>Select party</option>
             {partyGroups.map((g) => (
               <optgroup key={g.label} label={g.label}>
@@ -96,6 +92,20 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
             ))}
           </select>
         </div>
+      </div>
+
+      {/* 2026-08-27 (follow-up) — auto-populated the instant Company+Party
+          are picked above, no typing needed; shows item-by-item on a
+          multi-item invoice so this note attaches to the specific item. */}
+      <PartyBillPicker
+        label="Raised against bill/invoice (optional)"
+        companyId={companyId}
+        partyId={partyId}
+        selectedBillId={raisedAgainstBillId}
+        onSelect={setRaisedAgainstBillId}
+      />
+
+      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass} htmlFor="dn_date">Debit Note Date *</label>
           <input id="dn_date" name="debit_note_date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} className={inputClass} />
