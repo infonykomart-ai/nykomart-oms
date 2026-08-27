@@ -22,7 +22,7 @@
 // per sq ft, so each order now gets its own rate. qty_unit is still
 // shared — that part of the 2026-08-17 fix (don't silently mix units
 // under one shared invoice) is a separate concern and still holds.
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useActionState } from "react";
 import {
   lookupOrderForPurchaseBill,
@@ -75,6 +75,28 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
   const [bulkRate, setBulkRate] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // 2026-08-27 — "jab entry compleate ho jaye to entry save hokar entry
+  // form clear ho jaye" — same fix as the Multi-Item form (see that file's
+  // comment): once every order in this invoice saved successfully, clear
+  // the picked-orders list + shared vendor/invoice/GST fields so the next
+  // invoice starts fresh instead of needing everything cleared by hand.
+  // Left filled on a partial failure so the user can fix and retry.
+  useEffect(() => {
+    if (!state.results || state.results.length === 0 || !state.results.every((r) => r.ok)) return;
+    // setTimeout defers these off the synchronous effect body — see the
+    // Multi-Item form's identical comment for why.
+    const t = setTimeout(() => {
+      formRef.current?.reset();
+      setOrders([]);
+      setGstRatePct(null);
+      setGstType("CGST_SGST");
+      setSharedUnit("FT");
+      setBulkRate("");
+    }, 0);
+    return () => clearTimeout(t);
+  }, [state.results]);
 
   function addOrder(order: {
     id: string;
@@ -173,7 +195,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
   );
 
   return (
-    <form action={formAction} className="space-y-3">
+    <form ref={formRef} action={formAction} className="space-y-3">
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       {state.results && (
         <div className="space-y-1 rounded-lg bg-slate-50 p-2 text-xs">

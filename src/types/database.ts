@@ -229,6 +229,7 @@ export type Database = {
           credit_note_date: string | null;
           total_amt: number;
           credit_note_amt: number;
+          adj_amt: number;
           to_be_pay: number | null;
           total_paid: number;
           balance_due: number | null;
@@ -266,6 +267,7 @@ export type Database = {
           credit_note_date?: string | null;
           total_amt?: number;
           credit_note_amt?: number;
+          adj_amt?: number;
           to_be_pay?: number | null;
           total_paid?: number;
           balance_due?: number | null;
@@ -303,6 +305,7 @@ export type Database = {
           credit_note_date?: string | null;
           total_amt?: number;
           credit_note_amt?: number;
+          adj_amt?: number;
           to_be_pay?: number | null;
           total_paid?: number;
           balance_due?: number | null;
@@ -767,6 +770,7 @@ export type Database = {
           checked_by_employee_id: string | null;
           refund_type: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id: string | null;
+          bill_pass_register_id: string | null;
           created_by_employee_id: string | null;
           remark: string | null;
           created_at: string;
@@ -793,6 +797,7 @@ export type Database = {
           checked_by_employee_id?: string | null;
           refund_type?: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id?: string | null;
+          bill_pass_register_id?: string | null;
           created_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
@@ -819,6 +824,7 @@ export type Database = {
           checked_by_employee_id?: string | null;
           refund_type?: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id?: string | null;
+          bill_pass_register_id?: string | null;
           created_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
@@ -864,6 +870,13 @@ export type Database = {
             columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "credit_notes_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
             referencedColumns: ["id"];
           },
         ];
@@ -1047,6 +1060,7 @@ export type Database = {
           debit_note_no: string | null;
           debit_note_date: string;
           against_invoice_bill_no: string | null;
+          bill_pass_register_id: string | null;
           party_id: string;
           order_id: string | null;
           particulars: string | null;
@@ -1069,6 +1083,7 @@ export type Database = {
           debit_note_no?: string | null;
           debit_note_date: string;
           against_invoice_bill_no?: string | null;
+          bill_pass_register_id?: string | null;
           party_id: string;
           order_id?: string | null;
           particulars?: string | null;
@@ -1091,6 +1106,7 @@ export type Database = {
           debit_note_no?: string | null;
           debit_note_date?: string;
           against_invoice_bill_no?: string | null;
+          bill_pass_register_id?: string | null;
           party_id?: string;
           order_id?: string | null;
           particulars?: string | null;
@@ -1127,6 +1143,75 @@ export type Database = {
             columns: ["order_id"];
             isOneToOne: false;
             referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "debit_notes_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      bill_pass_register_adjustments: {
+        Row: {
+          id: string;
+          bill_pass_register_id: string;
+          debit_note_id: string | null;
+          credit_note_id: string | null;
+          amount: number;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          bill_pass_register_id: string;
+          debit_note_id?: string | null;
+          credit_note_id?: string | null;
+          amount: number;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          bill_pass_register_id?: string;
+          debit_note_id?: string | null;
+          credit_note_id?: string | null;
+          amount?: number;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "bill_pass_register_adjustments_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_adjustments_debit_note_id_fkey";
+            columns: ["debit_note_id"];
+            isOneToOne: false;
+            referencedRelation: "debit_notes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_adjustments_credit_note_id_fkey";
+            columns: ["credit_note_id"];
+            isOneToOne: false;
+            referencedRelation: "credit_notes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_adjustments_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];

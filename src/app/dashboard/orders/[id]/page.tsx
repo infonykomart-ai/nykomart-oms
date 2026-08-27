@@ -40,21 +40,30 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
   if (!order || !employee.companyIds.includes(order.company_id)) notFound();
 
-  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: vendor }] = await Promise.all([
-    supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
-    supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
-    supabase.from("item_categories").select("id, name, hsn_code").eq("id", order.item_category_id).single(),
-    order.invoice_id
-      ? supabase
-          .from("sales_invoices")
-          .select("id, invoice_no, master_invoice_no, invoice_date, csb_type, courier_company")
-          .eq("id", order.invoice_id)
-          .maybeSingle()
-      : Promise.resolve({ data: null }),
-    order.vendor_party_id
-      ? supabase.from("parties").select("id, name").eq("id", order.vendor_party_id).maybeSingle()
-      : Promise.resolve({ data: null }),
-  ]);
+  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: vendor }, { data: debitNotes }, { data: creditNotes }] =
+    await Promise.all([
+      supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
+      supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
+      supabase.from("item_categories").select("id, name, hsn_code").eq("id", order.item_category_id).single(),
+      order.invoice_id
+        ? supabase
+            .from("sales_invoices")
+            .select("id, invoice_no, master_invoice_no, invoice_date, csb_type, courier_company")
+            .eq("id", order.invoice_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      order.vendor_party_id
+        ? supabase.from("parties").select("id, name").eq("id", order.vendor_party_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      // 2026-08-27 — "kisi order ke against me bhi agar credit debit note
+      // bana na pade to vo bhi link ho": debit_notes.order_id /
+      // credit_notes.order_id already existed (pre-this-round), but this
+      // detail page never surfaced them — the only place they showed was
+      // OrderLookupBox's own inline results while CREATING a new note, not
+      // here on the order itself.
+      supabase.from("debit_notes").select("id, debit_note_no, debit_note_date, debit_amount").eq("order_id", id).order("debit_note_date", { ascending: false }),
+      supabase.from("credit_notes").select("id, cn_no, credit_note_date, refund_amount").eq("order_id", id).order("credit_note_date", { ascending: false }),
+    ]);
 
   return (
     <OrderView
@@ -66,6 +75,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       hsnCode={itemCategory?.hsn_code ?? ""}
       invoice={invoice ?? null}
       vendorName={vendor?.name ?? null}
+      debitNotes={(debitNotes ?? []).map((d) => ({ ...d, debit_amount: Number(d.debit_amount) }))}
+      creditNotes={(creditNotes ?? []).map((c) => ({ ...c, refund_amount: Number(c.refund_amount) }))}
     />
   );
 }

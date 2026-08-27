@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea } from "@/components/print-view";
+import { groupBills } from "@/lib/bill-grouping";
 import { LedgerExportBar } from "./ledger-export-bar";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
@@ -52,7 +53,7 @@ async function PartyLedgerInner(
   const { data: entriesRaw } = await supabase
     .from("bill_pass_register")
     .select(
-      "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
+      "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
     )
     .eq("party_id", id)
     .eq("company_id", employee.currentCompanyId)
@@ -128,17 +129,30 @@ async function PartyLedgerInner(
     sortKey: string; // date + a same-day tiebreaker so a bill sorts before its own same-day payment
   };
 
+  // 2026-08-27 — "party ladger me bhi ese hi dikh raha hai" (same N-rows-
+  // per-invoice bug as Approvals/Bill Payment): a multi-item/multi-order
+  // Purchase Bill's several bill_pass_register rows are grouped (see
+  // src/lib/bill-grouping.ts) into ONE "Credit" ledger line per invoice
+  // (summed total_amt) and ONE combined "Debit" line for any credit-note/
+  // adjustment amount, BEFORE building txns — every member row's own
+  // payments still post individually (a payment is its own real-world
+  // event, not something to merge), just all labeled against the shared
+  // invoice ref.
   const txns: Txn[] = [];
-  for (const e of entriesRaw ?? []) {
-    const ref = e.vendor_invoice_no ?? e.invoice_no ?? "—";
-    const label = sourceLabel[e.source ?? ""] ?? e.invoice_type ?? "Bill";
-    const billDate = e.invoice_date ?? e.invoice_recv_date ?? e.created_at.slice(0, 10);
-    const totalAmt = Number(e.total_amt);
-    const creditNoteAmt = Number(e.credit_note_amt);
+  const partyIdEntries = (entriesRaw ?? []).filter((e): e is typeof e & { party_id: string } => !!e.party_id);
+  for (const eg of groupBills(partyIdEntries)) {
+    const first = eg.bills[0];
+    const ref = first.vendor_invoice_no ?? first.invoice_no ?? "—";
+    const label = sourceLabel[first.source ?? ""] ?? first.invoice_type ?? "Bill";
+    const billDate = first.invoice_date ?? first.invoice_recv_date ?? first.created_at.slice(0, 10);
+    const totalAmt = eg.bills.reduce((sum, b) => sum + Number(b.total_amt), 0);
+    const creditNoteAmt = eg.bills.reduce((sum, b) => sum + Number(b.credit_note_amt), 0);
+    const adjAmt = eg.bills.reduce((sum, b) => sum + Number(b.adj_amt ?? 0), 0);
+    const itemsSuffix = eg.isGroup ? ` (${eg.bills.length} items)` : "";
     if (totalAmt !== 0) {
       txns.push({
         date: billDate,
-        particulars: `${label} ${ref}`,
+        particulars: `${label} ${ref}${itemsSuffix}`,
         type: "Credit",
         debit: 0,
         credit: totalAmt,
@@ -155,15 +169,27 @@ async function PartyLedgerInner(
         sortKey: `${billDate}_1`,
       });
     }
-    for (const p of paymentsByBill.get(e.id) ?? []) {
+    if (adjAmt > 0) {
       txns.push({
-        date: p.payment_date,
-        particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
+        date: billDate,
+        particulars: `Debit/Credit Note adjustment against ${ref}`,
         type: "Debit",
-        debit: p.amount,
+        debit: adjAmt,
         credit: 0,
-        sortKey: `${p.payment_date}_2`,
+        sortKey: `${billDate}_1`,
       });
+    }
+    for (const b of eg.bills) {
+      for (const p of paymentsByBill.get(b.id) ?? []) {
+        txns.push({
+          date: p.payment_date,
+          particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
+          type: "Debit",
+          debit: p.amount,
+          credit: 0,
+          sortKey: `${p.payment_date}_2`,
+        });
+      }
     }
   }
   txns.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));

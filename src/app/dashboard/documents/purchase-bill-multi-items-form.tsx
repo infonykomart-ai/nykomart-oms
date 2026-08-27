@@ -13,7 +13,7 @@
 // No./Date/GST are shared. Not order-linked (general-stock purchase, same
 // as leaving the order lookup blank on the Single Order form) — each item
 // becomes its own purchase_bills row with order_id NULL.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useActionState } from "react";
 import { savePurchaseBillMultiItems, type PurchaseBillMultiItemsState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
@@ -53,9 +53,34 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
   const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(savePurchaseBillMultiItems, initialState);
   const [items, setItems] = useState<ItemLine[]>([newItemLine()]);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
+
+  // 2026-08-27 — "jab entry compleate ho jaye to entry save hokar entry
+  // form clear ho jaye": this form used to stay filled after a successful
+  // save (state.results just rendered a results list alongside the still-
+  // populated items). Once every result comes back ok, clear everything —
+  // formRef.reset() clears the uncontrolled fields (vendor party/invoice
+  // no./date), and the item lines + GST selection (React-controlled state)
+  // are reset alongside it. A save with any failed item is deliberately
+  // left filled, so the user can fix and retry without re-entering
+  // everything.
+  useEffect(() => {
+    if (!state.results || state.results.length === 0 || !state.results.every((r) => r.ok)) return;
+    // setTimeout defers these off the synchronous effect body — same
+    // pattern bill-payment-list.tsx already uses for its own post-success
+    // reset — avoiding react-hooks/set-state-in-effect's cascading-render
+    // warning for a direct setState call inside an effect.
+    const t = setTimeout(() => {
+      formRef.current?.reset();
+      setItems([newItemLine()]);
+      setGstRatePct(null);
+      setGstType("CGST_SGST");
+    }, 0);
+    return () => clearTimeout(t);
+  }, [state.results]);
 
   function updateItem(clientId: number, patch: Partial<ItemLine>) {
     setItems((prev) => prev.map((it) => (it.clientId === clientId ? { ...it, ...patch } : it)));
@@ -84,7 +109,7 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
   );
 
   return (
-    <form action={formAction} className="space-y-3">
+    <form ref={formRef} action={formAction} className="space-y-3">
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       {state.results && (
         <div className="space-y-1 rounded-lg bg-slate-50 p-2 text-xs">

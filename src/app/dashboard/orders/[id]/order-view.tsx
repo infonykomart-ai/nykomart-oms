@@ -49,6 +49,9 @@ export type Invoice = {
   courier_company: string;
 } | null;
 
+export type OrderDebitNote = { id: string; debit_note_no: string | null; debit_note_date: string; debit_amount: number };
+export type OrderCreditNote = { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number };
+
 // 2026-08-26 — "PO SELECT KA OPTION NAHI HAI KISI PO KA JO EK SE JYADA
 // SELECT KAR KE DENA HO TO AGAR PRINT DE TO KESE DENGE 1/2 2/2 TYPE KE":
 // pulled the actual printable sheet out of OrderView into its own
@@ -257,6 +260,8 @@ export function OrderView({
   hsnCode,
   invoice,
   vendorName,
+  debitNotes = [],
+  creditNotes = [],
 }: {
   order: Order;
   companyName: string;
@@ -266,6 +271,8 @@ export function OrderView({
   hsnCode: string;
   invoice: Invoice;
   vendorName: string | null;
+  debitNotes?: OrderDebitNote[];
+  creditNotes?: OrderCreditNote[];
 }) {
   return (
     <div>
@@ -294,6 +301,40 @@ export function OrderView({
           <Link href={`/dashboard/invoices/${invoice.id}`} className="text-sm text-amber-600 underline">
             View full Invoice →
           </Link>
+        </div>
+      )}
+
+      {/* 2026-08-27 — "kisi order ke against me bhi agar credit debit note
+          bana na pade to vo bhi link ho" — see page.tsx's own comment on
+          why this wasn't shown here before. No per-note detail page exists
+          yet (Document Entry is entry-only), so this links back to the
+          Document Entry hub rather than a dead link — still visible +
+          linked, per the request, just not a dedicated note page. */}
+      {(debitNotes.length > 0 || creditNotes.length > 0) && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-xs print:hidden">
+          <p className="mb-1.5 font-semibold text-slate-700">Related Debit/Credit Notes</p>
+          <ul className="space-y-1">
+            {debitNotes.map((d) => (
+              <li key={d.id}>
+                <Link href="/dashboard/documents" className="text-amber-600 hover:underline">
+                  Debit Note {d.debit_note_no ?? "—"}
+                </Link>{" "}
+                <span className="text-slate-500">
+                  · {d.debit_note_date} · ₹{d.debit_amount.toFixed(2)}
+                </span>
+              </li>
+            ))}
+            {creditNotes.map((c) => (
+              <li key={c.id}>
+                <Link href="/dashboard/documents" className="text-amber-600 hover:underline">
+                  Credit Note {c.cn_no ?? "—"}
+                </Link>{" "}
+                <span className="text-slate-500">
+                  · {c.credit_note_date} · ₹{c.refund_amount.toFixed(2)}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

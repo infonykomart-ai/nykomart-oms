@@ -37,6 +37,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
+import { groupBills } from "@/lib/bill-grouping";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -223,10 +224,75 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
 }
 
+// 2026-08-27 — "credite note ya debit note agar us invoice se related ho to
+// vaha dikhna cahiye sath hi link bhi hona chahiye" + "dropdown-based bill
+// selection (not free-text matching)" (user's confirmed choice via
+// AskUserQuestion): the Debit Note form's old "Against Invoice/Bill No."
+// was a free-text field with zero real link to the bill it was about. This
+// is the search behind its replacement dropdown — searches
+// bill_pass_register by vendor invoice no./invoice no./party name, scoped
+// to the employee's accessible companies, and GROUPS results by invoice
+// (see src/lib/bill-grouping.ts) so a multi-item Purchase Bill shows as
+// ONE candidate, not N. `primaryBillId` is the specific bill_pass_register
+// row a note/adjustment actually attaches to (the group's first member —
+// see this file's own note on bill_pass_register_adjustments below for why
+// picking just one member is safe: Bill Payment/Party Ledger/P&L all sum
+// adj_amt across every row in a group, so it doesn't matter WHICH member
+// carries it).
+export type BillSearchHit = {
+  primaryBillId: string;
+  companyId: string;
+  partyId: string | null;
+  partyName: string | null;
+  label: string;
+  itemCount: number;
+  totalAmt: number;
+  balanceDue: number;
+};
+
+export async function searchBillsForNote(query: string): Promise<BillSearchHit[]> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const [{ data: byInvoice }, { data: parties }] = await Promise.all([
+    supabase
+      .from("bill_pass_register")
+      .select("id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, source, total_amt, balance_due")
+      .in("company_id", employee.companyIds)
+      .or(`vendor_invoice_no.ilike.%${trimmed}%,invoice_no.ilike.%${trimmed}%`)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    supabase.from("parties").select("id, name"),
+  ]);
+
+  const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
+  const groups = groupBills(byInvoice ?? []);
+
+  return groups.slice(0, 15).map((g) => {
+    const first = g.bills[0];
+    const ref = first.vendor_invoice_no ?? first.invoice_no ?? "—";
+    const partyLabel = first.party_id ? partyName.get(first.party_id) ?? "—" : "—";
+    return {
+      primaryBillId: first.id,
+      companyId: first.company_id,
+      partyId: first.party_id,
+      partyName: partyLabel,
+      label: `${ref} — ${partyLabel}${g.isGroup ? ` (${g.bills.length} items)` : ""} — ${first.invoice_type ?? ""}`.trim(),
+      itemCount: g.bills.length,
+      totalAmt: g.bills.reduce((sum, b) => sum + Number(b.total_amt), 0),
+      balanceDue: g.bills.reduce((sum, b) => sum + Number(b.balance_due ?? 0), 0),
+    };
+  });
+}
+
 type DebitNoteParams = {
   companyId: string;
   debitNoteDate: string;
   againstInvoiceBillNo: string | null;
+  billPassRegisterId: string | null;
   partyId: string;
   orderId: string | null;
   particulars: string | null;
@@ -237,6 +303,17 @@ type DebitNoteParams = {
   rate: number | null;
   debitAmount: number;
   remark: string | null;
+  // 2026-08-27 — "kisi bill me agar credit debit adjust karna pade kisi
+  // dusre invocie me to vo bhi hona chahiye": a note's amount can be
+  // applied to REDUCE a DIFFERENT invoice's payable than the one it was
+  // raised against (billPassRegisterId above) — see
+  // bill_pass_register_adjustments / trg_bpr_adjustments_sync() in
+  // db/2026-08-27-note-linking-and-adjustments.sql. Optional: a note can
+  // be saved with no adjustment at all (just the "raised against" link),
+  // and applied later from wherever the target bill is shown.
+  adjustTargetBillPassRegisterId: string | null;
+  adjustAmount: number | null;
+  adjustRemark: string | null;
 };
 
 async function saveDebitNoteCore(
@@ -248,6 +325,9 @@ async function saveDebitNoteCore(
   if (!employee.companyIds.includes(p.companyId)) return { error: "You do not have access to this company.", id: null, docNo: null };
   if (!p.debitNoteDate) return { error: "Debit Note Date is required.", id: null, docNo: null };
   if (!p.partyId) return { error: "Select a party.", id: null, docNo: null };
+  if (p.adjustTargetBillPassRegisterId && (!p.adjustAmount || p.adjustAmount <= 0)) {
+    return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
+  }
 
   const { data, error } = await supabase
     .from("debit_notes")
@@ -255,6 +335,7 @@ async function saveDebitNoteCore(
       company_id: p.companyId,
       debit_note_date: p.debitNoteDate,
       against_invoice_bill_no: p.againstInvoiceBillNo,
+      bill_pass_register_id: p.billPassRegisterId,
       party_id: p.partyId,
       order_id: p.orderId,
       particulars: p.particulars,
@@ -270,6 +351,28 @@ async function saveDebitNoteCore(
     .single();
 
   if (error || !data) return { error: `Failed to save Debit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
+
+  if (p.adjustTargetBillPassRegisterId && p.adjustAmount) {
+    const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert({
+      bill_pass_register_id: p.adjustTargetBillPassRegisterId,
+      debit_note_id: data.id,
+      amount: p.adjustAmount,
+      remark: p.adjustRemark,
+      created_by_employee_id: employee.id,
+    });
+    if (adjError) {
+      // Debit Note itself is saved and valid — surface the adjustment
+      // failure distinctly rather than losing the note behind a generic
+      // error (same "don't roll back what already succeeded" approach as
+      // savePurchaseBillCore's own Finance-mirror-insert failure handling).
+      return {
+        error: null,
+        id: data.id,
+        docNo: `${data.debit_note_no ?? ""} (saved, but the invoice adjustment failed: ${adjError.message} — apply it manually)`,
+      };
+    }
+  }
+
   return { error: null, id: data.id, docNo: data.debit_note_no ?? "" };
 }
 
@@ -281,6 +384,7 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     companyId: str(formData, "company_id"),
     debitNoteDate: str(formData, "debit_note_date"),
     againstInvoiceBillNo: strOrNull(formData, "against_invoice_bill_no"),
+    billPassRegisterId: strOrNull(formData, "bill_pass_register_id"),
     partyId: str(formData, "party_id"),
     orderId: strOrNull(formData, "order_id"),
     particulars: strOrNull(formData, "particulars"),
@@ -291,10 +395,16 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     rate: numOrNull(formData, "rate"),
     debitAmount: numOrZero(formData, "debit_amount"),
     remark: strOrNull(formData, "remark"),
+    adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
+    adjustAmount: numOrNull(formData, "adjust_amount"),
+    adjustRemark: strOrNull(formData, "adjust_remark"),
   });
 
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/approvals/l1");
+  revalidatePath("/dashboard/approvals/l2");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
 }
 
@@ -2333,6 +2443,14 @@ export async function bulkSaveDebitNotes(_prev: BulkDocState, formData: FormData
       companyId,
       debitNoteDate: cellStr(raw, byHeader, "Debit Note Date"),
       againstInvoiceBillNo: cellStr(raw, byHeader, "Against Invoice/Bill No") || null,
+      // Bulk-imported debit notes have no dropdown to pick a specific
+      // bill_pass_register row from (the source file only has free text) —
+      // billPassRegisterId stays null, same as a manually-entered note
+      // that isn't linked to a bill yet; the "raised against" text above
+      // still round-trips. No adjustment is applied from a bulk import
+      // either — see saveDebitNoteCore's own comment on why that's a
+      // separate, explicit action.
+      billPassRegisterId: null,
       partyId,
       orderId,
       particulars: cellStr(raw, byHeader, "Particulars") || null,
@@ -2343,6 +2461,9 @@ export async function bulkSaveDebitNotes(_prev: BulkDocState, formData: FormData
       rate: cellStr(raw, byHeader, "Rate") ? Number(cellStr(raw, byHeader, "Rate")) : null,
       debitAmount: Number(cellStr(raw, byHeader, "Debit Amount")) || 0,
       remark: cellStr(raw, byHeader, "Remark") || null,
+      adjustTargetBillPassRegisterId: null,
+      adjustAmount: null,
+      adjustRemark: null,
     });
 
     results.push({ row: rowNum, label, docNo: result.docNo, error: result.error });

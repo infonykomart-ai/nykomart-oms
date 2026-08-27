@@ -23,6 +23,12 @@ import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 //   - "pending"       -> balance_due > 0 AND due_date >= today (not yet due)
 //   - "overdue"       -> balance_due > 0 AND due_date <  today
 //   - "paid"          -> balance_due <= 0
+//
+// 2026-08-27 — rows here are grouped client-side (see bill-payment-list.tsx
+// + src/lib/bill-grouping.ts) so a multi-item/multi-order Purchase Bill's
+// several bill_pass_register rows show as one invoice row. The query below
+// is unchanged (still fetches every underlying row) — grouping is a
+// display/action concern, not a query concern.
 export default async function BillPaymentPage({
   searchParams,
 }: {
@@ -77,6 +83,7 @@ export default async function BillPaymentPage({
 
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
+    company_id: b.company_id,
     company_name: companyName.get(b.company_id) ?? "—",
     invoice_no: b.invoice_no,
     vendor_invoice_no: b.vendor_invoice_no,

@@ -1730,12 +1730,21 @@ CREATE TABLE bill_pass_register (
   credit_note_date                        date,
   total_amt                                 numeric(14,2) NOT NULL DEFAULT 0,
   credit_note_amt                             numeric(14,2) NOT NULL DEFAULT 0,
-  -- TO BE PAY = TOTAL AMT - CREDIT NOTE AMT; BALANCE DUE = TO BE PAY - TOTAL
-  -- PAID (inlined, since a generated column can't reference another one);
-  -- DUE DATE = INVOICE RECV. DATE + 7 (net-7 terms, matching the source data).
-  to_be_pay                                     numeric(14,2) GENERATED ALWAYS AS (total_amt - credit_note_amt) STORED,
+  -- 2026-08-27: adj_amt — SUM of bill_pass_register_adjustments targeting
+  -- this row, trigger-maintained (never hand-typed). Separate from the
+  -- pre-existing credit_note_amt above (that stays plain/manual, used by
+  -- Freight/Duty/Salary bill entry, untouched by this) — this is how a
+  -- Debit/Credit Note's amount reduces THIS invoice's payable even when
+  -- the note itself was raised against a DIFFERENT invoice. See
+  -- db/2026-08-27-note-linking-and-adjustments.sql.
+  adj_amt                                       numeric(14,2) NOT NULL DEFAULT 0,
+  -- TO BE PAY = TOTAL AMT - CREDIT NOTE AMT - ADJ AMT; BALANCE DUE = TO BE
+  -- PAY - TOTAL PAID (inlined, since a generated column can't reference
+  -- another one); DUE DATE = INVOICE RECV. DATE + 7 (net-7 terms, matching
+  -- the source data).
+  to_be_pay                                     numeric(14,2) GENERATED ALWAYS AS (total_amt - credit_note_amt - adj_amt) STORED,
   total_paid                                      numeric(14,2) NOT NULL DEFAULT 0,   -- plain imported value (source's own formula was a broken cross-file IMPORTRANGE)
-  balance_due                                       numeric(14,2) GENERATED ALWAYS AS (total_amt - credit_note_amt - total_paid) STORED,
+  balance_due                                       numeric(14,2) GENERATED ALWAYS AS (total_amt - credit_note_amt - adj_amt - total_paid) STORED,
   due_date                                            date GENERATED ALWAYS AS (invoice_recv_date + 7) STORED,
   party_id                                              uuid REFERENCES parties(id),
   party_type                                              text,
@@ -1796,6 +1805,71 @@ CREATE TABLE bill_pass_register_payments (
   entered_on                                   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_bpr_payments_bill ON bill_pass_register_payments(bill_pass_register_id);
+
+-- 2026-08-27 — the "raised against" link for Debit/Credit Notes. Added via
+-- ALTER (not inlined into the debit_notes/credit_notes CREATE TABLE blocks
+-- above) purely because this schema.sql lists those two tables BEFORE
+-- bill_pass_register — same forward-reference workaround the migration
+-- file itself uses.
+ALTER TABLE debit_notes
+  ADD COLUMN bill_pass_register_id uuid REFERENCES bill_pass_register(id);
+CREATE INDEX idx_debit_notes_bill_pass_register ON debit_notes(bill_pass_register_id);
+ALTER TABLE credit_notes
+  ADD COLUMN bill_pass_register_id uuid REFERENCES bill_pass_register(id);
+CREATE INDEX idx_credit_notes_bill_pass_register ON credit_notes(bill_pass_register_id);
+
+-- 2026-08-27 — cross-invoice Debit/Credit Note adjustments. "kisi bill me
+-- agar credit debit adjust karna pade kisi dusre invoice me to vo bhi
+-- hona chahiye" — a note's amount can reduce a DIFFERENT invoice's
+-- payable than the one it was raised against (debit_notes/credit_notes.
+-- bill_pass_register_id, below, is the "raised against" link; this table
+-- is where it's actually APPLIED — one note can split across several
+-- target bills). bill_pass_register.adj_amt (above) is the trigger-
+-- maintained SUM of this table per target row — see
+-- db/2026-08-27-note-linking-and-adjustments.sql for the trigger and the
+-- P&L view changes that net this into purchase expense.
+CREATE TABLE bill_pass_register_adjustments (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bill_pass_register_id      uuid NOT NULL REFERENCES bill_pass_register(id) ON DELETE CASCADE,
+  debit_note_id                uuid REFERENCES debit_notes(id) ON DELETE CASCADE,
+  credit_note_id                  uuid REFERENCES credit_notes(id) ON DELETE CASCADE,
+  amount                             numeric(14,2) NOT NULL CHECK (amount > 0),
+  remark                                text,
+  created_by_employee_id                  uuid REFERENCES employees(id),
+  created_at                                 timestamptz NOT NULL DEFAULT now(),
+  CHECK ( (debit_note_id IS NOT NULL AND credit_note_id IS NULL)
+       OR (debit_note_id IS NULL AND credit_note_id IS NOT NULL) )
+);
+CREATE INDEX idx_bpr_adjustments_target ON bill_pass_register_adjustments(bill_pass_register_id);
+CREATE INDEX idx_bpr_adjustments_debit_note ON bill_pass_register_adjustments(debit_note_id);
+CREATE INDEX idx_bpr_adjustments_credit_note ON bill_pass_register_adjustments(credit_note_id);
+CREATE OR REPLACE FUNCTION trg_bpr_adjustments_sync() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_ids uuid[];
+  v_id uuid;
+BEGIN
+  v_ids := ARRAY[]::uuid[];
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    v_ids := v_ids || NEW.bill_pass_register_id;
+  END IF;
+  IF TG_OP IN ('DELETE', 'UPDATE') THEN
+    v_ids := v_ids || OLD.bill_pass_register_id;
+  END IF;
+  FOREACH v_id IN ARRAY v_ids LOOP
+    UPDATE bill_pass_register
+    SET adj_amt = COALESCE((SELECT SUM(amount) FROM bill_pass_register_adjustments WHERE bill_pass_register_id = v_id), 0)
+    WHERE id = v_id;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+CREATE TRIGGER bpr_adjustments_sync_ins AFTER INSERT ON bill_pass_register_adjustments
+  FOR EACH ROW EXECUTE FUNCTION trg_bpr_adjustments_sync();
+CREATE TRIGGER bpr_adjustments_sync_upd AFTER UPDATE ON bill_pass_register_adjustments
+  FOR EACH ROW EXECUTE FUNCTION trg_bpr_adjustments_sync();
+CREATE TRIGGER bpr_adjustments_sync_del AFTER DELETE ON bill_pass_register_adjustments
+  FOR EACH ROW EXECUTE FUNCTION trg_bpr_adjustments_sync();
+
 -- 2026-08-12 (round 10): also auto-inserted for purchase_bills (source=
 -- 'purchase_bill', unambiguous — order_id always resolves one company) and,
 -- via an explicit reviewed "Send to Bill Pass Register" action, for
@@ -1961,10 +2035,22 @@ order_agg AS (
   GROUP BY o.company_id
 ),
 purchase_agg AS (
-  SELECT company_id, SUM(g_total_plus_gst) AS purchase_expenses_inr
+  SELECT company_id, SUM(g_total_plus_gst) AS purchase_expenses_gross_inr
   FROM purchase_bills
   WHERE company_id IS NOT NULL
   GROUP BY company_id
+),
+-- 2026-08-27: Debit/Credit Note adjustments applied against a
+-- source='purchase_bill' bill_pass_register row net OUT of purchase
+-- expense (a debit note for a vendor shortage/return means we really
+-- spent less than the bill's face value) — see
+-- db/2026-08-27-note-linking-and-adjustments.sql.
+purchase_adjustments AS (
+  SELECT bpr.company_id, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  WHERE bpr.source = 'purchase_bill'
+  GROUP BY bpr.company_id
 ),
 historical_agg AS (
   -- pre-`orders`-table CSV backfill rows only — see comment above.
@@ -1977,11 +2063,14 @@ combined AS (
   SELECT
     c.id AS company_id, c.name AS company_name,
     COALESCE(oa.total_sale_value_inr,0) + COALESCE(ha.hist_sale_inr,0) AS total_sale_value_inr,
-    COALESCE(oa.order_expenses_inr,0) + COALESCE(pa.purchase_expenses_inr,0) + COALESCE(ha.hist_expense_inr,0) AS total_expenses_inr
+    COALESCE(oa.order_expenses_inr,0)
+      + (COALESCE(pa.purchase_expenses_gross_inr,0) - COALESCE(padj.adjustment_total_inr,0))
+      + COALESCE(ha.hist_expense_inr,0) AS total_expenses_inr
   FROM companies c
-  LEFT JOIN order_agg oa      ON oa.company_id = c.id
-  LEFT JOIN purchase_agg pa   ON pa.company_id = c.id
-  LEFT JOIN historical_agg ha ON ha.company_id = c.id
+  LEFT JOIN order_agg oa            ON oa.company_id = c.id
+  LEFT JOIN purchase_agg pa         ON pa.company_id = c.id
+  LEFT JOIN purchase_adjustments padj ON padj.company_id = c.id
+  LEFT JOIN historical_agg ha       ON ha.company_id = c.id
 )
 SELECT
   combined.company_id, company_name,
@@ -2002,7 +2091,8 @@ COMMENT ON VIEW pl_dashboard_by_company_view IS
   '2026-08-20: rebuilt to be live off orders.order_value_inr + Courier/Duty reconciliation + purchase_bills '
   '(company-wide) instead of only the CSV-imported sale_profit_ledger — see db/2026-08-20-order-value-fix.sql. '
   'Pre-`orders`-table historical rows in sale_profit_ledger (order_id IS NULL) are still folded in so old '
-  'history is not lost.';
+  'history is not lost. 2026-08-27: purchase expense now nets out Debit/Credit Note adjustments applied '
+  'against purchase bills (bill_pass_register_adjustments) — see db/2026-08-27-note-linking-and-adjustments.sql.';
 
 -- 2026-08-20: rebuilt off a `months` CTE unioning distinct months from
 -- orders.order_date, purchase_bills.vendor_invoice_date, the historical
@@ -2041,10 +2131,22 @@ order_agg AS (
   GROUP BY date_trunc('month', o.order_date)
 ),
 purchase_agg AS (
-  SELECT date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_inr
+  SELECT date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_gross_inr
   FROM purchase_bills
   WHERE vendor_invoice_date IS NOT NULL
   GROUP BY date_trunc('month', vendor_invoice_date)
+),
+-- 2026-08-27: same purchase-adjustment netting as pl_dashboard_by_company_
+-- view, bucketed by the TARGET bill's own invoice_date (the month that
+-- purchase expense was originally booked) — not the note's own date, so a
+-- Debit Note entered next month for last month's shortage still corrects
+-- the month the expense actually belongs to.
+purchase_adjustments AS (
+  SELECT date_trunc('month', bpr.invoice_date)::date AS month, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  WHERE bpr.source = 'purchase_bill' AND bpr.invoice_date IS NOT NULL
+  GROUP BY date_trunc('month', bpr.invoice_date)
 ),
 historical_agg AS (
   SELECT date_trunc('month', invoice_date)::date AS month,
@@ -2062,11 +2164,14 @@ combined AS (
   SELECT
     m.month,
     COALESCE(oa.sale_inr, 0) + COALESCE(ha.hist_sale_inr, 0) AS total_sale_value_inr,
-    COALESCE(oa.order_expense_inr, 0) + COALESCE(pa.purchase_expense_inr, 0) + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr
+    COALESCE(oa.order_expense_inr, 0)
+      + (COALESCE(pa.purchase_expense_gross_inr, 0) - COALESCE(padj.adjustment_total_inr, 0))
+      + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr
   FROM months m
-  LEFT JOIN order_agg oa      ON oa.month = m.month
-  LEFT JOIN purchase_agg pa   ON pa.month = m.month
-  LEFT JOIN historical_agg ha ON ha.month = m.month
+  LEFT JOIN order_agg oa              ON oa.month = m.month
+  LEFT JOIN purchase_agg pa           ON pa.month = m.month
+  LEFT JOIN purchase_adjustments padj ON padj.month = m.month
+  LEFT JOIN historical_agg ha         ON ha.month = m.month
 )
 SELECT
   c.month,
@@ -2084,7 +2189,9 @@ COMMENT ON VIEW pl_dashboard_by_month_view IS
   'YEAR()/MONTH()) — a view naturally covers all history; LIMIT 24 in the application query if only a '
   'trailing window should be shown. 2026-08-20: rebuilt to be live off orders.order_date/order_value_inr + '
   'Courier/Duty + purchase_bills instead of only sale_profit_ledger — see pl_dashboard_by_company_view''s '
-  'comment and db/2026-08-20-order-value-fix.sql.';
+  'comment and db/2026-08-20-order-value-fix.sql. 2026-08-27: purchase expense now nets out Debit/Credit '
+  'Note adjustments applied against purchase bills, bucketed by the target bill''s own invoice month — see '
+  'db/2026-08-27-note-linking-and-adjustments.sql.';
 
 
 -- =============================================================================

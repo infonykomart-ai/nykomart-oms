@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { groupBills } from "@/lib/bill-grouping";
 import { PartyLedgerReportTable, type PartyLedgerRow } from "./party-ledger-report-table";
 
 // Party / Vendor Ledger report (2026-08-22) — one of the 3 new report
@@ -55,7 +56,7 @@ export default async function PartyLedgerReportPage({
   let query = finSupabase
     .from("bill_pass_register")
     .select(
-      "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, source, created_at"
+      "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, source, created_at"
     )
     .in("company_id", companyId ? [companyId] : employee.companyIds)
     .not("party_id", "is", null)
@@ -96,35 +97,54 @@ export default async function PartyLedgerReportPage({
   type Txn = { date: string; particulars: string; type: "Debit" | "Credit"; debit: number; credit: number; sortKey: string };
 
   // Same Dr/Cr convention as the single-party page: a bill (we now owe
-  // more) posts Credit, a credit note or payment (we owe less) posts
-  // Debit — see that page's 2026-08-20 comment for the full reasoning.
+  // more) posts Credit, a credit note/adjustment or payment (we owe less)
+  // posts Debit — see that page's 2026-08-20 comment for the full
+  // reasoning.
+  //
+  // 2026-08-27 — "party ladger me bhi ese hi dikh raha hai" (same N-rows-
+  // per-invoice bug as Approvals/Bill Payment): a multi-item/multi-order
+  // Purchase Bill's several bill_pass_register rows are grouped (see
+  // src/lib/bill-grouping.ts) into ONE "Credit" ledger line per invoice
+  // (summed total_amt) and ONE combined "Debit" line for any credit-note/
+  // adjustment amount, BEFORE building txns — every member row's own
+  // payments still post individually (a payment is its own real-world
+  // event, not something to merge), just all labeled against the shared
+  // invoice ref.
   const groups = new Map<string, { companyId: string; partyId: string; txns: Txn[] }>();
-  for (const e of entriesRaw ?? []) {
-    if (!e.party_id) continue;
-    const groupKey = `${e.company_id}__${e.party_id}`;
-    const group = groups.get(groupKey) ?? { companyId: e.company_id, partyId: e.party_id, txns: [] };
+  const partyIdEntries = (entriesRaw ?? []).filter((e): e is typeof e & { party_id: string } => !!e.party_id);
+  for (const eg of groupBills(partyIdEntries)) {
+    const first = eg.bills[0];
+    const groupKey = `${first.company_id}__${first.party_id}`;
+    const group = groups.get(groupKey) ?? { companyId: first.company_id, partyId: first.party_id, txns: [] };
 
-    const ref = e.vendor_invoice_no ?? e.invoice_no ?? "—";
-    const label = sourceLabel[e.source ?? ""] ?? e.invoice_type ?? "Bill";
-    const billDate = e.invoice_date ?? e.invoice_recv_date ?? e.created_at.slice(0, 10);
-    const totalAmt = Number(e.total_amt);
-    const creditNoteAmt = Number(e.credit_note_amt);
+    const ref = first.vendor_invoice_no ?? first.invoice_no ?? "—";
+    const label = sourceLabel[first.source ?? ""] ?? first.invoice_type ?? "Bill";
+    const billDate = first.invoice_date ?? first.invoice_recv_date ?? first.created_at.slice(0, 10);
+    const totalAmt = eg.bills.reduce((sum, b) => sum + Number(b.total_amt), 0);
+    const creditNoteAmt = eg.bills.reduce((sum, b) => sum + Number(b.credit_note_amt), 0);
+    const adjAmt = eg.bills.reduce((sum, b) => sum + Number(b.adj_amt ?? 0), 0);
+    const itemsSuffix = eg.isGroup ? ` (${eg.bills.length} items)` : "";
 
     if (totalAmt !== 0) {
-      group.txns.push({ date: billDate, particulars: `${label} ${ref}`, type: "Credit", debit: 0, credit: totalAmt, sortKey: `${billDate}_0` });
+      group.txns.push({ date: billDate, particulars: `${label} ${ref}${itemsSuffix}`, type: "Credit", debit: 0, credit: totalAmt, sortKey: `${billDate}_0` });
     }
     if (creditNoteAmt > 0) {
       group.txns.push({ date: billDate, particulars: `Credit Note against ${ref}`, type: "Debit", debit: creditNoteAmt, credit: 0, sortKey: `${billDate}_1` });
     }
-    for (const p of paymentsByBill.get(e.id) ?? []) {
-      group.txns.push({
-        date: p.payment_date,
-        particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
-        type: "Debit",
-        debit: p.amount,
-        credit: 0,
-        sortKey: `${p.payment_date}_2`,
-      });
+    if (adjAmt > 0) {
+      group.txns.push({ date: billDate, particulars: `Debit/Credit Note adjustment against ${ref}`, type: "Debit", debit: adjAmt, credit: 0, sortKey: `${billDate}_1` });
+    }
+    for (const b of eg.bills) {
+      for (const p of paymentsByBill.get(b.id) ?? []) {
+        group.txns.push({
+          date: p.payment_date,
+          particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
+          type: "Debit",
+          debit: p.amount,
+          credit: 0,
+          sortKey: `${p.payment_date}_2`,
+        });
+      }
     }
     groups.set(groupKey, group);
   }
