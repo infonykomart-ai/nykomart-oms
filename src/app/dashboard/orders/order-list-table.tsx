@@ -168,6 +168,7 @@ export function OrderListTable({
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [globalSearch, setGlobalSearch] = useState("");
   const [showColumnPanel, setShowColumnPanel] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();
     try {
@@ -466,6 +467,35 @@ export function OrderListTable({
       })
   );
 
+  // 2026-08-26 — "PO SELECT KA OPTION NAHI HAI ... EK SE JYADA SELECT KAR KE
+  // DENA HO TO AGAR PRINT DE": a checkbox per row + "select all" in the
+  // header, feeding a "Print Selected" link to /dashboard/orders/print —
+  // that route stacks every selected order's print sheet with "Page X of Y"
+  // footers and page breaks between them (see order-view.tsx's
+  // OrderPrintSheet and that route's own comment).
+  const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAllFiltered() {
+    setSelectedIds((prev) => {
+      if (allFilteredSelected) {
+        const next = new Set(prev);
+        filteredOrders.forEach((o) => next.delete(o.id));
+        return next;
+      }
+      const next = new Set(prev);
+      filteredOrders.forEach((o) => next.add(o.id));
+      return next;
+    });
+  }
+  const printSelectedHref = `/dashboard/orders/print?ids=${Array.from(selectedIds).join(",")}`;
+
   type ExportRow = {
     ref_no: string;
     order_date: string;
@@ -578,6 +608,24 @@ export function OrderListTable({
               ✕ Clear Filters ({activeFilterCount})
             </button>
           )}
+          {selectedIds.size > 0 && (
+            <>
+              <Link
+                href={printSelectedHref}
+                target="_blank"
+                className="rounded-lg border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-200"
+              >
+                🖨 Print Selected ({selectedIds.size})
+              </Link>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-[11px] text-slate-400 underline"
+              >
+                clear selection
+              </button>
+            </>
+          )}
           <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
         </div>
       </div>
@@ -617,6 +665,14 @@ export function OrderListTable({
             <table className="w-full min-w-[2200px] border-collapse text-xs">
               <thead className="sticky top-0 z-20">
                 <tr>
+                  <th className={`${HEAD_CELL} print:hidden`} title="Select for Print Selected">
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAllFiltered}
+                      className="h-3.5 w-3.5 rounded border-slate-400"
+                    />
+                  </th>
                   {visibleColumns.map((c) => (
                     <th key={c.key} className={`${HEAD_CELL} ${c.headClass ?? ""}`}>
                       {c.label}
@@ -625,6 +681,7 @@ export function OrderListTable({
                   <th className={`${HEAD_CELL} print:hidden`}>Actions</th>
                 </tr>
                 <tr>
+                  <th className={`${FILTER_CELL} print:hidden`} />
                   {visibleColumns.map((c) => (
                     <th key={c.key} className={FILTER_CELL}>
                       {c.filter === "text" && (
@@ -658,7 +715,7 @@ export function OrderListTable({
               <tbody>
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td className={CELL} colSpan={visibleColumns.length + 1}>
+                    <td className={CELL} colSpan={visibleColumns.length + 2}>
                       <p className="p-2 text-center text-slate-400">No orders match the current search / column filters.</p>
                     </td>
                   </tr>
@@ -676,7 +733,7 @@ export function OrderListTable({
                     <FragmentRow key={o.id}>
                       {editingId === o.id ? (
                         <tr>
-                          <td className={CELL} colSpan={visibleColumns.length + 1}>
+                          <td className={CELL} colSpan={visibleColumns.length + 2}>
                             <OrderEditForm
                               order={o}
                               itemCategories={itemCategories}
@@ -690,6 +747,14 @@ export function OrderListTable({
                         </tr>
                       ) : (
                         <tr className={`${rowBg} hover:bg-amber-50/60`}>
+                          <td className={`${CELL} print:hidden`}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(o.id)}
+                              onChange={() => toggleSelected(o.id)}
+                              className="h-3.5 w-3.5 rounded border-slate-400"
+                            />
+                          </td>
                           {visibleColumns.map((c) => (
                             <td
                               key={c.key}
@@ -745,7 +810,7 @@ export function OrderListTable({
 
                       {expandedId === o.id && editingId !== o.id && (
                         <tr className={rowBg}>
-                          <td className={`${CELL} print:hidden`} colSpan={visibleColumns.length + 1}>
+                          <td className={`${CELL} print:hidden`} colSpan={visibleColumns.length + 2}>
                             <div className="flex flex-wrap items-start justify-between gap-4 p-2">
                               <div className="min-w-0 flex-1 space-y-1.5">
                                 {purchasesByOrder[o.id] ? (

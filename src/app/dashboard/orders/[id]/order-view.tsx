@@ -10,7 +10,7 @@ import { PrintArea, PrintButton } from "@/components/print-view";
 // hand-rolled version predates PrintArea/PrintButton being pulled out into
 // a shared component; every printable view built since reuses the shared
 // pair instead of re-copying the CSS block again.
-type Order = {
+export type Order = {
   id: string;
   ref_no: string;
   order_date: string;
@@ -40,7 +40,7 @@ type Order = {
   entry_timestamp: string;
 };
 
-type Invoice = {
+export type Invoice = {
   id: string;
   invoice_no: string;
   master_invoice_no: string;
@@ -49,7 +49,15 @@ type Invoice = {
   courier_company: string;
 } | null;
 
-export function OrderView({
+// 2026-08-26 — "PO SELECT KA OPTION NAHI HAI KISI PO KA JO EK SE JYADA
+// SELECT KAR KE DENA HO TO AGAR PRINT DE TO KESE DENGE 1/2 2/2 TYPE KE":
+// pulled the actual printable sheet out of OrderView into its own
+// component so /dashboard/orders/print (multi-order print, see that
+// route) can stack several of these — one per selected order — inside a
+// single PrintArea/window.print() call, each with its own "Page X of Y"
+// footer and a page break before the next one. OrderView below still uses
+// this for the single-order case, just without pageLabel/pageBreakAfter.
+export function OrderPrintSheet({
   order,
   companyName,
   companyLogoUrl,
@@ -58,6 +66,8 @@ export function OrderView({
   hsnCode,
   invoice,
   vendorName,
+  pageLabel,
+  pageBreakAfter = false,
 }: {
   order: Order;
   companyName: string;
@@ -67,23 +77,16 @@ export function OrderView({
   hsnCode: string;
   invoice: Invoice;
   vendorName: string | null;
+  pageLabel?: string;
+  pageBreakAfter?: boolean;
 }) {
   const rate = Number(order.order_value_original || 0) / (order.qty || 1);
 
   return (
-    <div>
-      <div className="mb-4 flex items-center justify-between print:hidden">
-        <Link href="/dashboard/orders" className="text-sm text-slate-500 hover:underline">
-          ← Back to Orders
-        </Link>
-        <PrintButton label="🖨 Download PDF" />
-      </div>
-
-      <PrintArea id="order-print-area">
-        <div
-          className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-xs text-slate-900 print:border-0 print:p-0"
-          style={{ fontFamily: "Arial, sans-serif" }}
-        >
+    <div
+      className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-xs text-slate-900 print:border-0 print:p-0"
+      style={{ fontFamily: "Arial, sans-serif", pageBreakAfter: pageBreakAfter ? "always" : "auto" }}
+    >
           <div className="mb-4 flex items-start justify-between border-b-2 border-slate-800 pb-3">
             <div className="flex items-start gap-3">
               {companyLogoUrl && (
@@ -232,10 +235,58 @@ export function OrderView({
             </div>
           )}
 
-          <div className="mt-6 text-right text-[10px] text-slate-500">
-            Entered {new Date(order.entry_timestamp).toLocaleString()}
+          <div className="mt-6 flex items-center justify-between text-[10px] text-slate-500">
+            <span>Entered {new Date(order.entry_timestamp).toLocaleString()}</span>
+            {pageLabel && <span className="font-medium">{pageLabel}</span>}
           </div>
-        </div>
+    </div>
+  );
+}
+
+// Single-order read-only view — the "View"/"Download" destination linked
+// from the Orders hub's Actions column. Wraps one OrderPrintSheet in its
+// own PrintArea/PrintButton pair for the ordinary one-order-at-a-time case;
+// /dashboard/orders/print (see that route) is the multi-order counterpart
+// for "PO select karke ek sath print/download karna hai".
+export function OrderView({
+  order,
+  companyName,
+  companyLogoUrl,
+  storeName,
+  itemCategoryName,
+  hsnCode,
+  invoice,
+  vendorName,
+}: {
+  order: Order;
+  companyName: string;
+  companyLogoUrl: string | null;
+  storeName: string;
+  itemCategoryName: string;
+  hsnCode: string;
+  invoice: Invoice;
+  vendorName: string | null;
+}) {
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between print:hidden">
+        <Link href="/dashboard/orders" className="text-sm text-slate-500 hover:underline">
+          ← Back to Orders
+        </Link>
+        <PrintButton label="🖨 Download PDF" />
+      </div>
+
+      <PrintArea id="order-print-area">
+        <OrderPrintSheet
+          order={order}
+          companyName={companyName}
+          companyLogoUrl={companyLogoUrl}
+          storeName={storeName}
+          itemCategoryName={itemCategoryName}
+          hsnCode={hsnCode}
+          invoice={invoice}
+          vendorName={vendorName}
+        />
       </PrintArea>
 
       {invoice && (
