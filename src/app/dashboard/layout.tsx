@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { getAuthedEmployee, MfaRequiredError } from "@/lib/auth/require-capability";
+import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
@@ -20,11 +20,15 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   try {
     employee = await getAuthedEmployee();
   } catch (e) {
-    // 2026-08-24 — 2FA: the password WAS correct, just the second factor
-    // hasn't been verified this session yet, so send them to the code
-    // challenge instead of back to the plain login form.
-    if (e instanceof MfaRequiredError) redirect("/login/verify-2fa");
-    redirect("/login");
+    // 2026-08-27 — getAuthedEmployee() now redirects to /login/verify-2fa
+    // itself (see require-capability.ts) rather than throwing
+    // MfaRequiredError for us to catch, so that fix protects every caller
+    // (Server Actions included), not just this layout. That internal
+    // redirect() call throws Next.js's own NEXT_REDIRECT signal, which
+    // MUST pass through this catch untouched — only UnauthorizedError (no
+    // session / no active employee row) is ours to handle here.
+    if (e instanceof UnauthorizedError) redirect("/login");
+    throw e;
   }
 
   const supabase = await createClient();

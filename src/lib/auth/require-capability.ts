@@ -8,6 +8,7 @@
 // real roles/capabilities/role_capabilities join — see db/schema.sql — so
 // granting a role a new capability is a data change, not a redeploy.
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 
@@ -19,13 +20,26 @@ export class UnauthorizedError extends Error {
 }
 
 /**
- * 2026-08-24 — thrown when the signed-in user has a verified 2FA (TOTP)
- * factor enrolled but the current session hasn't completed that second
- * factor yet (Supabase's "AAL1 but AAL2 required" state — see
+ * 2026-08-24 — the signed-in user has a verified 2FA (TOTP) factor enrolled
+ * but the current session hasn't completed that second factor yet
+ * (Supabase's "AAL1 but AAL2 required" state — see
  * src/app/dashboard/profile/two-factor-actions.ts for enrollment and
- * src/app/login/verify-2fa/ for the challenge step). Distinct from
- * UnauthorizedError so callers can redirect to the 2FA challenge page
- * instead of back to the plain login form — the password WAS correct.
+ * src/app/login/verify-2fa/ for the challenge step).
+ *
+ * 2026-08-27 fix: getAuthedEmployee() used to `throw new MfaRequiredError()`
+ * here and leave every CALLER responsible for catching it and redirecting.
+ * dashboard/layout.tsx did (see its old comment), but that's only one of
+ * 100+ call sites — every Server Action and every page.tsx that calls
+ * requireCapability()/getAuthedEmployee() directly (not just through the
+ * layout) had no such catch, so an AAL1 session hitting any of them (e.g.
+ * submitting a form, or a page whose own redundant requireCapability() call
+ * runs before/independent of the layout's) surfaced this as a raw unhandled
+ * server error instead of a redirect to the 2FA challenge. Fixed by having
+ * getAuthedEmployee() redirect() here directly — Next.js's redirect() is
+ * safe to call from Server Components, Server Actions, and Route Handlers
+ * alike, so this now protects every caller in one place. The class is kept
+ * exported (still useful for an explicit instanceof check if ever needed)
+ * but nothing in this codebase should expect to catch it anymore.
  */
 export class MfaRequiredError extends Error {
   constructor(message = "Two-factor verification required.") {
@@ -80,13 +94,13 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
   // 2026-08-24 — 2FA enforcement. A password-only sign-in leaves the
   // session at AAL1; if this account has since enrolled a verified TOTP
   // factor, Supabase reports nextLevel: "aal2" until the second factor is
-  // also verified this session. Every /dashboard page goes through
-  // getAuthedEmployee() (this function), so this is the single choke point
-  // — see dashboard/layout.tsx for where MfaRequiredError is caught and
-  // redirected to the challenge page.
+  // also verified this session. Every /dashboard page and Server Action
+  // goes through getAuthedEmployee() (this function), so this is the single
+  // choke point — see the MfaRequiredError doc comment above for why this
+  // redirects directly rather than throwing.
   const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
-    throw new MfaRequiredError();
+    redirect("/login/verify-2fa");
   }
 
   // Plain queries rather than embedded-resource joins (`roles(name)`) — the
