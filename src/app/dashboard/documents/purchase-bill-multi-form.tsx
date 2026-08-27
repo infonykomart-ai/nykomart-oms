@@ -32,8 +32,8 @@ import {
   type PurchaseOrderSearchHit,
 } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
-import { UnitSelect } from "@/components/unit-select";
-import type { LengthUnit } from "@/lib/length-units";
+import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
+import type { PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 
 const inputClass =
@@ -69,7 +69,8 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
   // invoice silently produced wrong totals before this was shared (real bug
   // found live, see db/2026-08-17-purchase-bills-qty-unit.sql). Unit Rate
   // itself is no longer shared (2026-08-26) — only the unit is.
-  const [sharedUnit, setSharedUnit] = useState<LengthUnit>("FT");
+  const [sharedUnit, setSharedUnit] = useState<PurchaseQtyUnit>("FT");
+  const isPcs = sharedUnit === "PCS";
   // GST is also shared across the whole invoice, same reasoning as unit.
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
@@ -164,7 +165,9 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
     orders.map((o) => ({
       orderId: o.orderId,
       qty: o.qty,
-      sqFeet: Number(o.sqFeetDisplay) || 0,
+      // 2026-08-27 — PCS always sends sq_feet = 1 (piece count, not a size)
+      // — see db/2026-08-27-purchase-bills-pcs-unit.sql.
+      sqFeet: isPcs ? 1 : Number(o.sqFeetDisplay) || 0,
       unitRate: Number(o.unitRateInput) || 0,
     }))
   );
@@ -189,8 +192,8 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         <div className="mb-1 flex items-center justify-between">
           <label className="block text-xs font-medium text-slate-500">Add PO/RF/RG orders covered by this one vendor invoice</label>
           <div className="flex items-center gap-1 text-[11px] text-slate-500">
-            Sq. Feet unit for all orders below
-            <UnitSelect value={sharedUnit} onChange={setSharedUnit} />
+            Unit for all orders below
+            <PurchaseQtyUnitSelect value={sharedUnit} onChange={setSharedUnit} />
           </div>
         </div>
         <div className="relative flex gap-2">
@@ -281,7 +284,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
               )}
               <div className="mt-1.5 grid grid-cols-3 gap-2">
                 <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">Qty</label>
+                  <label className="mb-0.5 block text-[11px] text-slate-400">Qty {isPcs && "(Pcs)"}</label>
                   <input
                     type="number"
                     value={o.qty}
@@ -289,20 +292,27 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
                     className={inputClass}
                   />
                 </div>
+                {isPcs ? (
+                  <div>
+                    <label className="mb-0.5 block text-[11px] text-slate-400">Size</label>
+                    <p className="mt-1.5 text-[11px] text-slate-400">Not needed for Pcs.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="mb-0.5 block text-[11px] text-slate-400">
+                      Qty ({sharedUnit}){o.sqFeetAuto && <span className="text-purple-600"> — auto from Size, editable</span>}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={o.sqFeetDisplay}
+                      onChange={(e) => updateLine(o.orderId, { sqFeetDisplay: e.target.value, sqFeetAuto: false })}
+                      className={inputClass}
+                    />
+                  </div>
+                )}
                 <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">
-                    Qty ({sharedUnit}){o.sqFeetAuto && <span className="text-purple-600"> — auto from Size, editable</span>}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={o.sqFeetDisplay}
-                    onChange={(e) => updateLine(o.orderId, { sqFeetDisplay: e.target.value, sqFeetAuto: false })}
-                    className={inputClass}
-                  />
-                </div>
-                <div>
-                  <label className="mb-0.5 block text-[11px] text-slate-400">Unit Rate (per {sharedUnit})</label>
+                  <label className="mb-0.5 block text-[11px] text-slate-400">{isPcs ? "Rate per Pcs" : `Unit Rate (per ${sharedUnit})`}</label>
                   <input
                     type="number"
                     step="0.01"

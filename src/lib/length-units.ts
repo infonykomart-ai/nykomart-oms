@@ -26,3 +26,16 @@ export function toFeet(value: number, unit: LengthUnit): number {
   if (!Number.isFinite(value)) return 0;
   return value * FT_PER_UNIT[unit];
 }
+
+// 2026-08-27 — "AGAR PURCHASE PCS ME KIYA JATA HAI TO US PCS KI RATE KYA
+// HOGI" — some vendor bills price by piece count with a rate PER PIECE
+// (e.g. garment vendors: "16 PCS @ Rs.260/pc"), not by size at all. This is
+// a SEPARATE type from LengthUnit above, used only by the Purchase Bill
+// forms (src/components/purchase-qty-unit-select.tsx) — PCS has no
+// feet-equivalent, so it's kept out of LENGTH_UNITS/FT_PER_UNIT/toFeet
+// rather than added there, to avoid silently breaking Stock In/Out and
+// Material Out Chalan, which share LengthUnit and DO convert every entered
+// quantity to feet (toFeet) to keep one running stock balance comparable
+// across units.
+export const PURCHASE_QTY_UNITS = [...LENGTH_UNITS, "PCS"] as const;
+export type PurchaseQtyUnit = (typeof PURCHASE_QTY_UNITS)[number];

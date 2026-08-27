@@ -3,8 +3,8 @@
 import { useActionState, useEffect, useState } from "react";
 import { updatePurchaseBill, type DocEditState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
-import { UnitSelect } from "@/components/unit-select";
-import { toFeet, type LengthUnit } from "@/lib/length-units";
+import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
+import { toFeet, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
@@ -47,8 +47,11 @@ export function PurchaseBillEditForm({
   // per-that-unit), so this starts at the bill's own saved unit showing
   // its own saved value as-is, not re-interpreted as feet.
   const [sqFeetInput, setSqFeetInput] = useState(String(bill.sq_feet));
-  const [sqFeetUnit, setSqFeetUnit] = useState<LengthUnit>((bill.qty_unit as LengthUnit) || "FT");
-  const sqFeetConverted = sqFeetInput ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
+  const [sqFeetUnit, setSqFeetUnit] = useState<PurchaseQtyUnit>((bill.qty_unit as PurchaseQtyUnit) || "FT");
+  const isPcs = sqFeetUnit === "PCS";
+  // 2026-08-27 — see purchase-bill-form.tsx's identical comment: PCS is a
+  // piece count, not a length, so there's no feet-equivalent to show.
+  const sqFeetConverted = sqFeetInput && !isPcs ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
@@ -96,7 +99,7 @@ export function PurchaseBillEditForm({
           <input id={`pb_inv_date_${bill.id}`} name="vendor_invoice_date" type="date" defaultValue={bill.vendor_invoice_date ?? ""} className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor={`pb_qty_${bill.id}`}>Qty</label>
+          <label className={labelClass} htmlFor={`pb_qty_${bill.id}`}>Qty {isPcs && <span className="text-slate-400">(Pcs)</span>}</label>
           <input
             id={`pb_qty_${bill.id}`}
             name="qty"
@@ -106,36 +109,43 @@ export function PurchaseBillEditForm({
             className={inputClass}
           />
         </div>
-        <PurchaseBillRateHelper
-          qty={Number(qtyInput) || 0}
-          unitIsFt={sqFeetUnit === "FT"}
-          onApply={(sqFeet, unitRate) => {
-            setSqFeetInput(String(sqFeet));
-            setUnitRateInput(String(unitRate));
-          }}
-          idPrefix={`pb_edit_${bill.id}`}
-        />
+        {!isPcs && (
+          <PurchaseBillRateHelper
+            qty={Number(qtyInput) || 0}
+            unitIsFt={sqFeetUnit === "FT"}
+            onApply={(sqFeet, unitRate) => {
+              setSqFeetInput(String(sqFeet));
+              setUnitRateInput(String(unitRate));
+            }}
+            idPrefix={`pb_edit_${bill.id}`}
+          />
+        )}
         <div>
-          <label className={labelClass} htmlFor={`pb_sqfeet_${bill.id}`}>Sq. Feet</label>
+          <label className={labelClass} htmlFor={`pb_sqfeet_${bill.id}`}>{isPcs ? "Unit" : "Sq. Feet"}</label>
           <div className="flex gap-1.5">
-            <input
-              id={`pb_sqfeet_${bill.id}`}
-              type="number"
-              step="0.01"
-              value={sqFeetInput}
-              onChange={(e) => setSqFeetInput(e.target.value)}
-              className={inputClass}
-            />
-            <UnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+            {!isPcs && (
+              <input
+                id={`pb_sqfeet_${bill.id}`}
+                type="number"
+                step="0.01"
+                value={sqFeetInput}
+                onChange={(e) => setSqFeetInput(e.target.value)}
+                className={inputClass}
+              />
+            )}
+            <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
-          {sqFeetUnit !== "FT" && sqFeetInput && (
+          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && (
             <p className="mt-0.5 text-[11px] text-slate-400">≈ {sqFeetConverted.toFixed(2)} Sq. Feet equivalent (reference only)</p>
           )}
-          <input type="hidden" name="sq_feet" value={sqFeetInput} />
+          {isPcs && (
+            <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
+          )}
+          <input type="hidden" name="sq_feet" value={isPcs ? "1" : sqFeetInput} />
           <input type="hidden" name="qty_unit" value={sqFeetUnit} />
         </div>
         <div>
-          <label className={labelClass} htmlFor={`pb_rate_${bill.id}`}>Unit Rate {sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
+          <label className={labelClass} htmlFor={`pb_rate_${bill.id}`}>{isPcs ? "Rate per Pcs" : "Unit Rate"} {!isPcs && sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
           <input
             id={`pb_rate_${bill.id}`}
             name="unit_rate"

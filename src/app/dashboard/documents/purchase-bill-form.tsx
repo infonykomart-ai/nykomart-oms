@@ -5,8 +5,8 @@ import { useActionState } from "react";
 import { savePurchaseBill, type DocFormState, type OrderLookup } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
-import { UnitSelect } from "@/components/unit-select";
-import { toFeet, type LengthUnit } from "@/lib/length-units";
+import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
+import { toFeet, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
@@ -47,8 +47,13 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   // priced. See db/2026-08-17-purchase-bills-qty-unit.sql and
   // src/lib/length-units.ts.
   const [sqFeetInput, setSqFeetInput] = useState("");
-  const [sqFeetUnit, setSqFeetUnit] = useState<LengthUnit>("FT");
-  const sqFeetConverted = sqFeetInput ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
+  const [sqFeetUnit, setSqFeetUnit] = useState<PurchaseQtyUnit>("FT");
+  const isPcs = sqFeetUnit === "PCS";
+  // 2026-08-27 — "AGAR PURCHASE PCS ME KIYA JATA HAI TO US PCS KI RATE KYA
+  // HOGI": PCS has no feet-equivalent (it's a piece count, not a length),
+  // so the reference conversion line below only makes sense for the
+  // original 5 length units.
+  const sqFeetConverted = sqFeetInput && !isPcs ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
@@ -117,7 +122,7 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
           <input id="pb_inv_date" name="vendor_invoice_date" type="date" className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="pb_qty">Qty</label>
+          <label className={labelClass} htmlFor="pb_qty">Qty {isPcs && <span className="text-slate-400">(Pcs)</span>}</label>
           <input
             id="pb_qty"
             name="qty"
@@ -127,36 +132,47 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
             className={inputClass}
           />
         </div>
-        <PurchaseBillRateHelper
-          qty={Number(qtyInput) || 0}
-          unitIsFt={sqFeetUnit === "FT"}
-          onApply={(sqFeet, unitRate) => {
-            setSqFeetInput(String(sqFeet));
-            setUnitRateInput(String(unitRate));
-          }}
-          idPrefix="pb"
-        />
+        {/* 2026-08-27 — hidden in PCS mode: this helper works out a per-sq-ft
+            rate from an item's size (e.g. "3X90 FT"), which doesn't apply to
+            a piece-count purchase — a PCS bill already states its rate per
+            piece directly (e.g. "16 PCS @ Rs.260/pc"), nothing to derive. */}
+        {!isPcs && (
+          <PurchaseBillRateHelper
+            qty={Number(qtyInput) || 0}
+            unitIsFt={sqFeetUnit === "FT"}
+            onApply={(sqFeet, unitRate) => {
+              setSqFeetInput(String(sqFeet));
+              setUnitRateInput(String(unitRate));
+            }}
+            idPrefix="pb"
+          />
+        )}
         <div>
-          <label className={labelClass} htmlFor="pb_sqfeet">Sq. Feet</label>
+          <label className={labelClass} htmlFor="pb_sqfeet">{isPcs ? "Unit" : "Sq. Feet"}</label>
           <div className="flex gap-1.5">
-            <input
-              id="pb_sqfeet"
-              type="number"
-              step="0.01"
-              value={sqFeetInput}
-              onChange={(e) => setSqFeetInput(e.target.value)}
-              className={inputClass}
-            />
-            <UnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+            {!isPcs && (
+              <input
+                id="pb_sqfeet"
+                type="number"
+                step="0.01"
+                value={sqFeetInput}
+                onChange={(e) => setSqFeetInput(e.target.value)}
+                className={inputClass}
+              />
+            )}
+            <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
-          {sqFeetUnit !== "FT" && sqFeetInput && (
+          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && (
             <p className="mt-0.5 text-[11px] text-slate-400">≈ {sqFeetConverted.toFixed(2)} Sq. Feet equivalent (reference only)</p>
           )}
-          <input type="hidden" name="sq_feet" value={sqFeetInput} />
+          {isPcs && (
+            <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
+          )}
+          <input type="hidden" name="sq_feet" value={isPcs ? "1" : sqFeetInput} />
           <input type="hidden" name="qty_unit" value={sqFeetUnit} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="pb_rate">Unit Rate {sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
+          <label className={labelClass} htmlFor="pb_rate">{isPcs ? "Rate per Pcs" : "Unit Rate"} {!isPcs && sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
           <input
             id="pb_rate"
             name="unit_rate"

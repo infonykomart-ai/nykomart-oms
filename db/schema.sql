@@ -955,8 +955,14 @@ CREATE TABLE purchase_bills (
   -- (see db/2026-08-17-purchase-bills-qty-unit.sql — a real financial bug
   -- otherwise, e.g. MTR quantity x per-MTR rate silently inflated ~3.28x
   -- if converted to feet first).
+  -- 2026-08-27: 'PCS' added — some vendors bill by piece count with a rate
+  -- PER PIECE, not by size (e.g. garment vendors: "16 PCS @ Rs.260/pc", no
+  -- length/area at all). The app sends sq_feet = 1 whenever qty_unit =
+  -- 'PCS', so the existing total_amount formula below (qty * sq_feet *
+  -- unit_rate) collapses to qty * rate-per-piece with no formula change —
+  -- see db/2026-08-27-purchase-bills-pcs-unit.sql.
   qty_unit                     text NOT NULL DEFAULT 'FT'
-                                  CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM')),
+                                  CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM', 'PCS')),
   work_description             text,        -- "WORK1" in the source — general purpose confirmed 2026-08-04, see SCHEMA_NOTES.md #6
   unit_rate                     numeric(14,2) NOT NULL DEFAULT 0,
   order_id                       uuid REFERENCES orders(id),   -- optional make-to-order reference (added 2026-08 round)

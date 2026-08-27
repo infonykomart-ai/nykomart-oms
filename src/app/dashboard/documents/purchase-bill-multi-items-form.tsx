@@ -17,8 +17,8 @@ import { useState } from "react";
 import { useActionState } from "react";
 import { savePurchaseBillMultiItems, type PurchaseBillMultiItemsState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
-import { UnitSelect } from "@/components/unit-select";
-import type { LengthUnit } from "@/lib/length-units";
+import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
+import type { PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
@@ -33,7 +33,7 @@ type ItemLine = {
   clientId: number;
   workDescription: string;
   qty: string;
-  sqFeetUnit: LengthUnit;
+  sqFeetUnit: PurchaseQtyUnit;
   sqFeetInput: string;
   unitRateInput: string;
 };
@@ -73,7 +73,11 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
     items.map((it) => ({
       workDescription: it.workDescription || null,
       qty: Number(it.qty) || 1,
-      sqFeet: Number(it.sqFeetInput) || 0,
+      // 2026-08-27 — PCS items always send sq_feet = 1 (piece count, not a
+      // size) so the existing total_amount formula (qty * sq_feet *
+      // unit_rate) collapses to qty * rate-per-piece — see
+      // db/2026-08-27-purchase-bills-pcs-unit.sql.
+      sqFeet: it.sqFeetUnit === "PCS" ? 1 : Number(it.sqFeetInput) || 0,
       qtyUnit: it.sqFeetUnit,
       unitRate: Number(it.unitRateInput) || 0,
     }))
@@ -115,20 +119,24 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
               />
             </div>
 
-            <div className="mt-1.5">
-              <PurchaseBillRateHelper
-                qty={Number(it.qty) || 0}
-                unitIsFt={it.sqFeetUnit === "FT"}
-                onApply={(sqFeet, unitRate) =>
-                  updateItem(it.clientId, { sqFeetInput: String(sqFeet), unitRateInput: String(unitRate) })
-                }
-                idPrefix={`pbmi_${it.clientId}`}
-              />
-            </div>
+            {/* 2026-08-27 — hidden for PCS items: no size to derive a rate
+                from, the vendor bill already states rate-per-piece directly. */}
+            {it.sqFeetUnit !== "PCS" && (
+              <div className="mt-1.5">
+                <PurchaseBillRateHelper
+                  qty={Number(it.qty) || 0}
+                  unitIsFt={it.sqFeetUnit === "FT"}
+                  onApply={(sqFeet, unitRate) =>
+                    updateItem(it.clientId, { sqFeetInput: String(sqFeet), unitRateInput: String(unitRate) })
+                  }
+                  idPrefix={`pbmi_${it.clientId}`}
+                />
+              </div>
+            )}
 
             <div className="mt-1.5 grid grid-cols-3 gap-2">
               <div>
-                <label className="mb-0.5 block text-[11px] text-slate-400">Qty</label>
+                <label className="mb-0.5 block text-[11px] text-slate-400">Qty {it.sqFeetUnit === "PCS" && "(Pcs)"}</label>
                 <input
                   type="number"
                   value={it.qty}
@@ -137,21 +145,24 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
                 />
               </div>
               <div>
-                <label className="mb-0.5 block text-[11px] text-slate-400">Sq. Feet</label>
+                <label className="mb-0.5 block text-[11px] text-slate-400">{it.sqFeetUnit === "PCS" ? "Unit" : "Sq. Feet"}</label>
                 <div className="flex gap-1">
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={it.sqFeetInput}
-                    onChange={(e) => updateItem(it.clientId, { sqFeetInput: e.target.value })}
-                    className={inputClass}
-                  />
-                  <UnitSelect value={it.sqFeetUnit} onChange={(u) => updateItem(it.clientId, { sqFeetUnit: u })} />
+                  {it.sqFeetUnit !== "PCS" && (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={it.sqFeetInput}
+                      onChange={(e) => updateItem(it.clientId, { sqFeetInput: e.target.value })}
+                      className={inputClass}
+                    />
+                  )}
+                  <PurchaseQtyUnitSelect value={it.sqFeetUnit} onChange={(u) => updateItem(it.clientId, { sqFeetUnit: u })} />
                 </div>
               </div>
               <div>
                 <label className="mb-0.5 block text-[11px] text-slate-400">
-                  Unit Rate {it.sqFeetUnit !== "FT" && <span className="text-slate-400">(per {it.sqFeetUnit})</span>}
+                  {it.sqFeetUnit === "PCS" ? "Rate per Pcs" : "Unit Rate"}{" "}
+                  {it.sqFeetUnit !== "FT" && it.sqFeetUnit !== "PCS" && <span className="text-slate-400">(per {it.sqFeetUnit})</span>}
                 </label>
                 <input
                   type="number"
