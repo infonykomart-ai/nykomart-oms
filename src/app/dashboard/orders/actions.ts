@@ -256,6 +256,37 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   return { error: null, success: true };
 }
 
+/**
+ * Sets an order to Returned — the post-delivery counterpart to cancelOrder
+ * above. An order that was invoiced/dispatched/delivered and then sent back
+ * by the buyer was never actually cancelled, so it gets its own status
+ * ('Returned' — the same value courier-webhook RTO handling already uses)
+ * instead of overloading 'Cancelled'. The Refund step (saveOrderRefund
+ * below, unchanged) still runs exactly the same way afterward.
+ *
+ * 2026-08-27 hotfix: order-hold-cancel-actions.tsx already imports and
+ * calls this function in production, but this file never got the matching
+ * export uploaded alongside it — broke every build since ("The export
+ * returnOrder was not found in module .../orders/actions.ts"). This restores
+ * just the missing export, matching cancelOrder's exact shape.
+ */
+export async function returnOrder(orderId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("orders").update({ status: "Returned" }).eq("id", orderId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/invoices");
+  return { error: null, success: true };
+}
+
 export type OrderRefundState = { error: string | null; success: { creditNoteNo: string | null } | null };
 
 // 2026-08-27 (bulk-upload round) — "jese order ki sheet bani hai vesi har
