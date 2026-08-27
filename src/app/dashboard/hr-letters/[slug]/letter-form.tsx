@@ -1,9 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { renderTemplate, todayFormatted, type LetterTemplate } from "@/lib/hr-letters/templates";
 import { PrintArea } from "@/components/print-view";
 import { downloadLetterDoc, mailtoLetterLink, shareLetterOnWhatsApp } from "@/lib/hr-letters/letter-export";
+import { issueHrLetter } from "../actions";
 
 type Employee = {
   id: string;
@@ -45,6 +47,17 @@ export function LetterForm({
   const [bodyText, setBodyText] = useState("");
   const [hasGenerated, setHasGenerated] = useState(false);
 
+  // 2026-08-27 — "record teyar hota jaye ... usko ek no diya jaye": a
+  // deliberate, separate step from Print/Word/Email/WhatsApp (those still
+  // work exactly as before, unchanged) — clicking "Issue" is what actually
+  // saves this letter into the hr_letters record and assigns its dispatch
+  // no. (ref_no), so previewing/printing a draft never burns a number.
+  // Regenerating the text (below) clears this, since a regenerated letter
+  // is a new draft that needs its own Issue step / dispatch number.
+  const [issuing, setIssuing] = useState(false);
+  const [issued, setIssued] = useState<{ id: string; refNo: string } | null>(null);
+  const [issueError, setIssueError] = useState<string | null>(null);
+
   const [companyId, setCompanyId] = useState("");
 
   const companyMap = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
@@ -85,9 +98,38 @@ export function LetterForm({
     };
     setBodyText(renderTemplate(template.bodyTemplate, values));
     setHasGenerated(true);
+    setIssued(null);
+    setIssueError(null);
   }
 
   const subject = renderTemplate(template.subject, fieldValues);
+
+  async function handleIssue() {
+    setIssuing(true);
+    setIssueError(null);
+    const selectedEmployee = employees.find((e) => e.id === employeeId);
+    const result = await issueHrLetter({
+      templateSlug: template.slug,
+      companyId,
+      employeeId: employeeId || null,
+      employeeName,
+      employeeCode: selectedEmployee?.employee_code ?? null,
+      employeeAddress,
+      letterDate: dateIssued,
+      signatoryName,
+      signatoryDesignation,
+      subjectLine: subject,
+      fieldValues,
+      bodyText,
+    });
+    setIssuing(false);
+    if (result.ok) {
+      setIssued({ id: result.id, refNo: result.refNo });
+      setRefNo(result.refNo);
+    } else {
+      setIssueError(result.error);
+    }
+  }
 
   // Shared shape for Word/Email/WhatsApp — same content the print area
   // renders, built once here so all three "send" buttons and the print
@@ -138,8 +180,15 @@ export function LetterForm({
             <input id="employee_name" className={inputClass} value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} />
           </div>
           <div>
-            <label className={labelClass} htmlFor="ref_no">Reference No.</label>
-            <input id="ref_no" className={inputClass} value={refNo} onChange={(e) => setRefNo(e.target.value)} placeholder="Manual" />
+            <label className={labelClass} htmlFor="ref_no">Reference No. {issued && <span className="font-normal text-emerald-600">(dispatch no. assigned)</span>}</label>
+            <input
+              id="ref_no"
+              className={inputClass}
+              value={refNo}
+              onChange={(e) => setRefNo(e.target.value)}
+              placeholder="Assigned automatically when you click Issue below"
+              readOnly={!!issued}
+            />
           </div>
         </div>
 
@@ -205,6 +254,23 @@ export function LetterForm({
           </div>
         )}
 
+        {issueError && <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{issueError}</p>}
+
+        <button
+          type="button"
+          onClick={handleIssue}
+          disabled={!hasGenerated || issuing || !!issued}
+          className="w-full rounded-lg border border-emerald-500 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-40"
+        >
+          {issued ? `✅ Issued — Dispatch No. ${issued.refNo}` : issuing ? "Saving record…" : "📌 Save Record & Assign Dispatch No."}
+        </button>
+        {issued && (
+          <p className="text-xs text-slate-400">
+            Saved to the Issued Letters record.{" "}
+            <Link href="/dashboard/hr-letters/records" className="text-amber-600 hover:underline">View record →</Link>
+          </p>
+        )}
+
         <button
           type="button"
           onClick={() => window.print()}
@@ -250,7 +316,16 @@ export function LetterForm({
 
       <div>
         <PrintArea id="letter-print-area">
-        <div className="mx-auto min-h-[1000px] w-full bg-white p-10 text-sm text-slate-900 shadow-sm" style={{ fontFamily: "Georgia, serif" }}>
+        {/* 2026-08-27 — "pure page ka print hota hai lekin jo data apn
+            dalte hai uska hi print hona chahiye": min-h-[1000px] gives the
+            on-screen preview a nice full-page look, but PrintArea's
+            @media print CSS (print-view.tsx) never neutralizes min-h-*
+            utilities, so the forced 1000px minimum height was printing as
+            blank space below the actual letter content on every letter
+            shorter than that. print:min-h-0 removes ONLY the print-time
+            minimum — screen preview is unchanged, the printed/PDF page now
+            sizes to the real content. */}
+        <div className="mx-auto min-h-[1000px] w-full bg-white p-10 text-sm text-slate-900 shadow-sm print:min-h-0" style={{ fontFamily: "Georgia, serif" }}>
           <div className="mb-6 flex items-center gap-4 border-b border-slate-300 pb-4">
             {company?.logo_url && (
               // eslint-disable-next-line @next/next/no-img-element

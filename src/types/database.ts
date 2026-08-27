@@ -3099,12 +3099,19 @@ export type Database = {
           for_employee_id: string | null;
           for_employee_name_snapshot: string;
           for_employee_code_snapshot: string | null;
-          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
           ref_no: string | null;
           letter_date: string;
           remark: string | null;
           generated_by_employee_id: string;
           generated_on: string;
+          template_slug: string | null;
+          employee_address: string | null;
+          signatory_name: string | null;
+          signatory_designation: string | null;
+          subject_line: string | null;
+          field_values: Json;
+          body_text: string;
         };
         Insert: {
           id?: string;
@@ -3112,12 +3119,19 @@ export type Database = {
           for_employee_id?: string | null;
           for_employee_name_snapshot: string;
           for_employee_code_snapshot?: string | null;
-          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
           ref_no?: string | null;
           letter_date?: string;
           remark?: string | null;
           generated_by_employee_id: string;
           generated_on?: string;
+          template_slug?: string | null;
+          employee_address?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
+          subject_line?: string | null;
+          field_values?: Json;
+          body_text?: string;
         };
         Update: {
           id?: string;
@@ -3125,12 +3139,19 @@ export type Database = {
           for_employee_id?: string | null;
           for_employee_name_snapshot?: string;
           for_employee_code_snapshot?: string | null;
-          letter_type?: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+          letter_type?: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
           ref_no?: string | null;
           letter_date?: string;
           remark?: string | null;
           generated_by_employee_id?: string;
           generated_on?: string;
+          template_slug?: string | null;
+          employee_address?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
+          subject_line?: string | null;
+          field_values?: Json;
+          body_text?: string;
         };
         Relationships: [
           {
@@ -5999,7 +6020,7 @@ export type Database = {
       employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
       leave_request_status: "Pending" | "Approved" | "Rejected";
-      letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+      letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
       order_status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";

@@ -35,6 +35,15 @@ export default async function HrLettersHubPage() {
           label="Company Policy Handbook"
           index={LETTER_TEMPLATES.length + 1}
         />
+
+        {/* 2026-08-27 — "record kese dikhega, kaha par mantain hoyega sab
+            dikhe": the issued-letters log, one click from the hub. */}
+        <NavTile
+          href="/dashboard/hr-letters/records"
+          icon="📋"
+          label="Issued Letters Record"
+          index={LETTER_TEMPLATES.length + 2}
+        />
       </NavTileGrid>
     </div>
   );
