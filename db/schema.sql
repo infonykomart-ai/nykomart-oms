@@ -1838,6 +1838,18 @@ ALTER TABLE credit_notes
   ADD COLUMN party_id uuid REFERENCES parties(id);
 CREATE INDEX idx_credit_notes_party ON credit_notes(party_id);
 
+-- 2026-08-29 (later, same day as the Debit Note rate-difference ALTER
+-- above) — "ab esa system credit note ,internal invoice ke liye bhi
+-- banao": same Rate Difference Calculator, scoped to Credit Note's
+-- vendor-side (Party) flow only — the PO/buyer-refund flow above
+-- (order_id/buyer_name/item_price/refund_amount) is untouched. Unlike
+-- debit_notes, credit_notes never had a qty column at all, so this adds
+-- all three fields. See db/2026-08-29-credit-note-rate-difference.sql.
+ALTER TABLE credit_notes
+  ADD COLUMN qty numeric(14,2),
+  ADD COLUMN po_rate numeric(14,2),
+  ADD COLUMN billed_rate numeric(14,2);
+
 -- 2026-08-27 — cross-invoice Debit/Credit Note adjustments. "kisi bill me
 -- agar credit debit adjust karna pade kisi dusre invoice me to vo bhi
 -- hona chahiye" — a note's amount can reduce a DIFFERENT invoice's

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { updateCreditNote, type DocEditState } from "./actions";
 
 const initialState: DocEditState = { error: null, success: false };
@@ -29,6 +29,15 @@ export type EditableCreditNote = {
   credit_note_status: string | null;
   refund_type: string | null;
   remark: string | null;
+  // 2026-08-29 — party_id (set only for vendor-side notes, not editable
+  // here — see credit-note-form.tsx's create-flow comment) gates whether
+  // the Rate Difference Calculator below is shown at all; qty/po_rate/
+  // billed_rate are its editable reference fields — see
+  // db/2026-08-29-credit-note-rate-difference.sql.
+  party_id: string | null;
+  qty: number | null;
+  po_rate: number | null;
+  billed_rate: number | null;
 };
 
 // cn_no and the order_id link are deliberately not editable — same reasoning
@@ -48,6 +57,22 @@ export function CreditNoteEditForm({
     if (state.success) onDone();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.success]);
+
+  // 2026-08-29 — same Rate Difference Calculator as debit-note-edit-form.tsx,
+  // shown only for vendor-side (Party) notes and only as a suggestion —
+  // never auto-overwrites an already-saved Refund Amount.
+  const [qtyInput, setQtyInput] = useState(note.qty != null ? String(note.qty) : "");
+  const [poRateInput, setPoRateInput] = useState(note.po_rate != null ? String(note.po_rate) : "");
+  const [billedRateInput, setBilledRateInput] = useState(note.billed_rate != null ? String(note.billed_rate) : "");
+  const rateDiff = useMemo(() => {
+    const po = Number(poRateInput);
+    const billed = Number(billedRateInput);
+    return poRateInput !== "" && billedRateInput !== "" ? billed - po : null;
+  }, [poRateInput, billedRateInput]);
+  const rateDiffAmount = useMemo(() => {
+    const qty = Number(qtyInput);
+    return rateDiff != null && qty > 0 ? rateDiff * qty : null;
+  }, [rateDiff, qtyInput]);
 
   return (
     <form action={formAction} className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
@@ -130,6 +155,62 @@ export function CreditNoteEditForm({
           <input id={`cn_status_${note.id}`} name="credit_note_status" defaultValue={note.credit_note_status ?? ""} className={inputClass} />
         </div>
       </div>
+
+      {/* 2026-08-29 — only shown for vendor-side (Party) notes; the
+          original sales/buyer-refund flow (no party_id) never sees this. */}
+      {note.party_id && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+          <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelClass} htmlFor={`cn_qty_${note.id}`}>Qty</label>
+              <input
+                id={`cn_qty_${note.id}`}
+                name="qty"
+                type="number"
+                value={qtyInput}
+                onChange={(e) => setQtyInput(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor={`cn_po_rate_${note.id}`}>Agreed / PO Rate (per unit)</label>
+              <input
+                id={`cn_po_rate_${note.id}`}
+                name="po_rate"
+                type="number"
+                step="0.01"
+                value={poRateInput}
+                onChange={(e) => setPoRateInput(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor={`cn_billed_rate_${note.id}`}>Billed/Credited Rate (per unit)</label>
+              <input
+                id={`cn_billed_rate_${note.id}`}
+                name="billed_rate"
+                type="number"
+                step="0.01"
+                value={billedRateInput}
+                onChange={(e) => setBilledRateInput(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </div>
+          {rateDiff != null && (
+            <p className="mt-2 text-xs text-slate-600">
+              Difference: <strong>₹{rateDiff.toFixed(2)}</strong> / unit
+              {rateDiffAmount != null && (
+                <>
+                  {" "}× Qty {qtyInput} = <strong className="text-slate-800">₹{rateDiffAmount.toFixed(2)}</strong> — copy into
+                  Refund Amount above if it should change.
+                </>
+              )}
+            </p>
+          )}
+        </div>
+      )}
 
       <div>
         <label className={labelClass} htmlFor={`cn_remark_${note.id}`}>Remark</label>

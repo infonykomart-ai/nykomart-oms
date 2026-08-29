@@ -115,7 +115,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     supabase
       .from("credit_notes")
       .select(
-        "id, cn_no, company_id, store_id, credit_note_date, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, remark"
+        "id, cn_no, company_id, store_id, credit_note_date, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, remark, party_id, qty, po_rate, billed_rate"
       )
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
@@ -345,6 +345,12 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             refund_amount: Number(r.refund_amount),
             refund_amt_usd: r.refund_amt_usd != null ? Number(r.refund_amt_usd) : null,
             refund_amt_inr: r.refund_amt_inr != null ? Number(r.refund_amt_inr) : null,
+            // 2026-08-29 — Rate Difference Calculator reference fields
+            // (vendor-side/Party notes only — see
+            // db/2026-08-29-credit-note-rate-difference.sql).
+            qty: r.qty != null ? Number(r.qty) : null,
+            po_rate: r.po_rate != null ? Number(r.po_rate) : null,
+            billed_rate: r.billed_rate != null ? Number(r.billed_rate) : null,
             companyName: companyName.get(r.company_id) ?? "",
           })),
           debitNotes: (recentDebitNotes ?? []).map((r) => ({

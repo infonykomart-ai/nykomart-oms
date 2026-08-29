@@ -33,7 +33,7 @@ async function CreditNoteReportInner({ id }: { id: string }) {
   const { data: noteRaw } = await supabase
     .from("credit_notes")
     .select(
-      "id, company_id, store_id, cn_no, credit_note_date, order_id, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, debit_note_id, remark"
+      "id, company_id, store_id, cn_no, credit_note_date, order_id, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, debit_note_id, party_id, qty, po_rate, billed_rate, remark"
     )
     .eq("id", id)
     .maybeSingle();
@@ -47,9 +47,17 @@ async function CreditNoteReportInner({ id }: { id: string }) {
     refund_amount: Number(noteRaw.refund_amount),
     refund_amt_usd: noteRaw.refund_amt_usd != null ? Number(noteRaw.refund_amt_usd) : null,
     refund_amt_inr: noteRaw.refund_amt_inr != null ? Number(noteRaw.refund_amt_inr) : null,
+    // 2026-08-29 — vendor-side (Party) Rate Difference Calculator reference
+    // fields, see db/2026-08-29-credit-note-rate-difference.sql. Null on
+    // any note that isn't a rate-difference case (or that isn't
+    // vendor-side at all), so both the party block and the breakup line
+    // below are conditional.
+    qty: noteRaw.qty != null ? Number(noteRaw.qty) : null,
+    po_rate: noteRaw.po_rate != null ? Number(noteRaw.po_rate) : null,
+    billed_rate: noteRaw.billed_rate != null ? Number(noteRaw.billed_rate) : null,
   };
 
-  const [{ data: company }, { data: profile }, storeResult, orderResult, debitNoteResult] = await Promise.all([
+  const [{ data: company }, { data: profile }, storeResult, orderResult, debitNoteResult, partyResult] = await Promise.all([
     supabase.from("companies").select("id, name, logo_url").eq("id", note.company_id).single(),
     supabase.from("company_profiles").select("address, phone, email").eq("company_id", note.company_id).maybeSingle(),
     note.store_id ? supabase.from("stores").select("name").eq("id", note.store_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -57,10 +65,17 @@ async function CreditNoteReportInner({ id }: { id: string }) {
     note.debit_note_id
       ? supabase.from("debit_notes").select("debit_note_no").eq("id", note.debit_note_id).maybeSingle()
       : Promise.resolve({ data: null }),
+    // 2026-08-29 — vendor-side notes have no buyer_name at all (that field
+    // belongs to the original sales/buyer-refund flow); show the party
+    // instead so the printed note isn't blank where "Buyer" would be.
+    note.party_id
+      ? supabase.from("parties").select("name, address, gst, contact_no").eq("id", note.party_id).maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
   const store = storeResult.data;
   const order = orderResult.data;
   const debitNote = debitNoteResult.data;
+  const party = partyResult.data;
 
   return (
     <div>
@@ -97,8 +112,17 @@ async function CreditNoteReportInner({ id }: { id: string }) {
 
           <div className="mb-4 grid grid-cols-2 gap-6 text-xs">
             <div>
-              <div className="mb-1 font-semibold text-slate-700">Buyer</div>
-              <div className="text-slate-900">{note.buyer_name ?? "—"}</div>
+              <div className="mb-1 font-semibold text-slate-700">{party ? "Party (Vendor)" : "Buyer"}</div>
+              {party ? (
+                <>
+                  <div className="text-slate-900">{party.name}</div>
+                  {party.address && <div className="text-slate-500">{party.address}</div>}
+                  {party.gst && <div className="text-slate-500">GSTIN: {party.gst}</div>}
+                  {party.contact_no && <div className="text-slate-500">{party.contact_no}</div>}
+                </>
+              ) : (
+                <div className="text-slate-900">{note.buyer_name ?? "—"}</div>
+              )}
               {store?.name && <div className="text-slate-500">Portal/Store: {store.name}</div>}
             </div>
             <div className="text-right">
@@ -107,6 +131,21 @@ async function CreditNoteReportInner({ id }: { id: string }) {
               {debitNote?.debit_note_no && <div className="text-slate-600">Linked Debit Note: {debitNote.debit_note_no}</div>}
             </div>
           </div>
+
+          {/* 2026-08-29 — vendor-side rate-difference breakup, same
+              reasoning as the Debit Note report's identical block. */}
+          {note.po_rate != null && note.billed_rate != null && (
+            <div className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-slate-700">
+              <span className="font-semibold text-slate-700">Rate Difference: </span>
+              Billed ₹{note.billed_rate.toFixed(2)} − Agreed/PO ₹{note.po_rate.toFixed(2)} = ₹
+              {(note.billed_rate - note.po_rate).toFixed(2)} / unit
+              {note.qty != null && (
+                <>
+                  {" "}× Qty {note.qty} = ₹{((note.billed_rate - note.po_rate) * note.qty).toFixed(2)}
+                </>
+              )}
+            </div>
+          )}
 
           <table className="w-full border-collapse text-left text-xs">
             <thead>

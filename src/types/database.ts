@@ -772,6 +772,9 @@ export type Database = {
           debit_note_id: string | null;
           bill_pass_register_id: string | null;
           party_id: string | null;
+          qty: number | null;
+          po_rate: number | null;
+          billed_rate: number | null;
           created_by_employee_id: string | null;
           remark: string | null;
           created_at: string;
@@ -800,6 +803,9 @@ export type Database = {
           debit_note_id?: string | null;
           bill_pass_register_id?: string | null;
           party_id?: string | null;
+          qty?: number | null;
+          po_rate?: number | null;
+          billed_rate?: number | null;
           created_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
@@ -828,6 +834,9 @@ export type Database = {
           debit_note_id?: string | null;
           bill_pass_register_id?: string | null;
           party_id?: string | null;
+          qty?: number | null;
+          po_rate?: number | null;
+          billed_rate?: number | null;
           created_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;

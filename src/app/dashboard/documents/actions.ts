@@ -162,6 +162,18 @@ type CreditNoteParams = {
   adjustTargetBillPassRegisterId: string | null;
   adjustAmount: number | null;
   adjustRemark: string | null;
+  // 2026-08-29 — "ab esa system credit note ke liye bhi banao": same Rate
+  // Difference Calculator as Debit Note (see DebitNoteParams above /
+  // db/2026-08-29-credit-note-rate-difference.sql), but ONLY for the
+  // vendor-side ("Party") flow above — per the user's own scoping ("credit
+  // note po ke against me rahega ye vala, lekin agar kisi party ko bhi
+  // issue karna pad gaya to uske hisab se sahi se banao"), the original
+  // PO/buyer-refund fields (orderId/buyerName/itemPrice/refundAmount) are
+  // untouched. All three are nullable/optional so the buyer-refund flow
+  // (and any existing row) is unaffected.
+  qty: number | null;
+  poRate: number | null;
+  billedRate: number | null;
 };
 
 async function saveCreditNoteCore(
@@ -199,6 +211,9 @@ async function saveCreditNoteCore(
       debit_note_id: p.debitNoteId,
       party_id: p.partyId,
       bill_pass_register_id: p.billPassRegisterId,
+      qty: p.qty,
+      po_rate: p.poRate,
+      billed_rate: p.billedRate,
       created_by_employee_id: employee.id,
       remark: p.remark,
     })
@@ -258,6 +273,9 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
     adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
     adjustAmount: numOrNull(formData, "adjust_amount"),
     adjustRemark: strOrNull(formData, "adjust_remark"),
+    qty: numOrNull(formData, "qty"),
+    poRate: numOrNull(formData, "po_rate"),
+    billedRate: numOrNull(formData, "billed_rate"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -799,6 +817,13 @@ export async function updateCreditNote(_prev: DocEditState, formData: FormData):
       credit_note_status: strOrNull(formData, "credit_note_status"),
       refund_type: strOrNull(formData, "refund_type") as never,
       remark: strOrNull(formData, "remark"),
+      // 2026-08-29 — Rate Difference Calculator fields, edit-side (see
+      // CreditNoteParams above): shown on the edit form as suggestion-only
+      // for vendor-side notes, same convention as Debit Note's edit form —
+      // never silently overwrites an already-typed Refund Amount.
+      qty: numOrNull(formData, "qty"),
+      po_rate: numOrNull(formData, "po_rate"),
+      billed_rate: numOrNull(formData, "billed_rate"),
     })
     .eq("id", id);
 
@@ -2630,12 +2655,16 @@ export async function bulkSaveCreditNotes(_prev: BulkDocState, formData: FormDat
       remark: cellStr(raw, byHeader, "Remark") || null,
       // Bulk import is the sales/buyer-refund flow (Amazon/Etsy report rows
       // resolved by PO/RF/RG No.) — no vendor party or bill dropdown here,
-      // same reasoning as bulkSaveDebitNotes below.
+      // same reasoning as bulkSaveDebitNotes below. Same for the Rate
+      // Difference Calculator fields — that's vendor-side (Party) only.
       partyId: null,
       billPassRegisterId: null,
       adjustTargetBillPassRegisterId: null,
       adjustAmount: null,
       adjustRemark: null,
+      qty: null,
+      poRate: null,
+      billedRate: null,
     });
 
     results.push({ row: rowNum, label: refNo, docNo: result.docNo, error: result.error });

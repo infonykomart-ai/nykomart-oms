@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { saveCreditNote, type DocFormState, type OrderLookup, type BillSearchHit } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
 import { BillLookupSelect } from "./bill-lookup-select";
@@ -45,6 +45,39 @@ export function CreditNoteForm({
   const [applyAdjustment, setApplyAdjustment] = useState(false);
   const [adjustTargetBill, setAdjustTargetBill] = useState<BillSearchHit | null>(null);
   const [adjustAmount, setAdjustAmount] = useState("");
+
+  // 2026-08-29 — "ab esa system credit note ke liye bhi banao": same Rate
+  // Difference Calculator as Debit Note (see debit-note-form.tsx's fuller
+  // comment on the same pattern) — e.g. a courier/purchase party's own
+  // credit note undercharging relative to what was agreed/PO'd. Scoped to
+  // ONLY the vendor-side (Party) flow above, per the user's own boundary
+  // ("credit note po ke against me rahega ye vala, lekin agar kisi party ko
+  // bhi issue karna pad gaya to uske hisab se sahi se banao") — the
+  // calculator only renders once a Party is selected, and Refund Amount
+  // stays a plain manual field for the original sales/buyer-refund flow.
+  const [qtyInput, setQtyInput] = useState("");
+  const [poRateInput, setPoRateInput] = useState("");
+  const [billedRateInput, setBilledRateInput] = useState("");
+  const [refundAmountManual, setRefundAmountManual] = useState("");
+  const [refundAmountTouched, setRefundAmountTouched] = useState(false);
+  const rateDiff = useMemo(() => {
+    const po = Number(poRateInput);
+    const billed = Number(billedRateInput);
+    return poRateInput !== "" && billedRateInput !== "" ? billed - po : null;
+  }, [poRateInput, billedRateInput]);
+  const rateDiffAmount = useMemo(() => {
+    const qty = Number(qtyInput);
+    return rateDiff != null && qty > 0 ? rateDiff * qty : null;
+  }, [rateDiff, qtyInput]);
+  // Refund Amount shown/submitted is derived at render time, not synced via
+  // an effect — same reasoning as debit-note-form.tsx's debitAmountInput:
+  // the calculator's suggestion drives it until the user types into the
+  // field themselves, after which their own entry always wins.
+  const refundAmountInput = refundAmountTouched
+    ? refundAmountManual
+    : partyId && rateDiffAmount != null
+      ? rateDiffAmount.toFixed(2)
+      : "";
 
   function handleFound(r: OrderLookup) {
     if (!r.order) return;
@@ -96,6 +129,66 @@ export function CreditNoteForm({
           selectedBillId={raisedAgainstBillId}
           onSelect={setRaisedAgainstBillId}
         />
+
+        {partyId && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+            <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
+            <p className="mb-2 text-[11px] text-slate-500">
+              If the party&apos;s own credit note is for a rate difference — e.g. undercharged/overcharged relative to
+              agreed/PO — fill Qty and both rates here; Refund Amount fills in automatically as (Billed − PO Rate) × Qty.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className={labelClass} htmlFor="cn_qty">Qty</label>
+                <input
+                  id="cn_qty"
+                  name="qty"
+                  type="number"
+                  value={qtyInput}
+                  onChange={(e) => setQtyInput(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="cn_po_rate">Agreed / PO Rate (per unit)</label>
+                <input
+                  id="cn_po_rate"
+                  name="po_rate"
+                  type="number"
+                  step="0.01"
+                  value={poRateInput}
+                  onChange={(e) => setPoRateInput(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="cn_billed_rate">Billed/Credited Rate (per unit)</label>
+                <input
+                  id="cn_billed_rate"
+                  name="billed_rate"
+                  type="number"
+                  step="0.01"
+                  value={billedRateInput}
+                  onChange={(e) => setBilledRateInput(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+            </div>
+            {rateDiff != null && (
+              <p className="mt-2 text-xs text-slate-600">
+                Difference: <strong>₹{rateDiff.toFixed(2)}</strong> / unit
+                {rateDiffAmount != null && (
+                  <>
+                    {" "}× Qty {qtyInput} = <strong className="text-slate-800">₹{rateDiffAmount.toFixed(2)}</strong>
+                    {refundAmountTouched && Number(refundAmountInput) !== rateDiffAmount && (
+                      <span className="ml-1 text-amber-600">(Refund Amount was edited manually — not auto-filled)</span>
+                    )}
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -163,7 +256,19 @@ export function CreditNoteForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="cn_refund_amount">Refund Amount *</label>
-          <input id="cn_refund_amount" name="refund_amount" type="number" step="0.01" required className={inputClass} />
+          <input
+            id="cn_refund_amount"
+            name="refund_amount"
+            type="number"
+            step="0.01"
+            required
+            value={refundAmountInput}
+            onChange={(e) => {
+              setRefundAmountTouched(true);
+              setRefundAmountManual(e.target.value);
+            }}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor="cn_refund_usd">Refund Amt (USD)</label>
