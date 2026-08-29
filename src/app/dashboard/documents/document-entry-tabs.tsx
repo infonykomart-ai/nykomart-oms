@@ -259,6 +259,7 @@ export function DocumentEntryTabs({
             sub: `${r.companyName} · ${r.buyer_name ?? ""}`,
             amount: `₹${r.refund_amount}`,
             record: r,
+            printHref: `/dashboard/documents/credit-notes/${r.id}/report`,
           }))}
           onDelete={deleteCreditNote}
           renderEdit={(r, onDone) => (
@@ -274,6 +275,7 @@ export function DocumentEntryTabs({
             sub: `${r.companyName} · ${r.particulars ?? ""}`,
             amount: `₹${r.debit_amount}`,
             record: r,
+            printHref: `/dashboard/documents/debit-notes/${r.id}/report`,
           }))}
           onDelete={deleteDebitNote}
           renderEdit={(r, onDone) => <DebitNoteEditForm note={r} parties={parties} onDone={onDone} />}
@@ -302,6 +304,7 @@ export function DocumentEntryTabs({
             sub: `${r.fromCompanyName} → ${r.toCompanyName}`,
             amount: `₹${r.total_amount}`,
             record: r,
+            printHref: `/dashboard/documents/internal-invoices/${r.id}/report`,
           }))}
           onDelete={deleteInternalInvoice}
           renderEdit={(r, onDone) => <InternalInvoiceEditForm invoice={r} onDone={onDone} />}
@@ -445,7 +448,13 @@ function DocList<T extends { id: string }>({
   // real linked Credit/Debit Note records (see actions.ts's
   // listRelatedNotesForBills), show the same RelatedNotesBadge preview
   // used on Bill Payment / Courier Bill / Duty & Tax Bill.
-  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[] }[];
+  //
+  // 2026-08-29 — optional `printHref`: when set, a "Print" link appears
+  // next to Edit/Delete, pointing at that doc's own single-document report
+  // page (e.g. credit-notes/[id]/report) — see that page's header comment
+  // for why Credit Note/Debit Note/Internal Invoice needed this (previously
+  // only the whole flat list could be printed, never one document).
+  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[]; printHref?: string }[];
   renderEdit: (record: T, onDone: () => void) => ReactNode;
   onDelete: (id: string) => Promise<SimpleResult>;
 }) {
@@ -487,6 +496,14 @@ function DocList<T extends { id: string }>({
               <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
                 <p className="text-red-600">{deleteError[r.id]}</p>
                 <div className="flex shrink-0 gap-1.5">
+                  {r.printHref && (
+                    <Link
+                      href={r.printHref}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      🖨 Print
+                    </Link>
+                  )}
                   <button
                     type="button"
                     onClick={() => setEditingId(r.id)}
