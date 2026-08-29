@@ -9,7 +9,10 @@
 // paths. Linking to an existing bill here is optional — PartyBillPicker
 // (same component Debit Note's "Raised against bill/invoice" uses) lets
 // you attach it to a real bill_pass_register row if there is one, or leave
-// it blank for a fully free-standing JV.
+// it blank for a fully free-standing JV. Passed with `invoiceLevel` (see
+// party-bill-picker.tsx) — a JV always attaches to the WHOLE invoice, never
+// one item of a multi-item Purchase Bill, per the user's later
+// clarification ("INVOICE ME JO ITEM HOGA UN SABKI EK HI JV BANEGI").
 import { useActionState, useMemo, useState } from "react";
 import { saveJournalVoucher, type DocFormState } from "./actions";
 import { PartyBillPicker } from "./party-bill-picker";
@@ -78,6 +81,7 @@ export function JournalVoucherForm({ companies, parties }: { companies: { id: st
         partyId={partyId}
         selectedBillId={billPassRegisterId}
         onSelect={setBillPassRegisterId}
+        invoiceLevel
       />
 
       <div className="grid grid-cols-2 gap-3">

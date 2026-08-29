@@ -21,12 +21,22 @@ export function PartyBillPicker({
   partyId,
   selectedBillId,
   onSelect,
+  invoiceLevel,
 }: {
   label: string;
   companyId: string;
   partyId: string;
   selectedBillId: string;
   onSelect: (billId: string) => void;
+  // 2026-08-29 (later, same evening) — Journal Voucher: "INVOICE ME JO ITEM
+  // HOGA UN SABKI EK HI JV BANEGI" — a JV always attaches to the WHOLE
+  // invoice, never one item, unlike Debit/Credit Note's legitimate
+  // per-item rate-difference linking (the default behavior below, kept
+  // unchanged for those two). When true, skip the "Which item is this
+  // against?" second dropdown entirely and resolve straight to the
+  // group's first item — matching createJournalVoucherForBill's own
+  // representative-row convention in actions.ts.
+  invoiceLevel?: boolean;
 }) {
   const [options, setOptions] = useState<PartyBillOption[]>([]);
   const [invoiceKey, setInvoiceKey] = useState("");
@@ -54,14 +64,16 @@ export function PartyBillPicker({
   }, [companyId, partyId]);
 
   const selectedGroup = options.find((o) => o.key === invoiceKey) ?? null;
-  const needsItemPick = !!selectedGroup && selectedGroup.items.length > 1;
+  const needsItemPick = !invoiceLevel && !!selectedGroup && selectedGroup.items.length > 1;
 
   function handleInvoiceChange(key: string) {
     setInvoiceKey(key);
     const group = options.find((o) => o.key === key);
     if (!group) {
       onSelect("");
-    } else if (group.items.length === 1) {
+    } else if (group.items.length === 1 || invoiceLevel) {
+      // invoiceLevel: always resolve to the group's representative row,
+      // even for a multi-item invoice — no item-level pick, see comment above.
       onSelect(group.items[0].billPassRegisterId);
     } else {
       onSelect(""); // wait for the item pick below

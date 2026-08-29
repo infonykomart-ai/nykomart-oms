@@ -60,15 +60,51 @@ async function JournalVoucherReportInner({ id }: { id: string }) {
     supabase.from("company_profiles").select("address, phone, email").eq("company_id", jv.company_id).maybeSingle(),
     jv.party_id ? supabase.from("parties").select("name, address, gst, contact_no").eq("id", jv.party_id).maybeSingle() : Promise.resolve({ data: null }),
     jv.bill_pass_register_id
-      ? supabase.from("bill_pass_register").select("total_amt, to_be_pay, credit_note_amt, adj_amt").eq("id", jv.bill_pass_register_id).maybeSingle()
+      ? supabase
+          .from("bill_pass_register")
+          .select("company_id, party_id, vendor_invoice_no, source, to_be_pay, credit_note_amt, adj_amt")
+          .eq("id", jv.bill_pass_register_id)
+          .maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
   const bill = billResult.data;
 
+  // 2026-08-29 (later, same evening) — this JV's bill_pass_register_id is
+  // only a REPRESENTATIVE row when it's linked to a multi-item/multi-order
+  // Purchase Bill (one real vendor invoice split across N bill_pass_register
+  // rows, one per item — see src/lib/bill-grouping.ts and
+  // actions.ts's createJournalVoucherForBill). Sum the live balance across
+  // every sibling row sharing the same invoice (identical grouping
+  // key/condition as groupBills() elsewhere) so Passed Amount reflects the
+  // WHOLE invoice per "INVOICE ME JO ITEM HOGA UN SABKI EK HI JV BANEGI",
+  // not just its first item. Courier/Duty Bill and manual entries are never
+  // grouped, so this is a no-op single-row sum for them.
+  let billTotals: { to_be_pay: number; credit_note_amt: number; adj_amt: number } | null = bill
+    ? { to_be_pay: Number(bill.to_be_pay ?? 0), credit_note_amt: Number(bill.credit_note_amt ?? 0), adj_amt: Number(bill.adj_amt ?? 0) }
+    : null;
+  if (bill && bill.source === "purchase_bill" && bill.vendor_invoice_no && bill.party_id) {
+    const { data: siblings } = await supabase
+      .from("bill_pass_register")
+      .select("to_be_pay, credit_note_amt, adj_amt")
+      .eq("company_id", bill.company_id)
+      .eq("party_id", bill.party_id)
+      .eq("source", "purchase_bill")
+      .eq("vendor_invoice_no", bill.vendor_invoice_no);
+    if (siblings && siblings.length > 0) {
+      const summed = { to_be_pay: 0, credit_note_amt: 0, adj_amt: 0 };
+      for (const s of siblings) {
+        summed.to_be_pay += Number(s.to_be_pay ?? 0);
+        summed.credit_note_amt += Number(s.credit_note_amt ?? 0);
+        summed.adj_amt += Number(s.adj_amt ?? 0);
+      }
+      billTotals = summed;
+    }
+  }
+
   // Prefer the live bill balance when linked (see header comment) — falls
   // back to the stored column for a manual/unlinked JV.
-  const passedAmount = bill ? Number(bill.to_be_pay) : jv.passed_amount;
-  const hasAdjustment = bill != null && (Number(bill.credit_note_amt) > 0 || Number(bill.adj_amt) > 0);
+  const passedAmount = billTotals ? billTotals.to_be_pay : jv.passed_amount;
+  const hasAdjustment = billTotals != null && (billTotals.credit_note_amt > 0 || billTotals.adj_amt > 0);
 
   return (
     <div>

@@ -2562,62 +2562,134 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
 // =============================================================================
 
 /**
- * Best-effort auto-create: one Journal Voucher per bill_pass_register row.
- * Idempotent — if a JV already exists for this bill (created by an earlier
- * call, a manual entry that linked to the same bill, or a race between two
- * concurrent calls caught by the partial unique index), returns its id
- * instead of erroring. Returns null only if the bill itself doesn't exist
- * or the insert failed for a real reason — callers at the 3 "send to
- * Finance" sites deliberately ignore a null return rather than surfacing
- * it, since a JV is a value-add side effect, not a reason to fail the
- * underlying bill save (same philosophy as those functions' own
- * bprError handling).
+ * Best-effort auto-create: ONE Journal Voucher per real vendor invoice.
+ *
+ * 2026-08-29 (later, same evening) — user (Hindi, verbatim): "INVOICE ME JO
+ * ITEM HOGA UN SABKI EK HI JV BANEGI CHAHHE PURCHASE HO, OURIOUR HO, DUTY
+ * HO" — whatever items are on an invoice, they all share just ONE JV,
+ * regardless of bill type. A multi-item/multi-order Purchase Bill inserts N
+ * separate `bill_pass_register` rows for ONE real vendor invoice — one per
+ * item/order line, each with its own qty/rate/GST (see
+ * src/lib/bill-grouping.ts's header comment for why storage stays
+ * per-item) — so `savePurchaseBillCore` runs, and this function gets
+ * called, once per item in a loop. Without this grouping step that would
+ * create N Journal Vouchers for one invoice. Resolve the full sibling
+ * group with the EXACT SAME key/condition `groupBills()` already uses
+ * everywhere else (Bill Payment, Approvals, Party Ledger) — source =
+ * 'purchase_bill' AND a vendor_invoice_no present, grouped by (company_id,
+ * party_id, vendor_invoice_no) — before checking for an existing JV or
+ * computing the amount, so every item's call converges on the same one JV.
+ * Courier/Duty Bill and manual Bill Pass Register rows are never grouped
+ * (each already inserts exactly one row per document), so for them this is
+ * just the original single-row behavior.
+ *
+ * Idempotent — if a JV already exists for this invoice (created by an
+ * earlier call for a sibling item, a manual entry that linked to one of
+ * the group's bills, or a race between two concurrent calls caught by the
+ * partial unique index), returns its id instead of erroring. Returns null
+ * only if the bill itself doesn't exist or the insert failed for a real
+ * reason — callers at the 3 "send to Finance" sites deliberately ignore a
+ * null return rather than surfacing it, since a JV is a value-add side
+ * effect, not a reason to fail the underlying bill save (same philosophy
+ * as those functions' own bprError handling).
  */
 async function createJournalVoucherForBill(
   supabase: ServiceClient,
   billPassRegisterId: string,
   prefill?: { itemDetails?: string | null; qty?: number | null; qtyUnit?: string | null }
 ): Promise<string | null> {
-  const { data: existing } = await supabase
-    .from("journal_vouchers")
-    .select("id")
-    .eq("bill_pass_register_id", billPassRegisterId)
-    .maybeSingle();
-  if (existing) return existing.id;
-
   const { data: bill } = await supabase
     .from("bill_pass_register")
-    .select("id, company_id, party_id, vendor_invoice_no, invoice_date, total_amt")
+    .select("id, company_id, party_id, vendor_invoice_no, invoice_date, total_amt, source, source_id")
     .eq("id", billPassRegisterId)
     .maybeSingle();
   if (!bill) return null;
+
+  // Resolve the invoice group — see comment above. Matches groupBills()'s
+  // own isGroupable condition exactly.
+  let groupIds = [bill.id];
+  let groupTotal = Number(bill.total_amt);
+  let groupItemDetails = prefill?.itemDetails ?? null;
+  let groupQty = prefill?.qty ?? null;
+  let groupQtyUnit = prefill?.qtyUnit ?? null;
+  if (bill.source === "purchase_bill" && bill.vendor_invoice_no && bill.party_id) {
+    const { data: siblings } = await supabase
+      .from("bill_pass_register")
+      .select("id, total_amt, source_id")
+      .eq("company_id", bill.company_id)
+      .eq("party_id", bill.party_id)
+      .eq("source", "purchase_bill")
+      .eq("vendor_invoice_no", bill.vendor_invoice_no)
+      .order("id", { ascending: true }); // deterministic — same set/order regardless of which item's call got here first
+    if (siblings && siblings.length > 0) {
+      groupIds = siblings.map((s) => s.id);
+      groupTotal = siblings.reduce((sum, s) => sum + Number(s.total_amt), 0);
+
+      const sourceIds = siblings.map((s) => s.source_id).filter((id): id is string => !!id);
+      if (sourceIds.length > 0) {
+        const { data: items } = await supabase
+          .from("purchase_bills")
+          .select("id, work_description, qty, qty_unit")
+          .in("id", sourceIds);
+        if (items && items.length > 0) {
+          groupItemDetails = items
+            .map((it) => `${it.work_description ?? "Item"} (Qty ${it.qty ?? "—"} ${it.qty_unit ?? ""})`.trim())
+            .join("; ");
+          // A single unambiguous qty/unit only makes sense for a lone item —
+          // for a real multi-item group leave it null, the breakdown lives
+          // in item_details instead.
+          if (items.length === 1) {
+            groupQty = items[0].qty;
+            groupQtyUnit = items[0].qty_unit;
+          } else {
+            groupQty = null;
+            groupQtyUnit = null;
+          }
+        }
+      }
+    }
+  }
+
+  const { data: existing } = await supabase
+    .from("journal_vouchers")
+    .select("id")
+    .in("bill_pass_register_id", groupIds)
+    .limit(1);
+  if (existing && existing.length > 0) return existing[0].id;
+
+  // Representative row the JV links to — deterministic (first id in the
+  // sorted group), so a concurrent duplicate insert always collides on the
+  // exact same bill_pass_register_id and gets caught by the partial unique
+  // index below, regardless of which sibling's call reaches here first.
+  const representativeId = groupIds[0];
 
   const { data, error } = await supabase
     .from("journal_vouchers")
     .insert({
       company_id: bill.company_id,
-      bill_pass_register_id: bill.id,
+      bill_pass_register_id: representativeId,
       party_id: bill.party_id,
       vendor_invoice_no: bill.vendor_invoice_no,
       invoice_date: bill.invoice_date,
-      debit_amount: bill.total_amt,
-      item_details: prefill?.itemDetails ?? null,
-      qty: prefill?.qty ?? null,
-      qty_unit: prefill?.qtyUnit ?? null,
+      debit_amount: groupTotal,
+      item_details: groupItemDetails,
+      qty: groupQty,
+      qty_unit: groupQtyUnit,
     })
     .select("id")
     .single();
 
   if (error || !data) {
     // Race window between the existence check above and this insert —
-    // the partial unique index on bill_pass_register_id catches it.
+    // the partial unique index on bill_pass_register_id catches it (both
+    // concurrent calls resolve the same representativeId, see above).
     if (error?.message.includes("duplicate key")) {
       const { data: retry } = await supabase
         .from("journal_vouchers")
         .select("id")
-        .eq("bill_pass_register_id", billPassRegisterId)
-        .maybeSingle();
-      return retry?.id ?? null;
+        .in("bill_pass_register_id", groupIds)
+        .limit(1);
+      return retry?.[0]?.id ?? null;
     }
     return null;
   }
