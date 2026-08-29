@@ -1183,6 +1183,91 @@ export type Database = {
           },
         ];
       };
+      journal_vouchers: {
+        Row: {
+          id: string;
+          company_id: string;
+          jv_no: string | null;
+          jv_date: string;
+          bill_pass_register_id: string | null;
+          party_id: string | null;
+          vendor_invoice_no: string | null;
+          invoice_date: string | null;
+          debit_amount: number;
+          passed_amount: number | null;
+          item_details: string | null;
+          qty: number | null;
+          qty_unit: string | null;
+          qlty: string | null;
+          particulars: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          jv_no?: string | null;
+          jv_date?: string;
+          bill_pass_register_id?: string | null;
+          party_id?: string | null;
+          vendor_invoice_no?: string | null;
+          invoice_date?: string | null;
+          debit_amount?: number;
+          passed_amount?: number | null;
+          item_details?: string | null;
+          qty?: number | null;
+          qty_unit?: string | null;
+          qlty?: string | null;
+          particulars?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          jv_no?: string | null;
+          jv_date?: string;
+          bill_pass_register_id?: string | null;
+          party_id?: string | null;
+          vendor_invoice_no?: string | null;
+          invoice_date?: string | null;
+          debit_amount?: number;
+          passed_amount?: number | null;
+          item_details?: string | null;
+          qty?: number | null;
+          qty_unit?: string | null;
+          qlty?: string | null;
+          particulars?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "journal_vouchers_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "journal_vouchers_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "journal_vouchers_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       bill_pass_register_adjustments: {
         Row: {
           id: string;

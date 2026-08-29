@@ -24,6 +24,7 @@
 // underlying bill id), so the bulk bar still works across several
 // different invoices/parties at once exactly as before.
 import { useActionState, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { groupBills, type BillGroup } from "@/lib/bill-grouping";
 import {
   recordBulkBillPayment,
@@ -266,6 +267,23 @@ function GroupRow({
               (auto-linked)
             </span>
           )}
+          {/* 2026-08-29 (evening) — "ek genral voutcher banega jo bhi bills
+              honge unke liye": a JV auto-generates for every vendor bill
+              the instant it lands here (see actions.ts's
+              createJournalVoucherForBill) — this just links to it.
+              party_id != null excludes Salary/Advance rows, which have no
+              vendor/invoice concept to fit the JV template. A grouped
+              (multi-item) invoice has one JV per underlying item — see the
+              expanded-items table below instead. */}
+          {!group.isGroup && first.party_id && (
+            <Link
+              href={`/dashboard/documents/journal-vouchers/by-bill/${first.id}`}
+              target="_blank"
+              className="text-xs font-semibold text-slate-600 hover:underline"
+            >
+              🖨 JV
+            </Link>
+          )}
           <button type="button" onClick={() => setPayOpen((v) => !v)} className="text-xs font-semibold text-amber-600 hover:underline">
             {payOpen ? "Cancel" : "Record Payment"}
           </button>
@@ -281,6 +299,7 @@ function GroupRow({
                   <th className="px-2 py-1 text-right font-medium">To Be Pay</th>
                   <th className="px-2 py-1 text-right font-medium">Paid</th>
                   <th className="px-2 py-1 text-right font-medium">Balance</th>
+                  <th className="px-2 py-1 text-right font-medium">JV</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,6 +309,11 @@ function GroupRow({
                     <td className="px-2 py-1 text-right text-slate-600">{b.to_be_pay.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right text-slate-600">{b.total_paid.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right font-medium text-slate-800">{b.balance_due.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right">
+                      <Link href={`/dashboard/documents/journal-vouchers/by-bill/${b.id}`} target="_blank" className="font-semibold text-slate-600 hover:underline">
+                        🖨
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>

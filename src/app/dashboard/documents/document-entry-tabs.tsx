@@ -19,6 +19,8 @@ import { PurchaseBillMultiItemsForm } from "./purchase-bill-multi-items-form";
 import { CsbFilingForm } from "./csb-filing-form";
 import { CsbFilingEditForm, type EditableCsbFiling } from "./csb-filing-edit-form";
 import { ShipmentHandoverChalanForm } from "./shipment-handover-chalan-form";
+import { JournalVoucherForm } from "./journal-voucher-form";
+import { JournalVoucherEditForm, type EditableJournalVoucher } from "./journal-voucher-edit-form";
 import Link from "next/link";
 import {
   deleteCreditNote,
@@ -28,6 +30,7 @@ import {
   deletePurchaseBill,
   deleteCsbFiling,
   deleteShipmentHandoverChalan,
+  deleteJournalVoucher,
   type SimpleResult,
   type RelatedNote,
 } from "./actions";
@@ -57,6 +60,7 @@ type Recent = {
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
+  journalVouchers: (EditableJournalVoucher & { vendorName: string })[];
 };
 
 const TABS = [
@@ -70,6 +74,7 @@ const TABS = [
   { key: "courier-bill-pdf", label: "Courier Bill (PDF Upload)" },
   { key: "csb-filing", label: "CSB Filing" },
   { key: "shipment-chalan", label: "Shipment Chalan" },
+  { key: "journal-voucher", label: "Journal Voucher" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -231,6 +236,15 @@ export function DocumentEntryTabs({
               <CsbFilingForm currencies={currencies} />
             </div>
           )}
+          {tab === "journal-voucher" && (
+            <div>
+              <p className="mb-3 text-xs text-slate-400">
+                Most Journal Vouchers auto-generate the moment a Purchase/Courier/Duty Bill is sent to the Finance ledger — this
+                form is for a manual one, optionally linked to an existing bill.
+              </p>
+              <JournalVoucherForm companies={companies} parties={parties} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -380,6 +394,22 @@ export function DocumentEntryTabs({
           }))}
           onDelete={deleteCsbFiling}
           renderEdit={(r, onDone) => <CsbFilingEditForm filing={r} currencies={currencies} onDone={onDone} />}
+        />
+        </div>
+        <div className={tab === "journal-voucher" ? undefined : "print:hidden"}>
+        <DocList
+          title="Recent Journal Vouchers"
+          rows={recent.journalVouchers.map((r) => ({
+            id: r.id,
+            no: r.jv_no ?? "—",
+            date: r.jv_date,
+            sub: `${r.vendorName}${r.vendor_invoice_no ? ` · ${r.vendor_invoice_no}` : ""}`,
+            amount: `₹${r.debit_amount}`,
+            record: r,
+            printHref: `/dashboard/documents/journal-vouchers/${r.id}/report`,
+          }))}
+          onDelete={deleteJournalVoucher}
+          renderEdit={(r, onDone) => <JournalVoucherEditForm jv={r} parties={parties} onDone={onDone} />}
         />
         </div>
         </PrintArea>

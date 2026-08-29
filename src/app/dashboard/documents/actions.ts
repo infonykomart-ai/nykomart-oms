@@ -1120,24 +1120,43 @@ async function savePurchaseBillCore(
   // total and is what Bill Payment / Party Ledger should show as
   // outstanding — see db/2026-08-18-bill-pass-register-purchase-sync-fix.sql
   // for the one-time repair of rows already mirrored with the wrong value.
-  const { error: bprError } = await supabase.from("bill_pass_register").insert({
-    company_id: companyId,
-    invoice_type: "Purchase",
-    vendor_invoice_no: p.vendorInvoiceNo,
-    invoice_date: p.vendorInvoiceDate,
-    invoice_recv_date: p.vendorInvoiceDate,
-    total_amt: Number(data.g_total_plus_gst ?? data.total_amount ?? 0),
-    party_id: p.vendorPartyId,
-    party_type: "Purchase",
-    source: "purchase_bill",
-    source_id: data.id,
-  });
+  const { data: bprData, error: bprError } = await supabase
+    .from("bill_pass_register")
+    .insert({
+      company_id: companyId,
+      invoice_type: "Purchase",
+      vendor_invoice_no: p.vendorInvoiceNo,
+      invoice_date: p.vendorInvoiceDate,
+      invoice_recv_date: p.vendorInvoiceDate,
+      total_amt: Number(data.g_total_plus_gst ?? data.total_amount ?? 0),
+      party_id: p.vendorPartyId,
+      party_type: "Purchase",
+      source: "purchase_bill",
+      source_id: data.id,
+    })
+    .select("id")
+    .single();
   if (bprError) {
     return {
       error: null,
       id: data.id,
       docNo: `${data.vendor_invoice_no} (saved, but Finance ledger entry failed: ${bprError.message} — add it manually)`,
     };
+  }
+
+  // 2026-08-29 (evening) — "ek genral voutcher banega jo bhi bills honge
+  // unke liye ... jab send to bill pass register me bhejte hai ... us par
+  // click karne par auto mentic JV genrate kare": every bill landing in the
+  // Finance ledger auto-gets a Journal Voucher. Best-effort — a JV failure
+  // must never roll back or block the Purchase Bill itself, which is
+  // already fully saved at this point (same "don't lose what already
+  // succeeded" approach as the bprError handling just above).
+  if (bprData) {
+    await createJournalVoucherForBill(supabase, bprData.id, {
+      itemDetails: p.workDescription,
+      qty: p.qty || 1,
+      qtyUnit: p.qtyUnit || "FT",
+    });
   }
 
   return { error: null, id: data.id, docNo: data.vendor_invoice_no };
@@ -2117,24 +2136,28 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
     .eq("id", freightBillId)
     .maybeSingle();
 
-  const { error } = await supabase.from("bill_pass_register").insert({
-    company_id: companyId,
-    invoice_type: "FREIGHT INVOICE",
-    vendor_invoice_no: bill?.invoice_no ?? null,
-    invoice_date: bill?.invoice_date ?? null,
-    invoice_recv_date: bill?.invoice_date ?? null,
-    total_amt: totalAmt,
-    // 2026-08-17: carry the Courier Bill's own vendor/party through to the
-    // Finance ledger — previously this stayed NULL even when the bill had
-    // a vendor selected, which is why Courier Bills could never appear in
-    // a Party Ledger. party_type stays "Courier" either way (still useful
-    // for bills sent before a vendor was ever selected).
-    party_id: bill?.vendor_party_id ?? null,
-    party_type: "Courier",
-    source: "freight_bill",
-    source_id: freightBillId,
-    remark: strOrNull(formData, "remark"),
-  });
+  const { data: bprData, error } = await supabase
+    .from("bill_pass_register")
+    .insert({
+      company_id: companyId,
+      invoice_type: "FREIGHT INVOICE",
+      vendor_invoice_no: bill?.invoice_no ?? null,
+      invoice_date: bill?.invoice_date ?? null,
+      invoice_recv_date: bill?.invoice_date ?? null,
+      total_amt: totalAmt,
+      // 2026-08-17: carry the Courier Bill's own vendor/party through to the
+      // Finance ledger — previously this stayed NULL even when the bill had
+      // a vendor selected, which is why Courier Bills could never appear in
+      // a Party Ledger. party_type stays "Courier" either way (still useful
+      // for bills sent before a vendor was ever selected).
+      party_id: bill?.vendor_party_id ?? null,
+      party_type: "Courier",
+      source: "freight_bill",
+      source_id: freightBillId,
+      remark: strOrNull(formData, "remark"),
+    })
+    .select("id")
+    .single();
   if (error) {
     // Backstopped by uq_bill_pass_register_source — the check above has a
     // race window (two submits landing between check and insert); this
@@ -2142,6 +2165,9 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
     if (error.message.includes("duplicate key")) return { error: "This Courier Bill has already been sent to the Finance ledger.", success: false };
     return { error: error.message, success: false };
   }
+  // 2026-08-29 (evening) — auto-generate a Journal Voucher, same as
+  // Purchase Bill above; best-effort, never blocks the send.
+  if (bprData) await createJournalVoucherForBill(supabase, bprData.id);
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -2483,24 +2509,264 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
     .eq("id", dutyTaxBillId)
     .maybeSingle();
 
-  const { error } = await supabase.from("bill_pass_register").insert({
-    company_id: companyId,
-    invoice_type: "DUTY TAX",
-    vendor_invoice_no: bill?.invoice_no ?? null,
-    invoice_date: bill?.invoice_date ?? null,
-    invoice_recv_date: bill?.invoice_date ?? null,
-    total_amt: totalAmt,
-    // 2026-08-17: same vendor/party carry-through as sendFreightBillToFinance above.
-    party_id: bill?.vendor_party_id ?? null,
-    party_type: "Courier",
-    source: "duty_tax_bill",
-    source_id: dutyTaxBillId,
-    remark: strOrNull(formData, "remark"),
-  });
+  const { data: bprData, error } = await supabase
+    .from("bill_pass_register")
+    .insert({
+      company_id: companyId,
+      invoice_type: "DUTY TAX",
+      vendor_invoice_no: bill?.invoice_no ?? null,
+      invoice_date: bill?.invoice_date ?? null,
+      invoice_recv_date: bill?.invoice_date ?? null,
+      total_amt: totalAmt,
+      // 2026-08-17: same vendor/party carry-through as sendFreightBillToFinance above.
+      party_id: bill?.vendor_party_id ?? null,
+      party_type: "Courier",
+      source: "duty_tax_bill",
+      source_id: dutyTaxBillId,
+      remark: strOrNull(formData, "remark"),
+    })
+    .select("id")
+    .single();
   if (error) {
     if (error.message.includes("duplicate key")) return { error: "This Duty & Tax Bill has already been sent to the Finance ledger.", success: false };
     return { error: error.message, success: false };
   }
+  // 2026-08-29 (evening) — auto-generate a Journal Voucher, same as
+  // Purchase Bill / Courier Bill above; best-effort, never blocks the send.
+  if (bprData) await createJournalVoucherForBill(supabase, bprData.id);
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+// =============================================================================
+// JOURNAL VOUCHER (JV) — 2026-08-29 (evening). User (Hindi, verbatim):
+// "ek genral voutcher banega jo bhi bills honge unke liye kisi me debit
+// note lagana padega to vo bhi adjustment hoyega credit note bhi
+// adjustment hoyega uska bhi apna serial hoyega sath me jiska jiske sath
+// JV/GRN katega uske sath link hoyega" — a JV should exist for every bill,
+// its own serial number, linked back to whichever bill it belongs to.
+// Follow-up (AskUserQuestion): auto-generates the instant a bill lands in
+// bill_pass_register (see the 3 call sites above — savePurchaseBillCore,
+// sendFreightBillToFinance, sendDutyBillToFinance — each now calls
+// createJournalVoucherForBill right after its own bill_pass_register
+// insert). Second follow-up: "JV no automatic ke sath sath manual option
+// bhi hona chahiye" — saveJournalVoucherCore below is the manual path, its
+// own Document Entry tab, optionally linked to an existing bill via the
+// same PartyBillPicker UI Debit Note uses, or left unlinked entirely.
+//
+// See db/2026-08-29-journal-voucher.sql for the full schema-design
+// rationale (why Vendor/Invoice/Debit Amount are snapshotted here but
+// Passed Amount prefers a LIVE bill_pass_register.to_be_pay join when
+// linked, so a JV never goes stale after a Debit/Credit Note is raised
+// against its bill afterward).
+// =============================================================================
+
+/**
+ * Best-effort auto-create: one Journal Voucher per bill_pass_register row.
+ * Idempotent — if a JV already exists for this bill (created by an earlier
+ * call, a manual entry that linked to the same bill, or a race between two
+ * concurrent calls caught by the partial unique index), returns its id
+ * instead of erroring. Returns null only if the bill itself doesn't exist
+ * or the insert failed for a real reason — callers at the 3 "send to
+ * Finance" sites deliberately ignore a null return rather than surfacing
+ * it, since a JV is a value-add side effect, not a reason to fail the
+ * underlying bill save (same philosophy as those functions' own
+ * bprError handling).
+ */
+async function createJournalVoucherForBill(
+  supabase: ServiceClient,
+  billPassRegisterId: string,
+  prefill?: { itemDetails?: string | null; qty?: number | null; qtyUnit?: string | null }
+): Promise<string | null> {
+  const { data: existing } = await supabase
+    .from("journal_vouchers")
+    .select("id")
+    .eq("bill_pass_register_id", billPassRegisterId)
+    .maybeSingle();
+  if (existing) return existing.id;
+
+  const { data: bill } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, party_id, vendor_invoice_no, invoice_date, total_amt")
+    .eq("id", billPassRegisterId)
+    .maybeSingle();
+  if (!bill) return null;
+
+  const { data, error } = await supabase
+    .from("journal_vouchers")
+    .insert({
+      company_id: bill.company_id,
+      bill_pass_register_id: bill.id,
+      party_id: bill.party_id,
+      vendor_invoice_no: bill.vendor_invoice_no,
+      invoice_date: bill.invoice_date,
+      debit_amount: bill.total_amt,
+      item_details: prefill?.itemDetails ?? null,
+      qty: prefill?.qty ?? null,
+      qty_unit: prefill?.qtyUnit ?? null,
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) {
+    // Race window between the existence check above and this insert —
+    // the partial unique index on bill_pass_register_id catches it.
+    if (error?.message.includes("duplicate key")) {
+      const { data: retry } = await supabase
+        .from("journal_vouchers")
+        .select("id")
+        .eq("bill_pass_register_id", billPassRegisterId)
+        .maybeSingle();
+      return retry?.id ?? null;
+    }
+    return null;
+  }
+  return data.id;
+}
+
+/**
+ * Lazy fallback for the "🖨 JV" link on Bill Payment rows created before
+ * this feature existed (or where the eager create above somehow didn't
+ * run) — looks up or creates a JV for the given bill and returns its id,
+ * or null if the bill itself doesn't exist. Used by
+ * journal-vouchers/by-bill/[billId]/route.ts.
+ */
+export async function ensureJournalVoucherForBill(billPassRegisterId: string): Promise<string | null> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  return createJournalVoucherForBill(supabase, billPassRegisterId);
+}
+
+type JournalVoucherParams = {
+  companyId: string;
+  jvDate: string;
+  billPassRegisterId: string | null;
+  partyId: string;
+  vendorInvoiceNo: string | null;
+  invoiceDate: string | null;
+  debitAmount: number;
+  passedAmount: number | null;
+  itemDetails: string | null;
+  qty: number | null;
+  qtyUnit: string | null;
+  qlty: string | null;
+  particulars: string | null;
+  remark: string | null;
+};
+
+async function saveJournalVoucherCore(
+  employee: AuthedEmployee,
+  supabase: ServiceClient,
+  p: JournalVoucherParams
+): Promise<{ error: string | null; id: string | null; docNo: string | null }> {
+  if (!p.companyId) return { error: "Select a company.", id: null, docNo: null };
+  if (!employee.companyIds.includes(p.companyId)) return { error: "You do not have access to this company.", id: null, docNo: null };
+  if (!p.partyId) return { error: "Select a party (vendor).", id: null, docNo: null };
+  if (!p.jvDate) return { error: "JV Date is required.", id: null, docNo: null };
+
+  const { data, error } = await supabase
+    .from("journal_vouchers")
+    .insert({
+      company_id: p.companyId,
+      jv_date: p.jvDate,
+      bill_pass_register_id: p.billPassRegisterId,
+      party_id: p.partyId,
+      vendor_invoice_no: p.vendorInvoiceNo,
+      invoice_date: p.invoiceDate,
+      debit_amount: p.debitAmount,
+      passed_amount: p.passedAmount,
+      item_details: p.itemDetails,
+      qty: p.qty,
+      qty_unit: p.qtyUnit,
+      qlty: p.qlty,
+      particulars: p.particulars,
+      remark: p.remark,
+      created_by_employee_id: employee.id,
+    })
+    .select("id, jv_no")
+    .single();
+
+  if (error || !data) {
+    const msg = error?.message.includes("duplicate key")
+      ? "This bill already has a Journal Voucher linked to it — edit that one instead, or unlink here."
+      : error?.message;
+    return { error: `Failed to save Journal Voucher: ${msg ?? "unknown error"}`, id: null, docNo: null };
+  }
+  return { error: null, id: data.id, docNo: data.jv_no ?? "" };
+}
+
+export async function saveJournalVoucher(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const result = await saveJournalVoucherCore(employee, supabase, {
+    companyId: str(formData, "company_id"),
+    jvDate: str(formData, "jv_date"),
+    billPassRegisterId: strOrNull(formData, "bill_pass_register_id"),
+    partyId: str(formData, "party_id"),
+    vendorInvoiceNo: strOrNull(formData, "vendor_invoice_no"),
+    invoiceDate: strOrNull(formData, "invoice_date"),
+    debitAmount: numOrZero(formData, "debit_amount"),
+    passedAmount: numOrNull(formData, "passed_amount"),
+    itemDetails: strOrNull(formData, "item_details"),
+    qty: numOrNull(formData, "qty"),
+    qtyUnit: strOrNull(formData, "qty_unit"),
+    qlty: strOrNull(formData, "qlty"),
+    particulars: strOrNull(formData, "particulars"),
+    remark: strOrNull(formData, "remark"),
+  });
+
+  if (result.error) return initialFail(result.error);
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+export type EditJournalVoucherState = { error: string | null; success: boolean };
+
+export async function updateJournalVoucherDetails(_prev: EditJournalVoucherState, formData: FormData): Promise<EditJournalVoucherState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const id = str(formData, "id");
+  if (!id) return { error: "Missing Journal Voucher.", success: false };
+
+  const { data: existing } = await supabase.from("journal_vouchers").select("id, company_id").eq("id", id).maybeSingle();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Journal Voucher not found or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase
+    .from("journal_vouchers")
+    .update({
+      party_id: str(formData, "party_id"),
+      vendor_invoice_no: strOrNull(formData, "vendor_invoice_no"),
+      invoice_date: strOrNull(formData, "invoice_date"),
+      debit_amount: numOrZero(formData, "debit_amount"),
+      passed_amount: numOrNull(formData, "passed_amount"),
+      item_details: strOrNull(formData, "item_details"),
+      qty: numOrNull(formData, "qty"),
+      qty_unit: strOrNull(formData, "qty_unit"),
+      qlty: strOrNull(formData, "qlty"),
+      particulars: strOrNull(formData, "particulars"),
+      remark: strOrNull(formData, "remark"),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+export async function deleteJournalVoucher(id: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("journal_vouchers").select("id, company_id").eq("id", id).maybeSingle();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Journal Voucher not found or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("journal_vouchers").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }

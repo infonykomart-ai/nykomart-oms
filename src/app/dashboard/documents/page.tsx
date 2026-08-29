@@ -89,6 +89,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     { data: recentDutyBills },
     { data: recentCsbFilings },
     { data: recentShipmentChalans },
+    { data: recentJournalVouchers },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     // 2026-08-12 (round 10): invoice_type/party_type added so the party
@@ -200,6 +201,18 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     supabase
       .from("shipment_handover_chalans")
       .select("id, chalan_no, chalan_date, company_id, courier_party_id, remark")
+      .eq("company_id", employee.currentCompanyId)
+      .order("created_at", { ascending: false })
+      .limit(8),
+    // 2026-08-29 (evening) — Journal Voucher (see actions.ts's
+    // createJournalVoucherForBill / saveJournalVoucherCore's header
+    // comment for the full "why"). Scoped to the currently selected
+    // company, same as every other "Recent" list above.
+    supabase
+      .from("journal_vouchers")
+      .select(
+        "id, jv_no, jv_date, company_id, bill_pass_register_id, party_id, vendor_invoice_no, invoice_date, debit_amount, passed_amount, item_details, qty, qty_unit, qlty, particulars, remark"
+      )
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
@@ -395,6 +408,13 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             exchange_rate: r.exchange_rate != null ? Number(r.exchange_rate) : null,
             total_taxable_value: r.total_taxable_value != null ? Number(r.total_taxable_value) : null,
             fob_value_inr: r.fob_value_inr != null ? Number(r.fob_value_inr) : null,
+          })),
+          journalVouchers: (recentJournalVouchers ?? []).map((r) => ({
+            ...r,
+            debit_amount: Number(r.debit_amount),
+            passed_amount: r.passed_amount != null ? Number(r.passed_amount) : null,
+            qty: r.qty != null ? Number(r.qty) : null,
+            vendorName: r.party_id ? partyName.get(r.party_id) ?? "—" : "—",
           })),
           freightBills: (recentFreightBills ?? []).map((b) => ({
             ...b,
