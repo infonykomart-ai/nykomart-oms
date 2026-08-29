@@ -94,6 +94,16 @@ export function MaterialOutChalanForm({ parties, skuOptions }: { parties: { id: 
           <label className={labelClass} htmlFor="moc_date">Chalan Date</label>
           <input id="moc_date" name="chalan_date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className={inputClass} />
         </div>
+        {/* 2026-08-29 (evening, follow-up round) — optional, print-only fields
+            matching the physical NYKO MART chalan pad the user shared. */}
+        <div>
+          <label className={labelClass} htmlFor="moc_through">Through (optional)</label>
+          <input id="moc_through" name="through" placeholder="Transport / courier" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="moc_packages">No. of Packages (optional)</label>
+          <input id="moc_packages" name="no_of_packages" type="number" min="0" className={inputClass} />
+        </div>
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -166,6 +176,15 @@ export function MaterialOutChalanForm({ parties, skuOptions }: { parties: { id: 
         <label className={labelClass} htmlFor="moc_remark">Remark</label>
         <textarea id="moc_remark" name="remark" rows={2} className={inputClass} />
       </div>
+
+      {/* 2026-08-29 (evening) — "BINA PO KE SATH MAAL DISPATCH NAHI HO
+          SAKTA": at least one line needs an Order/PO before this can be
+          saved (enforced server-side too, see createMaterialOutChalan). */}
+      {!lines.some((l) => l.orders.length > 0) && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Link at least one Order/PO on some item before saving — a Delivery Chalan can&apos;t be dispatched without one.
+        </p>
+      )}
 
       <button
         type="submit"

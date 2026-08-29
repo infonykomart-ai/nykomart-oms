@@ -5472,6 +5472,11 @@ export type Database = {
           party_id: string;
           chalan_no: string | null;
           chalan_date: string;
+          // 2026-08-29 (evening, Received Chalan round) — optional
+          // print-reference fields matching the physical NYKO MART chalan
+          // pad, see db/2026-08-29-received-chalan-and-moc-fields.sql.
+          through: string | null;
+          no_of_packages: number | null;
           remark: string | null;
           created_at: string;
         };
@@ -5481,6 +5486,8 @@ export type Database = {
           party_id: string;
           chalan_no?: string | null;
           chalan_date: string;
+          through?: string | null;
+          no_of_packages?: number | null;
           remark?: string | null;
           created_at?: string;
         };
@@ -5490,6 +5497,8 @@ export type Database = {
           party_id?: string;
           chalan_no?: string | null;
           chalan_date?: string;
+          through?: string | null;
+          no_of_packages?: number | null;
           remark?: string | null;
           created_at?: string;
         };
@@ -5506,6 +5515,121 @@ export type Database = {
             columns: ["party_id"];
             isOneToOne: false;
             referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      // 2026-08-29 (evening, follow-up round) — Received Chalan: the
+      // "party -> company" counterpart to material_out_chalans, but
+      // deliberately NOT wired to stock_in (paperwork/proof-of-receipt
+      // document only — see db/2026-08-29-received-chalan-and-moc-fields.sql's
+      // header comment for why). source/source_id let a chalan be traced
+      // back to the Purchase Bill invoice group that auto-generated it,
+      // same "source" discriminator pattern as bill_pass_register.
+      received_chalans: {
+        Row: {
+          id: string;
+          company_id: string;
+          party_id: string;
+          chalan_no: string | null;
+          chalan_date: string;
+          order_id: string | null;
+          through: string | null;
+          no_of_packages: number | null;
+          source: "manual" | "purchase_bill" | null;
+          source_id: string | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          party_id: string;
+          chalan_no?: string | null;
+          chalan_date: string;
+          order_id?: string | null;
+          through?: string | null;
+          no_of_packages?: number | null;
+          source?: "manual" | "purchase_bill" | null;
+          source_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          party_id?: string;
+          chalan_no?: string | null;
+          chalan_date?: string;
+          order_id?: string | null;
+          through?: string | null;
+          no_of_packages?: number | null;
+          source?: "manual" | "purchase_bill" | null;
+          source_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "received_chalans_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "received_chalans_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "received_chalans_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      received_chalan_items: {
+        Row: {
+          id: string;
+          chalan_id: string;
+          description: string;
+          qty: number;
+          qty_unit: string;
+          rate: number | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          chalan_id: string;
+          description: string;
+          qty: number;
+          qty_unit?: string;
+          rate?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          chalan_id?: string;
+          description?: string;
+          qty?: number;
+          qty_unit?: string;
+          rate?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "received_chalan_items_chalan_id_fkey";
+            columns: ["chalan_id"];
+            isOneToOne: false;
+            referencedRelation: "received_chalans";
             referencedColumns: ["id"];
           },
         ];

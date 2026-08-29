@@ -21,6 +21,7 @@ import { CsbFilingEditForm, type EditableCsbFiling } from "./csb-filing-edit-for
 import { ShipmentHandoverChalanForm } from "./shipment-handover-chalan-form";
 import { JournalVoucherForm } from "./journal-voucher-form";
 import { JournalVoucherEditForm, type EditableJournalVoucher } from "./journal-voucher-edit-form";
+import { ReceivedChalanForm } from "./received-chalan-form";
 import Link from "next/link";
 import {
   deleteCreditNote,
@@ -31,6 +32,7 @@ import {
   deleteCsbFiling,
   deleteShipmentHandoverChalan,
   deleteJournalVoucher,
+  deleteReceivedChalan,
   type SimpleResult,
   type RelatedNote,
 } from "./actions";
@@ -61,6 +63,20 @@ type Recent = {
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
   journalVouchers: (EditableJournalVoucher & { vendorName: string })[];
+  receivedChalans: ReceivedChalanRow[];
+};
+
+// 2026-08-29 (evening, follow-up round) — create+delete only, no edit form
+// (matches Material OUT Chalan's own established shape, see stock module).
+type ReceivedChalanRow = {
+  id: string;
+  chalan_no: string | null;
+  chalan_date: string;
+  source: string | null;
+  remark: string | null;
+  partyName: string;
+  orderRefNo: string | null;
+  items: { description: string; qty: number; qty_unit: string }[];
 };
 
 const TABS = [
@@ -75,6 +91,7 @@ const TABS = [
   { key: "csb-filing", label: "CSB Filing" },
   { key: "shipment-chalan", label: "Shipment Chalan" },
   { key: "journal-voucher", label: "Journal Voucher" },
+  { key: "received-chalan", label: "Received Chalan" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -245,6 +262,16 @@ export function DocumentEntryTabs({
               <JournalVoucherForm companies={companies} parties={parties} />
             </div>
           )}
+          {tab === "received-chalan" && (
+            <div>
+              <p className="mb-3 text-xs text-slate-400">
+                &quot;Party se company&quot; maal aane ka proof — every Purchase Bill auto-generates one of these too. Use
+                this form for job-work returns (printing/washing wapas aana) that have no Purchase Bill of their own.
+                Order/PO is optional here — a Delivery Chalan (Stock → Material OUT Chalan tab) needs one, this doesn&apos;t.
+              </p>
+              <ReceivedChalanForm companies={companies} parties={parties} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -412,6 +439,24 @@ export function DocumentEntryTabs({
           renderEdit={(r, onDone) => <JournalVoucherEditForm jv={r} parties={parties} onDone={onDone} />}
         />
         </div>
+        <div className={tab === "received-chalan" ? undefined : "print:hidden"}>
+        <DocList
+          title="Recent Received Chalans"
+          rows={recent.receivedChalans.map((r) => ({
+            id: r.id,
+            no: r.chalan_no ?? "—",
+            date: r.chalan_date,
+            sub:
+              `${r.partyName}${r.orderRefNo ? ` · ${r.orderRefNo}` : ""}` +
+              (r.source === "purchase_bill" ? " · auto" : "") +
+              (r.items.length ? ` — ${r.items.map((it) => `${it.description} (${it.qty} ${it.qty_unit})`).join("; ")}` : ""),
+            amount: "",
+            record: r,
+            printHref: `/dashboard/documents/received-chalans/${r.id}/report`,
+          }))}
+          onDelete={deleteReceivedChalan}
+        />
+        </div>
         </PrintArea>
       </div>
     </div>
@@ -514,7 +559,12 @@ function DocList<T extends { id: string }>({
   // for why Credit Note/Debit Note/Internal Invoice needed this (previously
   // only the whole flat list could be printed, never one document).
   rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[]; printHref?: string }[];
-  renderEdit: (record: T, onDone: () => void) => ReactNode;
+  // 2026-08-29 (evening, follow-up round) — optional: Material OUT Chalan
+  // and Received Chalan (multi-item chalans, create+delete only, matching
+  // Material OUT Chalan's own established shape) have no edit form — when
+  // omitted, the Edit button itself doesn't render rather than opening a
+  // dead end. Every other caller still passes this and is unaffected.
+  renderEdit?: (record: T, onDone: () => void) => ReactNode;
   onDelete: (id: string) => Promise<SimpleResult>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -535,7 +585,7 @@ function DocList<T extends { id: string }>({
       <h2 className="mb-2 text-sm font-semibold text-slate-700">{title}</h2>
       <div className="space-y-1.5">
         {rows.map((r) =>
-          editingId === r.id ? (
+          editingId === r.id && renderEdit ? (
             <div key={r.id}>{renderEdit(r.record, () => setEditingId(null))}</div>
           ) : (
             <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
@@ -563,13 +613,15 @@ function DocList<T extends { id: string }>({
                       🖨 Print
                     </Link>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setEditingId(r.id)}
-                    className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
-                  >
-                    Edit
-                  </button>
+                  {renderEdit && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(r.id)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Edit
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={isPending}

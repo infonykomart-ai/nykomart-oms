@@ -352,6 +352,8 @@ export async function createMaterialOutChalan(_prev: MaterialOutChalanState, for
   const remark = strOrNull(formData, "remark");
 
   if (!partyId) return { error: "Select a party.", success: null };
+  const through = strOrNull(formData, "through");
+  const noOfPackages = numOrNull(formData, "no_of_packages");
 
   let lines: MaterialOutChalanLine[];
   try {
@@ -366,10 +368,18 @@ export async function createMaterialOutChalan(_prev: MaterialOutChalanState, for
       return { error: `Quantity must be greater than 0 for ${line.skuCode}.`, success: null };
     }
   }
+  // 2026-08-29 (evening, follow-up round) — "BINA PO KE SATH MAAL DISPATCH
+  // NAHI HO SAKTA": this chalan represents raw material physically leaving
+  // the company, so at least one line must carry an Order/PO reference —
+  // matches how Received Chalan (the "coming in" counterpart, see
+  // documents/actions.ts) deliberately leaves its own order link optional.
+  if (!lines.some((l) => l.orderIds?.length)) {
+    return { error: "Link at least one Order/PO — a Delivery Chalan can't be dispatched without one.", success: null };
+  }
 
   const { data: chalan, error: chalanError } = await supabase
     .from("material_out_chalans")
-    .insert({ company_id: employee.currentCompanyId, party_id: partyId, chalan_date: chalanDate, remark })
+    .insert({ company_id: employee.currentCompanyId, party_id: partyId, chalan_date: chalanDate, through, no_of_packages: noOfPackages, remark })
     .select("id, chalan_no")
     .single();
 

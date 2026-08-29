@@ -90,6 +90,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     { data: recentCsbFilings },
     { data: recentShipmentChalans },
     { data: recentJournalVouchers },
+    { data: recentReceivedChalans },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     // 2026-08-12 (round 10): invoice_type/party_type added so the party
@@ -216,6 +217,16 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
+    // 2026-08-29 (evening, follow-up round) — Received Chalan (see
+    // actions.ts's createReceivedChalanForBillGroup / createReceivedChalanManual
+    // header comments). Scoped to the currently selected company, same as
+    // every other "Recent" list above.
+    supabase
+      .from("received_chalans")
+      .select("id, chalan_no, chalan_date, company_id, party_id, order_id, source, remark")
+      .eq("company_id", employee.currentCompanyId)
+      .order("created_at", { ascending: false })
+      .limit(8),
   ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
@@ -325,6 +336,34 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       }),
   }));
 
+  // Received Chalan items + optional order ref_no — same "fetch header,
+  // then its children by chalan_id" shape as Shipment Handover Chalan above.
+  const receivedChalanIds = (recentReceivedChalans ?? []).map((c) => c.id);
+  const receivedChalanOrderIds = Array.from(
+    new Set((recentReceivedChalans ?? []).map((c) => c.order_id).filter((id): id is string => !!id))
+  );
+  const [{ data: receivedChalanItems }, { data: receivedChalanOrders }] = await Promise.all([
+    receivedChalanIds.length
+      ? supabase.from("received_chalan_items").select("chalan_id, description, qty, qty_unit").in("chalan_id", receivedChalanIds)
+      : Promise.resolve({ data: [] as { chalan_id: string; description: string; qty: number; qty_unit: string }[] }),
+    receivedChalanOrderIds.length
+      ? supabase.from("orders").select("id, ref_no").in("id", receivedChalanOrderIds)
+      : Promise.resolve({ data: [] as { id: string; ref_no: string }[] }),
+  ]);
+  const receivedChalanOrderRefNo = new Map((receivedChalanOrders ?? []).map((o) => [o.id, o.ref_no]));
+  const receivedChalanRows = (recentReceivedChalans ?? []).map((c) => ({
+    id: c.id,
+    chalan_no: c.chalan_no,
+    chalan_date: c.chalan_date,
+    source: c.source,
+    remark: c.remark,
+    partyName: partyName.get(c.party_id) ?? "—",
+    orderRefNo: c.order_id ? receivedChalanOrderRefNo.get(c.order_id) ?? null : null,
+    items: (receivedChalanItems ?? [])
+      .filter((it) => it.chalan_id === c.id)
+      .map((it) => ({ description: it.description, qty: Number(it.qty), qty_unit: it.qty_unit })),
+  }));
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -416,6 +455,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             qty: r.qty != null ? Number(r.qty) : null,
             vendorName: r.party_id ? partyName.get(r.party_id) ?? "—" : "—",
           })),
+          receivedChalans: receivedChalanRows,
           freightBills: (recentFreightBills ?? []).map((b) => ({
             ...b,
             freight_amt: Number(b.freight_amt),

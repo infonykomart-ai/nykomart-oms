@@ -416,7 +416,7 @@ CREATE INDEX idx_employee_store_access_store ON employee_store_access(store_id);
 CREATE TABLE sequence_counters (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id    uuid NOT NULL REFERENCES companies(id),
-  scope         text NOT NULL,     -- 'ORDER_REF' | 'DOC_CH' | 'DOC_DN' | 'DOC_CN' | 'DOC_II' | 'LETTER_JL' | 'LETTER_PL' | ...
+  scope         text NOT NULL,     -- 'ORDER_REF' | 'DOC_CH' | 'DOC_DN' | 'DOC_CN' | 'DOC_II' | 'DOC_JV' | 'DOC_MOC' | 'DOC_SHC' | 'DOC_RC' | 'LETTER_JL' | 'LETTER_PL' | ...
   fy_label      text NOT NULL DEFAULT '',   -- '' = no financial-year reset (order refs, letters); '26-27' etc. when it does
   last_number   integer NOT NULL DEFAULT 0,
   UNIQUE (company_id, scope, fy_label)
@@ -1710,6 +1710,147 @@ CREATE TABLE stock_out (
   created_at                         timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_stock_out_source_sku ON stock_out(source_party_id, sku_code);
+
+-- =============================================================================
+-- MATERIAL OUT CHALAN — 2026-08-17, header + (existing) stock_out as its
+-- line items. One chalan covers several SKU/qty rows going OUT to one
+-- party at once; stock_out itself is unchanged in shape, it just gets an
+-- optional link back to the chalan that grouped it. This block was written
+-- straight into a standalone migration on 2026-08-17
+-- (db/2026-08-17-material-out-and-shipment-handover-chalans.sql) and only
+-- folded into this file on 2026-08-29 when it was noticed missing here —
+-- it has been live in production the whole time. `through`/`no_of_packages`
+-- were added 2026-08-29 (evening) to match the physical NYKO MART chalan
+-- pad — see db/2026-08-29-received-chalan-and-moc-fields.sql.
+-- =============================================================================
+CREATE TABLE material_out_chalans (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id    uuid NOT NULL REFERENCES companies(id),
+  party_id       uuid NOT NULL REFERENCES parties(id),   -- who the raw material was given to
+  chalan_no       text UNIQUE,     -- auto-assigned, format NM/MOC/26-27/0001
+  chalan_date       date NOT NULL,
+  through             text,       -- optional, matches physical pad's "Through"
+  no_of_packages        integer,   -- optional, matches physical pad
+  remark                  text,
+  created_at                timestamptz NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION trg_material_out_chalans_doc_no() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_code text; v_num int;
+BEGIN
+  SELECT short_code INTO v_code FROM companies WHERE id = NEW.company_id;
+  v_num := reserve_next_number(NEW.company_id, 'DOC_MOC', true, NEW.chalan_date);
+  NEW.chalan_no := format_document_no(v_code, 'MOC', fy_label(NEW.chalan_date), v_num);
+  RETURN NEW;
+END; $$;
+CREATE TRIGGER material_out_chalans_before_insert BEFORE INSERT ON material_out_chalans
+  FOR EACH ROW WHEN (NEW.chalan_no IS NULL) EXECUTE FUNCTION trg_material_out_chalans_doc_no();
+CREATE INDEX idx_material_out_chalans_company ON material_out_chalans(company_id);
+CREATE INDEX idx_material_out_chalans_party ON material_out_chalans(party_id);
+
+ALTER TABLE stock_out ADD COLUMN chalan_id uuid REFERENCES material_out_chalans(id);
+CREATE INDEX idx_stock_out_chalan ON stock_out(chalan_id);
+COMMENT ON COLUMN stock_out.chalan_id IS
+  'Set when this row was created via the Material OUT Chalan multi-line form — several stock_out rows can '
+  'share one chalan_id. NULL for rows entered the old single-row way (chalan_no free text still works as before).';
+
+-- =============================================================================
+-- SHIPMENT HANDOVER CHALAN — 2026-08-17, header + line-per-order. Groups
+-- however many orders were physically handed to one courier on one day
+-- under a single auto-numbered chalan. Same "written straight into a
+-- standalone migration, folded in here later" history as Material OUT
+-- Chalan above.
+-- =============================================================================
+CREATE TABLE shipment_handover_chalans (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id     uuid NOT NULL REFERENCES companies(id),
+  courier_party_id uuid NOT NULL REFERENCES parties(id),
+  chalan_no        text UNIQUE,     -- auto-assigned, format NM/SHC/26-27/0001
+  chalan_date        date NOT NULL,
+  remark                text,
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION trg_shipment_handover_chalans_doc_no() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_code text; v_num int;
+BEGIN
+  SELECT short_code INTO v_code FROM companies WHERE id = NEW.company_id;
+  v_num := reserve_next_number(NEW.company_id, 'DOC_SHC', true, NEW.chalan_date);
+  NEW.chalan_no := format_document_no(v_code, 'SHC', fy_label(NEW.chalan_date), v_num);
+  RETURN NEW;
+END; $$;
+CREATE TRIGGER shipment_handover_chalans_before_insert BEFORE INSERT ON shipment_handover_chalans
+  FOR EACH ROW WHEN (NEW.chalan_no IS NULL) EXECUTE FUNCTION trg_shipment_handover_chalans_doc_no();
+CREATE INDEX idx_shipment_handover_chalans_company ON shipment_handover_chalans(company_id);
+
+CREATE TABLE shipment_handover_chalan_lines (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  chalan_id   uuid NOT NULL REFERENCES shipment_handover_chalans(id) ON DELETE CASCADE,
+  order_id      uuid NOT NULL REFERENCES orders(id),
+  remark          text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  -- One order's shipment can only be handed over once.
+  UNIQUE (order_id)
+);
+CREATE INDEX idx_shipment_handover_lines_chalan ON shipment_handover_chalan_lines(chalan_id);
+
+-- =============================================================================
+-- RECEIVED CHALAN — 2026-08-29 (evening, follow-up round). The
+-- "party -> company" counterpart to Material OUT Chalan, but deliberately
+-- NOT wired to stock_in — Purchase Bill and Stock In are two entirely
+-- separate, unlinked systems in this app, so auto-generating a Received
+-- Chalan from a Purchase Bill save must not silently create phantom
+-- stock_in rows the user never entered (real double-counting risk for
+-- anyone who also does a manual Stock In for the same delivery). This is a
+-- paperwork/proof-of-receipt document, same design philosophy as
+-- journal_vouchers — best-effort, non-blocking, snapshot-based, never a
+-- ledger mutation. See db/2026-08-29-received-chalan-and-moc-fields.sql for
+-- the full design rationale and the auto-generation grouping logic
+-- (mirrors src/lib/bill-grouping.ts's groupBills() key, learned from the
+-- Journal Voucher "one JV per invoice, not per item" fix the same evening).
+-- =============================================================================
+CREATE TABLE received_chalans (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id         uuid NOT NULL REFERENCES companies(id),
+  party_id            uuid NOT NULL REFERENCES parties(id),   -- who the material came FROM
+  chalan_no             text UNIQUE,     -- auto-assigned, format NM/RC/26-27/0001
+  chalan_date             date NOT NULL,
+  order_id                  uuid REFERENCES orders(id),   -- optional — "bina PO ke maal aa sakta hai"
+  through                     text,      -- optional, matches physical pad
+  no_of_packages                integer,  -- optional, matches physical pad
+  source                       text CHECK (source IS NULL OR source IN ('manual', 'purchase_bill')),
+  source_id                      uuid,   -- representative bill_pass_register.id when source='purchase_bill'; no FK (polymorphic-by-source)
+  remark                            text,
+  created_at                          timestamptz NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION trg_received_chalans_doc_no() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_code text; v_num int;
+BEGIN
+  SELECT short_code INTO v_code FROM companies WHERE id = NEW.company_id;
+  v_num := reserve_next_number(NEW.company_id, 'DOC_RC', true, NEW.chalan_date);
+  NEW.chalan_no := format_document_no(v_code, 'RC', fy_label(NEW.chalan_date), v_num);
+  RETURN NEW;
+END; $$;
+CREATE TRIGGER received_chalans_before_insert BEFORE INSERT ON received_chalans
+  FOR EACH ROW WHEN (NEW.chalan_no IS NULL) EXECUTE FUNCTION trg_received_chalans_doc_no();
+CREATE INDEX idx_received_chalans_company ON received_chalans(company_id);
+CREATE INDEX idx_received_chalans_party ON received_chalans(party_id);
+-- One Received Chalan per auto-generation source (mirrors journal_vouchers'
+-- partial unique index on bill_pass_register_id) — manual chalans
+-- (source_id NULL) are never deduped against each other.
+CREATE UNIQUE INDEX uq_received_chalans_source_id
+  ON received_chalans(source_id) WHERE source_id IS NOT NULL;
+
+CREATE TABLE received_chalan_items (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  chalan_id      uuid NOT NULL REFERENCES received_chalans(id) ON DELETE CASCADE,
+  description     text NOT NULL,
+  qty               numeric(14,2) NOT NULL,
+  qty_unit            text NOT NULL DEFAULT 'FT'
+                          CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM', 'PCS')),
+  rate                  numeric(14,2),
+  remark                  text,
+  created_at                timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_received_chalan_items_chalan ON received_chalan_items(chalan_id);
 
 CREATE VIEW stock_current_view AS
 SELECT

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { StockInForm, type EditableStockIn } from "./stock-in-form";
 import { StockOutForm, type EditableStockOut } from "./stock-out-form";
@@ -134,14 +135,22 @@ function MaterialOutChalanList({ rows }: { rows: MaterialOutChalanRow[] }) {
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
               <p className="text-red-600">{deleteError[r.id]}</p>
-              <button
-                type="button"
-                disabled={isPending}
-                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
-                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/dashboard/stock/material-out-chalans/${r.id}/report`}
+                  className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  🖨 Print
+                </Link>
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                  className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         ))}

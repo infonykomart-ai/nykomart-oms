@@ -1157,6 +1157,14 @@ async function savePurchaseBillCore(
       qty: p.qty || 1,
       qtyUnit: p.qtyUnit || "FT",
     });
+    // 2026-08-29 (evening, follow-up round) — "Received Chalan": every
+    // Purchase Bill landing in the Finance ledger also gets a Received
+    // Chalan, same best-effort/non-blocking philosophy as the JV call just
+    // above (a failure here must never roll back or block the Purchase
+    // Bill, already fully saved by this point). See
+    // createReceivedChalanForBillGroup's own header comment for why this
+    // is a paperwork document only, never a stock_in mutation.
+    await createReceivedChalanForBillGroup(supabase, bprData.id);
   }
 
   return { error: null, id: data.id, docNo: data.vendor_invoice_no };
@@ -2838,6 +2846,198 @@ export async function deleteJournalVoucher(id: string): Promise<SimpleResult> {
   }
 
   const { error } = await supabase.from("journal_vouchers").delete().eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: true };
+}
+
+// =============================================================================
+// RECEIVED CHALAN — 2026-08-29 (evening, follow-up round). "Party -> company"
+// counterpart to Material OUT Chalan (src/app/dashboard/stock/actions.ts) —
+// see db/2026-08-29-received-chalan-and-moc-fields.sql for the full design
+// rationale: this is a paperwork/proof-of-receipt document ONLY, deliberately
+// NOT wired to stock_in (Purchase Bill and Stock In are two entirely
+// separate, unlinked systems in this app — auto-creating stock_in rows here
+// would risk double-counting for anyone who also does a manual Stock In for
+// the same delivery). Two ways in:
+//   1. Auto — the instant a Purchase Bill lands in the Finance ledger (see
+//      savePurchaseBillCore's call to createReceivedChalanForBillGroup
+//      above). Mirrors createJournalVoucherForBill's exact invoice-group
+//      resolution (same key as src/lib/bill-grouping.ts's groupBills()) —
+//      learned from the JV "one JV per invoice, not per item" fix earlier
+//      the same evening — but builds one received_chalan_items ROW per
+//      sibling item instead of a single summed line, since a chalan is
+//      meant to show a real per-item breakdown when printed.
+//   2. Manual — for job-work returns (printing/washing done) that have no
+//      Purchase Bill at all, via createReceivedChalanManual below.
+// =============================================================================
+
+type ReceivedChalanItemInput = {
+  description: string;
+  qty: number;
+  qtyUnit: string;
+  rate: number | null;
+  remark: string | null;
+};
+
+async function createReceivedChalanForBillGroup(supabase: ServiceClient, billPassRegisterId: string): Promise<string | null> {
+  const { data: bill } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, party_id, vendor_invoice_no, invoice_date, source")
+    .eq("id", billPassRegisterId)
+    .maybeSingle();
+  if (!bill || bill.source !== "purchase_bill" || !bill.party_id) return null;
+
+  // Resolve the invoice group — identical key/condition to
+  // createJournalVoucherForBill / groupBills().
+  let groupIds = [bill.id];
+  if (bill.vendor_invoice_no) {
+    const { data: siblings } = await supabase
+      .from("bill_pass_register")
+      .select("id")
+      .eq("company_id", bill.company_id)
+      .eq("party_id", bill.party_id)
+      .eq("source", "purchase_bill")
+      .eq("vendor_invoice_no", bill.vendor_invoice_no)
+      .order("id", { ascending: true }); // deterministic, same as createJournalVoucherForBill
+    if (siblings && siblings.length > 0) groupIds = siblings.map((s) => s.id);
+  }
+  const representativeId = groupIds[0];
+
+  const { data: existing } = await supabase.from("received_chalans").select("id").eq("source_id", representativeId).maybeSingle();
+  if (existing) return existing.id;
+
+  const { data: pbItems } = await supabase
+    .from("purchase_bills")
+    .select("id, work_description, qty, qty_unit, unit_rate, order_id")
+    .in("id", groupIds);
+  if (!pbItems || pbItems.length === 0) return null; // nothing to put on the chalan — bail quietly, non-blocking
+
+  const items: ReceivedChalanItemInput[] = pbItems.map((it) => ({
+    description: it.work_description || "Item",
+    qty: Number(it.qty ?? 1),
+    qtyUnit: it.qty_unit ?? "FT",
+    rate: it.unit_rate != null ? Number(it.unit_rate) : null,
+    remark: null,
+  }));
+  // A single-item group's order link carries through — a multi-item group
+  // can span several different orders, too ambiguous to pick just one.
+  const orderId = pbItems.length === 1 ? pbItems[0].order_id ?? null : null;
+
+  const { data: chalan, error } = await supabase
+    .from("received_chalans")
+    .insert({
+      company_id: bill.company_id,
+      party_id: bill.party_id,
+      chalan_date: bill.invoice_date ?? new Date().toISOString().slice(0, 10),
+      order_id: orderId,
+      source: "purchase_bill",
+      source_id: representativeId,
+    })
+    .select("id")
+    .single();
+
+  if (error || !chalan) {
+    // Race window between the existence check above and this insert — the
+    // partial unique index on source_id catches it (same pattern as
+    // createJournalVoucherForBill's own duplicate-key retry).
+    if (error?.message.includes("duplicate key")) {
+      const { data: retry } = await supabase.from("received_chalans").select("id").eq("source_id", representativeId).maybeSingle();
+      return retry?.id ?? null;
+    }
+    return null;
+  }
+
+  await supabase.from("received_chalan_items").insert(
+    items.map((it) => ({
+      chalan_id: chalan.id,
+      description: it.description,
+      qty: it.qty,
+      qty_unit: it.qtyUnit,
+      rate: it.rate,
+      remark: it.remark,
+    }))
+  );
+
+  return chalan.id;
+}
+
+export type ReceivedChalanState = { error: string | null; success: { chalanNo: string } | null };
+
+export async function createReceivedChalanManual(_prev: ReceivedChalanState, formData: FormData): Promise<ReceivedChalanState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const companyId = str(formData, "company_id");
+  const partyId = str(formData, "party_id");
+  const chalanDate = strOrNull(formData, "chalan_date") ?? new Date().toISOString().slice(0, 10);
+  const orderId = strOrNull(formData, "order_id");
+  const through = strOrNull(formData, "through");
+  const noOfPackages = numOrNull(formData, "no_of_packages");
+  const remark = strOrNull(formData, "remark");
+
+  if (!companyId) return { error: "Select a company.", success: null };
+  if (!employee.companyIds.includes(companyId)) return { error: "You do not have access to this company.", success: null };
+  if (!partyId) return { error: "Select a party.", success: null };
+
+  let items: ReceivedChalanItemInput[];
+  try {
+    items = JSON.parse(str(formData, "items_json") || "[]");
+  } catch {
+    return { error: "Invalid item data — please retry.", success: null };
+  }
+  if (!items.length) return { error: "Add at least one item to the chalan.", success: null };
+  for (const it of items) {
+    if (!it.description?.trim()) return { error: "Every item needs a description.", success: null };
+    if (!it.qty || it.qty <= 0) return { error: `Quantity must be greater than 0 for "${it.description}".`, success: null };
+  }
+
+  const { data: chalan, error } = await supabase
+    .from("received_chalans")
+    .insert({
+      company_id: companyId,
+      party_id: partyId,
+      chalan_date: chalanDate,
+      order_id: orderId,
+      through,
+      no_of_packages: noOfPackages,
+      source: "manual",
+      remark,
+    })
+    .select("id, chalan_no")
+    .single();
+  if (error || !chalan?.chalan_no) {
+    return { error: `Failed to save Received Chalan: ${error?.message ?? "unknown error"}`, success: null };
+  }
+
+  const { error: itemsError } = await supabase.from("received_chalan_items").insert(
+    items.map((it) => ({
+      chalan_id: chalan.id,
+      description: it.description.trim(),
+      qty: it.qty,
+      qty_unit: it.qtyUnit || "FT",
+      rate: it.rate ?? null,
+      remark: it.remark ?? null,
+    }))
+  );
+  if (itemsError) {
+    return { error: `Chalan ${chalan.chalan_no} saved, but items failed: ${itemsError.message}`, success: null };
+  }
+
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { chalanNo: chalan.chalan_no } };
+}
+
+export async function deleteReceivedChalan(id: string): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("received_chalans").select("id, company_id").eq("id", id).maybeSingle();
+  if (!existing || !employee.companyIds.includes(existing.company_id)) {
+    return { error: "Received Chalan not found or you don't have access to this company.", success: false };
+  }
+
+  const { error } = await supabase.from("received_chalans").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
