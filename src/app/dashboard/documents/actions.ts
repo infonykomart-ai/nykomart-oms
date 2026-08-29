@@ -527,6 +527,14 @@ type DebitNoteParams = {
   sqFt: number | null;
   qty: number | null;
   rate: number | null;
+  // 2026-08-29 — "20 pcs liye 260 ki rate se lekin usne 270 ki rate se
+  // lagaya hai" — rate-difference reference fields, see
+  // db/2026-08-29-debit-note-rate-difference.sql. Purely informational
+  // (not used to derive debit_amount server-side — the form computes and
+  // fills debit_amount client-side so it's still one plain required number
+  // here, matching every other Debit Note that has no per-unit rate at all).
+  poRate: number | null;
+  billedRate: number | null;
   debitAmount: number;
   remark: string | null;
   // 2026-08-27 — "kisi bill me agar credit debit adjust karna pade kisi
@@ -570,6 +578,8 @@ async function saveDebitNoteCore(
       sq_ft: p.sqFt,
       qty: p.qty,
       rate: p.rate,
+      po_rate: p.poRate,
+      billed_rate: p.billedRate,
       debit_amount: p.debitAmount,
       remark: p.remark,
     })
@@ -619,6 +629,8 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     sqFt: numOrNull(formData, "sq_ft"),
     qty: numOrNull(formData, "qty"),
     rate: numOrNull(formData, "rate"),
+    poRate: numOrNull(formData, "po_rate"),
+    billedRate: numOrNull(formData, "billed_rate"),
     debitAmount: numOrZero(formData, "debit_amount"),
     remark: strOrNull(formData, "remark"),
     adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
@@ -845,6 +857,8 @@ export async function updateDebitNote(_prev: DocEditState, formData: FormData): 
       sq_ft: numOrNull(formData, "sq_ft"),
       qty: numOrNull(formData, "qty"),
       rate: numOrNull(formData, "rate"),
+      po_rate: numOrNull(formData, "po_rate"),
+      billed_rate: numOrNull(formData, "billed_rate"),
       debit_amount: numOrZero(formData, "debit_amount"),
       remark: strOrNull(formData, "remark"),
     })
@@ -2693,6 +2707,11 @@ export async function bulkSaveDebitNotes(_prev: BulkDocState, formData: FormData
       sqFt: cellStr(raw, byHeader, "SQ FT") ? Number(cellStr(raw, byHeader, "SQ FT")) : null,
       qty: cellStr(raw, byHeader, "Qty") ? Number(cellStr(raw, byHeader, "Qty")) : null,
       rate: cellStr(raw, byHeader, "Rate") ? Number(cellStr(raw, byHeader, "Rate")) : null,
+      // 2026-08-29 — optional, same rate-difference reference fields as the
+      // manual form (see DebitNoteParams's comment); a bulk row can leave
+      // both blank and just fill Debit Amount directly, same as before.
+      poRate: cellStr(raw, byHeader, "PO Rate") ? Number(cellStr(raw, byHeader, "PO Rate")) : null,
+      billedRate: cellStr(raw, byHeader, "Billed Rate") ? Number(cellStr(raw, byHeader, "Billed Rate")) : null,
       debitAmount: Number(cellStr(raw, byHeader, "Debit Amount")) || 0,
       remark: cellStr(raw, byHeader, "Remark") || null,
       adjustTargetBillPassRegisterId: null,

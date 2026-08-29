@@ -1359,6 +1359,18 @@ CREATE TABLE debit_notes (
   qty                                     integer,
   rate                                     numeric(14,2),
   po_amount                                 numeric(14,2) GENERATED ALWAYS AS (sq_ft * rate) STORED,  -- PO Amount = Sq.Ft * Rate
+  -- 2026-08-29 — "20 pcs liye 260 ki rate se lekin usne 270 ki rate se
+  -- lagaya hai to matlab 1 pcs par 10 rupes jyada liya hai": the common
+  -- real case for a Debit Note is "vendor billed at a higher per-unit rate
+  -- than what was agreed/PO'd" — po_rate/billed_rate are purely informational
+  -- reference fields (both nullable, NOT generated) that let the form
+  -- auto-compute debit_amount = (billed_rate - po_rate) * qty for the user
+  -- instead of them doing that math by hand, and let the printed report
+  -- show the breakup transparently. debit_amount itself stays a plain
+  -- manually-set column (unchanged) since not every Debit Note is a rate-
+  -- difference case — some are flat charges with no per-unit rate at all.
+  po_rate                                   numeric(14,2),
+  billed_rate                               numeric(14,2),
   debit_amount                               numeric(14,2) NOT NULL DEFAULT 0,   -- independent of PO Amount (matches source)
   -- Old "Taxable" column was a pure alias of Debit Amount (Taxable = Debit
   -- Amount, no other use) — dropped as redundant; CGST/SGST/Total below

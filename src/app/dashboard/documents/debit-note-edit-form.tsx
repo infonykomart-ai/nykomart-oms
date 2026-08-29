@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { updateDebitNote, type DocEditState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 
@@ -21,6 +21,10 @@ export type EditableDebitNote = {
   sq_ft: number | null;
   qty: number | null;
   rate: number | null;
+  // 2026-08-29 — rate-difference calculator reference fields, see
+  // debit-note-form.tsx's fuller comment on the same fields.
+  po_rate: number | null;
+  billed_rate: number | null;
   debit_amount: number;
   remark: string | null;
 };
@@ -41,6 +45,22 @@ export function DebitNoteEditForm({
     if (state.success) onDone();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.success]);
+
+  // 2026-08-29 — same Rate Difference Calculator as debit-note-form.tsx's
+  // create flow, so an existing note's PO Rate/Billed Rate can be added or
+  // corrected on edit too, with the same live (Billed − PO) × Qty helper.
+  const [qtyInput, setQtyInput] = useState(note.qty != null ? String(note.qty) : "");
+  const [poRateInput, setPoRateInput] = useState(note.po_rate != null ? String(note.po_rate) : "");
+  const [billedRateInput, setBilledRateInput] = useState(note.billed_rate != null ? String(note.billed_rate) : "");
+  const rateDiff = useMemo(() => {
+    const po = Number(poRateInput);
+    const billed = Number(billedRateInput);
+    return poRateInput !== "" && billedRateInput !== "" ? billed - po : null;
+  }, [poRateInput, billedRateInput]);
+  const rateDiffAmount = useMemo(() => {
+    const qty = Number(qtyInput);
+    return rateDiff != null && qty > 0 ? rateDiff * qty : null;
+  }, [rateDiff, qtyInput]);
 
   return (
     <form action={formAction} className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
@@ -86,7 +106,14 @@ export function DebitNoteEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`dn_qty_${note.id}`}>Qty</label>
-          <input id={`dn_qty_${note.id}`} name="qty" type="number" defaultValue={note.qty ?? ""} className={inputClass} />
+          <input
+            id={`dn_qty_${note.id}`}
+            name="qty"
+            type="number"
+            value={qtyInput}
+            onChange={(e) => setQtyInput(e.target.value)}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor={`dn_rate_${note.id}`}>Rate</label>
@@ -96,6 +123,51 @@ export function DebitNoteEditForm({
           <label className={labelClass} htmlFor={`dn_amount_${note.id}`}>Debit Amount *</label>
           <input id={`dn_amount_${note.id}`} name="debit_amount" type="number" step="0.01" required defaultValue={note.debit_amount} className={inputClass} />
         </div>
+      </div>
+
+      {/* 2026-08-29 — see debit-note-form.tsx's create-flow comment. Shown
+          as a suggestion only here (never auto-overwrites Debit Amount on
+          an existing, already-saved note) — copy the figure in manually if
+          it matches. */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+        <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor={`dn_po_rate_${note.id}`}>Agreed / PO Rate (per unit)</label>
+            <input
+              id={`dn_po_rate_${note.id}`}
+              name="po_rate"
+              type="number"
+              step="0.01"
+              value={poRateInput}
+              onChange={(e) => setPoRateInput(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor={`dn_billed_rate_${note.id}`}>Billed Rate (vendor charged, per unit)</label>
+            <input
+              id={`dn_billed_rate_${note.id}`}
+              name="billed_rate"
+              type="number"
+              step="0.01"
+              value={billedRateInput}
+              onChange={(e) => setBilledRateInput(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+        </div>
+        {rateDiff != null && (
+          <p className="mt-2 text-xs text-slate-600">
+            Difference: <strong>₹{rateDiff.toFixed(2)}</strong> / unit
+            {rateDiffAmount != null && (
+              <>
+                {" "}× Qty {qtyInput} = <strong className="text-slate-800">₹{rateDiffAmount.toFixed(2)}</strong> — copy into Debit
+                Amount above if it should change.
+              </>
+            )}
+          </p>
+        )}
       </div>
 
       <div>

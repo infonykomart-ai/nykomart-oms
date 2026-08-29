@@ -123,7 +123,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     supabase
       .from("debit_notes")
       .select(
-        "id, debit_note_no, debit_note_date, company_id, party_id, against_invoice_bill_no, particulars, bill_no, bill_date, sq_ft, qty, rate, debit_amount, remark"
+        "id, debit_note_no, debit_note_date, company_id, party_id, against_invoice_bill_no, particulars, bill_no, bill_date, sq_ft, qty, rate, po_rate, billed_rate, debit_amount, remark"
       )
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
@@ -351,6 +351,8 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             ...r,
             sq_ft: r.sq_ft != null ? Number(r.sq_ft) : null,
             rate: r.rate != null ? Number(r.rate) : null,
+            po_rate: r.po_rate != null ? Number(r.po_rate) : null,
+            billed_rate: r.billed_rate != null ? Number(r.billed_rate) : null,
             debit_amount: Number(r.debit_amount),
             companyName: companyName.get(r.company_id) ?? "",
           })),

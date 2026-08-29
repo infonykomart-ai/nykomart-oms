@@ -50,6 +50,36 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
     return qty > 0 && rate > 0 ? qty * rate : null;
   }, [qtyInput, rateInput]);
 
+  // 2026-08-29 — "20 pcs liye 260 ki rate se lekin usne 270 ki rate se
+  // lagaya hai to matlab 1 pcs par 10 rupes+gst jyada liya hai": the most
+  // common real Debit Note is exactly this — vendor billed at a higher
+  // per-unit rate than what was agreed/PO'd. Previously there was no field
+  // for this at all; the user had to work out (billed − agreed) × qty by
+  // hand and type the result straight into Debit Amount, with nothing on
+  // the saved record or the printout explaining where that number came
+  // from. This block auto-computes it and auto-fills Debit Amount (still
+  // editable/overridable) — po_rate/billed_rate are saved alongside so the
+  // printed report can show the breakup too (see report/page.tsx).
+  const [poRateInput, setPoRateInput] = useState("");
+  const [billedRateInput, setBilledRateInput] = useState("");
+  const [debitAmountManual, setDebitAmountManual] = useState("");
+  const [debitAmountTouched, setDebitAmountTouched] = useState(false);
+  const rateDiff = useMemo(() => {
+    const po = Number(poRateInput);
+    const billed = Number(billedRateInput);
+    return poRateInput !== "" && billedRateInput !== "" ? billed - po : null;
+  }, [poRateInput, billedRateInput]);
+  const rateDiffAmount = useMemo(() => {
+    const qty = Number(qtyInput);
+    return rateDiff != null && qty > 0 ? rateDiff * qty : null;
+  }, [rateDiff, qtyInput]);
+
+  // Debit Amount shown/submitted is derived at render time, not synced via
+  // an effect: the calculator's suggestion drives it right up until the
+  // user types into the field themselves, after which their own entry
+  // always wins (never silently overwrite a manual value).
+  const debitAmountInput = debitAmountTouched ? debitAmountManual : rateDiffAmount != null ? rateDiffAmount.toFixed(2) : "";
+
   function handleFound(r: OrderLookup) {
     if (!r.order) return;
     setCompanyId(r.order.company_id);
@@ -136,7 +166,19 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
         </div>
         <div>
           <label className={labelClass} htmlFor="dn_amount">Debit Amount *</label>
-          <input id="dn_amount" name="debit_amount" type="number" step="0.01" required className={inputClass} />
+          <input
+            id="dn_amount"
+            name="debit_amount"
+            type="number"
+            step="0.01"
+            required
+            value={debitAmountInput}
+            onChange={(e) => {
+              setDebitAmountTouched(true);
+              setDebitAmountManual(e.target.value);
+            }}
+            className={inputClass}
+          />
         </div>
       </div>
 
@@ -146,6 +188,58 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
           piece-count/unit charge.
         </p>
       )}
+
+      {/* 2026-08-29 — "20 pcs liye 260 ki rate se lekin usne 270 ki rate se
+          lagaya hai" — see the poRateInput/billedRateInput comment above.
+          Optional: leave both blank for a flat/non-rate Debit Amount, same
+          as before. */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+        <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
+        <p className="mb-2 text-[11px] text-slate-500">
+          If the vendor billed at a higher rate than agreed/PO — e.g. 20 pcs at ₹260 agreed, billed at ₹270 — fill Qty above plus
+          both rates here; Debit Amount fills in automatically as (Billed − PO Rate) × Qty, and the printed Debit Note will show
+          this breakup instead of a bare amount.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="dn_po_rate">Agreed / PO Rate (per unit)</label>
+            <input
+              id="dn_po_rate"
+              name="po_rate"
+              type="number"
+              step="0.01"
+              value={poRateInput}
+              onChange={(e) => setPoRateInput(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="dn_billed_rate">Billed Rate (vendor charged, per unit)</label>
+            <input
+              id="dn_billed_rate"
+              name="billed_rate"
+              type="number"
+              step="0.01"
+              value={billedRateInput}
+              onChange={(e) => setBilledRateInput(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+        </div>
+        {rateDiff != null && (
+          <p className="mt-2 text-xs text-slate-600">
+            Difference: <strong>₹{rateDiff.toFixed(2)}</strong> / unit
+            {rateDiffAmount != null && (
+              <>
+                {" "}× Qty {qtyInput} = <strong className="text-slate-800">₹{rateDiffAmount.toFixed(2)}</strong>
+                {debitAmountTouched && Number(debitAmountInput) !== rateDiffAmount && (
+                  <span className="ml-1 text-amber-600">(Debit Amount was edited manually — not auto-filled)</span>
+                )}
+              </>
+            )}
+          </p>
+        )}
+      </div>
 
       <div>
         <label className={labelClass} htmlFor="dn_particulars">Particulars</label>

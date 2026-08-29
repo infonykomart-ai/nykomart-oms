@@ -36,7 +36,7 @@ async function DebitNoteReportInner({ id }: { id: string }) {
   const { data: noteRaw } = await supabase
     .from("debit_notes")
     .select(
-      "id, company_id, debit_note_no, debit_note_date, against_invoice_bill_no, party_id, order_id, particulars, bill_no, bill_date, sq_ft, qty, rate, po_amount, debit_amount, cgst_2_5pct, sgst_2_5pct, total_amount, remark"
+      "id, company_id, debit_note_no, debit_note_date, against_invoice_bill_no, party_id, order_id, particulars, bill_no, bill_date, sq_ft, qty, rate, po_rate, billed_rate, po_amount, debit_amount, cgst_2_5pct, sgst_2_5pct, total_amount, remark"
     )
     .eq("id", id)
     .maybeSingle();
@@ -48,6 +48,12 @@ async function DebitNoteReportInner({ id }: { id: string }) {
     ...noteRaw,
     sq_ft: noteRaw.sq_ft != null ? Number(noteRaw.sq_ft) : null,
     rate: noteRaw.rate != null ? Number(noteRaw.rate) : null,
+    // 2026-08-29 — rate-difference reference fields (see
+    // db/2026-08-29-debit-note-rate-difference.sql) — null on any note
+    // that isn't a rate-difference case, so the breakup line below is
+    // conditional on both being present.
+    po_rate: noteRaw.po_rate != null ? Number(noteRaw.po_rate) : null,
+    billed_rate: noteRaw.billed_rate != null ? Number(noteRaw.billed_rate) : null,
     po_amount: noteRaw.po_amount != null ? Number(noteRaw.po_amount) : null,
     debit_amount: Number(noteRaw.debit_amount),
     cgst_2_5pct: Number(noteRaw.cgst_2_5pct),
@@ -117,6 +123,23 @@ async function DebitNoteReportInner({ id }: { id: string }) {
             <div className="mb-4 text-xs">
               <span className="font-semibold text-slate-700">Particulars: </span>
               <span className="text-slate-600">{note.particulars}</span>
+            </div>
+          )}
+
+          {/* 2026-08-29 — "sahi bana hai kya": show the rate-difference math
+              on the printed note itself, instead of a bare Debit Amount
+              nobody can trace back to a reason — only shown when both
+              reference rates were actually set. */}
+          {note.po_rate != null && note.billed_rate != null && (
+            <div className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-slate-700">
+              <span className="font-semibold text-slate-700">Rate Difference: </span>
+              Billed ₹{note.billed_rate.toFixed(2)} − Agreed/PO ₹{note.po_rate.toFixed(2)} = ₹
+              {(note.billed_rate - note.po_rate).toFixed(2)} / unit
+              {note.qty != null && (
+                <>
+                  {" "}× Qty {note.qty} = ₹{((note.billed_rate - note.po_rate) * note.qty).toFixed(2)}
+                </>
+              )}
             </div>
           )}
 

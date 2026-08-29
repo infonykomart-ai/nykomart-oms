@@ -1080,6 +1080,12 @@ export type Database = {
           qty: number | null;
           rate: number | null;
           po_amount: number | null;
+          // 2026-08-29 — rate-difference calculator reference fields, see
+          // db/2026-08-29-debit-note-rate-difference.sql. Purely
+          // informational (not generated columns); debit_amount stays the
+          // real stored amount.
+          po_rate: number | null;
+          billed_rate: number | null;
           debit_amount: number;
           cgst_2_5pct: number | null;
           sgst_2_5pct: number | null;
@@ -1103,6 +1109,8 @@ export type Database = {
           qty?: number | null;
           rate?: number | null;
           po_amount?: number | null;
+          po_rate?: number | null;
+          billed_rate?: number | null;
           debit_amount?: number;
           cgst_2_5pct?: number | null;
           sgst_2_5pct?: number | null;
@@ -1126,6 +1134,8 @@ export type Database = {
           qty?: number | null;
           rate?: number | null;
           po_amount?: number | null;
+          po_rate?: number | null;
+          billed_rate?: number | null;
           debit_amount?: number;
           cgst_2_5pct?: number | null;
           sgst_2_5pct?: number | null;

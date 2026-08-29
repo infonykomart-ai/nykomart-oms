@@ -245,11 +245,29 @@ export function DocumentEntryTabs({
             get their own dedicated printable report page instead (see
             freight-bill-section.tsx / duty-bill-section.tsx's "Report /
             PDF" link) since those need the invoice+AWB-table layout, not
-            a flat list. */}
+            a flat list.
+
+            2026-08-29 fix — "jab print debit note ka lena hai to baki or
+            kyu aaari hai, print camand puri window par kaam kar rahi": this
+            button and PrintArea used to wrap ALL SIX "Recent ..." lists
+            together (Credit Note, Debit Note, Washing Entry, Internal
+            Invoice, Purchase Bill, CSB Filing all in one shared
+            #doc-lists-print-area) — so printing from e.g. the Debit Note
+            tab printed every OTHER list too, not just Debit Notes. Each
+            list below is now wrapped in its own `tab === "..." ? "" :
+            "print:hidden"` div, so only the list matching the currently
+            selected tab actually prints — on-screen all six still show
+            together as before (that combined overview is unchanged), only
+            the print/PDF output is now scoped to the active tab. The
+            button label reflects which list will print. (For a SINGLE
+            document instead of a whole list, use the per-row "🖨 Print"
+            link added 2026-08-29 — see DocList's printHref comment below —
+            which goes to that one document's own dedicated report page.) */}
         <div className="flex justify-end print:hidden">
-          <PrintButton label="🖨 Print / Download this list" />
+          <PrintButton label={`🖨 Print / Download "${TABS.find((t) => t.key === tab)?.label ?? tab}" list`} />
         </div>
         <PrintArea id="doc-lists-print-area">
+        <div className={tab === "credit-note" ? undefined : "print:hidden"}>
         <DocList
           title="Recent Credit Notes"
           rows={recent.creditNotes.map((r) => ({
@@ -266,6 +284,8 @@ export function DocumentEntryTabs({
             <CreditNoteEditForm note={r} stores={stores.filter((s) => s.company_id === r.company_id)} onDone={onDone} />
           )}
         />
+        </div>
+        <div className={tab === "debit-note" ? undefined : "print:hidden"}>
         <DocList
           title="Recent Debit Notes"
           rows={recent.debitNotes.map((r) => ({
@@ -280,6 +300,8 @@ export function DocumentEntryTabs({
           onDelete={deleteDebitNote}
           renderEdit={(r, onDone) => <DebitNoteEditForm note={r} parties={parties} onDone={onDone} />}
         />
+        </div>
+        <div className={tab === "washing-entry" ? undefined : "print:hidden"}>
         <DocList
           title="Recent Washing Entries"
           rows={recent.washingEntries.map((r) => ({
@@ -295,6 +317,8 @@ export function DocumentEntryTabs({
             <WashingEntryEditForm entry={r} parties={parties} stores={stores.filter((s) => s.company_id === r.company_id)} onDone={onDone} />
           )}
         />
+        </div>
+        <div className={tab === "internal-invoice" ? undefined : "print:hidden"}>
         <DocList
           title="Recent Internal Invoices"
           rows={recent.internalInvoices.map((r) => ({
@@ -309,6 +333,8 @@ export function DocumentEntryTabs({
           onDelete={deleteInternalInvoice}
           renderEdit={(r, onDone) => <InternalInvoiceEditForm invoice={r} onDone={onDone} />}
         />
+        </div>
+        <div className={tab === "purchase-bill" ? undefined : "print:hidden"}>
         <PurchaseBillFilterForm parties={parties} filter={billFilters.purchaseBill} />
         <DocList
           title="Recent Purchase Bills"
@@ -340,6 +366,8 @@ export function DocumentEntryTabs({
           onDelete={deletePurchaseBill}
           renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
         />
+        </div>
+        <div className={tab === "csb-filing" ? undefined : "print:hidden"}>
         <DocList
           title="Recent CSB Filings"
           rows={recent.csbFilings.map((r) => ({
@@ -353,6 +381,7 @@ export function DocumentEntryTabs({
           onDelete={deleteCsbFiling}
           renderEdit={(r, onDone) => <CsbFilingEditForm filing={r} currencies={currencies} onDone={onDone} />}
         />
+        </div>
         </PrintArea>
       </div>
     </div>

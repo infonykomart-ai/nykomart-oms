@@ -42,6 +42,8 @@ export const DEBIT_NOTE_COLUMNS: BulkDocColumn[] = [
   { label: "SQ FT", example: "", required: false },
   { label: "Qty", example: "", required: false },
   { label: "Rate", example: "", required: false },
+  { label: "PO Rate", example: "", required: false, help: "Agreed/PO rate per unit — optional, only for a rate-difference debit. Leave blank if you're filling Debit Amount directly." },
+  { label: "Billed Rate", example: "", required: false, help: "Rate the vendor actually billed per unit — optional, pairs with PO Rate." },
   { label: "Debit Amount", example: "500", required: true },
   { label: "Remark", example: "", required: false },
 ];
