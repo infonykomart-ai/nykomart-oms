@@ -82,26 +82,33 @@ async function DebitNoteReportInner({ id }: { id: string }) {
 
       <PrintArea id="debit-note-report-area">
         <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-900 shadow-sm print:border-0 print:p-0" style={{ fontFamily: "Georgia, serif" }}>
-          <div className="mb-6 flex items-center justify-between border-b border-slate-300 pb-4">
-            <div className="flex items-center gap-3">
-              {company?.logo_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={company.logo_url} alt={company?.name ?? ""} className="h-14 w-14 object-contain" />
-              )}
-              <div>
-                <div className="text-lg font-bold">{company?.name ?? "—"}</div>
-                <div className="text-xs text-slate-500">
-                  {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
-                </div>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-xl font-bold tracking-wide text-slate-800">DEBIT NOTE</div>
+          {/* 2026-08-29 (later, same day) — "top ful: Company letterhead ...
+              top, just down center: document title + No. + Date, just down
+              left: Party/Buyer details ek taraf, reference numbers doosri
+              taraf" — restructured from a single letterhead-left/title-right
+              row into 3 stacked rows: full-width letterhead, then the
+              document title block centered below it, then the existing
+              party/reference two-column row unchanged. Applied identically
+              across Debit Note, Credit Note, and Internal Invoice reports
+              per the user's "sabhi isi parkar se bane" instruction. */}
+          <div className="mb-4 flex items-center gap-3">
+            {company?.logo_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={company.logo_url} alt={company?.name ?? ""} className="h-14 w-14 object-contain" />
+            )}
+            <div>
+              <div className="text-lg font-bold">{company?.name ?? "—"}</div>
               <div className="text-xs text-slate-500">
-                No.: <span className="font-semibold text-slate-800">{note.debit_note_no ?? "—"}</span>
+                {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
               </div>
-              <div className="text-xs text-slate-500">Date: {note.debit_note_date}</div>
             </div>
+          </div>
+          <div className="mb-6 border-b border-slate-300 pb-4 text-center">
+            <div className="text-xl font-bold tracking-wide text-slate-800">DEBIT NOTE</div>
+            <div className="text-xs text-slate-500">
+              No.: <span className="font-semibold text-slate-800">{note.debit_note_no ?? "—"}</span>
+            </div>
+            <div className="text-xs text-slate-500">Date: {note.debit_note_date}</div>
           </div>
 
           <div className="mb-4 grid grid-cols-2 gap-6 text-xs">

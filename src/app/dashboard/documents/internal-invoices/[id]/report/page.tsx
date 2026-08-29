@@ -69,26 +69,29 @@ async function InternalInvoiceReportInner({ id }: { id: string }) {
 
       <PrintArea id="internal-invoice-report-area">
         <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-900 shadow-sm print:border-0 print:p-0" style={{ fontFamily: "Georgia, serif" }}>
-          <div className="mb-6 flex items-center justify-between border-b border-slate-300 pb-4">
-            <div className="flex items-center gap-3">
-              {fromCompany?.logo_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={fromCompany.logo_url} alt={fromCompany?.name ?? ""} className="h-14 w-14 object-contain" />
-              )}
-              <div>
-                <div className="text-lg font-bold">{fromCompany?.name ?? "—"}</div>
-                <div className="text-xs text-slate-500">
-                  {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
-                </div>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-xl font-bold tracking-wide text-slate-800">INTERNAL INVOICE</div>
+          {/* 2026-08-29 (later, same day) — see debit-notes/[id]/report's
+              header comment for the full "why": restructured to full-width
+              letterhead, then centered title block, then the unchanged
+              "To" block below — applied identically across all 3 report
+              pages. */}
+          <div className="mb-4 flex items-center gap-3">
+            {fromCompany?.logo_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={fromCompany.logo_url} alt={fromCompany?.name ?? ""} className="h-14 w-14 object-contain" />
+            )}
+            <div>
+              <div className="text-lg font-bold">{fromCompany?.name ?? "—"}</div>
               <div className="text-xs text-slate-500">
-                No.: <span className="font-semibold text-slate-800">{invoice.invoice_no ?? "—"}</span>
+                {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
               </div>
-              <div className="text-xs text-slate-500">Date: {invoice.invoice_date}</div>
             </div>
+          </div>
+          <div className="mb-6 border-b border-slate-300 pb-4 text-center">
+            <div className="text-xl font-bold tracking-wide text-slate-800">INTERNAL INVOICE</div>
+            <div className="text-xs text-slate-500">
+              No.: <span className="font-semibold text-slate-800">{invoice.invoice_no ?? "—"}</span>
+            </div>
+            <div className="text-xs text-slate-500">Date: {invoice.invoice_date}</div>
           </div>
 
           <div className="mb-4 text-xs">
