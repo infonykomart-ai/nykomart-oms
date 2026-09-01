@@ -36,15 +36,6 @@ import { createDhlShipment, type DhlDdpDdu } from "@/lib/couriers/dhl-ship";
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 type Courier = "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
 
-const COURIER_DISPLAY_NAME: Record<Courier, string> = {
-  fedex: "FedEx",
-  ups: "UPS",
-  aramex: "Aramex",
-  delhivery: "Delhivery",
-  shiprocket: "Shiprocket",
-  dhl: "DHL",
-};
-
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
 }
@@ -972,8 +963,4 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
     await logAttempt(supabase, { courier: "dhl", orderId, serviceCode: input.productCode, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
     return { ...CREATE_INITIAL, error: message };
   }
-}
-
-export function courierDisplayName(courier: Courier): string {
-  return COURIER_DISPLAY_NAME[courier];
 }
