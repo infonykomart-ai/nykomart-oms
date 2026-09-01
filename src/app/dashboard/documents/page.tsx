@@ -244,7 +244,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       ? supabase
           .from("freight_bill_awb_assignments")
           .select(
-            "id, freight_bill_id, order_id, bill_weight_kg, dimensional_weight_kg, difference_amt, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
+            // 2026-09-01: order_shipment_id + billed_freight_amt added — the
+            // booking-cost-vs-billed-cost recheck (see
+            // db/2026-09-01-multi-courier-booking-and-freight-recon.sql).
+            "id, freight_bill_id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, billed_freight_amt, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
           )
           .in("freight_bill_id", freightBillIds)
       : Promise.resolve({ data: [] }),
@@ -276,6 +279,15 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   ]);
   const sentFreightBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => f.source_id));
   const sentDutyBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => f.source_id));
+
+  // 2026-09-01: booked_freight_amt for every freight-bill assignment's
+  // order_shipment — the "recheck" comparison shown alongside
+  // billed_freight_amt below. One batched query, not per-row.
+  const freightShipmentIds = Array.from(new Set((freightAssignments ?? []).map((a) => a.order_shipment_id).filter((v): v is string => !!v)));
+  const { data: bookedShipmentRows } = freightShipmentIds.length
+    ? await supabase.from("order_shipments").select("id, booked_freight_amt, booked_currency, booked_amount_source").in("id", freightShipmentIds)
+    : { data: [] };
+  const bookedById = new Map((bookedShipmentRows ?? []).map((r) => [r.id, r]));
 
   // 2026-08-27 (later same day) — "purchase bill ho ya kisi bhi party ka
   // bill ho ... credite note ya debit note agar us invoice se related ho
@@ -471,20 +483,27 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             related_notes: notesFor(bprIdByFreightBillId.get(b.id)),
             assignments: (freightAssignments ?? [])
               .filter((a) => a.freight_bill_id === b.id)
-              .map((a) => ({
-                id: a.id,
-                order_ref_no: orderRefNo.get(a.order_id) ?? "—",
-                bill_weight_kg: a.bill_weight_kg != null ? Number(a.bill_weight_kg) : null,
-                dimensional_weight_kg: a.dimensional_weight_kg != null ? Number(a.dimensional_weight_kg) : null,
-                difference_amt: a.difference_amt != null ? Number(a.difference_amt) : null,
-                credit_note_no: a.credit_note_no,
-                credit_note_date: a.credit_note_date,
-                credit_note_amt: a.credit_note_amt != null ? Number(a.credit_note_amt) : null,
-                debit_note_no: a.debit_note_no,
-                debit_note_date: a.debit_note_date,
-                debit_note_amt: a.debit_note_amt != null ? Number(a.debit_note_amt) : null,
-                remark: a.remark,
-              })),
+              .map((a) => {
+                const booked = a.order_shipment_id ? bookedById.get(a.order_shipment_id) : undefined;
+                return {
+                  id: a.id,
+                  order_ref_no: orderRefNo.get(a.order_id) ?? "—",
+                  bill_weight_kg: a.bill_weight_kg != null ? Number(a.bill_weight_kg) : null,
+                  dimensional_weight_kg: a.dimensional_weight_kg != null ? Number(a.dimensional_weight_kg) : null,
+                  difference_amt: a.difference_amt != null ? Number(a.difference_amt) : null,
+                  billed_freight_amt: a.billed_freight_amt != null ? Number(a.billed_freight_amt) : null,
+                  booked_freight_amt: booked?.booked_freight_amt != null ? Number(booked.booked_freight_amt) : null,
+                  booked_currency: booked?.booked_currency ?? null,
+                  booked_amount_source: booked?.booked_amount_source ?? null,
+                  credit_note_no: a.credit_note_no,
+                  credit_note_date: a.credit_note_date,
+                  credit_note_amt: a.credit_note_amt != null ? Number(a.credit_note_amt) : null,
+                  debit_note_no: a.debit_note_no,
+                  debit_note_date: a.debit_note_date,
+                  debit_note_amt: a.debit_note_amt != null ? Number(a.debit_note_amt) : null,
+                  remark: a.remark,
+                };
+              }),
           })),
           dutyBills: (recentDutyBills ?? []).map((b) => ({
             ...b,

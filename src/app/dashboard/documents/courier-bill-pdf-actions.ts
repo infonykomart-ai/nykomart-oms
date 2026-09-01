@@ -23,6 +23,12 @@ import { revalidatePath } from "next/cache";
 import { extractLayoutText } from "@/lib/courier-bills/pdf-layout";
 import { parseCourierBill } from "@/lib/courier-bills/parsers";
 import { matchShipmentByTracking } from "@/lib/courier-bills/match";
+// 2026-09-01: booking-cost-vs-billed-cost "recheck" reconciliation — see
+// db/2026-09-01-multi-courier-booking-and-freight-recon.sql. Non-blocking:
+// surfaces the comparison on the review screen and persists what was
+// actually billed per-AWB (previously parsed but silently dropped — see
+// that migration's comment on freight_bill_awb_assignments.billed_freight_amt),
+// never blocks the save either way.
 
 export type ParsedShipmentReview = {
   trackingNo: string;
@@ -38,6 +44,15 @@ export type ParsedShipmentReview = {
   orderShipmentId: string | null;
   orderRefNo: string | null;
   alreadyAssigned: boolean;
+  // 2026-09-01: what this shipment was booked for (any courier's real
+  // booking flow, or a rate-card estimate) — null when the shipment was
+  // entered manually with no booking behind it. varianceAmt = this row's
+  // billed `amount` minus bookedFreightAmt, non-blocking, informational
+  // only.
+  bookedFreightAmt: number | null;
+  bookedCurrency: string | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | null;
+  varianceAmt: number | null;
 };
 
 export type ParsedBillReview = {
@@ -83,6 +98,28 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
   const shipments: ParsedShipmentReview[] = [];
   for (const s of bill.shipments) {
     const match = await matchShipmentByTracking(supabase, employee.companyIds, bill.billCategory, s.trackingNo);
+
+    // 2026-09-01: non-blocking "recheck" — read the booked amount off the
+    // matched order_shipments row (if any) and compute the variance
+    // against this row's billed amount. freight bills only — a duty bill's
+    // "amount" is customs duty, not a freight-booking cost, so there is
+    // nothing meaningful to compare it against here (see the migration's
+    // header comment).
+    let bookedFreightAmt: number | null = null;
+    let bookedCurrency: string | null = null;
+    let bookedAmountSource: "api" | "rate_card_estimate" | null = null;
+    if (bill.billCategory === "freight" && match.orderShipmentId) {
+      const { data: shipmentRow } = await supabase
+        .from("order_shipments")
+        .select("booked_freight_amt, booked_currency, booked_amount_source")
+        .eq("id", match.orderShipmentId)
+        .maybeSingle();
+      bookedFreightAmt = shipmentRow?.booked_freight_amt ?? null;
+      bookedCurrency = shipmentRow?.booked_currency ?? null;
+      bookedAmountSource = shipmentRow?.booked_amount_source ?? null;
+    }
+    const varianceAmt = bookedFreightAmt != null && s.amount != null ? Math.round((s.amount - bookedFreightAmt) * 100) / 100 : null;
+
     shipments.push({
       trackingNo: s.trackingNo,
       courierRefNo: s.courierRefNo,
@@ -97,6 +134,10 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
       orderShipmentId: match.orderShipmentId,
       orderRefNo: match.orderRefNo,
       alreadyAssigned: match.alreadyAssigned,
+      bookedFreightAmt,
+      bookedCurrency,
+      bookedAmountSource,
+      varianceAmt,
     });
   }
 
@@ -195,6 +236,10 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
         order_id: s.orderId,
         order_shipment_id: s.orderShipmentId,
         bill_weight_kg: s.weightKg,
+        // 2026-09-01: persist what was actually billed for this AWB — was
+        // parsed already but silently dropped before this round, see
+        // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+        billed_freight_amt: s.amount,
         remark: `Auto-extracted from PDF (tracking ${s.trackingNo})`,
       });
       if (aErr) skipped++;

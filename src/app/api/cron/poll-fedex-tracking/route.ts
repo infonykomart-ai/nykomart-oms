@@ -66,10 +66,14 @@ import {
   type AramexClientInfo,
 } from "@/lib/couriers/aramex-tracking";
 import { fetchDhlTracking, getDhlApiKey, bucketFromDhlStatus } from "@/lib/couriers/dhl-tracking";
+// 2026-09-01: token-fetch extracted to a shared file so the new FedEx Ship
+// API booking client (src/lib/couriers/fedex-ship.ts) can reuse the exact
+// same OAuth2 client_credentials call instead of duplicating it — see
+// fedex-auth.ts's header comment.
+import { getFedexAccessToken, FEDEX_API_BASE } from "@/lib/couriers/fedex-auth";
 
 export const maxDuration = 60;
 
-const FEDEX_API_BASE = process.env.FEDEX_API_BASE_URL || "https://apis.fedex.com";
 const BATCH_SIZE = 30; // FedEx Track API's documented max trackingInfo entries per request; also used as Aramex's batch size (Aramex doesn't document a max, so reusing FedEx's documented limit as a conservative default)
 
 // DHL has no batch endpoint and a hard 1-call-per-5-seconds rate limit
@@ -102,29 +106,6 @@ function bucketFromFedexCode(code: string): TrackingBucket {
     default:
       return "OTHER"; // CA (cancelled), DE/EA/SE (exceptions) — no clean LOST signal, see header comment
   }
-}
-
-async function getFedexAccessToken(): Promise<string> {
-  const clientId = process.env.FEDEX_API_CLIENT_ID;
-  const clientSecret = process.env.FEDEX_API_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    throw new Error("FEDEX_API_CLIENT_ID / FEDEX_API_CLIENT_SECRET are not set.");
-  }
-
-  const res = await fetch(`${FEDEX_API_BASE}/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`FedEx OAuth token request failed ${res.status}: ${await res.text()}`);
-  }
-  const data = (await res.json()) as { access_token: string };
-  return data.access_token;
 }
 
 type FedexTrackResult = {

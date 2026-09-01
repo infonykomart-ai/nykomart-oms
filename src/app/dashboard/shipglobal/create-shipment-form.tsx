@@ -102,6 +102,12 @@ export function CreateShipmentForm() {
               <label className={labelClass}>Seller Reference</label>
               <input name="seller_reference" defaultValue={order.refNo} className={inputClass} />
             </div>
+            <div>
+              {/* 2026-09-01: booking-cost-vs-billed-cost reconciliation fallback —
+                  only used if Shipglobal's own response has no price, see actions.ts. */}
+              <label className={labelClass}>Zone (Courier Rate Card, optional)</label>
+              <input name="zone_label" placeholder="e.g. Zone A" className={inputClass} />
+            </div>
           </div>
 
           <div className="border-t border-slate-100 pt-3">

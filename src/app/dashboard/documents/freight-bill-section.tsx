@@ -34,6 +34,12 @@ export type FreightBillAssignment = {
   bill_weight_kg: number | null;
   dimensional_weight_kg: number | null;
   difference_amt: number | null;
+  // 2026-09-01: booking-cost-vs-billed-cost recheck — see
+  // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+  billed_freight_amt: number | null;
+  booked_freight_amt: number | null;
+  booked_currency: string | null;
+  booked_amount_source: "api" | "rate_card_estimate" | null;
   credit_note_no: string | null;
   credit_note_date: string | null;
   credit_note_amt: number | null;
@@ -544,6 +550,12 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
             <p className="text-slate-400">No dispatch record found for this order yet.</p>
           )}
           {lookup.alreadyAssigned && <p className="text-amber-600">⚠ Already assigned to a Courier Bill.</p>}
+          {lookup.bookedFreightAmt != null && (
+            <p className="text-slate-500">
+              Booked freight: {lookup.bookedCurrency} {lookup.bookedFreightAmt.toFixed(2)}
+              {lookup.bookedAmountSource === "rate_card_estimate" ? " (rate-card estimate)" : ""} — compare against Billed Amt below.
+            </p>
+          )}
         </div>
       )}
 
@@ -572,6 +584,13 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
           <div>
             <label className={labelClass}>Difference Amt</label>
             <input name="difference_amt" type="number" step="0.01" className={inputClass} />
+          </div>
+          <div>
+            {/* 2026-09-01: booking-cost-vs-billed-cost recheck — non-blocking,
+                see the "Booked freight" line above once a shipment with a
+                captured booking cost is found. */}
+            <label className={labelClass}>Billed Amt (this AWB)</label>
+            <input name="billed_freight_amt" type="number" step="0.01" className={inputClass} />
           </div>
           <div>
             <label className={labelClass}>Remark</label>
@@ -735,6 +754,22 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
             {assignment.dimensional_weight_kg != null && ` · Dim ${assignment.dimensional_weight_kg} kg`} · Diff ₹{assignment.difference_amt ?? 0}
           </span>
           {assignment.remark && <span className="ml-2 text-slate-400">· {assignment.remark}</span>}
+          {assignment.booked_freight_amt != null && (
+            <span
+              className={`ml-2 rounded px-1.5 py-0.5 ${
+                assignment.billed_freight_amt != null && Math.abs(assignment.billed_freight_amt - assignment.booked_freight_amt) > 1
+                  ? "bg-amber-100 text-amber-800"
+                  : "text-slate-400"
+              }`}
+            >
+              Booked {assignment.booked_currency} {assignment.booked_freight_amt.toFixed(2)}
+              {assignment.booked_amount_source === "rate_card_estimate" ? " (est.)" : ""}
+              {assignment.billed_freight_amt != null &&
+                ` · Billed ${assignment.booked_currency} ${assignment.billed_freight_amt.toFixed(2)} · Diff ${(
+                  assignment.billed_freight_amt - assignment.booked_freight_amt
+                ).toFixed(2)}`}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <p className="text-red-600">{deleteError}</p>

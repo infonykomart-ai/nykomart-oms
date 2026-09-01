@@ -999,6 +999,8 @@ export type Database = {
           carried_from_log_id: string | null;
           carried_forward: boolean;
           submitted_at: string | null;
+          priority: string;
+          carried_to_date: string | null;
         };
         Insert: {
           id?: string;
@@ -1023,6 +1025,8 @@ export type Database = {
           carried_from_log_id?: string | null;
           carried_forward?: boolean;
           submitted_at?: string | null;
+          priority?: string;
+          carried_to_date?: string | null;
         };
         Update: {
           id?: string;
@@ -1047,6 +1051,8 @@ export type Database = {
           carried_from_log_id?: string | null;
           carried_forward?: boolean;
           submitted_at?: string | null;
+          priority?: string;
+          carried_to_date?: string | null;
         };
         Relationships: [
           {
@@ -3002,6 +3008,7 @@ export type Database = {
           debit_note_date: string | null;
           debit_note_amt: number | null;
           remark: string | null;
+          billed_freight_amt: number | null;
         };
         Insert: {
           id?: string;
@@ -3018,6 +3025,7 @@ export type Database = {
           debit_note_date?: string | null;
           debit_note_amt?: number | null;
           remark?: string | null;
+          billed_freight_amt?: number | null;
         };
         Update: {
           id?: string;
@@ -3034,6 +3042,7 @@ export type Database = {
           debit_note_date?: string | null;
           debit_note_amt?: number | null;
           remark?: string | null;
+          billed_freight_amt?: number | null;
         };
         Relationships: [
           {
@@ -3966,6 +3975,9 @@ export type Database = {
           remark: string | null;
           created_by_employee_id: string | null;
           created_at: string;
+          booked_freight_amt: number | null;
+          booked_currency: string | null;
+          booked_amount_source: "api" | "rate_card_estimate" | null;
         };
         Insert: {
           id?: string;
@@ -3979,6 +3991,9 @@ export type Database = {
           remark?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
+          booked_freight_amt?: number | null;
+          booked_currency?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | null;
         };
         Update: {
           id?: string;
@@ -3992,6 +4007,9 @@ export type Database = {
           remark?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
+          booked_freight_amt?: number | null;
+          booked_currency?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | null;
         };
         Relationships: [
           {
@@ -5219,6 +5237,144 @@ export type Database = {
           },
           {
             foreignKeyName: "shipglobal_shipments_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_shipper_profiles: {
+        Row: {
+          company_id: string;
+          contact_name: string;
+          company_name: string;
+          phone: string;
+          email: string;
+          address1: string;
+          address2: string | null;
+          city: string;
+          state: string;
+          postcode: string;
+          country_code: string;
+          tax_id: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          company_id: string;
+          contact_name: string;
+          company_name: string;
+          phone: string;
+          email: string;
+          address1: string;
+          address2?: string | null;
+          city: string;
+          state: string;
+          postcode: string;
+          country_code?: string;
+          tax_id?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          company_id?: string;
+          contact_name?: string;
+          company_name?: string;
+          phone?: string;
+          email?: string;
+          address1?: string;
+          address2?: string | null;
+          city?: string;
+          state?: string;
+          postcode?: string;
+          country_code?: string;
+          tax_id?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_shipper_profiles_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: true;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_shipments: {
+        Row: {
+          id: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          order_id: string;
+          order_shipment_id: string | null;
+          service_code: string | null;
+          ddp_ddu: "DDP" | "DDU" | null;
+          status: "pending" | "created" | "failed";
+          awb_no: string | null;
+          label_url: string | null;
+          booked_amt: number | null;
+          booked_currency: string | null;
+          booked_amount_source: "api" | "rate_card_estimate" | null;
+          request_payload: Json | null;
+          response_payload: Json | null;
+          error_message: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          order_id: string;
+          order_shipment_id?: string | null;
+          service_code?: string | null;
+          ddp_ddu?: "DDP" | "DDU" | null;
+          status?: "pending" | "created" | "failed";
+          awb_no?: string | null;
+          label_url?: string | null;
+          booked_amt?: number | null;
+          booked_currency?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          error_message?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          order_id?: string;
+          order_shipment_id?: string | null;
+          service_code?: string | null;
+          ddp_ddu?: "DDP" | "DDU" | null;
+          status?: "pending" | "created" | "failed";
+          awb_no?: string | null;
+          label_url?: string | null;
+          booked_amt?: number | null;
+          booked_currency?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          error_message?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_shipments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_shipments_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_shipments_created_by_fkey";
             columns: ["created_by"];
             isOneToOne: false;
             referencedRelation: "employees";

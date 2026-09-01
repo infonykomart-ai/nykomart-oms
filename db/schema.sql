@@ -1076,6 +1076,15 @@ CREATE TABLE order_shipments (
   remark                  text,
   created_by_employee_id  uuid REFERENCES employees(id),
   created_at              timestamptz NOT NULL DEFAULT now(),
+  -- 2026-09-01: what the courier quoted/charged (or, failing that, a
+  -- Courier Rate Card estimate) at booking time — see
+  -- db/2026-09-01-multi-courier-booking-and-freight-recon.sql. NULL for
+  -- shipments entered manually with no API booking behind them. Compared
+  -- against the real courier bill at Freight Bill entry time via
+  -- freight_bill_awb_assignments.billed_freight_amt below.
+  booked_freight_amt      numeric(14,2),
+  booked_currency         text,
+  booked_amount_source    text CHECK (booked_amount_source IN ('api', 'rate_card_estimate')),
   CHECK (shipment_no > 0),
   UNIQUE (order_id, shipment_no)
 );
@@ -1164,6 +1173,13 @@ CREATE TABLE freight_bill_awb_assignments (
   debit_note_date                  date,
   debit_note_amt                     numeric(14,2),
   remark                  text,
+  -- 2026-09-01: this AWB's freight amount as actually billed by the
+  -- courier (PDF-parsed shipment Total, or entered manually) — was parsed
+  -- already (ParsedShipment.amount) but never persisted before this round.
+  -- Compared against order_shipments.booked_freight_amt as a non-blocking
+  -- "recheck" variance — see db/2026-09-01-multi-courier-booking-and-
+  -- freight-recon.sql.
+  billed_freight_amt         numeric(14,2),
   UNIQUE (order_shipment_id)   -- one AWB is billed under exactly one freight invoice (Gap 1, 2026-08-20 — was UNIQUE(order_id))
 );
 CREATE INDEX idx_freight_awb_assign_bill ON freight_bill_awb_assignments(freight_bill_id);
@@ -3302,7 +3318,20 @@ CREATE TABLE daily_work_logs (
   -- refresh-safe, but not yet a "real" report); non-null = finalized —
   -- this is what My Recent Reports and the Admin/MD Team Daily Work Log
   -- view now filter on, so half-typed drafts never show there.
-  submitted_at         timestamptz
+  submitted_at         timestamptz,
+  -- 2026-09-01 — "Today's Work -> Carry Forward": priority didn't exist on
+  -- this table before (tasks.priority already had this exact shape,
+  -- matched here). carried_to_date is set only on an ORIGINAL row once
+  -- explicitly Carried Forward (work_status -> 'Carried Forward',
+  -- carried_forward -> true, submitted_at set so it's finalized/visible in
+  -- history the same way every other filter on this table already works)
+  -- — purely informational, the real date-view driver is the auto-created
+  -- tomorrow row's own log_date. Carry Forward's idempotency reuses the
+  -- EXISTING idx_daily_work_logs_carried_from_unique index above (a
+  -- double-submit hits the same unique-violation guard the automatic
+  -- next-day carry-over already relies on) — no new index needed.
+  priority             text NOT NULL DEFAULT 'Medium',  -- Low / Medium / High / Urgent — matches tasks.priority
+  carried_to_date      date
 );
 CREATE INDEX idx_daily_work_logs_employee_date ON daily_work_logs(employee_id, log_date DESC);
 CREATE INDEX idx_daily_work_logs_company_date ON daily_work_logs(company_id, log_date DESC);
@@ -3684,6 +3713,52 @@ CREATE TABLE shipglobal_shipments (
 CREATE INDEX idx_shipglobal_shipments_order ON shipglobal_shipments(order_id);
 CREATE INDEX idx_shipglobal_shipments_tracking ON shipglobal_shipments(tracking_no);
 
+-- 2026-09-01 — real booking for the couriers ADDED to this same flow
+-- (FedEx, UPS, Aramex, Delhivery, Shiprocket, plus DHL added the same day
+-- via db/2026-09-01-dhl-courier-booking.sql). See
+-- db/2026-09-01-multi-courier-booking-and-freight-recon.sql's header
+-- comment for why these share ONE table instead of 6 near-duplicate
+-- <courier>_shipments tables the way Shipglobal (above, unchanged) does.
+CREATE TABLE courier_shipper_profiles (
+  company_id        uuid PRIMARY KEY REFERENCES companies(id),
+  contact_name       text NOT NULL,
+  company_name        text NOT NULL,
+  phone                 text NOT NULL,
+  email                  text NOT NULL,
+  address1                text NOT NULL,
+  address2                 text,
+  city                      text NOT NULL,
+  state                      text NOT NULL,
+  postcode                   text NOT NULL,
+  country_code                text NOT NULL DEFAULT 'IN',
+  tax_id                       text,
+  updated_at                    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE courier_shipments (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  courier             text NOT NULL CHECK (courier IN ('fedex', 'ups', 'aramex', 'delhivery', 'shiprocket', 'dhl')),
+  order_id            uuid NOT NULL REFERENCES orders(id),
+  order_shipment_id   uuid REFERENCES order_shipments(id),
+  service_code        text,
+  ddp_ddu             text CHECK (ddp_ddu IN ('DDP', 'DDU')),
+  status              text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'created', 'failed')),
+  awb_no              text,
+  label_url           text,
+  booked_amt          numeric(14,2),
+  booked_currency     text,
+  booked_amount_source text CHECK (booked_amount_source IN ('api', 'rate_card_estimate')),
+  request_payload     jsonb,
+  response_payload    jsonb,
+  error_message       text,
+  created_by          uuid REFERENCES employees(id),
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (order_id, courier)
+);
+CREATE INDEX idx_courier_shipments_order    ON courier_shipments(order_id);
+CREATE INDEX idx_courier_shipments_awb      ON courier_shipments(awb_no);
+CREATE INDEX idx_courier_shipments_courier  ON courier_shipments(courier);
+
 -- =============================================================================
 -- SECTION 17c — FREIGHT COST ESTIMATOR (Gap 5 part 1 of the 5-gaps plan)
 -- 2026-08-20 — see claude/five-gaps-implementation-plan-2026-08-20.md and
@@ -3837,7 +3912,11 @@ INSERT INTO capabilities (code, description) VALUES
   -- 2026-08-24: see db/2026-08-24-audit-log.sql and
   -- db/2026-08-24-automation-rules.sql.
   ('audit_log_view',   'View the audit log — who changed/deleted what, and when'),
-  ('automation_admin', 'Create/manage automation rules (trigger -> condition -> action) — the Automation Rules screen');
+  ('automation_admin', 'Create/manage automation rules (trigger -> condition -> action) — the Automation Rules screen'),
+  -- 2026-09-01: real booking for FedEx / UPS / Aramex / Delhivery /
+  -- Shiprocket, same real-money/real-customs caution as shipglobal_shipment
+  -- — see db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+  ('courier_booking_shipment', 'Create real FedEx / UPS / Aramex / Delhivery / Shiprocket shipments (real external shipment + label, once live credentials are configured)');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -3871,6 +3950,7 @@ JOIN (VALUES
   ('MD',                 'reports'), -- 2026-08-06: Universal Reports system (item 6) — MD (owner login) gets it too.
   ('MD',                 'invoicing'), -- 2026-08-06: Invoice Generation module.
   ('MD',                 'shipglobal_shipment'),
+  ('MD',                 'courier_booking_shipment'), -- 2026-09-01
   ('MD',                 'help_center_admin'),
   ('Admin',              'permissions_admin'),
   ('Admin',              'company_item_admin'), ('Admin', 'employee_admin'), ('Admin', 'reports'), ('Admin', 'doc_entry'),
@@ -3887,6 +3967,7 @@ JOIN (VALUES
   ('Admin',              'order_entry'), ('Admin', 'csv_upload'), ('Admin', 'bill_payment'),
   ('Admin',              'salary_admin'), ('Admin', 'statement_entry'), ('Admin', 'approve_level1'),
   ('Admin',              'approve_level2'), ('Admin', 'shipglobal_shipment'), ('Admin', 'help_center_admin'),
+  ('Admin',              'courier_booking_shipment'), -- 2026-09-01
   ('Finance',            'internal_expense_entry'), ('Admin', 'internal_expense_entry'), -- 2026-08-20: Gap 4, same grant set as bill_payment.
   ('Finance',            'freight_rate_admin'), ('MD', 'freight_rate_admin'), ('Admin', 'freight_rate_admin'), -- 2026-08-20: Gap 5 part 1, same grant set as exchange_rate_admin.
   ('Order Entry',        'freight_estimate'), ('Logistics', 'freight_estimate'), ('Finance', 'freight_estimate'),

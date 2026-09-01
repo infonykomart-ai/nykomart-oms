@@ -23,6 +23,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Stock In / Stock Out for raw material — Chalan No. mandatory on every entry." },
   { code: "shipglobal_shipment", label: "Shipglobal Shipments", icon: "🌍", href: "/dashboard/shipglobal",
     description: "Create a real Shipglobal shipment + label for an order (DPD / UniUni / VipParcel / DHL E-Commerce / UBI)." },
+  { code: "courier_booking_shipment", label: "Courier Booking", icon: "🚚", href: "/dashboard/courier-booking",
+    description: "Create a real shipment + AWB via FedEx, UPS, Aramex, Delhivery, or Shiprocket's own API — the same real-booking pattern Shipglobal uses." },
   { code: "bill_payment", label: "Bill Payment", icon: "💳", href: "/dashboard/bill-payment",
     description: "Bill-payment approval workflow." },
   { code: "internal_expense_entry", label: "Office Expenses", icon: "🧾", href: "/dashboard/expenses",

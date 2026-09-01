@@ -8,6 +8,7 @@ import { EXPECTED_WORK_MINUTES, ANOMALY_THRESHOLD_MINUTES, OFFICE_START_LABEL, O
 import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
+import { IncompleteWorkSection, type IncompleteLogRow } from "./incomplete-work-section";
 import { AssignTaskForm } from "../tasks/assign-task-form";
 import { TaskList, type TaskRow } from "../tasks/task-list";
 import { AssignedByMeList, type AssignedTaskRow } from "../tasks/assigned-by-me-list";
@@ -81,7 +82,7 @@ export default async function AttendancePage({
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
       dwlSupabase
         .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
         .eq("employee_id", employee.id)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
@@ -93,7 +94,7 @@ export default async function AttendancePage({
       viewDate
         ? dwlSupabase
             .from("daily_work_logs")
-            .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at")
+            .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
             .eq("employee_id", employee.id)
             .eq("log_date", viewDate)
             .not("submitted_at", "is", null)
@@ -129,6 +130,23 @@ export default async function AttendancePage({
   // real time spent) against the 8h15m office-hours-minus-breaks target.
   const todaysConsumedMinutes = todaysLogs.reduce((sum, l) => sum + Math.round((l.time_spent_seconds ?? 0) / 60), 0);
   const todaysWorkHours = compareToExpected(todaysConsumedMinutes);
+
+  // 2026-09-01 — "Today's Work -> Carry Forward": Incomplete Work is
+  // exactly the subset of today's (never-submitted, since Submit requires
+  // Completed) draft rows still marked "Not Started" (this table's
+  // existing "Pending" value) or "In Progress" — see
+  // incomplete-work-section.tsx.
+  const incompleteLogs: IncompleteLogRow[] = todaysLogs
+    .filter((l) => l.work_status === "Pending" || l.work_status === "In Progress")
+    .map((l) => ({
+      id: l.id,
+      category: l.category,
+      description: l.description,
+      workStatus: l.work_status as string,
+      priority: l.priority || "Medium",
+      estimatedTimeMinutes: l.estimated_time_minutes,
+      timeSpentSeconds: l.time_spent_seconds,
+    }));
 
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
   // usko alag se kyu banaya hai" — Task Assignment now renders directly on
@@ -328,6 +346,13 @@ export default async function AttendancePage({
           full day. This usually means a typo in the Hours box below (e.g. 50 instead of 5) — please check and fix the Time Consumed on each row.
         </div>
       )}
+
+      {/* 2026-09-01 — "Today's Work -> Carry Forward": placed right above
+          the add-task form below, so anything still open surfaces before
+          the employee starts adding more work for the day. */}
+      <div className="mb-6">
+        <IncompleteWorkSection logs={incompleteLogs} />
+      </div>
 
       <div className="mb-3">
         <h2 className="text-sm font-semibold text-slate-700">📝 Daily Work Report</h2>

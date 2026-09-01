@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireCapability, getAuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { recordPunchIn, recordPunchOut } from "@/lib/attendance/punch";
-import { todayIST } from "@/lib/attendance/ist-date";
+import { todayIST, addDaysToDateStr } from "@/lib/attendance/ist-date";
 
 export type SimpleActionState = { error: string | null; success: boolean };
 
@@ -69,6 +69,10 @@ export type DailyLogInput = {
   // (the form combines its Hour + Minute inputs before calling this).
   estimatedTimeMinutes: string; // "" = not set
   timeSpentMinutes: string; // "" = 0
+  // 2026-09-01 — "Today's Work -> Carry Forward": Priority didn't exist on
+  // this table before. "" falls back to the column's own DB default
+  // ('Medium') rather than writing an empty string.
+  priority: string;
 };
 
 /**
@@ -100,6 +104,9 @@ export async function upsertDailyLog(input: DailyLogInput): Promise<{ error: str
     // ever reaching the DB, regardless of how the request got here.
     estimated_time_minutes: input.estimatedTimeMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.estimatedTimeMinutes, 10) || 0)) : null,
     time_spent_seconds: input.timeSpentMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.timeSpentMinutes, 10) || 0)) * 60 : 0,
+    // 2026-09-01: priority is NOT NULL DEFAULT 'Medium' on the table —
+    // fall back explicitly rather than writing an empty string.
+    priority: input.priority || "Medium",
     updated_at: new Date().toISOString(),
   };
 
@@ -255,6 +262,7 @@ export async function saveAndSubmitDailyLog(input: DailyLogInput): Promise<{ err
     remark_sku: input.remarkSku || null,
     estimated_time_minutes: input.estimatedTimeMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.estimatedTimeMinutes, 10) || 0)) : null,
     time_spent_seconds: input.timeSpentMinutes ? Math.max(0, Math.min(24 * 60, parseInt(input.timeSpentMinutes, 10) || 0)) * 60 : 0,
+    priority: input.priority || "Medium",
     updated_at: nowIso,
     submitted_at: nowIso,
   };
@@ -285,4 +293,166 @@ export async function saveAndSubmitDailyLog(input: DailyLogInput): Promise<{ err
   revalidatePath("/dashboard/attendance");
   revalidatePath("/dashboard/attendance/admin");
   return { error: null, id: data.id, submittedAt: data.submitted_at };
+}
+
+// ============================================================================
+// 2026-09-01 — "Today's Work -> Carry Forward" (additive, on top of the
+// existing Daily Work Report above — punch in/out and the auto-save/Submit
+// flow above are all unchanged). "Incomplete Work" (Pending/In Progress
+// rows for today) gets 3 direct actions: ✓ Complete Today, → Carry
+// Forward, and Delete (Delete reuses the existing deleteDailyLog above
+// unchanged — a Pending/In Progress row is never submitted, so its
+// .is("submitted_at", null) guard already allows it).
+// ============================================================================
+
+type CarryForwardResult = { error: string | null; carriedToDate: string | null; newId: string | null };
+
+/**
+ * → Carry Forward — called from the Incomplete Work section, after the
+ * user confirms the "Carry this work to tomorrow?" popup. Two-step,
+ * insert-then-freeze, same order/shape as the existing automatic
+ * carryOverPendingDailyLogs() (carry-over.ts): insert the tomorrow-dated
+ * child row first, THEN mark the original — so if this ever gets
+ * interrupted between the two steps, a retry safely self-heals (the
+ * child's carried_from_log_id insert will just hit the SAME unique
+ * violation on retry and this function looks up the existing child instead
+ * of erroring, then re-applies the (idempotent) update to the original).
+ *
+ * Idempotency guard: reuses the EXISTING partial unique index
+ * `idx_daily_work_logs_carried_from_unique ON daily_work_logs
+ * (carried_from_log_id) WHERE carried_from_log_id IS NOT NULL` — added
+ * earlier for the automatic next-day carry-over, and already exactly the
+ * right shape for "at most one child per original". A double-click, a
+ * refresh-and-retry, or two tabs racing each other all collide on that
+ * same index rather than the client's disabled-button state (which is not
+ * robust against any of those on its own).
+ *
+ * Deliberately does NOT touch time_spent_seconds on the new row (stays 0
+ * — "do NOT carry today's actual time spent into tomorrow") and does NOT
+ * touch qty_done (a fresh task hasn't done anything yet either). Expected
+ * Time (estimated_time_minutes), Work Type (category), Priority, and
+ * Notes (remark_sku) all carry over, per spec.
+ */
+export async function carryForwardDailyLog(id: string): Promise<CarryForwardResult> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+
+  const { data: original, error: fetchError } = await supabase
+    .from("daily_work_logs")
+    .select("id, employee_id, company_id, log_date, category, description, target_qty, remark_sku, estimated_time_minutes, priority, work_status, carried_forward, carried_to_date, submitted_at")
+    .eq("id", id)
+    .eq("employee_id", employee.id) // defense in depth — can only ever act on your own rows
+    .single();
+  if (fetchError || !original) return { error: fetchError?.message ?? "Task not found.", carriedToDate: null, newId: null };
+
+  // Already carried forward (a genuine double-submit, refresh-and-retry, or
+  // a race with another tab) — idempotent no-op: look up the existing
+  // child instead of erroring or creating a second one.
+  if (original.carried_forward || original.work_status === "Carried Forward") {
+    const { data: existingChild } = await supabase
+      .from("daily_work_logs")
+      .select("id, log_date")
+      .eq("carried_from_log_id", original.id)
+      .maybeSingle();
+    return { error: null, carriedToDate: existingChild?.log_date ?? original.carried_to_date, newId: existingChild?.id ?? null };
+  }
+  // A Completed (or already-submitted) task has nothing left to carry —
+  // Carry Forward only applies to still-open (Pending/In Progress) work.
+  if (original.work_status === "Completed" || original.submitted_at) {
+    return { error: "This task is already completed — nothing to carry forward.", carriedToDate: null, newId: null };
+  }
+
+  const tomorrow = addDaysToDateStr(original.log_date, 1);
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("daily_work_logs")
+    .insert({
+      employee_id: original.employee_id,
+      company_id: original.company_id,
+      log_date: tomorrow,
+      category: original.category,
+      description: original.description,
+      target_qty: original.target_qty,
+      work_status: "Pending",
+      remark_sku: original.remark_sku,
+      estimated_time_minutes: original.estimated_time_minutes,
+      time_spent_seconds: 0, // never carry actual time spent into tomorrow
+      priority: original.priority,
+      carried_from_log_id: original.id,
+    })
+    .select("id, log_date")
+    .single();
+
+  let childId: string | null = null;
+  let childDate: string = tomorrow;
+  if (insertError) {
+    if (insertError.code === "23505") {
+      // Unique-violation race — someone else's request already created the
+      // child a moment ago. Fetch it instead of failing the user's click.
+      const { data: existingChild } = await supabase
+        .from("daily_work_logs")
+        .select("id, log_date")
+        .eq("carried_from_log_id", original.id)
+        .maybeSingle();
+      childId = existingChild?.id ?? null;
+      childDate = existingChild?.log_date ?? tomorrow;
+    } else {
+      return { error: insertError.message, carriedToDate: null, newId: null };
+    }
+  } else {
+    childId = inserted.id;
+    childDate = inserted.log_date;
+  }
+
+  // Freeze the original — status flips to 'Carried Forward' (a terminal,
+  // system-set status, not one of the manually-selectable WORK_STATUSES
+  // options) and submitted_at is set so it's finalized/read-only in the
+  // form and shows up in Report History / My Recent Reports / the Admin
+  // Team Daily Work Log the same way every other filter on this table
+  // already works (all filter on submitted_at IS NOT NULL) — "the original
+  // day's record must remain UNCHANGED and visible in history otherwise".
+  const { error: updateError } = await supabase
+    .from("daily_work_logs")
+    .update({ work_status: "Carried Forward", carried_forward: true, carried_to_date: childDate, submitted_at: new Date().toISOString() })
+    .eq("id", original.id)
+    .eq("employee_id", employee.id)
+    .is("submitted_at", null); // idempotent — a retry after the freeze already happened just no-ops here
+
+  if (updateError) return { error: updateError.message, carriedToDate: childDate, newId: childId };
+
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
+  return { error: null, carriedToDate: childDate, newId: childId };
+}
+
+/**
+ * ✓ Complete Today — a one-click finalize straight from the Incomplete
+ * Work section, for a task the employee actually finished but hadn't yet
+ * flipped to Completed + Submitted through the main form. Sets both
+ * work_status and submitted_at in one write (unlike the main form's flow,
+ * which requires Work Status already be Completed before Submit is even
+ * shown) — this button IS that "mark it Completed" step. Same
+ * .is("submitted_at", null) idempotency guard as submitDailyLog/
+ * saveAndSubmitDailyLog above.
+ */
+export async function completeIncompleteWorkToday(id: string): Promise<SubmitActionResult> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  const nowIso = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("daily_work_logs")
+    .update({ work_status: "Completed", submitted_at: nowIso, updated_at: nowIso })
+    .eq("id", id)
+    .eq("employee_id", employee.id)
+    .is("submitted_at", null)
+    .select("submitted_at")
+    .single();
+  if (error || !data) {
+    const message = error?.code === "PGRST116" ? "This report has already been submitted." : (error?.message ?? "Could not complete.");
+    return { error: message, submittedAt: null };
+  }
+  revalidatePath("/dashboard/attendance");
+  revalidatePath("/dashboard/attendance/admin");
+  return { error: null, submittedAt: data.submitted_at };
 }

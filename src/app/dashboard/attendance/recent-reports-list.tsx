@@ -34,6 +34,11 @@ const STATUS_BADGE: Record<string, string> = {
   "In Progress": "bg-sky-100 text-sky-700",
   Completed: "bg-green-100 text-green-700",
   "Next Day Carry On": "bg-amber-100 text-amber-700",
+  // 2026-09-01 — "Today's Work -> Carry Forward": a Carried Forward row is
+  // now also submitted_at IS NOT NULL (see actions.ts's
+  // carryForwardDailyLog), so it shows up here too — its own badge color
+  // so it's never confused with an actually-Completed report.
+  "Carried Forward": "bg-purple-100 text-purple-700",
 };
 
 export function RecentReportsList({ logs }: { logs: ServerLog[] }) {

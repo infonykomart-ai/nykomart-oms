@@ -19,12 +19,18 @@ type Row = {
   dims: string | null;
   consignee: string | null;
   weightKg: number | null;
-  amount: number | null; // duty bills only — Import Duty portion
+  amount: number | null; // duty bills: Import Duty portion. freight bills (2026-09-01): this shipment's billed Total — see billed_freight_amt
   otherAmt: number | null; // duty bills only — service/disbursement fee portion
   orderId: string | null;
   orderShipmentId: string | null;
   orderRefNo: string | null;
   alreadyAssigned: boolean;
+  // 2026-09-01: non-blocking booking-cost-vs-billed-cost "recheck" — freight
+  // bills only (duty is customs duty, not a freight-booking cost, nothing
+  // to compare it against — see the reconciliation migration's comment).
+  bookedFreightAmt: number | null;
+  bookedCurrency: string | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | null;
 };
 
 // Courier Bill PDF Upload — auto-extract via src/lib/courier-bills, review
@@ -73,12 +79,19 @@ export function CourierBillPdfSection() {
           dims: s.dims,
           consignee: s.consignee,
           weightKg: s.weightKg,
-          amount: s.dutyAmt,
+          // 2026-09-01: freight bills previously never captured this
+          // shipment's billed Total at all (only duty bills' Import Duty
+          // went into `amount`) — now both do, so freight can persist
+          // billed_freight_amt and show the booked-vs-billed recheck.
+          amount: rest.billCategory === "freight" ? s.amount : s.dutyAmt,
           otherAmt: s.otherAmt,
           orderId: s.alreadyAssigned ? null : s.orderId,
           orderShipmentId: s.alreadyAssigned ? null : s.orderShipmentId,
           orderRefNo: s.alreadyAssigned ? null : s.orderRefNo,
           alreadyAssigned: s.alreadyAssigned,
+          bookedFreightAmt: s.bookedFreightAmt,
+          bookedCurrency: s.bookedCurrency,
+          bookedAmountSource: s.bookedAmountSource,
         }))
       );
     });
@@ -324,6 +337,18 @@ function ShipmentRow({
             </div>
           </>
         )}
+        {billCategory === "freight" && (
+          <div>
+            <label className={labelClass}>Billed Amt (this AWB)</label>
+            <input
+              type="number"
+              step="0.01"
+              className={inputClass}
+              value={row.amount ?? ""}
+              onChange={(e) => onChange({ amount: e.target.value ? Number(e.target.value) : null })}
+            />
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <button
             type="button"
@@ -344,6 +369,10 @@ function ShipmentRow({
         </div>
       </div>
 
+      {billCategory === "freight" && row.bookedFreightAmt != null && (
+        <RecheckBanner bookedAmt={row.bookedFreightAmt} bookedCurrency={row.bookedCurrency} bookedSource={row.bookedAmountSource} billedAmt={row.amount} />
+      )}
+
       {fixing && (
         <FixMatchBox
           billKind={billCategory}
@@ -352,6 +381,40 @@ function ShipmentRow({
             setFixing(false);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// 2026-09-01 — non-blocking booking-cost-vs-billed-cost "recheck": what
+// this shipment was booked for (via Shipglobal or any of the 5 new courier
+// booking flows — see src/app/dashboard/courier-booking) vs. what the
+// courier actually billed for it here. Purely informational — never blocks
+// the save, matches the task's own "flag, don't block" framing.
+function RecheckBanner({
+  bookedAmt,
+  bookedCurrency,
+  bookedSource,
+  billedAmt,
+}: {
+  bookedAmt: number;
+  bookedCurrency: string | null;
+  bookedSource: "api" | "rate_card_estimate" | null;
+  billedAmt: number | null;
+}) {
+  const variance = billedAmt != null ? Math.round((billedAmt - bookedAmt) * 100) / 100 : null;
+  const flagged = variance != null && Math.abs(variance) > 1;
+  return (
+    <div className={`mt-2 rounded px-2 py-1.5 text-[11px] ${flagged ? "bg-amber-100 text-amber-900" : "bg-slate-100 text-slate-600"}`}>
+      Booked: {bookedCurrency ?? ""} {bookedAmt.toFixed(2)}
+      {bookedSource === "rate_card_estimate" && <span className="italic"> (rate-card estimate)</span>}
+      {billedAmt != null && (
+        <>
+          {" "}
+          · Billed: {bookedCurrency ?? ""} {billedAmt.toFixed(2)} · Diff: {variance != null && variance > 0 ? "+" : ""}
+          {variance?.toFixed(2)}
+          {flagged && <span className="ml-1 font-semibold">⚠ recheck</span>}
+        </>
       )}
     </div>
   );

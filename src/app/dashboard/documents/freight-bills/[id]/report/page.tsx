@@ -62,7 +62,11 @@ async function FreightBillReportInner({ id }: { id: string }) {
 
   const { data: assignments } = await supabase
     .from("freight_bill_awb_assignments")
-    .select("id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark")
+    // 2026-09-01: billed_freight_amt added — booking-cost-vs-billed-cost
+    // recheck, see db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+    .select(
+      "id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, billed_freight_amt, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark"
+    )
     .eq("freight_bill_id", id);
 
   const orderIds = (assignments ?? []).map((a) => a.order_id);
@@ -93,7 +97,11 @@ async function FreightBillReportInner({ id }: { id: string }) {
           .select("order_id, buyer_country, our_freight_amt, demand_surcharge_other_charge, gst_18pct")
           .in("order_id", orderIds)
       : Promise.resolve({ data: [] }),
-    shipmentIds.length ? supabase.from("order_shipments").select("id, awb_no").in("id", shipmentIds) : Promise.resolve({ data: [] }),
+    // 2026-09-01: booked_freight_amt/currency/source added — see the
+    // reconciliation migration's comment.
+    shipmentIds.length
+      ? supabase.from("order_shipments").select("id, awb_no, booked_freight_amt, booked_currency, booked_amount_source").in("id", shipmentIds)
+      : Promise.resolve({ data: [] }),
     shipmentIds.length ? supabase.from("order_packages").select("order_shipment_id, weight_kg").in("order_shipment_id", shipmentIds) : Promise.resolve({ data: [] }),
   ]);
 
@@ -137,7 +145,24 @@ async function FreightBillReportInner({ id }: { id: string }) {
       dimWeight: a.dimensional_weight_kg != null ? Number(a.dimensional_weight_kg) : null,
       differenceAmt: a.difference_amt != null ? Number(a.difference_amt) : null,
       shippingPct,
-      remark: [a.remark, a.credit_note_no ? `CN ${a.credit_note_no} -₹${a.credit_note_amt}` : null, a.debit_note_no ? `DN ${a.debit_note_no} +₹${a.debit_note_amt}` : null]
+      // 2026-09-01: non-blocking booking-cost-vs-billed-cost "recheck" note
+      // — see db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+      remark: [
+        a.remark,
+        a.credit_note_no ? `CN ${a.credit_note_no} -₹${a.credit_note_amt}` : null,
+        a.debit_note_no ? `DN ${a.debit_note_no} +₹${a.debit_note_amt}` : null,
+        shipment?.booked_freight_amt != null
+          ? `Booked ${shipment.booked_currency} ${Number(shipment.booked_freight_amt).toFixed(2)}${
+              shipment.booked_amount_source === "rate_card_estimate" ? " (est.)" : ""
+            }${
+              a.billed_freight_amt != null
+                ? ` vs Billed ${shipment.booked_currency} ${Number(a.billed_freight_amt).toFixed(2)} (Diff ${(
+                    Number(a.billed_freight_amt) - Number(shipment.booked_freight_amt)
+                  ).toFixed(2)})`
+                : ""
+            }`
+          : null,
+      ]
         .filter(Boolean)
         .join(" · "),
     };

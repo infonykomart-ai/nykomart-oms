@@ -80,20 +80,45 @@ export function OrderWhatsAppButton({
     setError(null);
     const text = buildMessage();
 
-    // Path 1: native share sheet with ONE composite image (photo + all the
-    // order details baked in as a caption panel underneath it).
+    // Path 1: native share sheet with the composite image (photo + all the
+    // order details baked in as a caption panel underneath it) AND the
+    // same text as a real `text` field alongside it.
+    //
     // 2026-08-08: "PHOTO OR MSG DONO ALAG ALAG KYU JA RAHE HAI EK SATH JANA
     // CHAHIYE" — user confirmed the photo and a separate text field were
-    // arriving as 2 SEPARATE WhatsApp messages, on BOTH phone and computer.
-    // That rules out a single-platform fix: no combination of
-    // `navigator.share({files, text})` reliably makes WhatsApp combine an
-    // image + text into one message on every device — its Share Target
-    // handling just doesn't support that combo consistently anywhere. The
-    // only way to GUARANTEE one message is to make splitting structurally
-    // impossible: /api/order-whatsapp-image composes the caption directly
-    // onto the photo server-side and returns ONE image, which is shared
-    // here with no separate text/title field at all — there is nothing
-    // left for any platform to split apart.
+    // arriving as 2 SEPARATE WhatsApp messages on both phone and computer,
+    // when `navigator.share({files, text})` was used. The fix at the time
+    // was to drop `text` entirely and rely only on the caption baked into
+    // the image pixels, so there was nothing left for any platform to
+    // split apart.
+    //
+    // 2026-09-01: "SIRF PHOTO HI JA RAHI HAI JO MSG APNE NE SETUP KIYA THA
+    // VO NAHI JA RAHA" — root cause: that 2026-08-08 fix's side effect is
+    // that `shareData` never carried a `text` field at all, so WhatsApp's
+    // own send screen shows the image with a genuinely EMPTY caption box —
+    // there is no separate chat text/caption for WhatsApp to display
+    // alongside the photo bubble, only whatever's drawn into the photo
+    // itself (which is easy to miss on a compressed chat-bubble thumbnail
+    // unless the photo is opened/zoomed). That reads exactly as "only the
+    // photo is going" even though the message technically still exists as
+    // pixels in the image.
+    //
+    // Restoring `text` here is a considered, NOT independently
+    // device-verified, trade-off: on a device/WhatsApp version where
+    // `{files, text}` is handled correctly, this now sends ONE message
+    // with a real, visible caption — fixing today's complaint outright. On
+    // whatever device/WhatsApp combination caused the ORIGINAL 2026-08-08
+    // split, this could reintroduce 2 separate messages (photo, then
+    // text) instead of 1 combined one — but even in that worst case the
+    // message text now actually arrives as real, readable WhatsApp text,
+    // which is strictly better than the current complaint (arriving as
+    // NOTHING visible). The baked-in caption panel on the photo itself is
+    // left exactly as-is as a safety net either way, so the information is
+    // never silently lost regardless of which platform behaviour a given
+    // employee's phone/computer exhibits. If "2 separate messages" comes
+    // back as a fresh complaint after this, that's the signal this
+    // trade-off went the wrong way for that device and needs revisiting —
+    // flag it rather than re-guessing.
     if (order.photo_url && typeof navigator !== "undefined" && "share" in navigator) {
       try {
         const imageParams = new URLSearchParams({
@@ -113,7 +138,7 @@ export function OrderWhatsAppButton({
         if (res.ok) {
           const blob = await res.blob();
           const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
-          const shareData = { files: [file] };
+          const shareData = { files: [file], text };
           if ("canShare" in navigator && navigator.canShare(shareData)) {
             await navigator.share(shareData);
             markSent();

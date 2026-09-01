@@ -17,6 +17,10 @@ import {
   SHIPGLOBAL_SERVICES,
   type ShipglobalServiceCode,
 } from "@/lib/couriers/shipglobal";
+// 2026-09-01: booking-cost-vs-billed-cost reconciliation — see
+// db/2026-09-01-multi-courier-booking-and-freight-recon.sql and
+// src/lib/couriers/rate-card-fallback.ts's header comment.
+import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
 
 export type ShipglobalLookupOrder = {
   id: string;
@@ -355,6 +359,31 @@ export async function createShipglobalShipment(
 
     if (manifested.trackingNo) {
       const carrierName = SHIPGLOBAL_SERVICES.find((s) => s.code === service)?.carrier ?? service;
+
+      // 2026-09-01: booking-cost capture — see rate-card-fallback.ts's
+      // header comment. created.chargedAmount is a best-effort opportunistic
+      // extraction (Shipglobal's docs never confirmed a pricing field —
+      // see shipglobal.ts's ShipglobalAddOrderResult comment), so this
+      // almost always falls back to the Courier Rate Card estimate today.
+      let bookedAmt = created.chargedAmount;
+      let bookedCurrency = created.chargedCurrency;
+      let bookedSource: "api" | "rate_card_estimate" | null = bookedAmt != null ? "api" : null;
+      const zoneLabel = str(formData, "zone_label");
+      if (bookedAmt == null && zoneLabel) {
+        const est = await estimateBookedAmountFromRateCard(
+          supabase,
+          employee.currentCompanyId,
+          "Shipglobal",
+          zoneLabel,
+          input.packageWeightG / 1000
+        );
+        if (est) {
+          bookedAmt = est.amt;
+          bookedCurrency = est.currency;
+          bookedSource = "rate_card_estimate";
+        }
+      }
+
       // Gap 1 (2026-08-20): writes order_shipments (shipment_no=1) +
       // order_packages (package_no=1) instead of dispatch_invoices
       // directly, then resyncs the order-level summary — see
@@ -373,6 +402,9 @@ export async function createShipglobalShipment(
             courier_name: `${carrierName} (Shipglobal)`,
             last_update_date: new Date().toISOString().slice(0, 10),
             created_by_employee_id: employee.id,
+            booked_freight_amt: bookedAmt,
+            booked_currency: bookedCurrency,
+            booked_amount_source: bookedSource,
           },
           { onConflict: "order_id,shipment_no" }
         )

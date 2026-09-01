@@ -39,7 +39,12 @@ export async function carryOverPendingDailyLogs(
 ): Promise<void> {
   const { data: pending } = await supabase
     .from("daily_work_logs")
-    .select("id, company_id, category, description, target_qty, remark_sku")
+    // 2026-09-01: priority didn't exist on this table when this automatic
+    // mechanism was first written — included now so a silently-rolled-over
+    // row doesn't lose its priority back to the column default, matching
+    // what the new explicit Carry Forward action (actions.ts,
+    // carryForwardDailyLog) already does.
+    .select("id, company_id, category, description, target_qty, remark_sku, priority")
     .eq("employee_id", employeeId)
     .in("work_status", CARRY_FORWARD_STATUSES)
     .eq("carried_forward", false)
@@ -68,6 +73,7 @@ export async function carryOverPendingDailyLogs(
       target_qty: row.target_qty,
       work_status: "Pending",
       remark_sku: row.remark_sku,
+      priority: row.priority,
       carried_from_log_id: row.id,
     });
     if (insertError && insertError.code !== "23505") continue; // unexpected error — leave carried_forward alone, retry next load

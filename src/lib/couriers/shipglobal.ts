@@ -146,8 +146,29 @@ export type ShipglobalAddOrderResult = {
   orderNumber: string | null;
   waybillNumber: string | null;
   labelPdfBase64: string | null;
+  // 2026-09-01: booking-cost capture (see
+  // db/2026-09-01-multi-courier-booking-and-freight-recon.sql). NOT part
+  // of the original addOrder.php docs the user pasted in (per this file's
+  // header comment, that response is order_number/waybill_number/
+  // pdf_base64 only) — this is a best-effort opportunistic extraction that
+  // checks a few plausible field names (amount/total_amount/
+  // charged_amount) on the off chance Shipglobal's LIVE response includes
+  // one that wasn't in the docs. Null every time unless one of those keys
+  // is actually present — never guessed/fabricated. If Shipglobal's real
+  // response turns out to have a differently-named pricing field once live
+  // credentials are used, update parseAddOrderAmount below, not the
+  // caller.
+  chargedAmount: number | null;
+  chargedCurrency: string | null;
   raw: unknown;
 };
+
+function parseAddOrderAmount(data: Record<string, unknown> | undefined): number | null {
+  if (!data) return null;
+  const candidate = data.amount ?? data.total_amount ?? data.charged_amount ?? data.shipping_charge;
+  const n = Number(candidate);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 export async function shipglobalAddOrder(token: string, input: ShipglobalAddOrderInput): Promise<ShipglobalAddOrderResult> {
   const body = {
@@ -222,7 +243,7 @@ export async function shipglobalAddOrder(token: string, input: ShipglobalAddOrde
   let parsed: {
     success?: boolean;
     error?: string;
-    data?: { order_number?: string; waybill_number?: string; pdf_base64?: string };
+    data?: { order_number?: string; waybill_number?: string; pdf_base64?: string; [key: string]: unknown };
   };
   try {
     parsed = JSON.parse(text);
@@ -237,6 +258,8 @@ export async function shipglobalAddOrder(token: string, input: ShipglobalAddOrde
     orderNumber: parsed.data?.order_number ?? null,
     waybillNumber: parsed.data?.waybill_number ?? null,
     labelPdfBase64: parsed.data?.pdf_base64 ?? null,
+    chargedAmount: parseAddOrderAmount(parsed.data),
+    chargedCurrency: parseAddOrderAmount(parsed.data) != null ? input.currencyCode : null,
     raw: parsed,
   };
 }

@@ -57,6 +57,14 @@ const CATEGORIES = [
   "Other",
 ];
 const WORK_STATUSES = ["Pending", "In Progress", "Completed", "Next Day Carry On"];
+// "Carried Forward" is deliberately NOT in WORK_STATUSES above — it's a
+// terminal, system-set status (only ever written by carryForwardDailyLog,
+// see the Incomplete Work section), never a manually-selectable option in
+// this dropdown.
+// 2026-09-01 — "Today's Work -> Carry Forward": Priority didn't exist on
+// this table before — same Low/Medium/High/Urgent shape as tasks.priority
+// (the sibling Task Assignment feature on this same page).
+const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 const DRAFT_KEY = "oms_daily_report_draft_v1";
 
 type LogRow = {
@@ -78,6 +86,8 @@ type LogRow = {
   consumedMinutes: string;
   carriedFromLogId: string | null;
   submittedAt: string | null;
+  priority: string;
+  carriedToDate: string | null;
 };
 
 type ServerLog = {
@@ -94,6 +104,8 @@ type ServerLog = {
   estimated_time_minutes: number | null;
   carried_from_log_id: string | null;
   submitted_at: string | null;
+  priority: string;
+  carried_to_date: string | null;
 };
 
 function splitHM(totalMinutes: number): { h: string; m: string } {
@@ -122,6 +134,8 @@ function fromServer(l: ServerLog): LogRow {
     consumedMinutes: consumed.m,
     carriedFromLogId: l.carried_from_log_id,
     submittedAt: l.submitted_at,
+    priority: l.priority || "Medium",
+    carriedToDate: l.carried_to_date,
   };
 }
 
@@ -143,6 +157,8 @@ function blankRow(today: string): LogRow {
     consumedMinutes: "",
     carriedFromLogId: null,
     submittedAt: null,
+    priority: "Medium",
+    carriedToDate: null,
   };
 }
 
@@ -273,6 +289,7 @@ export function DailyReportForm({
       remarkSku: row.remarkSku,
       estimatedTimeMinutes: estimatedTotal ? String(estimatedTotal) : "",
       timeSpentMinutes: consumedTotal ? String(consumedTotal) : "",
+      priority: row.priority,
     });
     setSavingIds((prev) => {
       const next = new Set(prev);
@@ -335,6 +352,7 @@ export function DailyReportForm({
       remarkSku: row.remarkSku,
       estimatedTimeMinutes: estimatedTotal ? String(estimatedTotal) : "",
       timeSpentMinutes: consumedTotal ? String(consumedTotal) : "",
+      priority: row.priority,
     });
     setSubmitPendingIds((prev) => {
       const next = new Set(prev);
@@ -362,21 +380,35 @@ export function DailyReportForm({
     <div className="space-y-3">
       {rows.map((row) =>
         row.submittedAt ? (
-          <div key={row.clientId} className="rounded-xl border border-green-200 bg-green-50/40 p-4">
+          // 2026-09-01: a "Carried Forward" row is ALSO finalized/read-only
+          // (submittedAt gets set by carryForwardDailyLog specifically so
+          // it's visible everywhere else on this table's submitted_at IS
+          // NOT NULL filters — Report History, My Recent Reports, the
+          // Admin Team Daily Work Log) but it is NOT a completed report —
+          // give it its own purple badge instead of the green "✓
+          // Submitted" one, so the two are never confused at a glance.
+          <div key={row.clientId} className={`rounded-xl border p-4 ${row.workStatus === "Carried Forward" ? "border-purple-200 bg-purple-50/40" : "border-green-200 bg-green-50/40"}`}>
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-2 text-xs">
                 {row.carriedFromLogId && <span className="rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">Carried from yesterday</span>}
-                <span className="rounded-full bg-green-100 px-2 py-0.5 font-medium text-green-700">
-                  ✓ Submitted at {formatISTTime(row.submittedAt)}
-                </span>
+                {row.workStatus === "Carried Forward" ? (
+                  <span className="rounded-full bg-purple-100 px-2 py-0.5 font-medium text-purple-700">
+                    ↪ Carried Forward{row.carriedToDate ? ` to ${row.carriedToDate}` : ""}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 font-medium text-green-700">
+                    ✓ Submitted at {formatISTTime(row.submittedAt)}
+                  </span>
+                )}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 md:grid-cols-4">
               <div><span className="text-slate-400">Work Type:</span> {row.category}</div>
+              <div><span className="text-slate-400">Priority:</span> {row.priority}</div>
               <div><span className="text-slate-400">Target Qty:</span> {row.targetQty || "—"}</div>
               <div><span className="text-slate-400">Qty Done:</span> {row.qtyDone || "—"}</div>
               <div><span className="text-slate-400">Status:</span> {row.workStatus}</div>
-              <div><span className="text-slate-400">Remark/SKU:</span> {row.remarkSku || "—"}</div>
+              <div><span className="text-slate-400">Remark/SKU (Notes):</span> {row.remarkSku || "—"}</div>
               <div><span className="text-slate-400">Estimated Time (guess, not counted):</span> {formatDuration(hmToMinutes(row.estimatedHours, row.estimatedMinutes) * 60)}</div>
               <div><span className="text-slate-400">Time Consumed (counted):</span> {formatDuration(hmToMinutes(row.consumedHours, row.consumedMinutes) * 60)}</div>
             </div>
@@ -439,7 +471,7 @@ export function DailyReportForm({
                   ))}
                 </select>
               </Field>
-              <Field label="Remark / SKU">
+              <Field label="Remark / SKU (Notes)">
                 <input
                   value={row.remarkSku}
                   onChange={(e) => updateRow(row.clientId, { remarkSku: e.target.value })}
@@ -447,6 +479,21 @@ export function DailyReportForm({
                   className={inputClass}
                   placeholder="optional"
                 />
+              </Field>
+              {/* 2026-09-01 — "Today's Work -> Carry Forward": Priority
+                  didn't exist on this table before, added alongside Work
+                  Type/Expected Time/Notes/Status per the owner's spec. */}
+              <Field label="Priority">
+                <select
+                  value={row.priority}
+                  onChange={(e) => updateRow(row.clientId, { priority: e.target.value })}
+                  onBlur={() => saveRow(row.clientId)}
+                  className={selectClass}
+                >
+                  {PRIORITIES.map((p) => (
+                    <option key={p}>{p}</option>
+                  ))}
+                </select>
               </Field>
             </div>
 

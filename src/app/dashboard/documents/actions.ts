@@ -1646,9 +1646,25 @@ export type ReconciliationLookup = {
     shipping_weight_kg: number | null;
   } | null;
   alreadyAssigned: boolean;
+  // 2026-09-01: what this shipment was booked for (any real courier
+  // booking flow) — freight bills only (see the reconciliation migration's
+  // comment on why duty bills don't get this). Surfaced in the manual
+  // Assign-AWB form so the "recheck" comparison isn't PDF-import-only.
+  bookedFreightAmt: number | null;
+  bookedCurrency: string | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | null;
 };
 
-const EMPTY_RECON: ReconciliationLookup = { error: null, order: null, orderShipmentId: null, dispatch: null, alreadyAssigned: false };
+const EMPTY_RECON: ReconciliationLookup = {
+  error: null,
+  order: null,
+  orderShipmentId: null,
+  dispatch: null,
+  alreadyAssigned: false,
+  bookedFreightAmt: null,
+  bookedCurrency: null,
+  bookedAmountSource: null,
+};
 
 // Gap 1 (2026-08-20): a courier bill is billed PER AWB, and an order can
 // now have more than one (see claude/gap1-multipackage-design-2026-08-20.md)
@@ -1722,7 +1738,30 @@ export async function lookupOrderForReconciliation(
   const table = billKind === "freight" ? "freight_bill_awb_assignments" : "duty_bill_awb_assignments";
   const { data: existing } = await supabase.from(table).select("id").eq("order_shipment_id", orderShipmentId).maybeSingle();
 
-  return { error: null, order, orderShipmentId, dispatch: dispatch ?? null, alreadyAssigned: !!existing };
+  let bookedFreightAmt: number | null = null;
+  let bookedCurrency: string | null = null;
+  let bookedAmountSource: "api" | "rate_card_estimate" | null = null;
+  if (billKind === "freight") {
+    const { data: shipmentRow } = await supabase
+      .from("order_shipments")
+      .select("booked_freight_amt, booked_currency, booked_amount_source")
+      .eq("id", orderShipmentId)
+      .maybeSingle();
+    bookedFreightAmt = shipmentRow?.booked_freight_amt ?? null;
+    bookedCurrency = shipmentRow?.booked_currency ?? null;
+    bookedAmountSource = shipmentRow?.booked_amount_source ?? null;
+  }
+
+  return {
+    error: null,
+    order,
+    orderShipmentId,
+    dispatch: dispatch ?? null,
+    alreadyAssigned: !!existing,
+    bookedFreightAmt,
+    bookedCurrency,
+    bookedAmountSource,
+  };
 }
 
 export type CreateShipmentResult = { error: string | null; orderShipmentId: string | null };
@@ -1990,6 +2029,9 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
       bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
       dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
       difference_amt: numOrNull(formData, "difference_amt"),
+      // 2026-09-01: booking-cost-vs-billed-cost recheck — see
+      // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+      billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
       remark: strOrNull(formData, "remark"),
     })
     .select("id")
