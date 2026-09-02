@@ -3,7 +3,16 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, addDaysToDateStr, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories } from "@/lib/attendance/payroll";
 import { formatDuration, liveElapsedSeconds } from "@/lib/attendance/timer";
-import { EXPECTED_WORK_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected } from "@/lib/attendance/work-hours";
+import { EXPECTED_WORK_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected, type WorkHoursVerdict } from "@/lib/attendance/work-hours";
+import {
+  attendanceScore,
+  leaveScore,
+  workEfficiencyScore,
+  businessImpactScoreRanked,
+  compositeScore,
+  growthPct,
+  topReasonFor,
+} from "@/lib/performance/score";
 import { HolidayForm } from "./holiday-form";
 import { WeeklyOffForm } from "./weekly-off-form";
 import { ManualAttendanceForm } from "./manual-attendance-form";
@@ -51,7 +60,7 @@ export default async function AttendanceAdminPage({
   const monthEnd = `${monthParam}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
 
   const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }, { data: pendingWorkRows }] = await Promise.all([
-    supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
+    supabase.from("employees").select("id, name, date_of_joining, role_id").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
     supabase.from("holidays").select("id, holiday_date, name, company_id").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd).order("holiday_date"),
     // 2026-08-11 (round 3): "md admin ke page par show ho jaye" — only
@@ -131,6 +140,116 @@ export default async function AttendanceAdminPage({
     });
     return { employee: e, summary: summarizeCategories(days) };
   });
+
+  // 2026-09-02: "Performance & Awards" team-wide ranking — HR/MD only
+  // (performance_admin capability, deliberately more restrictive than
+  // general attendance_admin — see capability-info.ts). Reuses
+  // teamSummary's attendance/leave counts (already computed above, never a
+  // second disagreeing count) plus a fresh, UNCAPPED month query for
+  // work-report minutes — the `dailyLogs` query below is capped at 200
+  // rows for the Team Daily Work Log display and would silently undercount
+  // a busy team/month if reused here — and order value/growth for
+  // order-entry/sales staff only (see score.ts header: the app has no
+  // per-employee order data beyond who ENTERED it, `orders.entry_by_employee_id`).
+  // This block NEVER decides or names a specific award — it only ranks
+  // metrics and shows a short factual reason string; HR/MD make the actual
+  // call (clarified with the owner before building this round).
+  const hasPerformanceAdmin = employee.capabilities.includes("performance_admin");
+  type RankedRow = {
+    employeeId: string;
+    name: string;
+    attendance: number;
+    leave: number;
+    workEfficiency: number;
+    businessImpact?: number;
+    composite: number;
+    orderCount: number;
+    orderValue: number;
+    orderGrowthPct: number | null;
+    reason: string;
+  };
+  let performanceRanking: RankedRow[] = [];
+
+  if (hasPerformanceAdmin) {
+    const perfPrevMonth = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
+    const perfPrevMonthStart = `${perfPrevMonth.y}-${String(perfPrevMonth.m).padStart(2, "0")}-01`;
+    const perfPrevMonthEnd = `${perfPrevMonth.y}-${String(perfPrevMonth.m).padStart(2, "0")}-${String(daysInMonth(perfPrevMonth.y, perfPrevMonth.m)).padStart(2, "0")}`;
+
+    const [{ data: orderEntryRoleRows }, { data: allMonthLogs }, { data: ordersThisMonth }, { data: ordersPrevMonth }] = await Promise.all([
+      supabase.from("role_capabilities").select("role_id").eq("capability_code", "order_entry"),
+      dwlSupabase
+        .from("daily_work_logs")
+        .select("employee_id, log_date, time_spent_seconds")
+        .eq("company_id", selectedCompanyId)
+        .gte("log_date", monthStart)
+        .lte("log_date", monthEnd)
+        .not("submitted_at", "is", null),
+      supabase.from("orders").select("entry_by_employee_id, order_value_usd").eq("company_id", selectedCompanyId).gte("order_date", monthStart).lte("order_date", monthEnd),
+      supabase.from("orders").select("entry_by_employee_id, order_value_usd").eq("company_id", selectedCompanyId).gte("order_date", perfPrevMonthStart).lte("order_date", perfPrevMonthEnd),
+    ]);
+
+    const orderEntryRoleIds = new Set((orderEntryRoleRows ?? []).map((r) => r.role_id));
+
+    const minutesByEmployeeDate = new Map<string, Map<string, number>>();
+    for (const l of allMonthLogs ?? []) {
+      if (!minutesByEmployeeDate.has(l.employee_id)) minutesByEmployeeDate.set(l.employee_id, new Map());
+      const m = minutesByEmployeeDate.get(l.employee_id)!;
+      const mins = Math.round((l.time_spent_seconds ?? 0) / 60);
+      m.set(l.log_date, (m.get(l.log_date) ?? 0) + mins);
+    }
+
+    const orderValueByEmployee = new Map<string, number>();
+    const orderCountByEmployee = new Map<string, number>();
+    for (const o of ordersThisMonth ?? []) {
+      orderValueByEmployee.set(o.entry_by_employee_id, (orderValueByEmployee.get(o.entry_by_employee_id) ?? 0) + (o.order_value_usd ?? 0));
+      orderCountByEmployee.set(o.entry_by_employee_id, (orderCountByEmployee.get(o.entry_by_employee_id) ?? 0) + 1);
+    }
+    const prevOrderValueByEmployee = new Map<string, number>();
+    for (const o of ordersPrevMonth ?? []) {
+      prevOrderValueByEmployee.set(o.entry_by_employee_id, (prevOrderValueByEmployee.get(o.entry_by_employee_id) ?? 0) + (o.order_value_usd ?? 0));
+    }
+    const maxOrderValueThisMonth = Math.max(0, ...Array.from(orderValueByEmployee.values()));
+
+    performanceRanking = teamSummary
+      .map(({ employee: e, summary: s }) => {
+        const isOrderEntry = orderEntryRoleIds.has(e.role_id);
+        const empMinutesByDate = minutesByEmployeeDate.get(e.id) ?? new Map<string, number>();
+        const verdicts: WorkHoursVerdict[] = Array.from(empMinutesByDate.values()).map((mins) => compareToExpected(mins).verdict);
+        const workingDays = s.Present + s.Late + s["Half Day"];
+
+        const attendance = attendanceScore(s);
+        const leave = leaveScore(s.Leave);
+        const workEfficiency = workEfficiencyScore(verdicts, workingDays);
+
+        let businessImpact: number | undefined;
+        let orderValue = 0;
+        let orderCount = 0;
+        let orderGrowth: number | null = null;
+        if (isOrderEntry) {
+          orderValue = orderValueByEmployee.get(e.id) ?? 0;
+          orderCount = orderCountByEmployee.get(e.id) ?? 0;
+          orderGrowth = growthPct(orderValue, prevOrderValueByEmployee.get(e.id) ?? 0);
+          businessImpact = businessImpactScoreRanked(orderValue, maxOrderValueThisMonth, orderGrowth);
+        }
+
+        const components = { attendance, leave, workEfficiency, businessImpact };
+        const composite = compositeScore(components);
+        return {
+          employeeId: e.id,
+          name: e.name,
+          attendance,
+          leave,
+          workEfficiency,
+          businessImpact,
+          composite,
+          orderCount,
+          orderValue,
+          orderGrowthPct: orderGrowth,
+          reason: topReasonFor({ ...components, name: e.name }),
+        };
+      })
+      .sort((a, b) => b.composite - a.composite);
+  }
 
   // 2026-08-12 (round 6): "admin md ko power ho ki jo employee report
   // submit kar raha hai uski har weekly report dikhe or coustome date ka
@@ -323,6 +442,69 @@ export default async function AttendanceAdminPage({
         </p>
         <PendingWorkPanel groups={pendingWorkGroups} />
       </div>
+
+      {/* 2026-09-02: "achi performance walo ke liye ... msg show hone lag
+          jaye ki kis ko konsa award diya ja sakta hai ... sirf admin hr md
+          ko hi dikhe" — HR/MD-only (performance_admin), ranked metrics
+          only, never an automatic award name (clarified + chosen by the
+          owner before building this). */}
+      {hasPerformanceAdmin && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-white p-4">
+          <h2 className="mb-1 text-sm font-semibold text-slate-700">🏆 Performance &amp; Awards — Team Ranking ({monthParam})</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Admin/MD only. A weighted score (0-100) per employee — attendance/punctuality, leave discipline, work-report
+            efficiency, and (for order-entry/sales staff only) order value &amp; growth vs. last month. Ranked so YOU can
+            decide who gets what — this never names or suggests a specific award itself.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="py-1 pr-3">#</th>
+                  <th className="px-2">Employee</th>
+                  <th className="px-2">Attendance</th>
+                  <th className="px-2">Leave</th>
+                  <th className="px-2">Work Efficiency</th>
+                  <th className="px-2">Order Value (Growth)</th>
+                  <th className="px-2">Score</th>
+                  <th className="px-2">Why they rank here</th>
+                </tr>
+              </thead>
+              <tbody>
+                {performanceRanking.map((r, i) => (
+                  <tr key={r.employeeId} className="border-t border-slate-100">
+                    <td className="py-1.5 pr-3 font-medium text-slate-800">{i < 3 ? "🏆" : i + 1}</td>
+                    <td className="px-2 font-medium text-slate-800">{r.name}</td>
+                    <td className="px-2">{r.attendance}</td>
+                    <td className="px-2">{r.leave}</td>
+                    <td className="px-2">{r.workEfficiency}</td>
+                    <td className="px-2">
+                      {r.businessImpact === undefined ? (
+                        <span className="text-slate-300">—</span>
+                      ) : (
+                        <>
+                          ${r.orderValue.toFixed(0)} ({r.orderCount})
+                          {r.orderGrowthPct !== null && (
+                            <span className={r.orderGrowthPct >= 0 ? "ml-1 text-green-700" : "ml-1 text-red-700"}>
+                              {r.orderGrowthPct >= 0 ? "+" : ""}
+                              {r.orderGrowthPct.toFixed(0)}%
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </td>
+                    <td className="px-2 font-semibold text-slate-900">{r.composite}</td>
+                    <td className="px-2 text-slate-500">{r.reason}</td>
+                  </tr>
+                ))}
+                {performanceRanking.length === 0 && (
+                  <tr><td colSpan={8} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">Manual Correction</h2>

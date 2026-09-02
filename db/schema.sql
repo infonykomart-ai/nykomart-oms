@@ -3916,7 +3916,12 @@ INSERT INTO capabilities (code, description) VALUES
   -- 2026-09-01: real booking for FedEx / UPS / Aramex / Delhivery /
   -- Shiprocket, same real-money/real-customs caution as shipglobal_shipment
   -- — see db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
-  ('courier_booking_shipment', 'Create real FedEx / UPS / Aramex / Delhivery / Shiprocket shipments (real external shipment + label, once live credentials are configured)');
+  ('courier_booking_shipment', 'Create real FedEx / UPS / Aramex / Delhivery / Shiprocket shipments (real external shipment + label, once live credentials are configured)'),
+  -- 2026-09-02: Performance & Awards ranking dashboard — see
+  -- db/2026-09-02-performance-dashboard.sql. Deliberately its own
+  -- capability, not folded into attendance_admin (see capability-info.ts
+  -- for the reasoning) — Admin/MD only.
+  ('performance_admin', 'Team-wide Performance & Awards ranking dashboard (order value/growth, attendance, work efficiency) — Admin/MD only');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -3978,7 +3983,8 @@ JOIN (VALUES
   ('Inventory',          'task_management'),
   ('Admin',              'data_export_admin'), ('MD', 'data_export_admin'), -- 2026-08-22: Backup Export, Admin/MD only.
   ('Admin',              'audit_log_view'), ('MD', 'audit_log_view'), -- 2026-08-24: Audit log, Admin/MD only to start.
-  ('Admin',              'automation_admin'), ('MD', 'automation_admin') -- 2026-08-24: Automation rules engine, Admin/MD only to start.
+  ('Admin',              'automation_admin'), ('MD', 'automation_admin'), -- 2026-08-24: Automation rules engine, Admin/MD only to start.
+  ('Admin',              'performance_admin'), ('MD', 'performance_admin') -- 2026-09-02: Performance & Awards ranking, Admin/MD only.
 ) AS rc(role_name, cap) ON rc.role_name = r.name;
 
 

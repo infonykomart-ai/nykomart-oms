@@ -51,6 +51,16 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Apply for leave with an application, and track its approval status." },
   { code: "leave_admin", label: "Leave Approvals", icon: "✋", href: "/dashboard/leave/admin",
     description: "Approve/reject leave requests and assign who covers the absent employee's store work." },
+  // 2026-09-02: Performance & Awards ranking dashboard — deliberately its
+  // own capability, NOT folded into attendance_admin, even though today
+  // both happen to be granted to the exact same roles (MD/Admin — see
+  // db/2026-09-02-performance-dashboard.sql). Kept separate so this can be
+  // narrowed or widened independently later without dragging general
+  // attendance-admin access along with it — this view surfaces order
+  // value/growth per employee, which is more sensitive than attendance
+  // records alone.
+  { code: "performance_admin", label: "Performance & Awards", icon: "🏆", href: "/dashboard/attendance/admin",
+    description: "Team-wide performance ranking — attendance, work efficiency, leave, and (for order-entry staff) order value/growth — Admin/MD only." },
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
   // usko alag se kyu banaya hai" — Tasks / Task Reports no longer have
   // their own sidebar tile or standalone route; the Task Assignment UI now

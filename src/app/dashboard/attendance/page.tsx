@@ -1,10 +1,18 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
-import { todayIST, addDaysToDateStr } from "@/lib/attendance/ist-date";
+import { todayIST, addDaysToDateStr, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
 import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
 import { formatDuration } from "@/lib/attendance/timer";
-import { EXPECTED_WORK_MINUTES, ANOMALY_THRESHOLD_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected } from "@/lib/attendance/work-hours";
+import { EXPECTED_WORK_MINUTES, ANOMALY_THRESHOLD_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected, type WorkHoursVerdict } from "@/lib/attendance/work-hours";
+import {
+  attendanceScore,
+  leaveScore,
+  workEfficiencyScore,
+  businessImpactScoreSelf,
+  compositeScore,
+  growthPct,
+} from "@/lib/performance/score";
 import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
@@ -55,13 +63,31 @@ export default async function AttendancePage({
   const [year, month] = today.split("-").map(Number);
   const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
   const sp = await searchParams;
-  const viewDate = typeof sp.viewDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.viewDate) ? sp.viewDate : null;
+  // 2026-09-02: "purane submited reports dekhne ka option ho" — replaced
+  // the old single-date lookback with a proper From/To range picker,
+  // mirroring the exact pattern Admin's own Employee Performance view
+  // already uses (attendance/admin/page.tsx's perfFrom/perfTo) — same
+  // component shape, same validation, so the two pages never drift apart
+  // on what a "date range" control looks like. Defaults to the last 30
+  // days rather than requiring a pick first.
+  const histFromDefault = addDaysToDateStr(today, -29);
+  const histFrom = typeof sp.histFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.histFrom) ? sp.histFrom : histFromDefault;
+  const histTo = typeof sp.histTo === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.histTo) ? sp.histTo : today;
   // 2026-09-02: "agar employee back date me report submit kare to iska koi
   // option nahi hai" — the Daily Work Report form now lets an employee add/
   // edit an entry for any of the last 7 days (today included), not just
   // today. See actions.ts's own server-side validateLogDate for the
   // authoritative check — this is just the matching read-side window.
   const minBackdate = addDaysToDateStr(today, -6);
+  // 2026-09-02: "My Performance" self-view — scoped to the current
+  // calendar month, same as the "This Month So Far" attendance summary
+  // directly above it on this page, so the two numbers are always talking
+  // about the same period without a second month picker. See
+  // src/lib/performance/score.ts for the shared formula both this
+  // self-view and the admin/MD ranking view call into.
+  const prevMonth = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
+  const prevMonthStart = `${prevMonth.y}-${String(prevMonth.m).padStart(2, "0")}-01`;
+  const prevMonthEnd = `${prevMonth.y}-${String(prevMonth.m).padStart(2, "0")}-${String(daysInMonth(prevMonth.y, prevMonth.m)).padStart(2, "0")}`;
 
   // "AGAR KOI KAAM NEXT DAY KE LIYE MARK KIYA HAI TO VO AGALE DIN
   // AUTOMATIC PENDING ME DIKH JAYE" — copy forward any still-pending
@@ -69,7 +95,7 @@ export default async function AttendancePage({
   // logs below, so a freshly carried-over row shows up immediately.
   await carryOverPendingDailyLogs(dwlSupabase, employee.id, today);
 
-  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: viewDateLogs }, { data: windowLogs }] =
+  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: historyLogs }, { data: windowLogs }, { data: monthLogs }] =
     await Promise.all([
       supabase.from("attendance").select("*").eq("employee_id", employee.id).eq("attendance_date", today).maybeSingle(),
       supabase
@@ -93,19 +119,21 @@ export default async function AttendancePage({
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
         .limit(30),
-      // 2026-08-12 (round 6): "employe kabhi bhi dekhna chahe to date
-      // chose kar ke dekh sake ki kab kya kaam kiya" — a separate,
-      // on-demand fetch for whatever date the employee picks below (not
-      // limited to the last-30-rows window `recentLogs` covers).
-      viewDate
-        ? dwlSupabase
-            .from("daily_work_logs")
-            .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
-            .eq("employee_id", employee.id)
-            .eq("log_date", viewDate)
-            .not("submitted_at", "is", null)
-            .order("submitted_at", { ascending: true })
-        : Promise.resolve({ data: null }),
+      // 2026-08-12 (round 6), extended 2026-09-02 into a real date-range
+      // picker: "purane submited reports dekhne ka option ho" — every
+      // submitted report between histFrom/histTo (default: last 30 days),
+      // not limited to the last-30-ROWS window `recentLogs` covers (which
+      // truncates by row count, not by date, so a busy month could hide
+      // older days even within the same range).
+      dwlSupabase
+        .from("daily_work_logs")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
+        .eq("employee_id", employee.id)
+        .gte("log_date", histFrom)
+        .lte("log_date", histTo)
+        .not("submitted_at", "is", null)
+        .order("log_date", { ascending: false })
+        .order("submitted_at", { ascending: true }),
       // 2026-09-02: the editable window for the Daily Work Report form
       // itself — today plus the last 6 days (backdate), so a not-yet-
       // submitted or already-submitted row from within that window still
@@ -121,6 +149,16 @@ export default async function AttendancePage({
         .lte("log_date", today)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false }),
+      // 2026-09-02: "My Performance" self-view — every SUBMITTED report
+      // this calendar month (uncapped by row count, unlike `recentLogs`),
+      // used only for the work-report-efficiency score below.
+      dwlSupabase
+        .from("daily_work_logs")
+        .select("log_date, time_spent_seconds")
+        .eq("employee_id", employee.id)
+        .gte("log_date", monthStart)
+        .lte("log_date", today)
+        .not("submitted_at", "is", null),
     ]);
 
   const attendanceByDate = new Map((monthRows ?? []).map((r) => [r.attendance_date, { status: r.status }]));
@@ -172,6 +210,50 @@ export default async function AttendancePage({
       estimatedTimeMinutes: l.estimated_time_minutes,
       timeSpentSeconds: l.time_spent_seconds,
     }));
+
+  // 2026-09-02: "My Performance" self-view — own numbers only, this month.
+  // Attendance/leave reuse the SAME `summary` shown in "This Month So Far"
+  // just above (never a second, disagreeing count). Work-report efficiency
+  // is built from `monthLogs` (every submitted report this month, grouped
+  // by day into minutes -> compareToExpected verdict — the identical
+  // function the "Today's Work" card above already uses).
+  const monthDailyMinutes = new Map<string, number>();
+  for (const l of monthLogs ?? []) {
+    const mins = Math.round((l.time_spent_seconds ?? 0) / 60);
+    monthDailyMinutes.set(l.log_date, (monthDailyMinutes.get(l.log_date) ?? 0) + mins);
+  }
+  const monthVerdicts: WorkHoursVerdict[] = Array.from(monthDailyMinutes.values()).map((mins) => compareToExpected(mins).verdict);
+  const workingDaysThisMonth = summary.Present + summary.Late + summary["Half Day"];
+
+  // Order value/growth — order-entry/sales staff only (see score.ts header
+  // for why: `orders.entry_by_employee_id` is the only per-employee order
+  // linkage the app has today). Self-view only ever uses the "Self" scoring
+  // variant — never compared to any other employee's numbers.
+  const hasOrderEntry = employee.capabilities.includes("order_entry");
+  let myOrderValueThisMonth = 0;
+  let myOrderGrowthPct: number | null = null;
+  let myOrderCountThisMonth = 0;
+  if (hasOrderEntry) {
+    const [{ data: ordersThisMonth }, { data: ordersPrevMonth }] = await Promise.all([
+      supabase.from("orders").select("order_value_usd").eq("entry_by_employee_id", employee.id).gte("order_date", monthStart).lte("order_date", today),
+      supabase.from("orders").select("order_value_usd").eq("entry_by_employee_id", employee.id).gte("order_date", prevMonthStart).lte("order_date", prevMonthEnd),
+    ]);
+    myOrderCountThisMonth = (ordersThisMonth ?? []).length;
+    myOrderValueThisMonth = (ordersThisMonth ?? []).reduce((sum, o) => sum + (o.order_value_usd ?? 0), 0);
+    const prevValue = (ordersPrevMonth ?? []).reduce((sum, o) => sum + (o.order_value_usd ?? 0), 0);
+    myOrderGrowthPct = growthPct(myOrderValueThisMonth, prevValue);
+  }
+
+  const myAttendanceScore = attendanceScore(summary);
+  const myLeaveScore = leaveScore(summary.Leave);
+  const myWorkEfficiencyScore = workEfficiencyScore(monthVerdicts, workingDaysThisMonth);
+  const myBusinessImpactScore = hasOrderEntry ? businessImpactScoreSelf(myOrderGrowthPct) : undefined;
+  const myCompositeScore = compositeScore({
+    attendance: myAttendanceScore,
+    leave: myLeaveScore,
+    workEfficiency: myWorkEfficiencyScore,
+    businessImpact: myBusinessImpactScore,
+  });
 
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
   // usko alag se kyu banaya hai" — Task Assignment now renders directly on
@@ -391,44 +473,83 @@ export default async function AttendancePage({
         <RecentReportsList logs={submittedTodaysLogs} />
       </div>
 
-      {/* 2026-08-12 (round 6): "employe kabhi bhi dekhna chahe to date
-          chose kar ke dekh sake ki kab kya kaam kiya" — pick any past date
-          and see that day's submitted reports, not just today's. */}
+      {/* 2026-08-12 (round 6), extended 2026-09-02 into a real date-range
+          picker: "purane submited reports dekhne ka option ho" — browse
+          any past window of submitted reports, not just one date at a
+          time (defaults to the last 30 days). Same From/To pattern as
+          Admin's own Employee Performance picker below on the admin page. */}
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">📅 Report History</h2>
         <form method="get" className="mb-3 flex flex-wrap items-end gap-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Date</label>
-            <input
-              type="date"
-              name="viewDate"
-              defaultValue={viewDate ?? ""}
-              max={today}
-              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-            />
+            <label className="mb-1 block text-xs font-medium text-slate-500">From</label>
+            <input type="date" name="histFrom" defaultValue={histFrom} max={today} className={dateInputClass} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500">To</label>
+            <input type="date" name="histTo" defaultValue={histTo} max={today} className={dateInputClass} />
           </div>
           <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
             View
           </button>
         </form>
-        {viewDate ? (
-          (viewDateLogs ?? []).length === 0 ? (
-            <p className="text-xs text-slate-400">No submitted reports on {viewDate}.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {(viewDateLogs ?? []).map((l) => (
-                <div key={l.id} className="rounded border border-slate-100 px-2.5 py-1.5 text-xs">
-                  <span className="font-medium text-slate-800">{l.category ?? "—"}</span>
-                  <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
-                  <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
-                  <p className="mt-0.5 text-slate-600">{l.description}</p>
-                </div>
-              ))}
-            </div>
-          )
+        {(historyLogs ?? []).length === 0 ? (
+          <p className="text-xs text-slate-400">No submitted reports between {histFrom} and {histTo}.</p>
         ) : (
-          <p className="text-xs text-slate-400">Pick a date to see what you worked on that day.</p>
+          <div className="max-h-96 space-y-1.5 overflow-y-auto">
+            {(historyLogs ?? []).map((l) => (
+              <div key={l.id} className="rounded border border-slate-100 px-2.5 py-1.5 text-xs">
+                <span className="font-medium text-slate-800">{l.log_date}</span>
+                <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
+                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
+                <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
+                <p className="mt-0.5 text-slate-600">{l.description}</p>
+              </div>
+            ))}
+          </div>
         )}
+      </div>
+
+      {/* 2026-09-02: "employe ko khud ki performance report dikhne lag
+          jaye ki vo kaisa kaam kar raha hai progress kesi hai" — own
+          numbers only, this month. No comparison to any other employee
+          anywhere on this card — see src/lib/performance/score.ts header
+          for the formula and that design choice. */}
+      <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-slate-700">📈 My Performance — {today.slice(0, 7)}</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Your own numbers this month only — never compared to anyone else. A simple weighted score
+          out of 100 (attendance/punctuality, leave, work-report efficiency{hasOrderEntry ? ", and order value/growth" : ""}) — see the breakdown below.
+        </p>
+        <div className="mb-4 flex flex-wrap items-center gap-4">
+          <div className="flex h-16 w-16 flex-none items-center justify-center rounded-full border-4 border-amber-400 text-lg font-bold text-slate-900">
+            {myCompositeScore}
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <Stat label="Attendance" value={`${myAttendanceScore}/100`} />
+            <Stat label="Leave" value={`${myLeaveScore}/100`} />
+            <Stat label="Work Efficiency" value={`${myWorkEfficiencyScore}/100`} />
+            {hasOrderEntry && <Stat label="Order Value Growth" value={`${myBusinessImpactScore}/100`} />}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+          <span className="rounded-full bg-slate-100 px-2.5 py-1">
+            {summary.Present} Present · {summary.Late} Late · {summary["Half Day"]} Half Day · {summary.Leave} Leave · {summary.Absent} Absent
+          </span>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1">{monthVerdicts.length} reports submitted this month</span>
+          {hasOrderEntry && (
+            <span className="rounded-full bg-slate-100 px-2.5 py-1">
+              {myOrderCountThisMonth} orders · ${myOrderValueThisMonth.toFixed(0)} this month
+              {myOrderGrowthPct !== null && (
+                <>
+                  {" "}
+                  ({myOrderGrowthPct >= 0 ? "+" : ""}
+                  {myOrderGrowthPct.toFixed(0)}% vs last month)
+                </>
+              )}
+            </span>
+          )}
+        </div>
       </div>
 
       {hasTaskManagement && (
@@ -454,6 +575,18 @@ export default async function AttendancePage({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const dateInputClass =
+  "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="text-sm font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
