@@ -12,12 +12,22 @@ import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
 //
 // The only way to GUARANTEE one message is to make it structurally
 // impossible to split: bake the caption directly into the photo itself
-// (a caption panel appended below it) and share ONLY that single composite
-// image, with no separate text field at all. There is nothing left for any
-// platform to split apart. This route does that compositing server-side
-// (fetching the source photo here also reuses the same CORS workaround as
+// (a caption panel) and share ONLY that single composite image, with no
+// separate text field at all. There is nothing left for any platform to
+// split apart. This route does that compositing server-side (fetching the
+// source photo here also reuses the same CORS workaround as
 // /api/order-photo-proxy — most photo URLs are on outside domains that
 // don't send us permissive CORS headers).
+//
+// 2026-09-02: panel moved from BELOW the photo to ABOVE it. A tall/portrait
+// product photo plus the panel can add up to an image taller than what
+// WhatsApp shows uncropped in the chat feed — with the panel below, that
+// meant the details were the part most likely to be cropped out of view,
+// which is what led (via a misdiagnosis) to briefly re-adding a separate
+// `text` field and reintroducing the exact 2-message split this whole
+// approach exists to prevent (see order-whatsapp-button.tsx's history
+// comment). Panel-first means the order details are always the first thing
+// visible, cropped or not, with no separate text field required.
 export const runtime = "nodejs";
 
 const MAX_WIDTH = 1000;
@@ -85,6 +95,12 @@ export async function GET(request: Request) {
   const photoType = params.get("photo_type") || "-";
   const colour = params.get("colour") || "-";
   const tasselFringes = params.get("tassel_fringes") === "1" ? "Yes" : "No";
+  // 2026-09-02: "tassel fringes sirf cotton rug me hota hai" — only draw
+  // this line for cotton-rug orders; every other item showed a meaningless
+  // "Tassel/Fringes: No" before. Caller (order-whatsapp-button.tsx) decides
+  // applicability from item_category_name and passes it explicitly rather
+  // than this route guessing from the ref/SKU.
+  const showTasselFringes = params.get("show_tassel_fringes") === "1";
   const sku = params.get("sku") || "-";
   const note = params.get("note") || "-";
 
@@ -107,7 +123,7 @@ export async function GET(request: Request) {
     ["Dispatch Date", dispatchDate],
     ["Photo", photoType],
     ["Colour", colour],
-    ["Tassel/ Fringes", tasselFringes],
+    ...(showTasselFringes ? ([["Tassel/ Fringes", tasselFringes]] as [string, string][]) : []),
     ["SKU", sku],
   ];
 
@@ -143,12 +159,15 @@ export async function GET(request: Request) {
   </svg>`;
   const panelBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
 
+  // Panel first (top: 0), photo below (top: panelHeight) — see the
+  // 2026-09-02 header comment: the details panel must be the part that
+  // survives if WhatsApp crops a tall image in the chat feed thumbnail.
   const composite = await sharp({
     create: { width, height: height + panelHeight, channels: 3, background: "#0f172a" },
   })
     .composite([
-      { input: resizedPhotoBuffer, top: 0, left: 0 },
-      { input: panelBuffer, top: height, left: 0 },
+      { input: panelBuffer, top: 0, left: 0 },
+      { input: resizedPhotoBuffer, top: panelHeight, left: 0 },
     ])
     .jpeg({ quality: 90 })
     .toBuffer();

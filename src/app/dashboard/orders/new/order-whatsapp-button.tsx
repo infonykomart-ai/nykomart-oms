@@ -52,6 +52,15 @@ export function OrderWhatsAppButton({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // 2026-09-02: "tassel fringes sirf cotton rug me hota hai" — the field is
+  // only meaningful for cotton rugs; showing "Tassel/Fringes: No" on every
+  // other item (jute, tufted, etc.) was pure noise in the packing message.
+  // item_category_name values are the fixed product-type strings set at
+  // order entry (see actions.ts's category map, e.g. "HANDMADE 100% COTTON
+  // RUG") — a simple substring check is enough and doesn't need a new
+  // column or a schema change.
+  const isCottonRug = (order.item_category_name || "").toLowerCase().includes("cotton");
+
   // 2026-08-07: production/packing-facing message — fixed field template
   // given directly by the user (PO/RF/RG, QTY, Size, Dispatch Date, Photo,
   // Colour, Tassel/Fringes, SKU, Note), all pulled straight from the order
@@ -68,7 +77,7 @@ export function OrderWhatsAppButton({
       `*Dispatch Date:* ${order.dispatch_date || "-"}`,
       `*Photo:* ${order.photo_type || "-"}`,
       `*Colour:* ${order.colour || "-"}`,
-      `*Tassel/ Fringes:* ${order.tassel_fringes ? "Yes" : "No"}`,
+      isCottonRug ? `*Tassel/ Fringes:* ${order.tassel_fringes ? "Yes" : "No"}` : null,
       `*SKU:* ${order.sku_label || "-"}`,
       "",
       `*Note:*\n${order.remark || "-"}`,
@@ -80,45 +89,38 @@ export function OrderWhatsAppButton({
     setError(null);
     const text = buildMessage();
 
-    // Path 1: native share sheet with the composite image (photo + all the
-    // order details baked in as a caption panel underneath it) AND the
-    // same text as a real `text` field alongside it.
+    // Path 1: native share sheet with ONLY the composite image (photo + all
+    // the order details baked in as a caption panel — see
+    // /api/order-whatsapp-image). No separate `text` field is passed here.
     //
-    // 2026-08-08: "PHOTO OR MSG DONO ALAG ALAG KYU JA RAHE HAI EK SATH JANA
-    // CHAHIYE" — user confirmed the photo and a separate text field were
-    // arriving as 2 SEPARATE WhatsApp messages on both phone and computer,
-    // when `navigator.share({files, text})` was used. The fix at the time
-    // was to drop `text` entirely and rely only on the caption baked into
-    // the image pixels, so there was nothing left for any platform to
-    // split apart.
+    // History of this exact decision flip-flopping — read before changing
+    // it again:
+    //  - 2026-08-08: "PHOTO OR MSG DONO ALAG ALAG KYU JA RAHE HAI EK SATH
+    //    JANA CHAHIYE" — photo + a separate `text` field were arriving as 2
+    //    SEPARATE WhatsApp messages, on both phone and computer. Fix: drop
+    //    `text` entirely, rely only on the caption baked into the image
+    //    pixels — nothing left for any platform to split apart.
+    //  - 2026-09-01: "SIRF PHOTO HI JA RAHI HAI JO MSG APNE NE SETUP KIYA
+    //    THA VO NAHI JA RAHA" — misdiagnosed as the caption not being sent
+    //    at all; it was actually just easy to miss on a compressed
+    //    chat-bubble thumbnail without opening the image. `text` was added
+    //    back as a "considered, not independently device-verified"
+    //    trade-off, with the caption panel kept as a safety net.
+    //  - 2026-09-02: user reported the EXACT 2026-08-08 symptom again, with
+    //    screenshots proving it: photo and text as 2 separate bubbles, 2
+    //    separate timestamps. So the 2026-09-01 trade-off did reintroduce
+    //    the split on real devices — confirmed, not hypothetical. Back to
+    //    image-only, and this time the root complaint the 2026-09-01 change
+    //    was chasing (caption easy to miss) is fixed properly instead of by
+    //    re-adding `text`: the details panel now renders ABOVE the photo
+    //    inside the composite image (see route.ts), not below it, so it's
+    //    the first thing visible in a WhatsApp feed thumbnail even when a
+    //    tall image gets cropped there — no separate `text` field needed to
+    //    make it visible.
     //
-    // 2026-09-01: "SIRF PHOTO HI JA RAHI HAI JO MSG APNE NE SETUP KIYA THA
-    // VO NAHI JA RAHA" — root cause: that 2026-08-08 fix's side effect is
-    // that `shareData` never carried a `text` field at all, so WhatsApp's
-    // own send screen shows the image with a genuinely EMPTY caption box —
-    // there is no separate chat text/caption for WhatsApp to display
-    // alongside the photo bubble, only whatever's drawn into the photo
-    // itself (which is easy to miss on a compressed chat-bubble thumbnail
-    // unless the photo is opened/zoomed). That reads exactly as "only the
-    // photo is going" even though the message technically still exists as
-    // pixels in the image.
-    //
-    // Restoring `text` here is a considered, NOT independently
-    // device-verified, trade-off: on a device/WhatsApp version where
-    // `{files, text}` is handled correctly, this now sends ONE message
-    // with a real, visible caption — fixing today's complaint outright. On
-    // whatever device/WhatsApp combination caused the ORIGINAL 2026-08-08
-    // split, this could reintroduce 2 separate messages (photo, then
-    // text) instead of 1 combined one — but even in that worst case the
-    // message text now actually arrives as real, readable WhatsApp text,
-    // which is strictly better than the current complaint (arriving as
-    // NOTHING visible). The baked-in caption panel on the photo itself is
-    // left exactly as-is as a safety net either way, so the information is
-    // never silently lost regardless of which platform behaviour a given
-    // employee's phone/computer exhibits. If "2 separate messages" comes
-    // back as a fresh complaint after this, that's the signal this
-    // trade-off went the wrong way for that device and needs revisiting —
-    // flag it rather than re-guessing.
+    // Do not re-add `text` to shareData here without a device-verified fix
+    // for the split — re-adding it on a hunch is exactly what caused this
+    // round's regression.
     if (order.photo_url && typeof navigator !== "undefined" && "share" in navigator) {
       try {
         const imageParams = new URLSearchParams({
@@ -130,6 +132,7 @@ export function OrderWhatsAppButton({
           photo_type: order.photo_type || "-",
           colour: order.colour || "-",
           tassel_fringes: order.tassel_fringes ? "1" : "0",
+          show_tassel_fringes: isCottonRug ? "1" : "0",
           sku: order.sku_label || "-",
           note: order.remark || "-",
           is_amazon: order.is_amazon ? "1" : "0",
@@ -138,7 +141,7 @@ export function OrderWhatsAppButton({
         if (res.ok) {
           const blob = await res.blob();
           const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
-          const shareData = { files: [file], text };
+          const shareData = { files: [file] };
           if ("canShare" in navigator && navigator.canShare(shareData)) {
             await navigator.share(shareData);
             markSent();
