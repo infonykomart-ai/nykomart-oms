@@ -272,10 +272,19 @@ function GroupRow({
               the instant it lands here (see actions.ts's
               createJournalVoucherForBill) — this just links to it.
               party_id != null excludes Salary/Advance rows, which have no
-              vendor/invoice concept to fit the JV template. A grouped
-              (multi-item) invoice has one JV per underlying item — see the
-              expanded-items table below instead. */}
-          {!group.isGroup && first.party_id && (
+              vendor/invoice concept to fit the JV template.
+              2026-09-02 fix — "jv item ke against me nahi banegi invoice ke
+              against me banegi bataya tha na": there was already only ever
+              ONE Journal Voucher per real invoice (createJournalVoucherForBill
+              resolves and dedupes across the whole multi-item group
+              regardless of which item's id you pass it) — but this link used
+              to be hidden for grouped rows in favor of a separate "JV" icon
+              on EVERY item in the expanded breakdown below, which visually
+              read as "one JV per item". Now shown here unconditionally
+              (any member of the group resolves to the same JV, so first.id
+              is fine), and the misleading per-item icons are gone — see
+              below. */}
+          {first.party_id && (
             <Link
               href={`/dashboard/documents/journal-vouchers/by-bill/${first.id}`}
               target="_blank"
@@ -299,21 +308,19 @@ function GroupRow({
                   <th className="px-2 py-1 text-right font-medium">To Be Pay</th>
                   <th className="px-2 py-1 text-right font-medium">Paid</th>
                   <th className="px-2 py-1 text-right font-medium">Balance</th>
-                  <th className="px-2 py-1 text-right font-medium">JV</th>
                 </tr>
               </thead>
               <tbody>
+                {/* No per-item JV link here — see the header row's own "🖨
+                    JV" link above (2026-09-02 fix): one Journal Voucher
+                    represents the WHOLE invoice, so it belongs at the
+                    invoice/group level, not repeated once per item. */}
                 {group.bills.map((b) => (
                   <tr key={b.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-2 py-1 text-slate-600">{b.id.slice(0, 8)}</td>
                     <td className="px-2 py-1 text-right text-slate-600">{b.to_be_pay.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right text-slate-600">{b.total_paid.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right font-medium text-slate-800">{b.balance_due.toFixed(2)}</td>
-                    <td className="px-2 py-1 text-right">
-                      <Link href={`/dashboard/documents/journal-vouchers/by-bill/${b.id}`} target="_blank" className="font-semibold text-slate-600 hover:underline">
-                        🖨
-                      </Link>
-                    </td>
                   </tr>
                 ))}
               </tbody>

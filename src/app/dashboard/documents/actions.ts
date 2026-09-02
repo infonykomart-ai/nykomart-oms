@@ -2650,22 +2650,33 @@ async function createJournalVoucherForBill(
 ): Promise<string | null> {
   const { data: bill } = await supabase
     .from("bill_pass_register")
-    .select("id, company_id, party_id, vendor_invoice_no, invoice_date, total_amt, source, source_id")
+    .select("id, company_id, party_id, vendor_invoice_no, invoice_date, invoice_type, credit_note_amt, adj_amt, source, source_id")
     .eq("id", billPassRegisterId)
     .maybeSingle();
   if (!bill) return null;
 
   // Resolve the invoice group — see comment above. Matches groupBills()'s
   // own isGroupable condition exactly.
+  //
+  // 2026-09-02 fix — "jab kisi invoice me debit kuchhua hi nahi hai to
+  // ammount kyu aara hai": Debit Amount was wrongly being set to the
+  // invoice's full total_amt (so it always showed a nonzero figure, even
+  // for a bill with no Debit/Credit Note against it at all). Debit Amount
+  // is supposed to be the amount actually adjusted against this invoice —
+  // credit_note_amt (a credit note received from the vendor, adjusted
+  // here) plus adj_amt (a Debit/Credit Note's cross-invoice adjustment,
+  // see bill_pass_register's own column comment) — same two columns
+  // to_be_pay already nets out. Zero when neither exists, matching the
+  // user's own description of the field.
   let groupIds = [bill.id];
-  let groupTotal = Number(bill.total_amt);
+  let groupDebitAdjustment = Number(bill.credit_note_amt ?? 0) + Number(bill.adj_amt ?? 0);
   let groupItemDetails = prefill?.itemDetails ?? null;
   let groupQty = prefill?.qty ?? null;
   let groupQtyUnit = prefill?.qtyUnit ?? null;
   if (bill.source === "purchase_bill" && bill.vendor_invoice_no && bill.party_id) {
     const { data: siblings } = await supabase
       .from("bill_pass_register")
-      .select("id, total_amt, source_id")
+      .select("id, credit_note_amt, adj_amt, source_id")
       .eq("company_id", bill.company_id)
       .eq("party_id", bill.party_id)
       .eq("source", "purchase_bill")
@@ -2673,7 +2684,7 @@ async function createJournalVoucherForBill(
       .order("id", { ascending: true }); // deterministic — same set/order regardless of which item's call got here first
     if (siblings && siblings.length > 0) {
       groupIds = siblings.map((s) => s.id);
-      groupTotal = siblings.reduce((sum, s) => sum + Number(s.total_amt), 0);
+      groupDebitAdjustment = siblings.reduce((sum, s) => sum + Number(s.credit_note_amt ?? 0) + Number(s.adj_amt ?? 0), 0);
 
       const sourceIds = siblings.map((s) => s.source_id).filter((id): id is string => !!id);
       if (sourceIds.length > 0) {
@@ -2685,18 +2696,43 @@ async function createJournalVoucherForBill(
           groupItemDetails = items
             .map((it) => `${it.work_description ?? "Item"} (Qty ${it.qty ?? "—"} ${it.qty_unit ?? ""})`.trim())
             .join("; ");
-          // A single unambiguous qty/unit only makes sense for a lone item —
-          // for a real multi-item group leave it null, the breakdown lives
-          // in item_details instead.
-          if (items.length === 1) {
-            groupQty = items[0].qty;
-            groupQtyUnit = items[0].qty_unit;
-          } else {
-            groupQty = null;
-            groupQtyUnit = null;
-          }
         }
       }
+    }
+  }
+
+  // "item details me jo item hai vo aana jaruri nahi hai agar vo purchse ka
+  // hai freight ka hai duty ka hai ya koi or hai" — when there's no specific
+  // item to list (Courier/Duty Bill and manual entries never join back to
+  // purchase_bills), fall back to the bill's own type so the column isn't
+  // just blank.
+  if (!groupItemDetails) groupItemDetails = bill.invoice_type ?? null;
+
+  // "qty me us invoice me kitne item hai ya kitne awb hai" — Qty means the
+  // COUNT of items on this invoice (Purchase Bill) or the count of AWBs
+  // (Courier/Duty Bill), not a single item's own qty×unit (that detail
+  // already lives in item_details above). Overrides whatever the caller's
+  // prefill passed for these two bill types.
+  if (bill.source === "purchase_bill") {
+    groupQty = groupIds.length;
+    groupQtyUnit = "Item";
+  } else if (bill.source === "freight_bill" && bill.source_id) {
+    const { count: awbCount } = await supabase
+      .from("freight_bill_awb_assignments")
+      .select("id", { count: "exact", head: true })
+      .eq("freight_bill_id", bill.source_id);
+    if (awbCount != null && awbCount > 0) {
+      groupQty = awbCount;
+      groupQtyUnit = "AWB";
+    }
+  } else if (bill.source === "duty_tax_bill" && bill.source_id) {
+    const { count: awbCount } = await supabase
+      .from("duty_bill_awb_assignments")
+      .select("id", { count: "exact", head: true })
+      .eq("duty_tax_bill_id", bill.source_id);
+    if (awbCount != null && awbCount > 0) {
+      groupQty = awbCount;
+      groupQtyUnit = "AWB";
     }
   }
 
@@ -2721,10 +2757,19 @@ async function createJournalVoucherForBill(
       party_id: bill.party_id,
       vendor_invoice_no: bill.vendor_invoice_no,
       invoice_date: bill.invoice_date,
-      debit_amount: groupTotal,
+      debit_amount: groupDebitAdjustment,
       item_details: groupItemDetails,
       qty: groupQty,
       qty_unit: groupQtyUnit,
+      // "perticular me vahi item vala & remark me ok" / "quility ok agr koi
+      // dispute nahi ho to" — sensible defaults for an auto-generated JV
+      // (previously left blank/"—" on the printed voucher). Whoever reviews
+      // the bill can still edit these via the JV edit form if there
+      // actually is a dispute — this is just the default, not a locked-in
+      // value.
+      particulars: groupItemDetails,
+      qlty: "OK",
+      remark: "OK",
     })
     .select("id")
     .single();

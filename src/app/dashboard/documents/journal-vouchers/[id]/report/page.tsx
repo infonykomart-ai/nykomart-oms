@@ -104,6 +104,14 @@ async function JournalVoucherReportInner({ id }: { id: string }) {
   // Prefer the live bill balance when linked (see header comment) — falls
   // back to the stored column for a manual/unlinked JV.
   const passedAmount = billTotals ? billTotals.to_be_pay : jv.passed_amount;
+  // 2026-09-02 — same live-vs-snapshot preference as Passed Amount above,
+  // for the same reason: a note raised against this bill AFTER the JV was
+  // created must still show up here rather than the printed JV going
+  // stale. Also fixes a real bug — the stored jv.debit_amount from
+  // createJournalVoucherForBill used to be the invoice's full total_amt
+  // (always nonzero), not the actual adjusted amount; this live figure is
+  // correct regardless of when the row was created.
+  const debitAmount = billTotals ? billTotals.credit_note_amt + billTotals.adj_amt : jv.debit_amount;
   const hasAdjustment = billTotals != null && (billTotals.credit_note_amt > 0 || billTotals.adj_amt > 0);
 
   return (
@@ -172,7 +180,7 @@ async function JournalVoucherReportInner({ id }: { id: string }) {
             </thead>
             <tbody>
               <tr className="border-b border-slate-200">
-                <td className="py-1.5 pr-2 text-right font-medium">{jv.debit_amount.toFixed(2)}</td>
+                <td className="py-1.5 pr-2 text-right font-medium">{debitAmount.toFixed(2)}</td>
                 <td className="py-1.5 pr-2">{jv.item_details ?? "—"}</td>
                 <td className="py-1.5 pr-2 text-right font-semibold text-slate-900">
                   {passedAmount != null ? passedAmount.toFixed(2) : "—"}
