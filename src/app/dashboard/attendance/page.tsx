@@ -255,6 +255,51 @@ export default async function AttendancePage({
     businessImpact: myBusinessImpactScore,
   });
 
+  // 2026-09-02 (round 3): "jis employe ko jo store allot hai uske according
+  // banadena tha" — Cost (store ad spend) vs. Value (store's order value),
+  // using the existing Store Access assignment (Admin > Employees > Store
+  // Access — the `employee_store_access` table), NOT `entry_by_employee_id`
+  // above. Deliberately a SEPARATE panel from "My Performance", and
+  // deliberately NOT folded into myCompositeScore: employee_store_access's
+  // original purpose is Ad Spend module scoping, not an order-entry
+  // linkage, and reusing it for a formula input the owner hasn't confirmed
+  // yet would be guessing. Shown as its own informational panel instead,
+  // for ANY employee with >=1 store assigned via Store Access, regardless
+  // of role. Cost/value are for the WHOLE store (every order in it, not
+  // just ones this employee personally entered) — the owner's own framing
+  // ("jis employe ko jo store allot hai") is store-level, not order-level.
+  // Clarified with the owner before building (AskUserQuestion, 2026-09-02):
+  // separate panel (not folded into the existing score), store assignment
+  // done by the owner via the existing Store Access UI (no new UI here),
+  // and a store shared by >1 employee shows its FULL cost to each of them
+  // with a "shared" note rather than guessing a split.
+  const { data: myStoreAccess } = await supabase.from("employee_store_access").select("store_id").eq("employee_id", employee.id);
+  const myStoreIds = Array.from(new Set((myStoreAccess ?? []).map((r) => r.store_id)));
+  type MyStoreCostRow = { storeId: string; storeName: string; cost: number; value: number; sharedWithCount: number };
+  let myStoreCostRows: MyStoreCostRow[] = [];
+  if (myStoreIds.length > 0) {
+    const [{ data: myStores }, { data: myStoreSpend }, { data: myStoreOrders }, { data: allAccessForMyStores }] = await Promise.all([
+      supabase.from("stores").select("id, name").in("id", myStoreIds),
+      supabase.from("store_ad_spend").select("store_id, spend_usd").in("store_id", myStoreIds).gte("spend_date", monthStart).lte("spend_date", today),
+      supabase.from("orders").select("store_id, order_value_usd").in("store_id", myStoreIds).gte("order_date", monthStart).lte("order_date", today),
+      supabase.from("employee_store_access").select("store_id").in("store_id", myStoreIds),
+    ]);
+    const storeNameById = new Map((myStores ?? []).map((s) => [s.id, s.name as string]));
+    const costByStore = new Map<string, number>();
+    for (const r of myStoreSpend ?? []) costByStore.set(r.store_id, (costByStore.get(r.store_id) ?? 0) + (r.spend_usd ?? 0));
+    const valueByStore = new Map<string, number>();
+    for (const r of myStoreOrders ?? []) valueByStore.set(r.store_id, (valueByStore.get(r.store_id) ?? 0) + (r.order_value_usd ?? 0));
+    const accessCountByStore = new Map<string, number>();
+    for (const r of allAccessForMyStores ?? []) accessCountByStore.set(r.store_id, (accessCountByStore.get(r.store_id) ?? 0) + 1);
+    myStoreCostRows = myStoreIds.map((id) => ({
+      storeId: id,
+      storeName: storeNameById.get(id) ?? "Unknown store",
+      cost: costByStore.get(id) ?? 0,
+      value: valueByStore.get(id) ?? 0,
+      sharedWithCount: Math.max(0, (accessCountByStore.get(id) ?? 1) - 1),
+    }));
+  }
+
   // 2026-08-11 (round 3): "task vala option isi page par show hona chahiye
   // usko alag se kyu banaya hai" — Task Assignment now renders directly on
   // this page instead of its own /dashboard/tasks route, gated on the same
@@ -551,6 +596,45 @@ export default async function AttendancePage({
           )}
         </div>
       </div>
+
+      {/* 2026-09-02 (round 3): "jis employe ko jo store allot hai uske
+          according banadena tha" — cost vs. value for whichever store(s)
+          Admin has assigned this employee via Store Access. Only renders
+          if at least one store is assigned; see the data-fetch comment
+          above for why this is a separate panel from "My Performance". */}
+      {myStoreCostRows.length > 0 && (
+        <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
+          <h2 className="mb-1 text-sm font-semibold text-slate-700">💰 My Store — Cost vs Order Value ({today.slice(0, 7)})</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Ad spend vs. order value for the store(s) assigned to you (Admin &gt; Employees &gt; Store Access), this month.
+          </p>
+          <div className="flex flex-col gap-3">
+            {myStoreCostRows.map((r) => (
+              <div key={r.storeId} className="rounded-lg bg-slate-50 p-3">
+                <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-slate-800">{r.storeName}</span>
+                  {r.sharedWithCount > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                      Shared with {r.sharedWithCount} other employee{r.sharedWithCount > 1 ? "s" : ""} — full store cost/value shown, not split
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs text-slate-600">
+                  <span>Ad Spend: ${r.cost.toFixed(0)}</span>
+                  <span>Order Value: ${r.value.toFixed(0)}</span>
+                  <span>
+                    {r.cost > 0
+                      ? `${(r.value / r.cost).toFixed(2)}x value per $ spent`
+                      : r.value > 0
+                        ? "No ad spend logged this month"
+                        : "No ad spend or orders logged this month"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {hasTaskManagement && (
         <div className="mt-6">

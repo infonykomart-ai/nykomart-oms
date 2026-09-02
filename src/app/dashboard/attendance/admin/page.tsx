@@ -170,6 +170,16 @@ export default async function AttendanceAdminPage({
   };
   let performanceRanking: RankedRow[] = [];
 
+  // 2026-09-02 (round 3): "jis employe ko jo store allot hai uske according
+  // banadena tha" — same Store Access reuse as the employee self-view (see
+  // attendance/page.tsx's matching comment for the full rationale and the
+  // 3 things clarified with the owner before building this: separate panel
+  // from the ranking table above, store assignment done via the existing
+  // Store Access UI, and a shared store shows its FULL cost to every
+  // assigned employee with a note rather than a guessed split).
+  type StoreCostRow = { employeeId: string; name: string; stores: { storeId: string; storeName: string; cost: number; value: number; sharedWithCount: number }[] };
+  let storeCostRows: StoreCostRow[] = [];
+
   if (hasPerformanceAdmin) {
     const perfPrevMonth = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
     const perfPrevMonthStart = `${perfPrevMonth.y}-${String(perfPrevMonth.m).padStart(2, "0")}-01`;
@@ -249,6 +259,46 @@ export default async function AttendanceAdminPage({
         };
       })
       .sort((a, b) => b.composite - a.composite);
+
+    // Store Cost vs Order Value — scoped to this company's stores and this
+    // company's active team (teamEmployees), same monthStart/monthEnd as
+    // the ranking above. See the header comment above `storeCostRows` for
+    // why this is a separate computation from businessImpact/orderValue.
+    const { data: companyStores } = await supabase.from("stores").select("id, name").eq("company_id", selectedCompanyId);
+    const companyStoreIds = (companyStores ?? []).map((s) => s.id);
+    if (companyStoreIds.length > 0) {
+      const [{ data: allStoreAccess }, { data: allStoreSpend }, { data: allStoreOrders }] = await Promise.all([
+        supabase.from("employee_store_access").select("employee_id, store_id").in("store_id", companyStoreIds),
+        supabase.from("store_ad_spend").select("store_id, spend_usd").in("store_id", companyStoreIds).gte("spend_date", monthStart).lte("spend_date", monthEnd),
+        supabase.from("orders").select("store_id, order_value_usd").eq("company_id", selectedCompanyId).in("store_id", companyStoreIds).gte("order_date", monthStart).lte("order_date", monthEnd),
+      ]);
+      const storeNameById = new Map((companyStores ?? []).map((s) => [s.id, s.name as string]));
+      const costByStore = new Map<string, number>();
+      for (const r of allStoreSpend ?? []) costByStore.set(r.store_id, (costByStore.get(r.store_id) ?? 0) + (r.spend_usd ?? 0));
+      const valueByStore = new Map<string, number>();
+      for (const r of allStoreOrders ?? []) valueByStore.set(r.store_id, (valueByStore.get(r.store_id) ?? 0) + (r.order_value_usd ?? 0));
+      const accessCountByStore = new Map<string, number>();
+      const storeIdsByEmployee = new Map<string, string[]>();
+      const activeTeamEmployeeIds = new Set(teamSummary.map(({ employee: e }) => e.id));
+      for (const r of allStoreAccess ?? []) {
+        accessCountByStore.set(r.store_id, (accessCountByStore.get(r.store_id) ?? 0) + 1);
+        if (!activeTeamEmployeeIds.has(r.employee_id)) continue; // only this company's active team
+        if (!storeIdsByEmployee.has(r.employee_id)) storeIdsByEmployee.set(r.employee_id, []);
+        storeIdsByEmployee.get(r.employee_id)!.push(r.store_id);
+      }
+      const employeeNameById = new Map(teamSummary.map(({ employee: e }) => [e.id, e.name]));
+      storeCostRows = Array.from(storeIdsByEmployee.entries()).map(([employeeId, storeIds]) => ({
+        employeeId,
+        name: employeeNameById.get(employeeId) ?? "Unknown",
+        stores: storeIds.map((id) => ({
+          storeId: id,
+          storeName: storeNameById.get(id) ?? "Unknown store",
+          cost: costByStore.get(id) ?? 0,
+          value: valueByStore.get(id) ?? 0,
+          sharedWithCount: Math.max(0, (accessCountByStore.get(id) ?? 1) - 1),
+        })),
+      }));
+    }
   }
 
   // 2026-08-12 (round 6): "admin md ko power ho ki jo employee report
@@ -502,6 +552,49 @@ export default async function AttendanceAdminPage({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* 2026-09-02 (round 3): "jis employe ko jo store allot hai uske
+          according banadena tha" — cost vs. value per employee, for
+          whichever store(s) each has assigned via Store Access. Same
+          performance_admin gate as the ranking table above; only lists
+          employees who actually have >=1 store assigned. */}
+      {hasPerformanceAdmin && storeCostRows.length > 0 && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-white p-4">
+          <h2 className="mb-1 text-sm font-semibold text-slate-700">💰 Store Cost vs Order Value — {monthParam}</h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Ad spend vs. order value for each employee&apos;s assigned store(s) (Admin &gt; Employees &gt; Store Access). A store
+            shared by more than one employee shows its full cost/value to each of them, flagged below — not split.
+          </p>
+          <div className="flex flex-col gap-3">
+            {storeCostRows.map((row) => (
+              <div key={row.employeeId} className="rounded-lg bg-slate-50 p-3">
+                <div className="mb-1.5 text-sm font-medium text-slate-800">{row.name}</div>
+                <div className="flex flex-col gap-1.5">
+                  {row.stores.map((s) => (
+                    <div key={s.storeId} className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                      <span className="font-medium text-slate-700">{s.storeName}</span>
+                      <span>Ad Spend: ${s.cost.toFixed(0)}</span>
+                      <span>Order Value: ${s.value.toFixed(0)}</span>
+                      <span>
+                        {s.cost > 0
+                          ? `${(s.value / s.cost).toFixed(2)}x value per $ spent`
+                          : s.value > 0
+                            ? "No ad spend logged"
+                            : "No ad spend or orders logged"}
+                      </span>
+                      {s.sharedWithCount > 0 && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                          Shared with {s.sharedWithCount} other{s.sharedWithCount > 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
