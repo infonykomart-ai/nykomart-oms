@@ -1,4 +1,7 @@
 import sharp from "sharp";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { requireCapability, UnauthorizedError, ForbiddenError } from "@/lib/auth/require-capability";
 import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
 
@@ -28,7 +31,48 @@ import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
 // approach exists to prevent (see order-whatsapp-button.tsx's history
 // comment). Panel-first means the order details are always the first thing
 // visible, cropped or not, with no separate text field required.
+//
+// 2026-09-02: "order photo ke sath ek msg jo apn ne decide kiya tha vo
+// jana chahiye tha vo kyu nahi jara" — the panel WAS rendering (right
+// position, right size), but every character inside it came out as a
+// blank □ box. Root cause: the panel used to be drawn as an SVG <text>
+// element with font-family="Arial, Helvetica, sans-serif", rasterized by
+// sharp's bundled librsvg. That works locally/in dev (real system fonts
+// installed) but Vercel's Node serverless runtime ships with NO fonts and
+// no working fontconfig at all — librsvg has no font to fall back to, so
+// every glyph renders as its "missing glyph" box, confirmed by
+// reproducing this exact failure in an isolated sandbox with fontconfig
+// pointed at an empty directory. Embedding a font directly in the SVG via
+// a base64 @font-face (tried both .woff2 and .ttf) did NOT fix it either
+// — librsvg in this sharp build simply doesn't honor embedded @font-face
+// at all, it only ever resolves fonts through the (here, empty) system
+// fontconfig database.
+//
+// Fixed by not asking the OS for a font at all: the panel is now drawn
+// with @napi-rs/canvas (already a dependency — see courier-bills/
+// pdf-layout.ts) using GlobalFonts.register() on font files read
+// straight from src/lib/fonts/ into a Buffer. Registering a font this way
+// bypasses fontconfig entirely, so it works identically whether or not
+// the OS has any fonts installed — verified by reproducing the exact
+// same empty-fontconfig sandbox and confirming real glyphs render both
+// for plain ASCII and for Devanagari (order notes are sometimes typed in
+// Hindi). Noto Sans + Noto Sans Devanagari (SIL OFL, freely embeddable)
+// were chosen for that reason — a Latin-only font would still have left
+// Hindi notes as boxes.
 export const runtime = "nodejs";
+
+const FONTS_DIR = path.join(process.cwd(), "src/lib/fonts");
+const LATIN_FONT_FAMILY = "OrderWhatsAppLatin";
+const DEVANAGARI_FONT_FAMILY = "OrderWhatsAppDevanagari";
+// Family list, not a single family — canvas falls back per-character to
+// whichever registered font actually has the glyph, so one line can mix
+// English labels and a Hindi note correctly (see header comment above).
+const PANEL_FONT_STACK = `${LATIN_FONT_FAMILY}, ${DEVANAGARI_FONT_FAMILY}`;
+// Registering twice (e.g. on a warm serverless instance handling a 2nd
+// request) just re-registers the same family name — harmless — so no
+// extra guard is needed here.
+GlobalFonts.register(readFileSync(path.join(FONTS_DIR, "NotoSans-Regular.ttf")), LATIN_FONT_FAMILY);
+GlobalFonts.register(readFileSync(path.join(FONTS_DIR, "NotoSansDevanagari-Regular.ttf")), DEVANAGARI_FONT_FAMILY);
 
 const MAX_WIDTH = 1000;
 const PAD_X = 24;
@@ -37,15 +81,6 @@ const LINE_HEIGHT = 30;
 const PRIORITY_HEIGHT = 42;
 const NOTE_CHARS_PER_LINE = 58;
 const NOTE_MAX_LINES = 3;
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
 
 function wrapText(label: string, value: string, charsPerLine: number, maxLines: number): string[] {
   const words = value.split(/\s+/).filter(Boolean);
@@ -127,37 +162,38 @@ export async function GET(request: Request) {
     ["SKU", sku],
   ];
 
-  const svgLines: { text: string; bold?: boolean; color?: string; size?: number }[] = [];
-  if (isAmazon) svgLines.push({ text: "TOP PRIORITY", bold: true, color: "#fbbf24", size: 24 });
+  const panelLines: { text: string; bold?: boolean; color?: string; size?: number }[] = [];
+  if (isAmazon) panelLines.push({ text: "TOP PRIORITY", bold: true, color: "#fbbf24", size: 24 });
   for (const [label, value] of fields) {
-    svgLines.push({ text: `${label}: ${value}`, bold: false, color: "#f1f5f9", size: 18 });
+    panelLines.push({ text: `${label}: ${value}`, bold: false, color: "#f1f5f9", size: 18 });
   }
   const noteLines = wrapText("Note", note, NOTE_CHARS_PER_LINE, NOTE_MAX_LINES);
   noteLines.forEach((line, i) => {
-    svgLines.push({ text: line, bold: i === 0, color: "#f1f5f9", size: 18 });
+    panelLines.push({ text: line, bold: i === 0, color: "#f1f5f9", size: 18 });
   });
 
   const panelHeight =
-    PAD_Y * 2 + (isAmazon ? PRIORITY_HEIGHT : 0) + (svgLines.length - (isAmazon ? 1 : 0)) * LINE_HEIGHT;
+    PAD_Y * 2 + (isAmazon ? PRIORITY_HEIGHT : 0) + (panelLines.length - (isAmazon ? 1 : 0)) * LINE_HEIGHT;
+
+  // Drawn with @napi-rs/canvas, not sharp+SVG — see the header comment on
+  // why (fontconfig-free rendering is the whole point).
+  const panelCanvas = createCanvas(width, panelHeight);
+  const ctx = panelCanvas.getContext("2d");
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, width, panelHeight);
+  ctx.textBaseline = "alphabetic";
 
   let y = PAD_Y;
-  const textEls: string[] = [];
-  for (const line of svgLines) {
+  for (const line of panelLines) {
     const isPriority = isAmazon && line.text === "TOP PRIORITY";
     y += isPriority ? PRIORITY_HEIGHT * 0.7 : LINE_HEIGHT * 0.75;
-    textEls.push(
-      `<text x="${PAD_X}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${line.size}" font-weight="${
-        line.bold ? "bold" : "normal"
-      }" fill="${line.color}">${escapeXml(line.text)}</text>`
-    );
+    ctx.font = `${line.bold ? "bold " : ""}${line.size}px ${PANEL_FONT_STACK}`;
+    ctx.fillStyle = line.color ?? "#f1f5f9";
+    ctx.fillText(line.text, PAD_X, y);
     y += isPriority ? PRIORITY_HEIGHT * 0.3 : LINE_HEIGHT * 0.25;
   }
 
-  const svg = `<svg width="${width}" height="${panelHeight}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${width}" height="${panelHeight}" fill="#0f172a"/>
-    ${textEls.join("\n")}
-  </svg>`;
-  const panelBuffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  const panelBuffer = panelCanvas.toBuffer("image/png");
 
   // Panel first (top: 0), photo below (top: panelHeight) — see the
   // 2026-09-02 header comment: the details panel must be the part that

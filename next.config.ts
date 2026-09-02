@@ -11,8 +11,17 @@ const nextConfig: NextConfig = {
   // can't discover it and leaves it out of the deployed function bundle —
   // surfaced on Vercel as "Cannot find module '.../pdf.worker.mjs'" even
   // though pdf.mjs itself loads fine. Force it into the bundle explicitly.
+  // 2026-09-02: order-whatsapp-image/route.ts reads 2 .ttf files from
+  // src/lib/fonts/ at request time via fs.readFileSync (see that route's
+  // header comment — @napi-rs/canvas font registration, fontconfig-free
+  // text rendering). Next's output tracer follows literal `import`s, not
+  // a runtime-computed fs path, so — same reasoning as the pdf.worker.mjs
+  // entry above — it has to be listed explicitly or Vercel deploys the
+  // function without the fonts and every glyph silently goes missing
+  // again.
   outputFileTracingIncludes: {
     "/dashboard/documents": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+    "/api/order-whatsapp-image": ["./src/lib/fonts/*.ttf"],
   },
   // 2026-08-14: Direct Messaging (src/app/dashboard/messages) lets an
   // employee attach one file/image per message via a Server Action —
