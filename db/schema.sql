@@ -3491,6 +3491,96 @@ COMMENT ON TABLE direct_messages IS
   'Private 1-to-1 messages — see db/2026-08-14m-help-center-and-messaging.sql for the RESTRICTIVE RLS '
   'policy that hard-scopes reads/writes to a message''s own sender/recipient.';
 
+-- 2026-09-02: Group Messaging — "massaging group banane ka option hona
+-- chahiye" (alongside the new Messenger-style popup UI — see
+-- src/components/messages/messenger-popup.tsx). Deliberately a SEPARATE,
+-- PARALLEL system from direct_messages above, not a migration of it to a
+-- unified model — direct_messages' 1:1 real-time flow is already shipped
+-- and working, and folding it into a "conversations" model would risk
+-- that existing behavior for a feature (groups) that only needs to be
+-- additive. The popup UI merges both into one visual list, but underneath
+-- they stay two separate tables. Same "open to every signed-in employee,
+-- no capability gate" precedent as direct_messages/My Profile.
+CREATE TABLE conversations (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                      text NOT NULL,
+  created_by_employee_id    uuid NOT NULL REFERENCES employees(id),
+  created_at                timestamptz NOT NULL DEFAULT now()
+);
+
+-- Membership. Any current member may add more members or rename the group
+-- (simplest permission model — no per-group "admin" role was asked for);
+-- leaving is always self-only (removing another member isn't supported
+-- this round — kept out deliberately rather than guessing a permission
+-- model for it). last_read_at drives the unread badge/count, same idea as
+-- direct_messages.read_at but per-member since a group has many readers.
+CREATE TABLE conversation_members (
+  conversation_id           uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  employee_id               uuid NOT NULL REFERENCES employees(id),
+  added_by_employee_id      uuid REFERENCES employees(id),
+  joined_at                 timestamptz NOT NULL DEFAULT now(),
+  last_read_at              timestamptz,
+  PRIMARY KEY (conversation_id, employee_id)
+);
+CREATE INDEX idx_conversation_members_employee ON conversation_members(employee_id);
+
+CREATE TABLE conversation_messages (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id           uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_employee_id        uuid NOT NULL REFERENCES employees(id),
+  body                      text,
+  -- Same private 'message-attachments' Storage bucket as direct_messages,
+  -- just a different path prefix (see group-actions.ts) — no new bucket.
+  attachment_path           text,
+  attachment_name           text,
+  attachment_mime           text,
+  attachment_size_bytes     bigint,
+  created_at                timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT conversation_messages_has_content CHECK (body IS NOT NULL OR attachment_path IS NOT NULL)
+);
+CREATE INDEX idx_conversation_messages_conv_created ON conversation_messages(conversation_id, created_at);
+
+-- Row Level Security (auth.uid()-dependent) lives ONLY in
+-- db/2026-09-02-group-messaging.sql, same as direct_messages' own RLS —
+-- NOT here, since this file is also applied to a plain throwaway Postgres
+-- for local type-gen/testing that has no auth schema (see the
+-- direct_messages comment above for the original statement of this rule).
+-- Summary of what that migration adds: RESTRICTIVE-in-spirit SELECT-only
+-- policies scoping every read to the requesting employee's own
+-- memberships (this is the REAL gate for the popup's real-time
+-- subscription — Realtime's filter syntax can't express "conversation_id
+-- IN (my conversations)", so it subscribes with no per-conversation filter
+-- and RLS is what actually restricts which rows reach a given employee).
+-- No INSERT/UPDATE/DELETE policy for the anon/browser role is defined —
+-- every WRITE goes through group-actions.ts's Server Actions via the
+-- service-role client instead (bypasses RLS; application-layer checks are
+-- the real gate there — same established pattern as
+-- direct_messages/actions.ts), so no code path ever writes these tables
+-- through the anon role.
+
+-- Total unread GROUP message count for one employee — used for the
+-- Messenger popup's badge (layout.tsx) and reusable anywhere else that
+-- needs it, so the "what counts as unread" definition lives in exactly
+-- one place. A message counts as unread if it's newer than this member's
+-- last_read_at for that conversation (or, if they've never read it, newer
+-- than when they joined — so messages sent before someone was added never
+-- retroactively count against them) and wasn't sent by themselves.
+CREATE OR REPLACE FUNCTION get_unread_group_message_count(p_employee_id uuid)
+RETURNS integer
+LANGUAGE sql STABLE AS $$
+  SELECT COUNT(*)::integer
+  FROM conversation_messages cm
+  JOIN conversation_members mem
+    ON mem.conversation_id = cm.conversation_id AND mem.employee_id = p_employee_id
+  WHERE cm.sender_employee_id <> p_employee_id
+    AND cm.created_at > COALESCE(mem.last_read_at, mem.joined_at);
+$$;
+
+COMMENT ON TABLE conversations IS
+  'Group conversations (2026-09-02) — parallel to direct_messages, which stays untouched. See '
+  'conversation_members for membership/read-state and the RLS policies just above for the real access '
+  'control (writes go through group-actions.ts''s service-role Server Actions instead).';
+
 
 -- =============================================================================
 -- SECTION 17 — REPORTING VIEWS

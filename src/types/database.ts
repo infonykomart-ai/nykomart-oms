@@ -1390,6 +1390,132 @@ export type Database = {
           },
         ];
       };
+      conversations: {
+        Row: {
+          id: string;
+          name: string;
+          created_by_employee_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          created_by_employee_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          created_by_employee_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversations_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      conversation_members: {
+        Row: {
+          conversation_id: string;
+          employee_id: string;
+          added_by_employee_id: string | null;
+          joined_at: string;
+          last_read_at: string | null;
+        };
+        Insert: {
+          conversation_id: string;
+          employee_id: string;
+          added_by_employee_id?: string | null;
+          joined_at?: string;
+          last_read_at?: string | null;
+        };
+        Update: {
+          conversation_id?: string;
+          employee_id?: string;
+          added_by_employee_id?: string | null;
+          joined_at?: string;
+          last_read_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversation_members_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_members_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_members_added_by_employee_id_fkey";
+            columns: ["added_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      conversation_messages: {
+        Row: {
+          id: string;
+          conversation_id: string;
+          sender_employee_id: string;
+          body: string | null;
+          attachment_path: string | null;
+          attachment_name: string | null;
+          attachment_mime: string | null;
+          attachment_size_bytes: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          conversation_id: string;
+          sender_employee_id: string;
+          body?: string | null;
+          attachment_path?: string | null;
+          attachment_name?: string | null;
+          attachment_mime?: string | null;
+          attachment_size_bytes?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          conversation_id?: string;
+          sender_employee_id?: string;
+          body?: string | null;
+          attachment_path?: string | null;
+          attachment_name?: string | null;
+          attachment_mime?: string | null;
+          attachment_size_bytes?: number | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversation_messages_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_messages_sender_employee_id_fkey";
+            columns: ["sender_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       dispatch_invoices: {
         Row: {
           id: string;
@@ -6365,6 +6491,12 @@ export type Database = {
           rate_to_inr: number | null;
           effective_from: string | null;
         }[];
+      };
+      get_unread_group_message_count: {
+        Args: {
+          p_employee_id: string;
+        };
+        Returns: number;
       };
       get_order_status_counts: {
         Args: {

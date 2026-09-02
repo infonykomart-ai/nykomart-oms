@@ -3,6 +3,7 @@ import { LogoutButton } from "./logout-button";
 import { CompanySwitcher } from "./company-switcher";
 import { MessagesHeaderLink } from "./messages/messages-header-link";
 import { NotificationBell, type NotificationItem } from "./notification-bell";
+import { GlobalSearchButton } from "./search/global-search";
 
 /**
  * Professional dashboard header — company logo + name (with a switcher for
@@ -63,6 +64,10 @@ export function DashboardHeader({
 
       <div className="flex items-center gap-4">
         <CompanySwitcher companies={companies} currentCompanyId={currentCompanyId} />
+        {/* 2026-09-02: Global Search — "pure OMS ke liye ek global search
+            button" — open to every signed-in employee, per-hit
+            authorization handled server-side (see actions.ts). */}
+        <GlobalSearchButton />
         {/* 2026-08-22: Theme settings — open to every signed-in employee,
             same "not a capability tile" precedent as My Profile/Messages/
             Help Center just below (see capability-info.ts). */}

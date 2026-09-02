@@ -11,6 +11,7 @@ import { HelpCenterProvider } from "@/components/help-center/help-center-provide
 import { getHelpArticles } from "@/lib/help-center/get-articles";
 import { PresenceProvider } from "@/components/presence/presence-context";
 import { MessageToastProvider } from "@/components/messages/message-toast-provider";
+import { MessengerPopup } from "@/components/messages/messenger-popup";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { ThemedShell } from "@/components/theme/themed-shell";
 import { PageTransition } from "@/components/page-transition";
@@ -67,6 +68,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     { count: pendingL2Count },
     { count: overdueBillsCount },
     { data: myThemePrefs },
+    { data: unreadGroupMessageCount },
   ] =
     await Promise.all([
       getHelpArticles(),
@@ -113,6 +115,13 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       // to the caller's own id regardless.
       //
       bprClient.from("employees").select("theme_id, custom_accent_color").eq("id", employee.id).single(),
+      // 2026-09-02 — unread count for the new Messenger popup's group
+      // badge (messenger-popup.tsx). Same RPC the popup itself re-calls on
+      // resync (get_unread_group_message_count, db/2026-09-02-group-
+      // messaging.sql) — seeding it here means the badge's very first
+      // paint is already correct, same reasoning as unreadMessageCount
+      // above for the 1:1 badge.
+      bprClient.rpc("get_unread_group_message_count", { p_employee_id: employee.id }),
     ]);
 
   const notificationItems = [
@@ -170,6 +179,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             </ThemedShell>
           </ThemeProvider>
           <MessageToastProvider meId={employee.id} employeesById={employeesById} />
+          <MessengerPopup
+            meId={employee.id}
+            employeesById={employeesById}
+            initialDirectUnread={unreadMessageCount ?? 0}
+            initialGroupUnread={typeof unreadGroupMessageCount === "number" ? unreadGroupMessageCount : 0}
+          />
         </HelpCenterProvider>
       </CelebrationProvider>
     </PresenceProvider>

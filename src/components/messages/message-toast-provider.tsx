@@ -77,7 +77,12 @@ export function MessageToastProvider({
   if (toasts.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+    // 2026-09-02 — bumped from bottom-4 to bottom-24: the new Messenger
+    // popup (messenger-popup.tsx) now keeps a persistent 56px round bubble
+    // fixed at bottom-6 right-6 on every dashboard page, and bottom-4 would
+    // render these toast cards right on top of it. Toasts now stack ABOVE
+    // the bubble instead of colliding with it.
+    <div className="pointer-events-none fixed bottom-24 right-4 z-50 flex flex-col gap-2">
       {toasts.map((t) => (
         <button
           key={t.id}
