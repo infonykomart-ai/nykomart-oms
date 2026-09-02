@@ -1,6 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
-import { todayIST } from "@/lib/attendance/ist-date";
+import { todayIST, addDaysToDateStr } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
 import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
 import { formatDuration } from "@/lib/attendance/timer";
@@ -56,6 +56,12 @@ export default async function AttendancePage({
   const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
   const sp = await searchParams;
   const viewDate = typeof sp.viewDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.viewDate) ? sp.viewDate : null;
+  // 2026-09-02: "agar employee back date me report submit kare to iska koi
+  // option nahi hai" — the Daily Work Report form now lets an employee add/
+  // edit an entry for any of the last 7 days (today included), not just
+  // today. See actions.ts's own server-side validateLogDate for the
+  // authoritative check — this is just the matching read-side window.
+  const minBackdate = addDaysToDateStr(today, -6);
 
   // "AGAR KOI KAAM NEXT DAY KE LIYE MARK KIYA HAI TO VO AGALE DIN
   // AUTOMATIC PENDING ME DIKH JAYE" — copy forward any still-pending
@@ -63,7 +69,7 @@ export default async function AttendancePage({
   // logs below, so a freshly carried-over row shows up immediately.
   await carryOverPendingDailyLogs(dwlSupabase, employee.id, today);
 
-  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: viewDateLogs }] =
+  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: viewDateLogs }, { data: windowLogs }] =
     await Promise.all([
       supabase.from("attendance").select("*").eq("employee_id", employee.id).eq("attendance_date", today).maybeSingle(),
       supabase
@@ -100,6 +106,21 @@ export default async function AttendancePage({
             .not("submitted_at", "is", null)
             .order("submitted_at", { ascending: true })
         : Promise.resolve({ data: null }),
+      // 2026-09-02: the editable window for the Daily Work Report form
+      // itself — today plus the last 6 days (backdate), so a not-yet-
+      // submitted or already-submitted row from within that window still
+      // shows up (and is still editable, if not yet submitted) after a
+      // refresh. Separate from `recentLogs` above (which is a flat
+      // most-recent-30 feed used for other things) so this is never
+      // silently truncated by that unrelated limit.
+      dwlSupabase
+        .from("daily_work_logs")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
+        .eq("employee_id", employee.id)
+        .gte("log_date", minBackdate)
+        .lte("log_date", today)
+        .order("log_date", { ascending: false })
+        .order("updated_at", { ascending: false }),
     ]);
 
   const attendanceByDate = new Map((monthRows ?? []).map((r) => [r.attendance_date, { status: r.status }]));
@@ -116,7 +137,11 @@ export default async function AttendancePage({
   const summary = summarizeCategories(days);
   const holidayNameByDate = new Map((holidays ?? []).map((h) => [h.holiday_date, h.name]));
 
-  const todaysLogs = (recentLogs ?? []).filter((l) => l.log_date === today);
+  // Kept scoped to TODAY only for every stat below (Today's Work total,
+  // Incomplete Work, My Recent Reports) — unaffected by the backdate
+  // window added 2026-09-02, which only widens what the FORM itself shows/
+  // edits (see `windowLogs` above, passed separately to DailyReportForm).
+  const todaysLogs = (windowLogs ?? []).filter((l) => l.log_date === today);
   // 2026-08-11 (round 3): "submit karte hi khud ke kaam me add ho jaye" —
   // My Recent Reports only lists rows that were actually submitted, not
   // half-typed drafts. DailyReportForm below still gets the full
@@ -360,7 +385,7 @@ export default async function AttendancePage({
           Auto-saves as you type — safe to refresh, nothing typed is lost. Logout also flushes any pending change.
         </p>
       </div>
-      <DailyReportForm todayLogs={todaysLogs} recentLogs={recentLogs ?? []} today={today} />
+      <DailyReportForm editableLogs={windowLogs ?? []} recentLogs={recentLogs ?? []} today={today} minDate={minBackdate} />
 
       <div className="mt-6">
         <RecentReportsList logs={submittedTodaysLogs} />

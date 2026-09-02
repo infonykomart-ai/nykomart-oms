@@ -194,15 +194,22 @@ function persistDraftMap(map: Record<string, LogRow & { savedLocallyAt: number }
 }
 
 export function DailyReportForm({
-  todayLogs,
+  editableLogs,
   today,
+  minDate,
 }: {
-  todayLogs: ServerLog[];
+  // 2026-09-02: "agar employee back date me report submit kare to iska koi
+  // option nahi hai" — this now carries every not-yet-submitted-or-recent
+  // row across the whole backdate window (today and the 6 days before it),
+  // not just today's rows. Each row still shows/edits its own Date field
+  // (see the Field label="Date" below), clamped to [minDate, today].
+  editableLogs: ServerLog[];
   recentLogs: ServerLog[];
   today: string;
+  minDate: string;
 }) {
   const [rows, setRows] = useState<LogRow[]>(() => {
-    const serverRows = todayLogs.map(fromServer);
+    const serverRows = editableLogs.map(fromServer);
     if (typeof window === "undefined") return serverRows.length ? serverRows : [blankRow(today)];
 
     // Merge in any localStorage draft that's newer than (or has no) server
@@ -213,7 +220,7 @@ export function DailyReportForm({
     const merged = new Map(serverRows.map((r) => [r.clientId, r]));
     for (const key of Object.keys(draftMap)) {
       const draft = draftMap[key];
-      if (draft.logDate !== today || draft.submittedAt) continue;
+      if (draft.logDate < minDate || draft.logDate > today || draft.submittedAt) continue;
       // A row's clientId is "new_xxx" only until its FIRST save — once it
       // has a server id, fromServer() re-keys it by that id (see below),
       // but the localStorage entry for it is still sitting under the old
@@ -403,6 +410,7 @@ export function DailyReportForm({
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 md:grid-cols-4">
+              <div><span className="text-slate-400">Date:</span> {row.logDate}{row.logDate !== today && <span className="ml-1 rounded-full bg-blue-100 px-1.5 py-0.5 text-blue-700">Backdated</span>}</div>
               <div><span className="text-slate-400">Work Type:</span> {row.category}</div>
               <div><span className="text-slate-400">Priority:</span> {row.priority}</div>
               <div><span className="text-slate-400">Target Qty:</span> {row.targetQty || "—"}</div>
@@ -429,6 +437,21 @@ export function DailyReportForm({
               <p className="mb-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{rowErrors[row.clientId]}</p>
             )}
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              {/* 2026-09-02: "agar employee back date me report submit kare
+                  to iska koi option nahi hai" — a not-yet-submitted row's
+                  Date is now editable, clamped to the last 7 days
+                  (today included). Defaults to today for a fresh row. */}
+              <Field label="Date">
+                <input
+                  type="date"
+                  value={row.logDate}
+                  min={minDate}
+                  max={today}
+                  onChange={(e) => updateRow(row.clientId, { logDate: e.target.value })}
+                  onBlur={() => saveRow(row.clientId)}
+                  className={inputClass}
+                />
+              </Field>
               <Field label="Work Type">
                 <select
                   value={row.category}

@@ -8,6 +8,7 @@ import { HolidayForm } from "./holiday-form";
 import { WeeklyOffForm } from "./weekly-off-form";
 import { ManualAttendanceForm } from "./manual-attendance-form";
 import { RemoveHolidayButton } from "./remove-holiday-button";
+import { PendingWorkPanel, type PendingWorkGroup } from "./pending-work-panel";
 
 // 2026-08-11: Attendance Admin — holiday calendar + weekly-off pattern per
 // company, a team-wide monthly Present/Absent/Late/Leave/Holiday/Week Off
@@ -49,7 +50,7 @@ export default async function AttendanceAdminPage({
   // bug found and fixed this round in salary/actions.ts + salary/page.tsx.
   const monthEnd = `${monthParam}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
 
-  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }] = await Promise.all([
+  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }, { data: pendingWorkRows }] = await Promise.all([
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
     supabase.from("holidays").select("id, holiday_date, name, company_id").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd).order("holiday_date"),
@@ -65,10 +66,51 @@ export default async function AttendanceAdminPage({
       .not("submitted_at", "is", null)
       .order("log_date", { ascending: false })
       .limit(200),
+    // 2026-09-02: "pending work,next day carry on vala work sabhi employe
+    // ki sheet par dikhnae sath me admin ko bhi dikhe ki kiska kitna kaam
+    // baki hai" — every still-open (Pending / In Progress) row, team-wide,
+    // NOT date-bound to the selected month (a lingering old Pending row is
+    // still real open work regardless of which log_date it's stamped
+    // with) — see PendingWorkPanel below. These rows are never submitted
+    // by design (Submit requires Completed — see actions.ts), so
+    // .is("submitted_at", null) is defense in depth, not the primary filter.
+    dwlSupabase
+      .from("daily_work_logs")
+      .select("id, employee_id, log_date, category, description, work_status, priority, estimated_time_minutes")
+      .eq("company_id", selectedCompanyId)
+      .in("work_status", ["Pending", "In Progress"])
+      .is("submitted_at", null)
+      .order("log_date", { ascending: false })
+      .limit(300),
   ]);
 
   const employeeName = new Map((teamEmployees ?? []).map((e) => [e.id, e.name]));
   const holidayDates = new Set((holidays ?? []).map((h) => h.holiday_date));
+
+  // 2026-09-02: group pendingWorkRows by employee for PendingWorkPanel —
+  // summary counts (Pending / In Progress) plus the full row list per
+  // employee for the expand-to-detail view. Employees with zero open work
+  // are simply absent from this list (nothing to show).
+  const pendingByEmployee = new Map<string, PendingWorkGroup>();
+  for (const r of pendingWorkRows ?? []) {
+    let group = pendingByEmployee.get(r.employee_id);
+    if (!group) {
+      group = { employeeId: r.employee_id, employeeName: employeeName.get(r.employee_id) ?? "—", pendingCount: 0, inProgressCount: 0, rows: [] };
+      pendingByEmployee.set(r.employee_id, group);
+    }
+    if (r.work_status === "In Progress") group.inProgressCount++;
+    else group.pendingCount++;
+    group.rows.push({
+      id: r.id,
+      logDate: r.log_date,
+      category: r.category,
+      description: r.description,
+      workStatus: r.work_status,
+      priority: r.priority || "Medium",
+      estimatedTimeMinutes: r.estimated_time_minutes,
+    });
+  }
+  const pendingWorkGroups = Array.from(pendingByEmployee.values()).sort((a, b) => (b.pendingCount + b.inProgressCount) - (a.pendingCount + a.inProgressCount));
   const weeklyOffDays = (selectedCompany?.weekly_off_days as number[] | undefined) ?? [0];
 
   const rowsByEmployee = new Map<string, Map<string, { status: string | null }>>();
@@ -271,6 +313,17 @@ export default async function AttendanceAdminPage({
         </div>
       </div>
 
+      {/* 2026-09-02: "pending work,next day carry on vala work sabhi
+          employe ki sheet par dikhnae sath me admin ko bhi dikhe ki kiska
+          kitna kaam baki hai" */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">🔄 Pending / Carry-Forward Work — Team</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Every employee&apos;s still-open (Pending / In Progress) Daily Work Report items, regardless of which day they were logged on. Click Show to see the actual list for anyone.
+        </p>
+        <PendingWorkPanel groups={pendingWorkGroups} />
+      </div>
+
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">Manual Correction</h2>
         <p className="mb-3 text-xs text-slate-500">Missed punch, approved leave, or a one-off half day — sets/overrides that day&apos;s status directly.</p>
@@ -287,6 +340,19 @@ export default async function AttendanceAdminPage({
               <span className="ml-2 text-slate-500">{employeeName.get(l.employee_id) ?? "—"}</span>
               <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
               <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
+              {/* 2026-09-02: "task compleate ho gaya to vo daily report me
+                  employe ko to dikh jata hai lekin admin ko show nahi
+                  hota" — markTaskDone() (tasks/actions.ts) already
+                  auto-inserts a submitted daily_work_logs row prefixed
+                  "[Task] ..." whenever an assigned Task is marked Done, so
+                  it was always technically included in this same feed —
+                  it just blended in with no visual signal, easy to miss.
+                  This badge is the fix: make a task-completion row
+                  unmistakable at a glance instead of adding a second,
+                  separate feed. */}
+              {l.description?.startsWith("[Task]") && (
+                <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700">📋 From Task</span>
+              )}
               {l.estimated_time_minutes ? (
                 <span className="ml-2 text-slate-400" title="Just an estimate — never counted in any total">
                   Est {formatDuration(l.estimated_time_minutes * 60)} (not counted)

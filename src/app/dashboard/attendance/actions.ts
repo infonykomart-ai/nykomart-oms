@@ -54,6 +54,22 @@ export async function punchOutOnLogout(): Promise<void> {
 // employee could log their own work with no special permission.
 // ============================================================================
 
+// 2026-09-02: "agar employee back date me report submit kare to iska koi
+// option nahi hai" — employees can now log/backdate a Daily Work Report
+// entry for any of the last 7 days (today included), not just today.
+// Server-side is the authoritative check (the client's date picker is just
+// UX) — never trust a client-supplied logDate blindly.
+const BACKDATE_WINDOW_DAYS = 6; // + today = 7 days total
+
+function validateLogDate(logDate: string): string | null {
+  if (!logDate) return null; // falls back to todayIST() below, always valid
+  const today = todayIST();
+  const minDate = addDaysToDateStr(today, -BACKDATE_WINDOW_DAYS);
+  if (logDate > today) return "You can't log work for a future date.";
+  if (logDate < minDate) return `You can only log work for the last 7 days (from ${minDate}).`;
+  return null;
+}
+
 export type DailyLogInput = {
   id?: string; // present = update existing row, absent = create new
   logDate: string;
@@ -85,6 +101,8 @@ export type DailyLogInput = {
  */
 export async function upsertDailyLog(input: DailyLogInput): Promise<{ error: string | null; id: string | null; updatedAt: string | null }> {
   const employee = await getAuthedEmployee();
+  const dateError = validateLogDate(input.logDate);
+  if (dateError) return { error: dateError, id: null, updatedAt: null };
   const supabase = createServiceRoleClient();
 
   const row = {
@@ -245,6 +263,8 @@ export async function saveAndSubmitDailyLog(input: DailyLogInput): Promise<{ err
   if (input.workStatus !== "Completed") {
     return { error: "Mark Work Status as Completed before submitting.", id: null, submittedAt: null };
   }
+  const dateError = validateLogDate(input.logDate);
+  if (dateError) return { error: dateError, id: null, submittedAt: null };
 
   const employee = await getAuthedEmployee();
   const supabase = createServiceRoleClient();

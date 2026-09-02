@@ -14,9 +14,14 @@ import { todayIST, nowISOInstant, nowISTTime } from "./ist-date";
 
 // HH:MM (IST, 24h) — same config-constant convention as the old system's
 // ATTENDANCE_LATE_CUTOFF_HOUR/MINUTE. No admin UI to change this yet
-// (flagged as a scope simplification) — edit this constant if 9:30 AM
-// isn't the right cutoff.
-const LATE_CUTOFF_HHMM = "09:30";
+// (flagged as a scope simplification) — edit this constant if the cutoff
+// needs to change again.
+//
+// 2026-09-02: "attendance 9:30 ke baad sabhi ko late dikhati hai punching
+// time 9:20 se 9:45 am tak agar koi present karta hai to vo present
+// dikhaye" — moved from 09:30 to 09:45. Anyone punching in AT or before
+// 9:45 AM IST now shows Present; only strictly after 9:45 shows Late.
+const LATE_CUTOFF_HHMM = "09:45";
 
 export async function recordPunchIn(
   supabase: SupabaseClient<Database>,
