@@ -159,9 +159,15 @@ export function MessengerPopup({
     resyncUnreadCounts();
   }
 
+  // 2026-09-02 — bottom-24/right-24, NOT right-6: the existing Help Center
+  // widget (help-center-provider.tsx) already owns "bottom-24 right-6" for
+  // its own panel. Sharing that exact spot meant the two panels would
+  // render on top of each other if a person opened both — this keeps the
+  // Messenger panel anchored above its own bubble (see the button below,
+  // also moved off right-6 for the same reason) instead of colliding.
   const panelSizeClasses = expanded
     ? "fixed inset-y-0 right-0 z-50 w-full max-w-md border-l border-slate-200 shadow-2xl"
-    : "fixed bottom-24 right-6 z-50 h-[30rem] w-96 max-w-[calc(100vw-3rem)] rounded-xl border border-slate-200 shadow-2xl";
+    : "fixed bottom-24 right-24 z-50 h-[30rem] w-96 max-w-[calc(100vw-3rem)] rounded-xl border border-slate-200 shadow-2xl";
 
   return (
     <>
@@ -255,11 +261,22 @@ export function MessengerPopup({
         </div>
       )}
 
+      {/* 2026-09-02 fix — right-24, NOT right-6: the pre-existing Help
+          Center widget (help-center-provider.tsx) already sits at
+          "fixed bottom-6 right-6 z-40" with the exact same size/shape/color
+          (bg-amber-500, h-14 w-14). Sharing that spot meant Help Center's
+          own button — which renders AFTER this one in the DOM, since
+          HelpCenterProvider wraps this component as one of its children —
+          painted directly on top of this button and silently ate every
+          click. Root cause of "group option/split window not appearing":
+          people were actually clicking the OLD Help Center bubble the
+          whole time, this one was invisible underneath it. Sitting the two
+          buttons side by side instead of stacked fixes that for good. */}
       <button
         type="button"
         onClick={toggleOpen}
         title="Messenger"
-        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500 text-2xl text-white shadow-xl transition hover:bg-amber-600"
+        className="fixed bottom-6 right-24 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500 text-2xl text-white shadow-xl transition hover:bg-amber-600"
       >
         {open ? "✕" : "💬"}
         {!open && combinedUnread > 0 && (
