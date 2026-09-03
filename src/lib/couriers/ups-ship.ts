@@ -78,11 +78,18 @@ export type UpsShipResult = {
   raw: unknown;
 };
 
-async function getUpsAccessToken(): Promise<string> {
-  const clientId = process.env.UPS_CLIENT_ID;
-  const clientSecret = process.env.UPS_CLIENT_SECRET;
+// 2026-09-03: `override` lets a caller supply per-company credentials
+// resolved from the new courier_credentials table (see
+// src/lib/couriers/credentials.ts) instead of this deployment's global env
+// vars. UPS booking credentials are used ONLY here (not shared with any
+// tracking cron, unlike FedEx/Aramex — see credentials.ts's header
+// comment), so no env-var-only caller depends on this staying
+// argument-less.
+async function getUpsAccessToken(override?: { clientId?: string; clientSecret?: string }): Promise<string> {
+  const clientId = override?.clientId || process.env.UPS_CLIENT_ID;
+  const clientSecret = override?.clientSecret || process.env.UPS_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    throw new Error("UPS_CLIENT_ID / UPS_CLIENT_SECRET are not set. (Not the same as UPS_WEBHOOK_CLIENT_ID/SECRET — see this file's header comment.)");
+    throw new Error("UPS_CLIENT_ID / UPS_CLIENT_SECRET are not set (env var or Account Setup). (Not the same as UPS_WEBHOOK_CLIENT_ID/SECRET — see this file's header comment.)");
   }
   const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
     method: "POST",
@@ -105,8 +112,11 @@ function upsTermsOfShipment(ddpDdu: UpsDdpDdu): "DDP" | "DAP" {
   return ddpDdu === "DDP" ? "DDP" : "DAP";
 }
 
-export async function createUpsShipment(input: UpsShipInput): Promise<UpsShipResult> {
-  const accessToken = await getUpsAccessToken();
+export async function createUpsShipment(
+  input: UpsShipInput,
+  credentials?: { client_id?: string; client_secret?: string }
+): Promise<UpsShipResult> {
+  const accessToken = await getUpsAccessToken({ clientId: credentials?.client_id, clientSecret: credentials?.client_secret });
   const isInternational = input.shipper.countryCode !== input.recipient.countryCode;
 
   const shipmentPayload: Record<string, unknown> = {

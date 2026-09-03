@@ -24,7 +24,19 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   { code: "shipglobal_shipment", label: "Shipglobal Shipments", icon: "🌍", href: "/dashboard/shipglobal",
     description: "Create a real Shipglobal shipment + label for an order (DPD / UniUni / VipParcel / DHL E-Commerce / UBI)." },
   { code: "courier_booking_shipment", label: "Courier Booking", icon: "🚚", href: "/dashboard/courier-booking",
-    description: "Create a real shipment + AWB via FedEx, UPS, Aramex, Delhivery, or Shiprocket's own API — the same real-booking pattern Shipglobal uses." },
+    description: "Book a real shipment + AWB, track it, and print its label — FedEx, UPS, Aramex, Delhivery, Shiprocket, DHL." },
+  // 2026-09-03: Courier Account Setup (the tab that stores each courier's
+  // API credentials, encrypted, per company) — deliberately its own
+  // capability, NOT folded into courier_booking_shipment, same reasoning
+  // performance_admin was split from attendance_admin (2026-09-02):
+  // entering/editing an API secret is more sensitive than booking a
+  // shipment with credentials someone else already set up. Same href as
+  // courier_booking_shipment (both land on the same tabbed page — see
+  // attendance_admin/performance_admin above for the existing precedent of
+  // two capabilities sharing one href) — see
+  // db/2026-09-03-courier-account-setup.sql.
+  { code: "courier_credentials_admin", label: "Courier Account Setup", icon: "🔐", href: "/dashboard/courier-booking",
+    description: "Enter/edit courier API account credentials (FedEx, UPS, Aramex, Delhivery, Shiprocket, DHL) — Admin/MD only." },
   { code: "bill_payment", label: "Bill Payment", icon: "💳", href: "/dashboard/bill-payment",
     description: "Bill-payment approval workflow." },
   { code: "internal_expense_entry", label: "Office Expenses", icon: "🧾", href: "/dashboard/expenses",

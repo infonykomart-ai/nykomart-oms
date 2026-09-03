@@ -3849,6 +3849,22 @@ CREATE INDEX idx_courier_shipments_order    ON courier_shipments(order_id);
 CREATE INDEX idx_courier_shipments_awb      ON courier_shipments(awb_no);
 CREATE INDEX idx_courier_shipments_courier  ON courier_shipments(courier);
 
+-- 2026-09-03: per-company, per-courier API credentials entered via the
+-- Account Setup tab on /dashboard/courier-booking, instead of Vercel env
+-- vars — see db/2026-09-03-courier-account-setup.sql for the full context
+-- comment and src/lib/couriers/credentials.ts for the per-courier field
+-- schema and the encrypt/decrypt + env-var-fallback logic.
+CREATE TABLE courier_credentials (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id   uuid NOT NULL REFERENCES companies(id),
+  courier      text NOT NULL CHECK (courier IN ('fedex', 'ups', 'aramex', 'delhivery', 'shiprocket', 'dhl')),
+  secrets_enc  jsonb NOT NULL DEFAULT '{}',
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  updated_by   uuid REFERENCES employees(id),
+  UNIQUE (company_id, courier)
+);
+CREATE INDEX idx_courier_credentials_company ON courier_credentials(company_id);
+
 -- =============================================================================
 -- SECTION 17c — FREIGHT COST ESTIMATOR (Gap 5 part 1 of the 5-gaps plan)
 -- 2026-08-20 — see claude/five-gaps-implementation-plan-2026-08-20.md and
@@ -4011,7 +4027,12 @@ INSERT INTO capabilities (code, description) VALUES
   -- db/2026-09-02-performance-dashboard.sql. Deliberately its own
   -- capability, not folded into attendance_admin (see capability-info.ts
   -- for the reasoning) — Admin/MD only.
-  ('performance_admin', 'Team-wide Performance & Awards ranking dashboard (order value/growth, attendance, work efficiency) — Admin/MD only');
+  ('performance_admin', 'Team-wide Performance & Awards ranking dashboard (order value/growth, attendance, work efficiency) — Admin/MD only'),
+  -- 2026-09-03: entering/editing courier API credentials (Account Setup tab
+  -- on /dashboard/courier-booking) — deliberately its own capability, not
+  -- folded into courier_booking_shipment (see capability-info.ts for the
+  -- reasoning) — Admin/MD only. See db/2026-09-03-courier-account-setup.sql.
+  ('courier_credentials_admin', 'Enter/edit courier API account credentials (FedEx, UPS, Aramex, Delhivery, Shiprocket, DHL) in the Courier Booking dashboard''s Account Setup tab — Admin/MD only');
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
@@ -4074,7 +4095,8 @@ JOIN (VALUES
   ('Admin',              'data_export_admin'), ('MD', 'data_export_admin'), -- 2026-08-22: Backup Export, Admin/MD only.
   ('Admin',              'audit_log_view'), ('MD', 'audit_log_view'), -- 2026-08-24: Audit log, Admin/MD only to start.
   ('Admin',              'automation_admin'), ('MD', 'automation_admin'), -- 2026-08-24: Automation rules engine, Admin/MD only to start.
-  ('Admin',              'performance_admin'), ('MD', 'performance_admin') -- 2026-09-02: Performance & Awards ranking, Admin/MD only.
+  ('Admin',              'performance_admin'), ('MD', 'performance_admin'), -- 2026-09-02: Performance & Awards ranking, Admin/MD only.
+  ('Admin',              'courier_credentials_admin'), ('MD', 'courier_credentials_admin') -- 2026-09-03: Courier Account Setup, Admin/MD only.
 ) AS rc(role_name, cap) ON rc.role_name = r.name;
 
 

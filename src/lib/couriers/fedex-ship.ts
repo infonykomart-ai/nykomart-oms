@@ -82,8 +82,11 @@ function fedexDutiesPaymentType(ddpDdu: FedexDdpDdu): "SENDER" | "RECIPIENT" {
   return ddpDdu === "DDP" ? "SENDER" : "RECIPIENT";
 }
 
-export async function createFedexShipment(input: FedexShipInput): Promise<FedexShipResult> {
-  const accessToken = await getFedexAccessToken();
+export async function createFedexShipment(
+  input: FedexShipInput,
+  credentials?: { client_id?: string; client_secret?: string }
+): Promise<FedexShipResult> {
+  const accessToken = await getFedexAccessToken({ clientId: credentials?.client_id, clientSecret: credentials?.client_secret });
 
   const isInternational = input.shipper.countryCode !== input.recipient.countryCode;
 

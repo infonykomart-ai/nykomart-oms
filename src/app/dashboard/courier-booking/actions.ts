@@ -32,6 +32,7 @@ import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-s
 import { createDelhiveryShipment } from "@/lib/couriers/delhivery-ship";
 import { createShiprocketShipment } from "@/lib/couriers/shiprocket-ship";
 import { createDhlShipment, type DhlDdpDdu } from "@/lib/couriers/dhl-ship";
+import { resolveCourierCredentials } from "@/lib/couriers/credentials";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 type Courier = "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
@@ -295,6 +296,13 @@ export type CourierBookingCreateState = {
   bookedAmt: number | null;
   bookedCurrency: string | null;
   bookedAmountSource: "api" | "rate_card_estimate" | null;
+  // Only ever populated for the 4 couriers whose booking response includes
+  // a label directly (FedEx/UPS/Aramex/DHL) — Delhivery/Shiprocket always
+  // return null here, since those 2 need the separate on-demand
+  // label-actions.ts flow after the shipment already exists (see that
+  // file's header comment). ResultBanner in create-shipment-form.tsx shows
+  // a download link only when this is non-null.
+  labelUrl: string | null;
 };
 
 const CREATE_INITIAL: CourierBookingCreateState = {
@@ -304,6 +312,7 @@ const CREATE_INITIAL: CourierBookingCreateState = {
   bookedAmt: null,
   bookedCurrency: null,
   bookedAmountSource: null,
+  labelUrl: null,
 };
 
 async function resolveShipperProfile(supabase: ServiceClient, companyId: string) {
@@ -367,7 +376,8 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
   };
 
   try {
-    const result = await createFedexShipment(input);
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "fedex");
+    const result = await createFedexShipment(input, credentials);
     let bookedAmt = result.bookedAmt;
     let bookedCurrency = result.bookedCurrency;
     let bookedSource: "api" | "rate_card_estimate" | null = bookedAmt != null ? "api" : null;
@@ -415,7 +425,7 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logAttempt(supabase, { courier: "fedex", orderId, serviceCode: input.serviceType, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -478,7 +488,8 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
   };
 
   try {
-    const result = await createUpsShipment(input);
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "ups");
+    const result = await createUpsShipment(input, credentials);
     let bookedAmt = result.bookedAmt;
     let bookedCurrency = result.bookedCurrency;
     let bookedSource: "api" | "rate_card_estimate" | null = bookedAmt != null ? "api" : null;
@@ -526,7 +537,7 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logAttempt(supabase, { courier: "ups", orderId, serviceCode: input.serviceCode, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -595,7 +606,8 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
   };
 
   try {
-    const result = await createAramexShipment(input);
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "aramex");
+    const result = await createAramexShipment(input, credentials);
     // Aramex's own create response never carries pricing (see
     // aramex-shipping.ts header comment) — always falls back to the rate
     // card here, not conditionally.
@@ -646,7 +658,7 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logAttempt(supabase, { courier: "aramex", orderId, serviceCode: input.productType, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -692,7 +704,8 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
   };
 
   try {
-    const result = await createDelhiveryShipment(input);
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "delhivery");
+    const result = await createDelhiveryShipment(input, credentials);
     // Delhivery's create.json never carries pricing — always rate-card fallback, same as Aramex.
     let bookedAmt: number | null = null;
     let bookedCurrency: string | null = null;
@@ -738,7 +751,7 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logAttempt(supabase, { courier: "delhivery", orderId, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -790,7 +803,8 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
   };
 
   try {
-    const result = await createShiprocketShipment(input);
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "shiprocket");
+    const result = await createShiprocketShipment(input, credentials);
     let bookedAmt = result.bookedAmt;
     let bookedCurrency = result.bookedCurrency;
     let bookedSource: "api" | "rate_card_estimate" | null = bookedAmt != null ? "api" : null;
@@ -835,7 +849,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logAttempt(supabase, { courier: "shiprocket", orderId, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -909,7 +923,8 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
   };
 
   try {
-    const result = await createDhlShipment(input);
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "dhl");
+    const result = await createDhlShipment(input, credentials);
     let bookedAmt = result.bookedAmt;
     let bookedCurrency = result.bookedCurrency;
     let bookedSource: "api" | "rate_card_estimate" | null = bookedAmt != null ? "api" : null;
@@ -957,7 +972,7 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await logAttempt(supabase, { courier: "dhl", orderId, serviceCode: input.productCode, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });

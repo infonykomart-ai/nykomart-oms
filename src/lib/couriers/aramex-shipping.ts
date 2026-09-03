@@ -188,8 +188,25 @@ function asArray<T>(value: T | T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
-export async function createAramexShipment(input: AramexShipInput): Promise<AramexShipResult> {
-  const client = getAramexClientInfo();
+export async function createAramexShipment(
+  input: AramexShipInput,
+  credentials?: {
+    username?: string;
+    password?: string;
+    account_number?: string;
+    account_pin?: string;
+    account_entity?: string;
+    account_country_code?: string;
+  }
+): Promise<AramexShipResult> {
+  const client = getAramexClientInfo({
+    userName: credentials?.username,
+    password: credentials?.password,
+    accountNumber: credentials?.account_number,
+    accountPin: credentials?.account_pin,
+    accountEntity: credentials?.account_entity,
+    accountCountryCode: credentials?.account_country_code,
+  });
   const requestXml = buildCreateShipmentsRequestXml(client, input);
 
   const res = await fetch(ARAMEX_SHIPPING_ENDPOINT, {

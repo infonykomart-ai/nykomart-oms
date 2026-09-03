@@ -53,14 +53,23 @@ export type DelhiveryShipResult = {
   raw: unknown;
 };
 
-function getDelhiveryApiToken(): string {
-  const token = process.env.DELHIVERY_API_TOKEN;
-  if (!token) throw new Error("DELHIVERY_API_TOKEN is not set.");
+// 2026-09-03: `override` lets a caller supply a per-company token resolved
+// from the new courier_credentials table (see
+// src/lib/couriers/credentials.ts) instead of this deployment's global env
+// var. Delhivery's booking token is used ONLY here (not shared with any
+// tracking cron today), so no env-var-only caller depends on this staying
+// argument-less.
+function getDelhiveryApiToken(override?: string): string {
+  const token = override || process.env.DELHIVERY_API_TOKEN;
+  if (!token) throw new Error("DELHIVERY_API_TOKEN is not set (env var or Account Setup).");
   return token;
 }
 
-export async function createDelhiveryShipment(input: DelhiveryShipInput): Promise<DelhiveryShipResult> {
-  const token = getDelhiveryApiToken();
+export async function createDelhiveryShipment(
+  input: DelhiveryShipInput,
+  credentials?: { api_token?: string }
+): Promise<DelhiveryShipResult> {
+  const token = getDelhiveryApiToken(credentials?.api_token);
 
   const shipment = {
     name: input.consignee.name,

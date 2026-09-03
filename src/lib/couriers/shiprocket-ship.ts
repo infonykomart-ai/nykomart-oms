@@ -62,10 +62,17 @@ export type ShiprocketShipResult = {
   raw: unknown;
 };
 
-async function shiprocketLogin(): Promise<string> {
-  const email = process.env.SHIPROCKET_EMAIL;
-  const password = process.env.SHIPROCKET_PASSWORD;
-  if (!email || !password) throw new Error("SHIPROCKET_EMAIL / SHIPROCKET_PASSWORD are not set.");
+// 2026-09-03: `override` lets a caller supply per-company credentials
+// resolved from the new courier_credentials table (see
+// src/lib/couriers/credentials.ts) instead of this deployment's global env
+// vars. Shiprocket's booking login is used ONLY here (not shared with any
+// tracking cron — its webhook auth token, SHIPROCKET_WEBHOOK_TOKEN, is a
+// completely separate credential, see .env.example), so no env-var-only
+// caller depends on this staying argument-less.
+async function shiprocketLogin(override?: { email?: string; password?: string }): Promise<string> {
+  const email = override?.email || process.env.SHIPROCKET_EMAIL;
+  const password = override?.password || process.env.SHIPROCKET_PASSWORD;
+  if (!email || !password) throw new Error("SHIPROCKET_EMAIL / SHIPROCKET_PASSWORD are not set (env var or Account Setup).");
 
   const res = await fetch(`${SHIPROCKET_API_BASE}/auth/login`, {
     method: "POST",
@@ -84,8 +91,11 @@ async function shiprocketLogin(): Promise<string> {
   return data.token;
 }
 
-export async function createShiprocketShipment(input: ShiprocketShipInput): Promise<ShiprocketShipResult> {
-  const token = await shiprocketLogin();
+export async function createShiprocketShipment(
+  input: ShiprocketShipInput,
+  credentials?: { email?: string; password?: string }
+): Promise<ShiprocketShipResult> {
+  const token = await shiprocketLogin(credentials);
 
   const orderRes = await fetch(`${SHIPROCKET_API_BASE}/orders/create/adhoc`, {
     method: "POST",

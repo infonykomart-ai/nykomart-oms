@@ -61,16 +61,25 @@ export type AramexClientInfo = {
   accountCountryCode: string;
 };
 
-export function getAramexClientInfo(): AramexClientInfo {
-  const userName = process.env.ARAMEX_USERNAME;
-  const password = process.env.ARAMEX_PASSWORD;
-  const accountNumber = process.env.ARAMEX_ACCOUNT_NUMBER;
-  const accountPin = process.env.ARAMEX_ACCOUNT_PIN;
-  const accountEntity = process.env.ARAMEX_ACCOUNT_ENTITY;
-  const accountCountryCode = process.env.ARAMEX_ACCOUNT_COUNTRY_CODE;
+// 2026-09-03: `override` (partial — any subset of fields) lets a caller
+// supply per-company credentials resolved from the new courier_credentials
+// table (see src/lib/couriers/credentials.ts) instead of this deployment's
+// global env vars — used by courier-booking/actions.ts's
+// createAramexBooking, via aramex-shipping.ts. Any field NOT present in
+// override falls back to its env var, same as before this round. The
+// TRACKING cron (poll-fedex-tracking/route.ts) calls this with no
+// argument, so it is fully unaffected — that cron has no per-company
+// concept and is deliberately untouched by this round.
+export function getAramexClientInfo(override?: Partial<AramexClientInfo>): AramexClientInfo {
+  const userName = override?.userName || process.env.ARAMEX_USERNAME;
+  const password = override?.password || process.env.ARAMEX_PASSWORD;
+  const accountNumber = override?.accountNumber || process.env.ARAMEX_ACCOUNT_NUMBER;
+  const accountPin = override?.accountPin || process.env.ARAMEX_ACCOUNT_PIN;
+  const accountEntity = override?.accountEntity || process.env.ARAMEX_ACCOUNT_ENTITY;
+  const accountCountryCode = override?.accountCountryCode || process.env.ARAMEX_ACCOUNT_COUNTRY_CODE;
   if (!userName || !password || !accountNumber || !accountPin || !accountEntity || !accountCountryCode) {
     throw new Error(
-      "ARAMEX_USERNAME / ARAMEX_PASSWORD / ARAMEX_ACCOUNT_NUMBER / ARAMEX_ACCOUNT_PIN / ARAMEX_ACCOUNT_ENTITY / ARAMEX_ACCOUNT_COUNTRY_CODE are not all set."
+      "ARAMEX_USERNAME / ARAMEX_PASSWORD / ARAMEX_ACCOUNT_NUMBER / ARAMEX_ACCOUNT_PIN / ARAMEX_ACCOUNT_ENTITY / ARAMEX_ACCOUNT_COUNTRY_CODE are not all set (env var or Account Setup)."
     );
   }
   return { userName, password, accountNumber, accountPin, accountEntity, accountCountryCode };

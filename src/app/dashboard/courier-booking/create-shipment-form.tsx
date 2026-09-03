@@ -22,6 +22,7 @@ const createInitial: CourierBookingCreateState = {
   bookedAmt: null,
   bookedCurrency: null,
   bookedAmountSource: null,
+  labelUrl: null,
 };
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -55,6 +56,18 @@ function ResultBanner({ state }: { state: CourierBookingCreateState }) {
           )}
           {state.bookedAmt == null && (
             <> No booked amount captured — the courier&apos;s API returned no price and no Courier Rate Card slab matched (enter a Zone below to get an estimate).</>
+          )}
+          {state.labelUrl && (
+            <>
+              {" "}
+              <a href={state.labelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold underline">
+                🖨 Download label
+              </a>
+              .
+            </>
+          )}
+          {!state.labelUrl && state.trackingNo && (
+            <> No label captured from this booking yet — see the Track Shipments tab (Delhivery/Shiprocket can generate one on demand there; for other couriers, check the courier&apos;s own dashboard).</>
           )}
         </div>
       )}
@@ -170,7 +183,17 @@ function SharedShipmentFields({ order }: { order: CourierBookingLookupOrder }) {
   );
 }
 
-export function CreateShipmentForm() {
+// Non-secret values (account numbers, pickup location names) saved via the
+// Account Setup tab — see credentials.ts's getNonSecretCredentialValues.
+// Keyed exactly like COURIER_CREDENTIAL_FIELDS's field `key`s (e.g.
+// prefill.fedex.account_number), NOT like this form's own input `name`
+// attributes, which differ per courier (fedex_account_number vs
+// ups_shipper_number etc) for historical reasons — mapped one field at a
+// time below rather than renamed, to avoid touching the 6 create* actions'
+// formData.get() calls in actions.ts.
+export type CourierBookingPrefill = Partial<Record<CourierKey, Record<string, string>>>;
+
+export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefill }) {
   const [lookupState, lookupAction, lookupPending] = useActionState(lookupOrderForCourierBooking, lookupInitial);
   const [fedexState, fedexAction, fedexPending] = useActionState(createFedexBooking, createInitial);
   const [upsState, upsAction, upsPending] = useActionState(createUpsBooking, createInitial);
@@ -230,7 +253,12 @@ export function CreateShipmentForm() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <div>
                   <label className={labelClass}>FedEx Account Number *</label>
-                  <input name="fedex_account_number" required className={inputClass} />
+                  <input
+                    name="fedex_account_number"
+                    required
+                    defaultValue={prefill?.fedex?.account_number ?? ""}
+                    className={inputClass}
+                  />
                 </div>
                 <div>
                   <label className={labelClass}>Service Type</label>
@@ -263,7 +291,12 @@ export function CreateShipmentForm() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <div>
                   <label className={labelClass}>UPS Shipper Number *</label>
-                  <input name="ups_shipper_number" required className={inputClass} />
+                  <input
+                    name="ups_shipper_number"
+                    required
+                    defaultValue={prefill?.ups?.shipper_number ?? ""}
+                    className={inputClass}
+                  />
                 </div>
                 <div>
                   <label className={labelClass}>Service Code</label>
@@ -296,7 +329,12 @@ export function CreateShipmentForm() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div>
                   <label className={labelClass}>Aramex Account Number *</label>
-                  <input name="aramex_account_number" required className={inputClass} />
+                  <input
+                    name="aramex_account_number"
+                    required
+                    defaultValue={prefill?.aramex?.account_number ?? ""}
+                    className={inputClass}
+                  />
                 </div>
                 <div>
                   <label className={labelClass}>Product Group</label>
@@ -343,7 +381,13 @@ export function CreateShipmentForm() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <div>
                   <label className={labelClass}>Pickup Location Name *</label>
-                  <input name="pickup_location_name" required placeholder="registered on Delhivery dashboard" className={inputClass} />
+                  <input
+                    name="pickup_location_name"
+                    required
+                    placeholder="registered on Delhivery dashboard"
+                    defaultValue={prefill?.delhivery?.pickup_location_name ?? ""}
+                    className={inputClass}
+                  />
                 </div>
                 <div>
                   <label className={labelClass}>Payment Mode</label>
@@ -379,7 +423,13 @@ export function CreateShipmentForm() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <div>
                   <label className={labelClass}>Pickup Location Name *</label>
-                  <input name="pickup_location_name" required placeholder="registered on Shiprocket dashboard" className={inputClass} />
+                  <input
+                    name="pickup_location_name"
+                    required
+                    placeholder="registered on Shiprocket dashboard"
+                    defaultValue={prefill?.shiprocket?.pickup_location_name ?? ""}
+                    className={inputClass}
+                  />
                 </div>
                 <div>
                   <label className={labelClass}>Payment Mode</label>
@@ -411,7 +461,12 @@ export function CreateShipmentForm() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div>
                   <label className={labelClass}>DHL Account Number *</label>
-                  <input name="dhl_account_number" required className={inputClass} />
+                  <input
+                    name="dhl_account_number"
+                    required
+                    defaultValue={prefill?.dhl?.account_number ?? ""}
+                    className={inputClass}
+                  />
                 </div>
                 <div>
                   <label className={labelClass}>Product Code</label>

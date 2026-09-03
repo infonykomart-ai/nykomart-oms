@@ -109,12 +109,19 @@ export type DhlShipResult = {
   raw: unknown;
 };
 
-function getDhlExpressCredentials(): { username: string; password: string } {
-  const username = process.env.DHL_EXPRESS_USERNAME;
-  const password = process.env.DHL_EXPRESS_PASSWORD;
+// 2026-09-03: `override` lets a caller supply per-company credentials
+// resolved from the new courier_credentials table (see
+// src/lib/couriers/credentials.ts) instead of this deployment's global env
+// vars. DHL Express booking credentials are used ONLY here — dhl-tracking.ts
+// is a completely different DHL product/credential (DHL_API_KEY, see this
+// file's own header comment) — so no env-var-only caller depends on this
+// staying argument-less.
+function getDhlExpressCredentials(override?: { username?: string; password?: string }): { username: string; password: string } {
+  const username = override?.username || process.env.DHL_EXPRESS_USERNAME;
+  const password = override?.password || process.env.DHL_EXPRESS_PASSWORD;
   if (!username || !password) {
     throw new Error(
-      "DHL_EXPRESS_USERNAME / DHL_EXPRESS_PASSWORD are not set. (These are MyDHL API booking credentials — NOT the same as DHL_API_KEY, which only covers DHL's Tracking API. Register a separate MyDHL API app at developer.dhl.com.)"
+      "DHL_EXPRESS_USERNAME / DHL_EXPRESS_PASSWORD are not set (env var or Account Setup). (These are MyDHL API booking credentials — NOT the same as DHL_API_KEY, which only covers DHL's Tracking API. Register a separate MyDHL API app at developer.dhl.com.)"
     );
   }
   return { username, password };
@@ -144,8 +151,11 @@ function dhlPostalAddress(p: {
   };
 }
 
-export async function createDhlShipment(input: DhlShipInput): Promise<DhlShipResult> {
-  const { username, password } = getDhlExpressCredentials();
+export async function createDhlShipment(
+  input: DhlShipInput,
+  credentials?: { username?: string; password?: string }
+): Promise<DhlShipResult> {
+  const { username, password } = getDhlExpressCredentials(credentials);
   const isInternational = input.shipper.countryCode !== input.recipient.countryCode;
   const declaredValue = input.customsValue ?? 0;
 

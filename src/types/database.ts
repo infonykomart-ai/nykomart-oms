@@ -5508,6 +5508,48 @@ export type Database = {
           },
         ];
       };
+      courier_credentials: {
+        Row: {
+          id: string;
+          company_id: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          secrets_enc: Json;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          secrets_enc?: Json;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          secrets_enc?: Json;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_credentials_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_credentials_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       shipping_bills: {
         Row: {
           id: string;

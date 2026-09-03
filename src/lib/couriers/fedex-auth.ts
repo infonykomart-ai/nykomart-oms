@@ -19,11 +19,19 @@
 
 export const FEDEX_API_BASE = process.env.FEDEX_API_BASE_URL || "https://apis.fedex.com";
 
-export async function getFedexAccessToken(): Promise<string> {
-  const clientId = process.env.FEDEX_API_CLIENT_ID;
-  const clientSecret = process.env.FEDEX_API_CLIENT_SECRET;
+// 2026-09-03: `override` lets a caller supply per-company credentials
+// resolved from the new courier_credentials table (see
+// src/lib/couriers/credentials.ts) instead of this deployment's global env
+// vars — used by courier-booking/actions.ts's createFedexBooking. The
+// TRACKING cron (poll-fedex-tracking/route.ts) calls this with no
+// argument, same as always, and keeps reading the env vars directly below
+// — that cron has no per-company concept and is deliberately untouched by
+// this round.
+export async function getFedexAccessToken(override?: { clientId?: string; clientSecret?: string }): Promise<string> {
+  const clientId = override?.clientId || process.env.FEDEX_API_CLIENT_ID;
+  const clientSecret = override?.clientSecret || process.env.FEDEX_API_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    throw new Error("FEDEX_API_CLIENT_ID / FEDEX_API_CLIENT_SECRET are not set.");
+    throw new Error("FEDEX_API_CLIENT_ID / FEDEX_API_CLIENT_SECRET are not set (env var or Account Setup).");
   }
 
   const res = await fetch(`${FEDEX_API_BASE}/oauth/token`, {
