@@ -23,6 +23,10 @@ import { markOrderWhatsAppSent } from "./actions";
  * Either way, sending is a manual last step inside WhatsApp itself — this
  * button cannot (and does not claim to) guarantee delivery, only that the
  * employee was hands-off for building the message.
+ *
+ * A separate "📋 Copy caption" button next to it copies the same details
+ * as plain text to the clipboard — see the 2026-09-03 note below on why
+ * that exists alongside the image-only send.
  */
 export function OrderWhatsAppButton({
   order,
@@ -51,6 +55,7 @@ export function OrderWhatsAppButton({
   const [sentAt, setSentAt] = useState(order.whatsapp_sent_at);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [copied, setCopied] = useState(false);
 
   // 2026-09-02: "tassel fringes sirf cotton rug me hota hai" — the field is
   // only meaningful for cotton rugs; showing "Tassel/Fringes: No" on every
@@ -118,9 +123,22 @@ export function OrderWhatsAppButton({
     //    tall image gets cropped there — no separate `text` field needed to
     //    make it visible.
     //
-    // Do not re-add `text` to shareData here without a device-verified fix
-    // for the split — re-adding it on a hunch is exactly what caused this
-    // round's regression.
+    // 2026-09-03: "photo+text message ek sath" — user explicitly asked for
+    // the caption to go as real, copyable/searchable WhatsApp text again
+    // (an image-only caption can't be searched or copy-pasted inside
+    // WhatsApp). Told directly, in the same conversation, that this exact
+    // combination — image file + a `text` field in one shareData — was
+    // tried and reverted twice before (2026-08-08, then again 2026-09-01
+    // -> 2026-09-02) because it split into 2 separate WhatsApp bubbles on
+    // real devices both times. User chose to go ahead anyway, so `text` is
+    // back here — but per that history, treat this as UNVERIFIED on real
+    // devices until it's actually been tried on both a phone and a
+    // computer (both split last time). If it splits again: don't just
+    // flip it back a third time — remove `text` here again AND lean on
+    // the "📋 Copy caption" button below as the intended workaround
+    // instead (copies the same text to the clipboard, paste it as its own
+    // WhatsApp message only when actually needed — searchable/copyable on
+    // demand, with no risk of an automatic split).
     if (order.photo_url && typeof navigator !== "undefined" && "share" in navigator) {
       try {
         const imageParams = new URLSearchParams({
@@ -141,7 +159,7 @@ export function OrderWhatsAppButton({
         if (res.ok) {
           const blob = await res.blob();
           const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
-          const shareData = { files: [file] };
+          const shareData = { files: [file], text };
           if ("canShare" in navigator && navigator.canShare(shareData)) {
             await navigator.share(shareData);
             markSent();
@@ -178,6 +196,24 @@ export function OrderWhatsAppButton({
     });
   }
 
+  // 2026-09-03: safety net alongside the image+text share above — copies
+  // the exact same caption as plain text to the clipboard so it can be
+  // pasted as its own WhatsApp message whenever it's actually needed to be
+  // searchable/copyable (e.g. searching WhatsApp later for a PO/RF/RG
+  // number), without depending on the OS share sheet keeping photo+text
+  // together. Doesn't send anything by itself and doesn't call markSent()
+  // — copying isn't sending.
+  async function handleCopyCaption() {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(buildMessage());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Could not copy — your browser may be blocking clipboard access.");
+    }
+  }
+
   // 2026-08-07: "whatsapp par send karne ka option regular hona chahiye,
   // ek baar send hone ke baad dubara send nahi kar paye ese nahi, bus sent
   // jo hoga vo green ho jaye" — sending stays available every time (e.g. to
@@ -186,18 +222,32 @@ export function OrderWhatsAppButton({
   // card's green tint elsewhere, driven by the same whatsapp_sent_at).
   return (
     <div>
-      <button
-        type="button"
-        disabled={isPending}
-        onClick={handleShare}
-        className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
-          sentAt
-            ? "border-green-400 bg-green-100 text-green-800 hover:bg-green-200"
-            : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-        }`}
-      >
-        {sentAt ? "✓ Sent — Send Again" : "📱 Send on WhatsApp"}
-      </button>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={handleShare}
+          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
+            sentAt
+              ? "border-green-400 bg-green-100 text-green-800 hover:bg-green-200"
+              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          {sentAt ? "✓ Sent — Send Again" : "📱 Send on WhatsApp"}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopyCaption}
+          title="Copy the caption as text — paste it as its own WhatsApp message if you need to search or copy it later"
+          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+            copied
+              ? "border-green-400 bg-green-100 text-green-800"
+              : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          {copied ? "✓ Copied" : "📋 Copy caption"}
+        </button>
+      </div>
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
   );
