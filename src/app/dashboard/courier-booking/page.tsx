@@ -2,6 +2,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { ShipperProfileForm } from "./shipper-profile-form";
 import { CreateShipmentForm, type CourierBookingPrefill } from "./create-shipment-form";
+import { RateComparison } from "./rate-comparison";
 import { AccountSetupForm } from "./account-setup-form";
 import { ShipmentsTracking } from "./shipments-tracking";
 import { CourierBookingTabs, type CourierBookingTab } from "./courier-booking-tabs";
@@ -77,6 +78,7 @@ export default async function CourierBookingPage({
         book={
           <div className="space-y-6">
             <ShipperProfileForm existing={shipper ?? null} companyName={company?.name ?? "this company"} />
+            <RateComparison />
             <div className="rounded-lg border border-slate-200 bg-white p-4">
               <h2 className="mb-3 text-sm font-semibold text-slate-800">Create Shipment</h2>
               <CreateShipmentForm prefill={prefill} />

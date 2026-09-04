@@ -59,7 +59,7 @@ export type DelhiveryShipResult = {
 // var. Delhivery's booking token is used ONLY here (not shared with any
 // tracking cron today), so no env-var-only caller depends on this staying
 // argument-less.
-function getDelhiveryApiToken(override?: string): string {
+export function getDelhiveryApiToken(override?: string): string {
   const token = override || process.env.DELHIVERY_API_TOKEN;
   if (!token) throw new Error("DELHIVERY_API_TOKEN is not set (env var or Account Setup).");
   return token;

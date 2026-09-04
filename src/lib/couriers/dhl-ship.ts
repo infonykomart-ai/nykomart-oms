@@ -59,7 +59,7 @@
 // Rate Card fallback for whenever this comes back null, exactly like
 // Aramex/Delhivery.
 
-const DHL_EXPRESS_API_BASE = process.env.DHL_EXPRESS_API_BASE_URL || "https://express.api.dhl.com/mydhlapi";
+export const DHL_EXPRESS_API_BASE = process.env.DHL_EXPRESS_API_BASE_URL || "https://express.api.dhl.com/mydhlapi";
 
 export type DhlDdpDdu = "DDP" | "DDU";
 
@@ -116,7 +116,7 @@ export type DhlShipResult = {
 // is a completely different DHL product/credential (DHL_API_KEY, see this
 // file's own header comment) — so no env-var-only caller depends on this
 // staying argument-less.
-function getDhlExpressCredentials(override?: { username?: string; password?: string }): { username: string; password: string } {
+export function getDhlExpressCredentials(override?: { username?: string; password?: string }): { username: string; password: string } {
   const username = override?.username || process.env.DHL_EXPRESS_USERNAME;
   const password = override?.password || process.env.DHL_EXPRESS_PASSWORD;
   if (!username || !password) {

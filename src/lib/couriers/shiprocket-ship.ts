@@ -30,7 +30,7 @@
 // real quoted amount at booking time. Falls back to null (rate-card
 // estimate) if the field isn't present in a given response.
 
-const SHIPROCKET_API_BASE = process.env.SHIPROCKET_API_BASE_URL || "https://apiv2.shiprocket.in/v1/external";
+export const SHIPROCKET_API_BASE = process.env.SHIPROCKET_API_BASE_URL || "https://apiv2.shiprocket.in/v1/external";
 
 export type ShiprocketShipInput = {
   orderRefNo: string;
@@ -69,7 +69,7 @@ export type ShiprocketShipResult = {
 // tracking cron — its webhook auth token, SHIPROCKET_WEBHOOK_TOKEN, is a
 // completely separate credential, see .env.example), so no env-var-only
 // caller depends on this staying argument-less.
-async function shiprocketLogin(override?: { email?: string; password?: string }): Promise<string> {
+export async function shiprocketLogin(override?: { email?: string; password?: string }): Promise<string> {
   const email = override?.email || process.env.SHIPROCKET_EMAIL;
   const password = override?.password || process.env.SHIPROCKET_PASSWORD;
   if (!email || !password) throw new Error("SHIPROCKET_EMAIL / SHIPROCKET_PASSWORD are not set (env var or Account Setup).");

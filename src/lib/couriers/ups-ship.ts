@@ -31,7 +31,7 @@
 // (NegotiatedRatesIndicator) — extracted when present, null otherwise
 // (caller falls back to a rate-card estimate).
 
-const UPS_API_BASE = process.env.UPS_API_BASE_URL || "https://onlinetools.ups.com";
+export const UPS_API_BASE = process.env.UPS_API_BASE_URL || "https://onlinetools.ups.com";
 
 export type UpsDdpDdu = "DDP" | "DDU";
 
@@ -85,7 +85,7 @@ export type UpsShipResult = {
 // tracking cron, unlike FedEx/Aramex — see credentials.ts's header
 // comment), so no env-var-only caller depends on this staying
 // argument-less.
-async function getUpsAccessToken(override?: { clientId?: string; clientSecret?: string }): Promise<string> {
+export async function getUpsAccessToken(override?: { clientId?: string; clientSecret?: string }): Promise<string> {
   const clientId = override?.clientId || process.env.UPS_CLIENT_ID;
   const clientSecret = override?.clientSecret || process.env.UPS_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
