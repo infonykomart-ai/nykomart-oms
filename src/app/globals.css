@@ -344,6 +344,10 @@ body {
  * unscaled outer tile, doesn't get dragged along by its neighbor's scale.
  * `transform-origin: bottom` makes the icon grow upward from a fixed
  * baseline, like a real dock, instead of growing in both directions.
+ * `translateZ(0)` promotes the glyph to its own compositing layer so the
+ * browser scales it on the GPU path instead of repainting text on the CPU
+ * on every frame of the hover transition — the difference between a crisp
+ * scale-up and a soft/blurry one for a large emoji glyph.
  *
  * Neighbor magnify uses `:has()`, which degrades gracefully: on any
  * browser old enough not to support it, only the hovered/focused tile
@@ -353,18 +357,21 @@ body {
 .oms-dock-icon-wrap {
   transform-origin: bottom center;
   transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  backface-visibility: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .oms-dock-tile:hover .oms-dock-icon-wrap,
 .oms-dock-tile:focus-visible .oms-dock-icon-wrap {
-  transform: scale(1.3);
+  transform: translateZ(0) scale(1.3);
 }
 
 .oms-dock-tile:has(+ .oms-dock-tile:hover) .oms-dock-icon-wrap,
 .oms-dock-tile:has(+ .oms-dock-tile:focus-visible) .oms-dock-icon-wrap,
 .oms-dock-tile:hover + .oms-dock-tile .oms-dock-icon-wrap,
 .oms-dock-tile:focus-visible + .oms-dock-tile .oms-dock-icon-wrap {
-  transform: scale(1.12);
+  transform: translateZ(0) scale(1.12);
 }
 
 .oms-dock-tooltip {
@@ -379,27 +386,73 @@ body {
   transform: translate(-50%, 0);
 }
 
-/* Thin, theme-neutral scrollbar for the dock's own horizontal scroll
-   (~30+ tiles at once can exceed even a wide viewport) — deliberately not
-   .oms-scroll's always-visible amber bar, which would look out of place
-   on a floating pill in every theme. */
-.oms-dock-inner {
-  scrollbar-width: thin;
+/* 2026-09-04 (redesign, same day) — the dock's ~30 tiles no longer scroll
+   via a native horizontal scrollbar (there's nothing to hide: the
+   `.oms-dock-viewport` below is `overflow: hidden`, and `.oms-dock-track`
+   is panned into view with a `transform: translateX(...)` written
+   directly by dashboard-dock.tsx's pointer/focus handlers). The old
+   `.oms-dock-inner::-webkit-scrollbar` rules are gone along with the
+   `overflow-x-auto` that needed them. */
+.oms-dock-viewport {
+  position: relative;
+  /* The visible "window" width comes from the flex layout in
+     dashboard-dock.tsx (`min-w-0 flex-1` inside a capped-width pill) —
+     nothing sized here, just the clipping + a positioning context for
+     the glow. */
 }
 
-.oms-dock-inner::-webkit-scrollbar {
-  height: 6px;
+.oms-dock-track {
+  position: relative;
+  z-index: 1;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
 }
 
-.oms-dock-inner::-webkit-scrollbar-thumb {
-  background-color: var(--oms-sidebar-tile-border);
+/* The cursor-follow "electric" glow — a small blurred radial blob in the
+   page's own --oms-accent color (so it matches whichever company theme
+   is active, same as every other accent use in this file), moved by
+   dashboard-dock.tsx setting its `transform` directly on every pointer
+   move (a ref write, not React state — see that component's header
+   comment for why). The `transition` on `transform`/`opacity` here is
+   what turns "snap straight to the cursor" into a smooth trailing chase;
+   `oms-dock-electric-pulse` layers a slow flicker on top so it reads as
+   "electric" rather than just a static soft-focus spotlight.
+   `mix-blend-mode: plus-lighter` lets it glow additively over the tiles
+   and the glass background instead of sitting as a flat opaque circle. */
+.oms-dock-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 90px;
+  height: 90px;
+  margin: -45px 0 0 -45px;
   border-radius: 999px;
+  background: radial-gradient(circle, var(--oms-accent) 0%, transparent 70%);
+  filter: blur(14px);
+  opacity: 0;
+  pointer-events: none;
+  mix-blend-mode: plus-lighter;
+  transition: transform 90ms linear, opacity 200ms ease;
+  animation: oms-dock-electric-pulse 1.6s ease-in-out infinite;
+  z-index: 0;
+}
+
+@keyframes oms-dock-electric-pulse {
+  0%, 100% {
+    scale: 0.92;
+  }
+  50% {
+    scale: 1.08;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .oms-dock-icon-wrap,
-  .oms-dock-tooltip {
+  .oms-dock-tooltip,
+  .oms-dock-track,
+  .oms-dock-glow {
     transition: none;
+    animation: none;
   }
 
   .oms-dock-tile:hover .oms-dock-icon-wrap,
