@@ -18,7 +18,7 @@ function shipmentBadgeClass(status: string): string {
 
 function attemptBadgeClass(status: TrackedShipment["status"]): string {
   if (status === "created") return "bg-green-100 text-green-700";
-  if (status === "failed") return "bg-red-100 text-red-700";
+  if (status === "failed" || status === "cancelled") return "bg-red-100 text-red-700";
   return "bg-slate-100 text-slate-600";
 }
 
@@ -48,6 +48,7 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
             <option value="">All</option>
             <option value="created">Created</option>
             <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
           </select>
         </div>
         <div>
@@ -73,6 +74,7 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                 <th className="px-3 py-2 font-medium">Order Status</th>
                 <th className="px-3 py-2 font-medium">Booked</th>
                 <th className="px-3 py-2 font-medium">Label</th>
+                <th className="px-3 py-2 font-medium">Detail</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -107,6 +109,11 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                     ) : (
                       "—"
                     )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Link href={`/dashboard/courier-booking/shipment/${s.id}`} className="text-xs font-medium text-amber-700 hover:underline">
+                      View →
+                    </Link>
                   </td>
                 </tr>
               ))}

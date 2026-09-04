@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import {
   lookupOrderForCourierBooking,
   createFedexBooking,
@@ -193,7 +193,13 @@ function SharedShipmentFields({ order }: { order: CourierBookingLookupOrder }) {
 // formData.get() calls in actions.ts.
 export type CourierBookingPrefill = Partial<Record<CourierKey, Record<string, string>>>;
 
-export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefill }) {
+// From Pending Orders' "Book" / "Combine & Book" (see pending-orders.tsx)
+// — navigates here with ?tab=book&book_ref_no=...&book_combined_ids=...
+// so the employee lands with the order already loaded instead of having
+// to retype the Ref No.
+export type BookPrefill = { refNo: string; combinedOrderIds: string } | null;
+
+export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: CourierBookingPrefill; bookPrefill?: BookPrefill }) {
   const [lookupState, lookupAction, lookupPending] = useActionState(lookupOrderForCourierBooking, lookupInitial);
   const [fedexState, fedexAction, fedexPending] = useActionState(createFedexBooking, createInitial);
   const [upsState, upsAction, upsPending] = useActionState(createUpsBooking, createInitial);
@@ -202,16 +208,29 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
   const [shiprocketState, shiprocketAction, shiprocketPending] = useActionState(createShiprocketBooking, createInitial);
   const [dhlState, dhlAction, dhlPending] = useActionState(createDhlBooking, createInitial);
   const [courier, setCourier] = useState<CourierKey>("fedex");
+  const lookupFormRef = useRef<HTMLFormElement>(null);
+  const autoSubmitted = useRef(false);
 
   const order = lookupState.order;
+  const combinedIdsField = order?.combinedOrderIds.join(",") ?? "";
+
+  // Auto-submit the lookup exactly once when arriving pre-filled from
+  // Pending Orders, instead of making the employee retype/resubmit.
+  useEffect(() => {
+    if (bookPrefill?.refNo && !autoSubmitted.current) {
+      autoSubmitted.current = true;
+      lookupFormRef.current?.requestSubmit();
+    }
+  }, [bookPrefill]);
 
   return (
     <div className="space-y-4">
-      <form action={lookupAction} className="flex items-end gap-2">
+      <form ref={lookupFormRef} action={lookupAction} className="flex items-end gap-2">
         <div className="flex-1">
           <label className={labelClass}>Order Ref No.</label>
-          <input name="ref_no" required placeholder="e.g. PO-0123" className={inputClass} />
+          <input name="ref_no" required defaultValue={bookPrefill?.refNo ?? ""} placeholder="e.g. PO-0123" className={inputClass} />
         </div>
+        <input type="hidden" name="combined_order_ids" value={bookPrefill?.combinedOrderIds ?? ""} />
         <button
           type="submit"
           disabled={lookupPending}
@@ -221,6 +240,14 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
         </button>
       </form>
       {lookupState.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{lookupState.error}</p>}
+
+      {order && order.combinedOrderIds.length > 0 && (
+        <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+          Combining {order.combinedOrderIds.length + 1} orders into ONE shipment: {order.refNo}, {order.combinedRefNos.join(", ")}.
+          Declared value below is the combined total — package weight/dimensions still need the actual combined-package
+          weight/measurements typed in below.
+        </p>
+      )}
 
       {order && (
         <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
@@ -249,6 +276,7 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
             <form action={fedexAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
+              <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
               <ResultBanner state={fedexState} />
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <div>
@@ -287,6 +315,7 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
             <form action={upsAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
+              <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
               <ResultBanner state={upsState} />
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <div>
@@ -325,6 +354,7 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
             <form action={aramexAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
+              <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
               <ResultBanner state={aramexState} />
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div>
@@ -374,6 +404,7 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
             <form action={delhiveryAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
+              <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
               <ResultBanner state={delhiveryState} />
               <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 Delhivery ships within India only — no customs/duty fields apply.
@@ -416,6 +447,7 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
             <form action={shiprocketAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
+              <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
               <ResultBanner state={shiprocketState} />
               <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 Domestic adhoc-order flow only this round — see the report for what international Shiprocket booking would need.
@@ -457,6 +489,7 @@ export function CreateShipmentForm({ prefill }: { prefill?: CourierBookingPrefil
             <form action={dhlAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
+              <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
               <ResultBanner state={dhlState} />
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div>

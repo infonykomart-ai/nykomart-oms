@@ -3832,7 +3832,7 @@ CREATE TABLE courier_shipments (
   order_shipment_id   uuid REFERENCES order_shipments(id),
   service_code        text,
   ddp_ddu             text CHECK (ddp_ddu IN ('DDP', 'DDU')),
-  status              text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'created', 'failed')),
+  status              text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'created', 'failed', 'cancelled')),
   awb_no              text,
   label_url           text,
   booked_amt          numeric(14,2),
@@ -3841,6 +3841,11 @@ CREATE TABLE courier_shipments (
   request_payload     jsonb,
   response_payload    jsonb,
   error_message       text,
+  -- 2026-09-04: EGS-integration round — Cancel Shipment modal on the new
+  -- shipment detail page. See db/2026-09-04-egs-integration-pickup-and-cancel.sql.
+  cancel_reason        text,
+  cancel_remark        text,
+  cancelled_at          timestamptz,
   created_by          uuid REFERENCES employees(id),
   created_at          timestamptz NOT NULL DEFAULT now(),
   UNIQUE (order_id, courier)
@@ -3864,6 +3869,36 @@ CREATE TABLE courier_credentials (
   UNIQUE (company_id, courier)
 );
 CREATE INDEX idx_courier_credentials_company ON courier_credentials(company_id);
+
+-- 2026-09-04: EGS-integration round — Pickup Request scheduling (internal
+-- request log only, NOT a live courier pickup API call — see
+-- db/2026-09-04-egs-integration-pickup-and-cancel.sql's header comment).
+CREATE TABLE courier_pickup_requests (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              uuid NOT NULL REFERENCES companies(id),
+  courier                 text NOT NULL CHECK (courier IN ('fedex', 'ups', 'aramex', 'delhivery', 'shiprocket', 'dhl')),
+  pickup_address          text NOT NULL,
+  booking_date            date NOT NULL,
+  scheduled_pickup_date   date NOT NULL,
+  status                  text NOT NULL DEFAULT 'requested' CHECK (status IN ('requested', 'confirmed', 'cancelled')),
+  remark                  text,
+  request_payload         jsonb,
+  response_payload        jsonb,
+  created_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_courier_pickup_requests_company ON courier_pickup_requests(company_id);
+CREATE INDEX idx_courier_pickup_requests_courier ON courier_pickup_requests(courier);
+CREATE INDEX idx_courier_pickup_requests_date    ON courier_pickup_requests(scheduled_pickup_date);
+
+CREATE TABLE courier_pickup_request_awbs (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  pickup_request_id   uuid NOT NULL REFERENCES courier_pickup_requests(id),
+  order_shipment_id   uuid NOT NULL REFERENCES order_shipments(id),
+  UNIQUE (order_shipment_id)
+);
+CREATE INDEX idx_pickup_request_awbs_request  ON courier_pickup_request_awbs(pickup_request_id);
+CREATE INDEX idx_pickup_request_awbs_shipment ON courier_pickup_request_awbs(order_shipment_id);
 
 -- =============================================================================
 -- SECTION 17c — FREIGHT COST ESTIMATOR (Gap 5 part 1 of the 5-gaps plan)

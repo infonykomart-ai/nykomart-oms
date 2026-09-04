@@ -18,7 +18,7 @@ type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 export type TrackedShipment = {
   id: string;
   courier: CourierKey;
-  status: "pending" | "created" | "failed";
+  status: "pending" | "created" | "failed" | "cancelled";
   awbNo: string | null;
   labelUrl: string | null;
   bookedAmt: number | null;
@@ -32,7 +32,7 @@ export type TrackedShipment = {
 
 export type TrackingFilters = {
   courier?: CourierKey | "";
-  status?: "pending" | "created" | "failed" | "";
+  status?: "pending" | "created" | "failed" | "cancelled" | "";
   q?: string; // matches AWB or Ref No.
 };
 

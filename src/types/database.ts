@@ -5434,7 +5434,7 @@ export type Database = {
           order_shipment_id: string | null;
           service_code: string | null;
           ddp_ddu: "DDP" | "DDU" | null;
-          status: "pending" | "created" | "failed";
+          status: "pending" | "created" | "failed" | "cancelled";
           awb_no: string | null;
           label_url: string | null;
           booked_amt: number | null;
@@ -5443,6 +5443,9 @@ export type Database = {
           request_payload: Json | null;
           response_payload: Json | null;
           error_message: string | null;
+          cancel_reason: string | null;
+          cancel_remark: string | null;
+          cancelled_at: string | null;
           created_by: string | null;
           created_at: string;
         };
@@ -5453,7 +5456,7 @@ export type Database = {
           order_shipment_id?: string | null;
           service_code?: string | null;
           ddp_ddu?: "DDP" | "DDU" | null;
-          status?: "pending" | "created" | "failed";
+          status?: "pending" | "created" | "failed" | "cancelled";
           awb_no?: string | null;
           label_url?: string | null;
           booked_amt?: number | null;
@@ -5462,6 +5465,9 @@ export type Database = {
           request_payload?: Json | null;
           response_payload?: Json | null;
           error_message?: string | null;
+          cancel_reason?: string | null;
+          cancel_remark?: string | null;
+          cancelled_at?: string | null;
           created_by?: string | null;
           created_at?: string;
         };
@@ -5472,7 +5478,7 @@ export type Database = {
           order_shipment_id?: string | null;
           service_code?: string | null;
           ddp_ddu?: "DDP" | "DDU" | null;
-          status?: "pending" | "created" | "failed";
+          status?: "pending" | "created" | "failed" | "cancelled";
           awb_no?: string | null;
           label_url?: string | null;
           booked_amt?: number | null;
@@ -5481,6 +5487,9 @@ export type Database = {
           request_payload?: Json | null;
           response_payload?: Json | null;
           error_message?: string | null;
+          cancel_reason?: string | null;
+          cancel_remark?: string | null;
+          cancelled_at?: string | null;
           created_by?: string | null;
           created_at?: string;
         };
@@ -5546,6 +5555,99 @@ export type Database = {
             columns: ["updated_by"];
             isOneToOne: false;
             referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_pickup_requests: {
+        Row: {
+          id: string;
+          company_id: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          pickup_address: string;
+          booking_date: string;
+          scheduled_pickup_date: string;
+          status: "requested" | "confirmed" | "cancelled";
+          remark: string | null;
+          request_payload: Json | null;
+          response_payload: Json | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          pickup_address: string;
+          booking_date: string;
+          scheduled_pickup_date: string;
+          status?: "requested" | "confirmed" | "cancelled";
+          remark?: string | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          pickup_address?: string;
+          booking_date?: string;
+          scheduled_pickup_date?: string;
+          status?: "requested" | "confirmed" | "cancelled";
+          remark?: string | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_pickup_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_pickup_requests_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_pickup_request_awbs: {
+        Row: {
+          id: string;
+          pickup_request_id: string;
+          order_shipment_id: string;
+        };
+        Insert: {
+          id?: string;
+          pickup_request_id: string;
+          order_shipment_id: string;
+        };
+        Update: {
+          id?: string;
+          pickup_request_id?: string;
+          order_shipment_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_pickup_request_awbs_pickup_request_id_fkey";
+            columns: ["pickup_request_id"];
+            isOneToOne: false;
+            referencedRelation: "courier_pickup_requests";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_pickup_request_awbs_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
             referencedColumns: ["id"];
           },
         ];

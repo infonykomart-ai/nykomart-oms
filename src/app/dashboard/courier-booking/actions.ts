@@ -76,6 +76,18 @@ export type CourierBookingLookupOrder = {
   shippingWeightKg: number | null;
   orderValueInr: number | null;
   alreadyBooked: Partial<Record<Courier, boolean>>;
+  // EGS-integration round (2026-09-04) — set only when this lookup came
+  // from Pending Orders' "Combine & Book" (see pending-orders.tsx): the
+  // OTHER order ids in the same ref_no_base buyer-batch, so the booking
+  // form can pass them straight through as the hidden "combined_order_ids"
+  // field every create*Booking action reads (applyCombinedSiblingShipments
+  // above). orderValueInr above is already the BATCH SUM in that case —
+  // see the combined-totals block below. Package weight/dims stay
+  // whatever the employee physically weighs/measures either way (this app
+  // has never had a reliable pre-dispatch weight source — dispatch_invoices
+  // only exists post-dispatch — so combine doesn't change that).
+  combinedOrderIds: string[];
+  combinedRefNos: string[];
 };
 
 export type CourierBookingLookupState = { error: string | null; order: CourierBookingLookupOrder | null };
@@ -89,6 +101,8 @@ export async function lookupOrderForCourierBooking(
 
   const refNo = str(formData, "ref_no");
   if (!refNo) return { error: "Enter a Ref No. first.", order: null };
+  const combinedIdsRaw = str(formData, "combined_order_ids");
+  const combinedOrderIds = combinedIdsRaw ? Array.from(new Set(combinedIdsRaw.split(",").map((s) => s.trim()).filter(Boolean))) : [];
 
   const { data: orders, error: orderError } = await supabase
     .from("orders")
@@ -101,19 +115,29 @@ export async function lookupOrderForCourierBooking(
   if (orders.length > 1) return { error: "Ambiguous — more than one order matched this Ref No.", order: null };
   const order = orders[0];
 
-  const [{ data: dispatch }, { data: existing }] = await Promise.all([
+  const [{ data: dispatch }, { data: existing }, { data: siblings }] = await Promise.all([
     supabase
       .from("dispatch_invoices")
       .select("buyer_name, buyer_mail, buyer_contact, buyer_country, hsn_no, length_cm, width_cm, height_cm, shipping_weight_kg")
       .eq("order_id", order.id)
       .maybeSingle(),
     supabase.from("courier_shipments").select("courier, status").eq("order_id", order.id),
+    combinedOrderIds.length > 0
+      ? supabase.from("orders").select("id, ref_no, order_value_inr").in("id", combinedOrderIds).in("company_id", employee.companyIds)
+      : Promise.resolve({ data: [] as { id: string; ref_no: string; order_value_inr: number | null }[] }),
   ]);
 
   const alreadyBooked: Partial<Record<Courier, boolean>> = {};
   for (const row of existing ?? []) {
     if (row.status === "created") alreadyBooked[row.courier as Courier] = true;
   }
+
+  // Combined orderValueInr = this order's own value + every sibling's —
+  // the courier is being told the customs/declared value of the WHOLE
+  // physical package (one AWB covering the whole buyer-batch), not just
+  // the primary order's line.
+  const siblingRows = (siblings ?? []).filter((s) => s.id !== order.id);
+  const combinedValue = siblingRows.reduce((sum, s) => sum + (s.order_value_inr ?? 0), order.order_value_inr ?? 0);
 
   return {
     error: null,
@@ -131,8 +155,10 @@ export async function lookupOrderForCourierBooking(
       widthCm: dispatch?.width_cm ?? null,
       heightCm: dispatch?.height_cm ?? null,
       shippingWeightKg: dispatch?.shipping_weight_kg ?? null,
-      orderValueInr: order.order_value_inr,
+      orderValueInr: siblingRows.length > 0 ? combinedValue : order.order_value_inr,
       alreadyBooked,
+      combinedOrderIds: siblingRows.map((s) => s.id),
+      combinedRefNos: siblingRows.map((s) => s.ref_no),
     },
   };
 }
@@ -289,6 +315,83 @@ async function writeOrderShipmentFromBooking(
   return shipment.id;
 }
 
+// -----------------------------------------------------------------------
+// Combine booking (EGS-integration round, 2026-09-04) — "Show Orders
+// Combine" from the Pending Orders staging tab: same buyer-batch
+// (company_id, store_id, ref_no_base) as the Invoice Generation module
+// already groups by (see invoices/actions.ts's own batch-grouping
+// comment) booked as ONE physical shipment / ONE AWB, instead of one
+// booking per order row.
+//
+// NO NEW SCHEMA NEEDED for this — courier_shipments already has
+// UNIQUE(order_id, courier), so every sibling order in the batch just
+// gets its OWN courier_shipments + order_shipments row, all sharing the
+// SAME awb_no/label_url/response_payload from the single real courier API
+// call the primary order's create*Booking already made above. This is
+// exactly how tracking/detail/reporting already expect data to look (one
+// row per order, keyed by order_id) — nothing downstream needs to know
+// "combined" is a special case, it just sees N orders that happen to
+// share an AWB, the same way freight_bill_awb_assignments already lets
+// multiple AWBs share one freight_bill_id.
+//
+// pending-orders.tsx submits sibling order ids as a hidden comma-joined
+// "combined_order_ids" field (never including the primary order_id
+// itself) alongside the normal booking form fields — see that file.
+async function applyCombinedSiblingShipments(
+  supabase: ServiceClient,
+  args: {
+    formData: FormData;
+    primaryOrderId: string;
+    courier: Courier;
+    courierLabel: string;
+    awbNo: string;
+    labelUrl: string | null;
+    employeeId: string;
+    weightKg: number;
+    dimsCm: { length: number; width: number; height: number };
+    bookedAmt: number | null;
+    bookedCurrency: string | null;
+    bookedAmountSource: "api" | "rate_card_estimate" | null;
+    serviceCode: string | null;
+    ddpDdu: "DDP" | "DDU" | null;
+    responsePayload: unknown;
+  }
+): Promise<void> {
+  const raw = str(args.formData, "combined_order_ids");
+  if (!raw) return;
+  const siblingOrderIds = Array.from(new Set(raw.split(",").map((s) => s.trim()).filter((s) => s && s !== args.primaryOrderId)));
+  if (siblingOrderIds.length === 0) return;
+
+  for (const siblingOrderId of siblingOrderIds) {
+    const siblingShipmentId = await writeOrderShipmentFromBooking(supabase, {
+      orderId: siblingOrderId,
+      courierLabel: args.courierLabel,
+      awbNo: args.awbNo,
+      employeeId: args.employeeId,
+      weightKg: args.weightKg,
+      dimsCm: args.dimsCm,
+      bookedAmt: args.bookedAmt,
+      bookedCurrency: args.bookedCurrency,
+      bookedAmountSource: args.bookedAmountSource,
+    });
+    await logAttempt(supabase, {
+      courier: args.courier,
+      orderId: siblingOrderId,
+      orderShipmentId: siblingShipmentId,
+      serviceCode: args.serviceCode,
+      ddpDdu: args.ddpDdu,
+      status: "created",
+      awbNo: args.awbNo,
+      labelUrl: args.labelUrl,
+      bookedAmt: args.bookedAmt,
+      bookedCurrency: args.bookedCurrency,
+      bookedAmountSource: args.bookedAmountSource,
+      responsePayload: args.responsePayload,
+      createdBy: args.employeeId,
+    });
+  }
+}
+
 export type CourierBookingCreateState = {
   error: string | null;
   success: boolean;
@@ -423,6 +526,24 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       createdBy: employee.id,
     });
 
+    await applyCombinedSiblingShipments(supabase, {
+      formData,
+      primaryOrderId: orderId,
+      courier: "fedex",
+      courierLabel: "FedEx",
+      awbNo: result.trackingNo,
+      labelUrl: result.labelUrl ?? null,
+      employeeId: employee.id,
+      weightKg,
+      dimsCm: dims,
+      bookedAmt,
+      bookedCurrency,
+      bookedAmountSource: bookedSource,
+      serviceCode: input.serviceType,
+      ddpDdu: input.ddpDdu,
+      responsePayload: result.raw,
+    });
+
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
@@ -533,6 +654,24 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    await applyCombinedSiblingShipments(supabase, {
+      formData,
+      primaryOrderId: orderId,
+      courier: "ups",
+      courierLabel: "UPS",
+      awbNo: result.trackingNo,
+      labelUrl: result.labelUrl ?? null,
+      employeeId: employee.id,
+      weightKg,
+      dimsCm: dims,
+      bookedAmt,
+      bookedCurrency,
+      bookedAmountSource: bookedSource,
+      serviceCode: input.serviceCode,
+      ddpDdu: input.ddpDdu,
+      responsePayload: result.raw,
     });
 
     revalidatePath("/dashboard/courier-booking");
@@ -656,6 +795,24 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
       createdBy: employee.id,
     });
 
+    await applyCombinedSiblingShipments(supabase, {
+      formData,
+      primaryOrderId: orderId,
+      courier: "aramex",
+      courierLabel: "Aramex",
+      awbNo: result.trackingNo,
+      labelUrl: result.labelUrl ?? null,
+      employeeId: employee.id,
+      weightKg,
+      dimsCm: dims,
+      bookedAmt,
+      bookedCurrency,
+      bookedAmountSource: bookedSource,
+      serviceCode: input.productType,
+      ddpDdu,
+      responsePayload: result.raw,
+    });
+
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
@@ -747,6 +904,24 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    await applyCombinedSiblingShipments(supabase, {
+      formData,
+      primaryOrderId: orderId,
+      courier: "delhivery",
+      courierLabel: "Delhivery",
+      awbNo: result.trackingNo,
+      labelUrl: result.labelUrl ?? null,
+      employeeId: employee.id,
+      weightKg,
+      dimsCm: dims,
+      bookedAmt,
+      bookedCurrency,
+      bookedAmountSource: bookedSource,
+      serviceCode: null,
+      ddpDdu: null,
+      responsePayload: result.raw,
     });
 
     revalidatePath("/dashboard/courier-booking");
@@ -845,6 +1020,24 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    await applyCombinedSiblingShipments(supabase, {
+      formData,
+      primaryOrderId: orderId,
+      courier: "shiprocket",
+      courierLabel: "Shiprocket",
+      awbNo: result.trackingNo,
+      labelUrl: result.labelUrl ?? null,
+      employeeId: employee.id,
+      weightKg,
+      dimsCm: dims,
+      bookedAmt,
+      bookedCurrency,
+      bookedAmountSource: bookedSource,
+      serviceCode: null,
+      ddpDdu: null,
+      responsePayload: result.raw,
     });
 
     revalidatePath("/dashboard/courier-booking");
@@ -968,6 +1161,24 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    await applyCombinedSiblingShipments(supabase, {
+      formData,
+      primaryOrderId: orderId,
+      courier: "dhl",
+      courierLabel: "DHL",
+      awbNo: result.trackingNo,
+      labelUrl: result.labelUrl ?? null,
+      employeeId: employee.id,
+      weightKg,
+      dimsCm: dims,
+      bookedAmt,
+      bookedCurrency,
+      bookedAmountSource: bookedSource,
+      serviceCode: input.productCode,
+      ddpDdu,
+      responsePayload: result.raw,
     });
 
     revalidatePath("/dashboard/courier-booking");
