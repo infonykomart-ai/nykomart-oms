@@ -51,7 +51,7 @@ export type ParsedShipmentReview = {
   // only.
   bookedFreightAmt: number | null;
   bookedCurrency: string | null;
-  bookedAmountSource: "api" | "rate_card_estimate" | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null;
   varianceAmt: number | null;
 };
 
@@ -107,7 +107,7 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
     // header comment).
     let bookedFreightAmt: number | null = null;
     let bookedCurrency: string | null = null;
-    let bookedAmountSource: "api" | "rate_card_estimate" | null = null;
+    let bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null = null;
     if (bill.billCategory === "freight" && match.orderShipmentId) {
       const { data: shipmentRow } = await supabase
         .from("order_shipments")

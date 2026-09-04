@@ -1001,6 +1001,7 @@ export type Database = {
           submitted_at: string | null;
           priority: string;
           carried_to_date: string | null;
+          source_template_id: string | null;
         };
         Insert: {
           id?: string;
@@ -1027,6 +1028,7 @@ export type Database = {
           submitted_at?: string | null;
           priority?: string;
           carried_to_date?: string | null;
+          source_template_id?: string | null;
         };
         Update: {
           id?: string;
@@ -1053,6 +1055,7 @@ export type Database = {
           submitted_at?: string | null;
           priority?: string;
           carried_to_date?: string | null;
+          source_template_id?: string | null;
         };
         Relationships: [
           {
@@ -1074,6 +1077,13 @@ export type Database = {
             columns: ["carried_from_log_id"];
             isOneToOne: false;
             referencedRelation: "daily_work_logs";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_work_logs_source_template_id_fkey";
+            columns: ["source_template_id"];
+            isOneToOne: false;
+            referencedRelation: "work_plan_templates";
             referencedColumns: ["id"];
           },
         ];
@@ -4103,7 +4113,7 @@ export type Database = {
           created_at: string;
           booked_freight_amt: number | null;
           booked_currency: string | null;
-          booked_amount_source: "api" | "rate_card_estimate" | null;
+          booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
         };
         Insert: {
           id?: string;
@@ -4119,7 +4129,7 @@ export type Database = {
           created_at?: string;
           booked_freight_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
         };
         Update: {
           id?: string;
@@ -4135,7 +4145,7 @@ export type Database = {
           created_at?: string;
           booked_freight_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
         };
         Relationships: [
           {
@@ -5429,7 +5439,7 @@ export type Database = {
       courier_shipments: {
         Row: {
           id: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
           order_id: string;
           order_shipment_id: string | null;
           service_code: string | null;
@@ -5439,19 +5449,20 @@ export type Database = {
           label_url: string | null;
           booked_amt: number | null;
           booked_currency: string | null;
-          booked_amount_source: "api" | "rate_card_estimate" | null;
+          booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
           request_payload: Json | null;
           response_payload: Json | null;
           error_message: string | null;
           cancel_reason: string | null;
           cancel_remark: string | null;
           cancelled_at: string | null;
+          manual_courier_name: string | null;
           created_by: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
           order_id: string;
           order_shipment_id?: string | null;
           service_code?: string | null;
@@ -5461,19 +5472,20 @@ export type Database = {
           label_url?: string | null;
           booked_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
           request_payload?: Json | null;
           response_payload?: Json | null;
           error_message?: string | null;
           cancel_reason?: string | null;
           cancel_remark?: string | null;
           cancelled_at?: string | null;
+          manual_courier_name?: string | null;
           created_by?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
-          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
           order_id?: string;
           order_shipment_id?: string | null;
           service_code?: string | null;
@@ -5483,13 +5495,14 @@ export type Database = {
           label_url?: string | null;
           booked_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
           request_payload?: Json | null;
           response_payload?: Json | null;
           error_message?: string | null;
           cancel_reason?: string | null;
           cancel_remark?: string | null;
           cancelled_at?: string | null;
+          manual_courier_name?: string | null;
           created_by?: string | null;
           created_at?: string;
         };
@@ -6422,6 +6435,83 @@ export type Database = {
             columns: ["store_id"];
             isOneToOne: false;
             referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      work_plan_templates: {
+        Row: {
+          id: string;
+          company_id: string;
+          scope: string;
+          role_name: string | null;
+          employee_id: string | null;
+          category: string | null;
+          description: string;
+          target_qty: string | null;
+          sort_order: number;
+          active: boolean;
+          created_by: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          scope: string;
+          role_name?: string | null;
+          employee_id?: string | null;
+          category?: string | null;
+          description: string;
+          target_qty?: string | null;
+          sort_order?: number;
+          active?: boolean;
+          created_by: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          scope?: string;
+          role_name?: string | null;
+          employee_id?: string | null;
+          category?: string | null;
+          description?: string;
+          target_qty?: string | null;
+          sort_order?: number;
+          active?: boolean;
+          created_by?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "work_plan_templates_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "work_plan_templates_role_name_fkey";
+            columns: ["role_name"];
+            isOneToOne: false;
+            referencedRelation: "roles";
+            referencedColumns: ["name"];
+          },
+          {
+            foreignKeyName: "work_plan_templates_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "work_plan_templates_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];

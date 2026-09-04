@@ -40,6 +40,7 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                 {c.label}
               </option>
             ))}
+            <option value="other">Other / Manual Entry</option>
           </select>
         </div>
         <div>
@@ -85,7 +86,14 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                       {s.refNo}
                     </Link>
                   </td>
-                  <td className="px-3 py-2">{COURIERS.find((c) => c.key === s.courier)?.label ?? s.courier}</td>
+                  <td className="px-3 py-2">
+                    {s.courier === "other"
+                      ? `${s.manualCourierName ?? "Other"} (manual)`
+                      : COURIERS.find((c) => c.key === s.courier)?.label ?? s.courier}
+                    {s.bookedAmountSource === "manual" && s.courier !== "other" && (
+                      <span className="ml-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">manual</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2">{s.awbNo ?? "—"}</td>
                   <td className="px-3 py-2">
                     <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${attemptBadgeClass(s.status)}`}>{s.status}</span>

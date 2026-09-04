@@ -113,7 +113,15 @@ export default async function ShipmentDetailPage({ params }: { params: Promise<{
             <Field label="Booked Amount" value={detail.charges.bookedAmt != null ? `${detail.charges.bookedCurrency ?? ""} ${detail.charges.bookedAmt.toFixed(2)}` : null} />
             <Field
               label="Source"
-              value={detail.charges.bookedAmountSource === "api" ? "Courier's own API response" : detail.charges.bookedAmountSource === "rate_card_estimate" ? "Courier Rate Card estimate" : null}
+              value={
+                detail.charges.bookedAmountSource === "api"
+                  ? "Courier's own API response"
+                  : detail.charges.bookedAmountSource === "rate_card_estimate"
+                    ? "Courier Rate Card estimate"
+                    : detail.charges.bookedAmountSource === "manual"
+                      ? "Manual entry — booked outside the app"
+                      : null
+              }
             />
           </div>
           <div>

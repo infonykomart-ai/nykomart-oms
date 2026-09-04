@@ -30,7 +30,7 @@ type Row = {
   // to compare it against — see the reconciliation migration's comment).
   bookedFreightAmt: number | null;
   bookedCurrency: string | null;
-  bookedAmountSource: "api" | "rate_card_estimate" | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null;
 };
 
 // Courier Bill PDF Upload — auto-extract via src/lib/courier-bills, review
@@ -399,7 +399,7 @@ function RecheckBanner({
 }: {
   bookedAmt: number;
   bookedCurrency: string | null;
-  bookedSource: "api" | "rate_card_estimate" | null;
+  bookedSource: "api" | "rate_card_estimate" | "manual" | null;
   billedAmt: number | null;
 }) {
   const variance = billedAmt != null ? Math.round((billedAmt - bookedAmt) * 100) / 100 : null;
@@ -408,6 +408,7 @@ function RecheckBanner({
     <div className={`mt-2 rounded px-2 py-1.5 text-[11px] ${flagged ? "bg-amber-100 text-amber-900" : "bg-slate-100 text-slate-600"}`}>
       Booked: {bookedCurrency ?? ""} {bookedAmt.toFixed(2)}
       {bookedSource === "rate_card_estimate" && <span className="italic"> (rate-card estimate)</span>}
+      {bookedSource === "manual" && <span className="italic"> (manual entry)</span>}
       {billedAmt != null && (
         <>
           {" "}

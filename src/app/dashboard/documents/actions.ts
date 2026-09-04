@@ -1652,7 +1652,7 @@ export type ReconciliationLookup = {
   // Assign-AWB form so the "recheck" comparison isn't PDF-import-only.
   bookedFreightAmt: number | null;
   bookedCurrency: string | null;
-  bookedAmountSource: "api" | "rate_card_estimate" | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null;
 };
 
 const EMPTY_RECON: ReconciliationLookup = {
@@ -1740,7 +1740,7 @@ export async function lookupOrderForReconciliation(
 
   let bookedFreightAmt: number | null = null;
   let bookedCurrency: string | null = null;
-  let bookedAmountSource: "api" | "rate_card_estimate" | null = null;
+  let bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null = null;
   if (billKind === "freight") {
     const { data: shipmentRow } = await supabase
       .from("order_shipments")

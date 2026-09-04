@@ -19,6 +19,7 @@ import { WeeklyOffForm } from "./weekly-off-form";
 import { ManualAttendanceForm } from "./manual-attendance-form";
 import { RemoveHolidayButton } from "./remove-holiday-button";
 import { PendingWorkPanel, type PendingWorkGroup } from "./pending-work-panel";
+import { WorkPlanTemplatesPanel, type WorkPlanTemplateRow } from "./work-plan-templates-panel";
 
 // 2026-08-11: Attendance Admin — holiday calendar + weekly-off pattern per
 // company, a team-wide monthly Present/Absent/Late/Leave/Holiday/Week Off
@@ -60,7 +61,7 @@ export default async function AttendanceAdminPage({
   // bug found and fixed this round in salary/actions.ts + salary/page.tsx.
   const monthEnd = `${monthParam}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
 
-  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }, { data: pendingWorkRows }, { data: completionRows }] = await Promise.all([
+  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }, { data: pendingWorkRows }, { data: completionRows }, { data: roles }, { data: roleTemplates }] = await Promise.all([
     supabase.from("employees").select("id, name, date_of_joining, role_id").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
     supabase.from("holidays").select("id, holiday_date, name, company_id").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd).order("holiday_date"),
@@ -69,7 +70,7 @@ export default async function AttendanceAdminPage({
     // being typed. See daily_work_logs.submitted_at.
     dwlSupabase
       .from("daily_work_logs")
-      .select("id, log_date, employee_id, category, description, work_status, submitted_at, time_spent_seconds, estimated_time_minutes")
+      .select("id, log_date, employee_id, category, description, work_status, submitted_at, time_spent_seconds, estimated_time_minutes, source_template_id")
       .eq("company_id", selectedCompanyId)
       .gte("log_date", monthStart)
       .lte("log_date", monthEnd)
@@ -108,6 +109,22 @@ export default async function AttendanceAdminPage({
       .gte("log_date", monthStart)
       .lte("log_date", monthEnd)
       .not("submitted_at", "is", null),
+    // 2026-09-04 — Daily Work Planner: every role name, for the template
+    // form's role dropdown.
+    supabase.from("roles").select("id, name").order("name"),
+    // 2026-09-04 — Daily Work Planner: every role-scope template (active
+    // AND inactive — inactive ones still show in the panel, greyed out,
+    // so Admin can Reactivate rather than having to re-type it) for the
+    // currently selected company. Service-role read (dwlSupabase), same
+    // "writes go via service role, so reads must too" reasoning as every
+    // other daily_work_logs-adjacent query on this page.
+    dwlSupabase
+      .from("work_plan_templates")
+      .select("id, role_name, category, description, target_qty, sort_order, active")
+      .eq("company_id", selectedCompanyId)
+      .eq("scope", "role")
+      .order("role_name")
+      .order("sort_order"),
   ]);
 
   const employeeName = new Map((teamEmployees ?? []).map((e) => [e.id, e.name]));
@@ -137,6 +154,17 @@ export default async function AttendanceAdminPage({
     });
   }
   const pendingWorkGroups = Array.from(pendingByEmployee.values()).sort((a, b) => (b.pendingCount + b.inProgressCount) - (a.pendingCount + a.inProgressCount));
+
+  // 2026-09-04 — Daily Work Planner: role templates for WorkPlanTemplatesPanel.
+  const workPlanTemplateRows: WorkPlanTemplateRow[] = (roleTemplates ?? []).map((t) => ({
+    id: t.id,
+    roleName: t.role_name ?? "—",
+    category: t.category,
+    description: t.description,
+    targetQty: t.target_qty,
+    sortOrder: t.sort_order,
+    active: t.active,
+  }));
   const weeklyOffDays = (selectedCompany?.weekly_off_days as number[] | undefined) ?? [0];
 
   const rowsByEmployee = new Map<string, Map<string, { status: string | null }>>();
@@ -479,6 +507,19 @@ export default async function AttendanceAdminPage({
         </div>
       </div>
 
+      {/* 2026-09-04 — Daily Work Planner: per-ROLE fixed/recurring
+          templates. Materialized automatically into every matching-role
+          employee's Today's Work each day (badged "🗂️ Template") — on top
+          of whatever personal recurring items that employee has ALSO
+          added themselves (self-managed, own attendance page). */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-slate-700">🗂️ Daily Work Planner — Fixed Items by Role ({selectedCompany?.name})</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Set a baseline list of work items every employee in a role should see automatically each day, without re-typing it — they still show up as normal Today&apos;s Work rows (editable, completable, carry-forward-able), just badged so it&apos;s clear where they came from. Each employee can also add their own personal recurring items on top, from their own Attendance page.
+        </p>
+        <WorkPlanTemplatesPanel companyId={selectedCompanyId} roles={roles ?? []} templates={workPlanTemplateRows} />
+      </div>
+
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">Team Attendance Summary — {monthParam}</h2>
         <div className="overflow-x-auto">
@@ -661,6 +702,13 @@ export default async function AttendanceAdminPage({
                   separate feed. */}
               {l.description?.startsWith("[Task]") && (
                 <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700">📋 From Task</span>
+              )}
+              {/* 2026-09-04 — Daily Work Planner: same "make the source
+                  unmistakable at a glance" convention as the "From Task"
+                  badge above, for a row auto-materialized from a fixed
+                  role/personal template (see source_template_id). */}
+              {l.source_template_id && (
+                <span className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 font-medium text-teal-700">🗂️ Template</span>
               )}
               {l.estimated_time_minutes ? (
                 <span className="ml-2 text-slate-400" title="Just an estimate — never counted in any total">

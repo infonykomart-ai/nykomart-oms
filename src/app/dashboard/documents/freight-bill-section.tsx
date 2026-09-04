@@ -39,7 +39,7 @@ export type FreightBillAssignment = {
   billed_freight_amt: number | null;
   booked_freight_amt: number | null;
   booked_currency: string | null;
-  booked_amount_source: "api" | "rate_card_estimate" | null;
+  booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
   credit_note_no: string | null;
   credit_note_date: string | null;
   credit_note_amt: number | null;
@@ -553,7 +553,8 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
           {lookup.bookedFreightAmt != null && (
             <p className="text-slate-500">
               Booked freight: {lookup.bookedCurrency} {lookup.bookedFreightAmt.toFixed(2)}
-              {lookup.bookedAmountSource === "rate_card_estimate" ? " (rate-card estimate)" : ""} — compare against Billed Amt below.
+              {lookup.bookedAmountSource === "rate_card_estimate" ? " (rate-card estimate)" : lookup.bookedAmountSource === "manual" ? " (manual entry)" : ""} — compare
+              against Billed Amt below.
             </p>
           )}
         </div>
@@ -763,7 +764,7 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
               }`}
             >
               Booked {assignment.booked_currency} {assignment.booked_freight_amt.toFixed(2)}
-              {assignment.booked_amount_source === "rate_card_estimate" ? " (est.)" : ""}
+              {assignment.booked_amount_source === "rate_card_estimate" ? " (est.)" : assignment.booked_amount_source === "manual" ? " (manual)" : ""}
               {assignment.billed_freight_amt != null &&
                 ` · Billed ${assignment.booked_currency} ${assignment.billed_freight_amt.toFixed(2)} · Diff ${(
                   assignment.billed_freight_amt - assignment.booked_freight_amt

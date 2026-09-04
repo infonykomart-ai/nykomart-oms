@@ -81,6 +81,99 @@ export async function setWeeklyOffDays(_prev: SimpleActionState, formData: FormD
   return { error: null, success: true };
 }
 
+// ============================================================================
+// 2026-09-04 — Daily Work Planner: per-ROLE fixed/recurring templates.
+// Admin/HR builds a baseline list of work items that apply to EVERY
+// employee whose role matches (materialized daily each day — see
+// src/lib/attendance/work-plan-templates.ts). The employee's own personal
+// recurring items (on top of whatever role template applies to them) are
+// a separate, self-managed list — see attendance/actions.ts, not here.
+// Gated on the same attendance_admin capability as the rest of this file.
+// ============================================================================
+
+/**
+ * Add or edit one role-scope template item. `id` present = edit an
+ * existing row (still scoped to attendance_admin's own company access, so
+ * one admin can't silently edit another company's template); absent =
+ * create a new one.
+ */
+export async function saveWorkPlanTemplate(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
+  const admin = await requireCapability("attendance_admin");
+  const id = str(formData, "id");
+  const companyId = str(formData, "company_id");
+  const roleName = str(formData, "role_name");
+  const category = str(formData, "category");
+  const description = str(formData, "description");
+  const targetQty = str(formData, "target_qty");
+  const sortOrderRaw = str(formData, "sort_order");
+  if (!companyId || !roleName || !description) {
+    return { error: "Company, role, and description are all required.", success: false };
+  }
+  // Same "never trust a client-claimed company" check as addHoliday/
+  // setWeeklyOffDays/setManualAttendance above.
+  if (!admin.companyIds.includes(companyId)) {
+    return { error: "You don't have access to that company.", success: false };
+  }
+
+  const supabase = createServiceRoleClient();
+  const row = {
+    company_id: companyId,
+    scope: "role" as const,
+    role_name: roleName,
+    employee_id: null,
+    category: category || null,
+    description,
+    target_qty: targetQty || null,
+    sort_order: sortOrderRaw ? Math.max(0, parseInt(sortOrderRaw, 10) || 0) : 0,
+    created_by: admin.id,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (id) {
+    // Verify the row being edited actually belongs to a company this admin
+    // can access, before allowing the update (same defense-in-depth as
+    // removeHoliday's own re-check above).
+    const { data: existing } = await supabase.from("work_plan_templates").select("id, company_id").eq("id", id).eq("scope", "role").maybeSingle();
+    if (!existing) return { error: "Template not found.", success: false };
+    if (!admin.companyIds.includes(existing.company_id)) {
+      return { error: "You don't have access to that company.", success: false };
+    }
+    const { error } = await supabase.from("work_plan_templates").update(row).eq("id", id);
+    if (error) return { error: error.message, success: false };
+  } else {
+    const { error } = await supabase.from("work_plan_templates").insert(row);
+    if (error) return { error: error.message, success: false };
+  }
+  revalidatePath("/dashboard/attendance/admin");
+  revalidatePath("/dashboard/attendance");
+  return { error: null, success: true };
+}
+
+/**
+ * Deactivate/reactivate a role-scope template — a soft toggle rather than
+ * a hard delete, so a template that already materialized rows into past
+ * daily_work_logs history keeps that history's source_template_id link
+ * intact (the FK would otherwise force either a hard block or an ON
+ * DELETE that quietly orphans/nulls out old rows' badge). An inactive
+ * template simply stops being materialized for any new day.
+ */
+export async function setWorkPlanTemplateActive(id: string, active: boolean): Promise<SimpleActionState> {
+  const admin = await requireCapability("attendance_admin");
+  const supabase = createServiceRoleClient();
+
+  const { data: existing } = await supabase.from("work_plan_templates").select("id, company_id").eq("id", id).eq("scope", "role").maybeSingle();
+  if (!existing) return { error: "Template not found.", success: false };
+  if (!admin.companyIds.includes(existing.company_id)) {
+    return { error: "You don't have access to that company.", success: false };
+  }
+
+  const { error } = await supabase.from("work_plan_templates").update({ active, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/attendance/admin");
+  revalidatePath("/dashboard/attendance");
+  return { error: null, success: true };
+}
+
 /**
  * Manual attendance correction — mark Present/Absent/Half Day/Leave/Holiday
  * for a specific employee+date (e.g. a missed punch, an approved leave, a

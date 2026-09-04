@@ -3,6 +3,9 @@ import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capabil
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { DashboardDock } from "@/components/dashboard-dock";
+import { DashboardMain } from "@/components/dashboard-main";
+import { NavStyleProvider } from "@/components/nav-style-context";
 import { redirect } from "next/navigation";
 import { CelebrationProvider } from "@/components/celebration/celebration-context";
 import { TodaysCelebrationsBanner } from "@/components/celebration/todays-celebrations-banner";
@@ -157,25 +160,33 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         <HelpCenterProvider articles={helpArticles}>
           <ThemeProvider initialThemeId={myThemePrefs?.theme_id ?? null} initialCustomAccent={myThemePrefs?.custom_accent_color ?? null}>
             <ThemedShell>
-              <DashboardSidebar capabilities={employee.capabilities} />
-              <div className="flex flex-1 flex-col overflow-hidden">
-                <DashboardHeader
-                  companyName={currentCompany?.name ?? ""}
-                  logoUrl={currentCompany?.logo_url ?? null}
-                  employeeName={employee.name}
-                  roleName={employee.roleName}
-                  companies={companies ?? []}
-                  currentCompanyId={employee.currentCompanyId}
-                  meId={employee.id}
-                  myPhotoUrl={employee.photoUrl}
-                  unreadMessageCount={unreadMessageCount ?? 0}
-                  notificationItems={notificationItems}
-                />
-                <main className="flex-1 overflow-y-auto p-6">
-                  <TodaysCelebrationsBanner celebrations={celebrations} />
-                  <PageTransition>{children}</PageTransition>
-                </main>
-              </div>
+              <NavStyleProvider>
+                <DashboardSidebar capabilities={employee.capabilities} />
+                <div className="flex flex-1 flex-col overflow-hidden">
+                  <DashboardHeader
+                    companyName={currentCompany?.name ?? ""}
+                    logoUrl={currentCompany?.logo_url ?? null}
+                    employeeName={employee.name}
+                    roleName={employee.roleName}
+                    companies={companies ?? []}
+                    currentCompanyId={employee.currentCompanyId}
+                    meId={employee.id}
+                    myPhotoUrl={employee.photoUrl}
+                    unreadMessageCount={unreadMessageCount ?? 0}
+                    notificationItems={notificationItems}
+                  />
+                  <DashboardMain>
+                    <TodaysCelebrationsBanner celebrations={celebrations} />
+                    <PageTransition>{children}</PageTransition>
+                  </DashboardMain>
+                </div>
+                {/* Bottom-center dock, opt-in alternative to the left
+                    sidebar above — renders nothing unless the employee has
+                    switched to Dock mode (nav-style-context.tsx). `fixed`
+                    positioning takes it out of this flex row regardless of
+                    where it sits in the tree. */}
+                <DashboardDock capabilities={employee.capabilities} />
+              </NavStyleProvider>
             </ThemedShell>
           </ThemeProvider>
           <MessageToastProvider meId={employee.id} employeesById={employeesById} />

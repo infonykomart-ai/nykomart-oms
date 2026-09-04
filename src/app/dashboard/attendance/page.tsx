@@ -3,6 +3,7 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, addDaysToDateStr, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, type DayCategory } from "@/lib/attendance/payroll";
 import { carryOverPendingDailyLogs } from "@/lib/attendance/carry-over";
+import { materializeWorkPlanTemplatesForToday } from "@/lib/attendance/work-plan-templates";
 import { formatDuration } from "@/lib/attendance/timer";
 import { EXPECTED_WORK_MINUTES, ANOMALY_THRESHOLD_MINUTES, OFFICE_START_LABEL, OFFICE_END_LABEL, formatHM, compareToExpected, type WorkHoursVerdict } from "@/lib/attendance/work-hours";
 import {
@@ -17,6 +18,7 @@ import { PunchButtons } from "./punch-buttons";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
 import { IncompleteWorkSection, type IncompleteLogRow } from "./incomplete-work-section";
+import { MyRecurringWorkForm, type MyRecurringItemRow } from "./my-recurring-work-form";
 import { AssignTaskForm } from "../tasks/assign-task-form";
 import { TaskList, type TaskRow } from "../tasks/task-list";
 import { AssignedByMeList, type AssignedTaskRow } from "../tasks/assigned-by-me-list";
@@ -94,8 +96,15 @@ export default async function AttendancePage({
   // "Next Day Carry On" rows from before today, BEFORE reading today's
   // logs below, so a freshly carried-over row shows up immediately.
   await carryOverPendingDailyLogs(dwlSupabase, employee.id, today);
+  // 2026-09-04 — Daily Work Planner: same "run before reading today's
+  // logs, plain function on the service-role client" pattern as
+  // carryOverPendingDailyLogs above. Auto-inserts any still-missing fixed
+  // item (role template matching employee.roleName, OR the employee's own
+  // personal recurring item) as a normal 'Pending' row for today, tagged
+  // source_template_id so DailyReportForm can badge it "🗂️ Template".
+  await materializeWorkPlanTemplatesForToday(dwlSupabase, employee.id, employee.currentCompanyId, employee.roleName, today);
 
-  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: historyLogs }, { data: windowLogs }, { data: monthLogs }] =
+  const [{ data: todayRow }, { data: monthRows }, { data: company }, { data: holidays }, { data: emp }, { data: recentLogs }, { data: historyLogs }, { data: windowLogs }, { data: monthLogs }, { data: myRecurringItems }] =
     await Promise.all([
       supabase.from("attendance").select("*").eq("employee_id", employee.id).eq("attendance_date", today).maybeSingle(),
       supabase
@@ -114,7 +123,7 @@ export default async function AttendancePage({
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
       dwlSupabase
         .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date, source_template_id")
         .eq("employee_id", employee.id)
         .order("log_date", { ascending: false })
         .order("updated_at", { ascending: false })
@@ -143,7 +152,7 @@ export default async function AttendancePage({
       // silently truncated by that unrelated limit.
       dwlSupabase
         .from("daily_work_logs")
-        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date")
+        .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date, source_template_id")
         .eq("employee_id", employee.id)
         .gte("log_date", minBackdate)
         .lte("log_date", today)
@@ -159,6 +168,16 @@ export default async function AttendancePage({
         .gte("log_date", monthStart)
         .lte("log_date", today)
         .not("submitted_at", "is", null),
+      // 2026-09-04 — Daily Work Planner: the employee's OWN personal
+      // recurring items (scope='employee'), for MyRecurringWorkForm below.
+      // Active AND inactive (inactive ones still show, greyed out, so the
+      // employee can Reactivate rather than re-typing it).
+      dwlSupabase
+        .from("work_plan_templates")
+        .select("id, category, description, target_qty, sort_order, active")
+        .eq("scope", "employee")
+        .eq("employee_id", employee.id)
+        .order("sort_order"),
     ]);
 
   const attendanceByDate = new Map((monthRows ?? []).map((r) => [r.attendance_date, { status: r.status }]));
@@ -210,6 +229,17 @@ export default async function AttendancePage({
       estimatedTimeMinutes: l.estimated_time_minutes,
       timeSpentSeconds: l.time_spent_seconds,
     }));
+
+  // 2026-09-04 — Daily Work Planner: the employee's own personal recurring
+  // items, for MyRecurringWorkForm.
+  const myRecurringItemRows: MyRecurringItemRow[] = (myRecurringItems ?? []).map((t) => ({
+    id: t.id,
+    category: t.category,
+    description: t.description,
+    targetQty: t.target_qty,
+    sortOrder: t.sort_order,
+    active: t.active,
+  }));
 
   // 2026-09-02: "My Performance" self-view — own numbers only, this month.
   // Attendance/leave reuse the SAME `summary` shown in "This Month So Far"
@@ -505,6 +535,25 @@ export default async function AttendancePage({
       <div className="mb-6">
         <IncompleteWorkSection logs={incompleteLogs} />
       </div>
+
+      {/* 2026-09-04 — Daily Work Planner: personal recurring items, on top
+          of whatever fixed role template Admin/HR already set up for this
+          employee's role (see admin/work-plan-templates-panel.tsx). Both
+          layers auto-appear in Today's Work every day (badged "🗂️
+          Template" below) without re-typing them — collapsed by default
+          since most days nobody needs to touch this list, only set it up
+          once. */}
+      <details className="mb-6 rounded-xl border border-slate-200 bg-white">
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          🗂️ My Fixed / Recurring Work Items {myRecurringItemRows.filter((r) => r.active).length > 0 && `(${myRecurringItemRows.filter((r) => r.active).length} active)`}
+        </summary>
+        <div className="p-4 pt-0">
+          <p className="mb-3 text-xs text-slate-500">
+            Anything you add here shows up automatically in Today&apos;s Work every day, so you don&apos;t have to re-type it. This is on top of any fixed items your role already has (set up by Admin) — both apply together.
+          </p>
+          <MyRecurringWorkForm items={myRecurringItemRows} />
+        </div>
+      </details>
 
       <div className="mb-3">
         <h2 className="text-sm font-semibold text-slate-700">📝 Daily Work Report</h2>

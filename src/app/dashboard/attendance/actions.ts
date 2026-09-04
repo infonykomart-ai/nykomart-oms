@@ -476,3 +476,81 @@ export async function completeIncompleteWorkToday(id: string): Promise<SubmitAct
   revalidatePath("/dashboard/attendance/admin");
   return { error: null, submittedAt: data.submitted_at };
 }
+
+// ============================================================================
+// 2026-09-04 — Daily Work Planner: an employee's OWN personal recurring
+// items, on top of whatever per-ROLE template Admin/HR has set up (that
+// side is managed on attendance/admin/page.tsx, gated on attendance_admin
+// — see admin/actions.ts's saveWorkPlanTemplate/setWorkPlanTemplateActive
+// for the mirror-image admin-side actions). No special capability needed
+// beyond being signed in, same as the Daily Work Report above — every
+// employee manages only their OWN scope='employee' rows (employee_id is
+// always the calling employee's own id, never client-supplied). Both
+// layers get materialized into daily_work_logs together each day by
+// materializeWorkPlanTemplatesForToday() (src/lib/attendance/
+// work-plan-templates.ts), called from page.tsx.
+// ============================================================================
+
+export type MyRecurringItemInput = {
+  id?: string; // present = edit existing row, absent = create new
+  category: string;
+  description: string;
+  targetQty: string;
+  sortOrder: string; // "" = 0
+};
+
+/** Add or edit one of the employee's own personal recurring work items. */
+export async function saveMyRecurringItem(input: MyRecurringItemInput): Promise<SimpleActionState> {
+  const employee = await getAuthedEmployee();
+  if (!input.description.trim()) return { error: "Description is required.", success: false };
+  const supabase = createServiceRoleClient();
+
+  const row = {
+    company_id: employee.currentCompanyId,
+    scope: "employee" as const,
+    role_name: null,
+    employee_id: employee.id,
+    category: input.category || null,
+    description: input.description.trim(),
+    target_qty: input.targetQty || null,
+    sort_order: input.sortOrder ? Math.max(0, parseInt(input.sortOrder, 10) || 0) : 0,
+    created_by: employee.id,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (input.id) {
+    // Defense in depth — can only ever edit your own scope='employee' rows.
+    const { error } = await supabase
+      .from("work_plan_templates")
+      .update(row)
+      .eq("id", input.id)
+      .eq("employee_id", employee.id)
+      .eq("scope", "employee");
+    if (error) return { error: error.message, success: false };
+  } else {
+    const { error } = await supabase.from("work_plan_templates").insert(row);
+    if (error) return { error: error.message, success: false };
+  }
+  revalidatePath("/dashboard/attendance");
+  return { error: null, success: true };
+}
+
+/**
+ * Deactivate/reactivate one of the employee's own personal recurring
+ * items — a soft toggle (not delete), same reasoning as the admin-side
+ * setWorkPlanTemplateActive: keeps source_template_id intact on any
+ * daily_work_logs row already materialized from it.
+ */
+export async function setMyRecurringItemActive(id: string, active: boolean): Promise<SimpleActionState> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase
+    .from("work_plan_templates")
+    .update({ active, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("employee_id", employee.id)
+    .eq("scope", "employee");
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/attendance");
+  return { error: null, success: true };
+}

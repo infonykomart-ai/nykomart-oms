@@ -17,12 +17,16 @@ type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
 export type TrackedShipment = {
   id: string;
-  courier: CourierKey;
+  courier: CourierKey | "other";
+  // Only set when courier === "other" — the free-text name from a Manual
+  // Entry (Booked Outside) row. See manual-booking-actions.ts.
+  manualCourierName: string | null;
   status: "pending" | "created" | "failed" | "cancelled";
   awbNo: string | null;
   labelUrl: string | null;
   bookedAmt: number | null;
   bookedCurrency: string | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null;
   createdAt: string;
   orderId: string;
   refNo: string;
@@ -31,7 +35,7 @@ export type TrackedShipment = {
 };
 
 export type TrackingFilters = {
-  courier?: CourierKey | "";
+  courier?: CourierKey | "other" | "";
   status?: "pending" | "created" | "failed" | "cancelled" | "";
   q?: string; // matches AWB or Ref No.
 };
@@ -45,7 +49,7 @@ export async function getTrackedShipments(
 ): Promise<TrackedShipment[]> {
   let query = supabase
     .from("courier_shipments")
-    .select("id, courier, status, awb_no, label_url, booked_amt, booked_currency, created_at, order_id")
+    .select("id, courier, manual_courier_name, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, created_at, order_id")
     .order("created_at", { ascending: false })
     .limit(MAX_ROWS);
 
@@ -79,12 +83,14 @@ export async function getTrackedShipments(
     }
     result.push({
       id: s.id,
-      courier: s.courier as CourierKey,
+      courier: s.courier as CourierKey | "other",
+      manualCourierName: s.manual_courier_name,
       status: s.status,
       awbNo: s.awb_no,
       labelUrl: s.label_url,
       bookedAmt: s.booked_amt,
       bookedCurrency: s.booked_currency,
+      bookedAmountSource: s.booked_amount_source,
       createdAt: s.created_at,
       orderId: s.order_id,
       refNo: order.ref_no,

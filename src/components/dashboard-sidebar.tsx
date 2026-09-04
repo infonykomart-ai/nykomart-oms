@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CAPABILITY_INFO } from "@/lib/capability-info";
+import { useNavStyle } from "@/components/nav-style-context";
 
 /**
  * Professional role-based left sidebar work menu — only shows tiles for
@@ -27,6 +28,17 @@ import { CAPABILITY_INFO } from "@/lib/capability-info";
  * one hover away without taking up permanent width. Preference persists via
  * localStorage so it survives reloads. Defaults to pinned (today's
  * behavior) so nothing changes for anyone who doesn't touch the new button.
+ *
+ * 2026-09-04 — "Dock" nav style: a second, independent per-browser
+ * preference (see nav-style-context.tsx) lets an employee swap this whole
+ * sidebar out for a macOS-Dock-style bottom-center bar
+ * (dashboard-dock.tsx) — same tiles, same capability filtering, different
+ * chrome. A small ⬇️ button next to the existing 📌 pin button switches to
+ * it; this component renders nothing at all once that preference is
+ * "dock" (checked after the same `mounted` gate the pin state already
+ * uses, so there's no flash of the sidebar before the dock takes over).
+ * Defaults to "sidebar" — today's behavior — for anyone who hasn't opted
+ * in, exactly like `pinned` defaults to true above.
  */
 const PIN_STORAGE_KEY = "oms_sidebar_pinned";
 
@@ -37,6 +49,7 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const [pinned, setPinned] = useState(true);
   const [hovered, setHovered] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const { navStyle, mounted: navStyleMounted, setNavStyle } = useNavStyle();
 
   useEffect(() => {
     // Reading localStorage (an external system) on mount, not deriving from
@@ -56,6 +69,11 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
       return next;
     });
   }
+
+  // Dock mode fully replaces this sidebar — see the 2026-09-04 header
+  // comment above. Nothing renders here (not even the thin hover-strip)
+  // once the preference is confirmed as "dock"; DashboardDock takes over.
+  if (navStyleMounted && navStyle === "dock") return null;
 
   const menu = (
     <nav className="flex-1 overflow-y-auto p-3">
@@ -81,14 +99,24 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
       <aside className="flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)]">
         <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-6">
           <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
-          <button
-            type="button"
-            onClick={togglePinned}
-            title="Hide menu (hover the edge to bring it back)"
-            className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-          >
-            📌
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setNavStyle("dock")}
+              title="Switch to Dock menu (bottom bar)"
+              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+            >
+              ⬇️
+            </button>
+            <button
+              type="button"
+              onClick={togglePinned}
+              title="Hide menu (hover the edge to bring it back)"
+              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+            >
+              📌
+            </button>
+          </div>
         </div>
         {menu}
       </aside>
@@ -107,14 +135,24 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
       >
         <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-6">
           <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
-          <button
-            type="button"
-            onClick={togglePinned}
-            title="Keep menu pinned open"
-            className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-          >
-            📌
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setNavStyle("dock")}
+              title="Switch to Dock menu (bottom bar)"
+              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+            >
+              ⬇️
+            </button>
+            <button
+              type="button"
+              onClick={togglePinned}
+              title="Keep menu pinned open"
+              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+            >
+              📌
+            </button>
+          </div>
         </div>
         {menu}
       </aside>

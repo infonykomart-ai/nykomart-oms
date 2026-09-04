@@ -13,6 +13,12 @@ import {
   type CourierBookingCreateState,
   type CourierBookingLookupOrder,
 } from "./actions";
+import {
+  createManualBooking,
+  MANUAL_BOOKING_COURIERS,
+  type ManualBookingState,
+  type ManualBookingCourierChoice,
+} from "./manual-booking-actions";
 
 const lookupInitial: CourierBookingLookupState = { error: null, order: null };
 const createInitial: CourierBookingCreateState = {
@@ -24,6 +30,7 @@ const createInitial: CourierBookingCreateState = {
   bookedAmountSource: null,
   labelUrl: null,
 };
+const manualBookingInitial: ManualBookingState = { error: null, success: false, shipmentId: null, awbNo: null };
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
@@ -207,7 +214,10 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
   const [delhiveryState, delhiveryAction, delhiveryPending] = useActionState(createDelhiveryBooking, createInitial);
   const [shiprocketState, shiprocketAction, shiprocketPending] = useActionState(createShiprocketBooking, createInitial);
   const [dhlState, dhlAction, dhlPending] = useActionState(createDhlBooking, createInitial);
+  const [manualState, manualAction, manualPending] = useActionState(createManualBooking, manualBookingInitial);
   const [courier, setCourier] = useState<CourierKey>("fedex");
+  const [showManual, setShowManual] = useState(false);
+  const [manualCourier, setManualCourier] = useState<ManualBookingCourierChoice>("other");
   const lookupFormRef = useRef<HTMLFormElement>(null);
   const autoSubmitted = useRef(false);
 
@@ -527,6 +537,106 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
               </button>
             </form>
           )}
+
+          <div className="border-t border-slate-200 pt-4">
+            <button
+              type="button"
+              onClick={() => setShowManual((v) => !v)}
+              className="text-sm font-medium text-slate-600 hover:text-slate-900"
+            >
+              {showManual ? "▾" : "▸"} ➕ Manual Entry (Booked Outside) — already booked with a courier/process outside this app
+            </button>
+            <p className="mt-1 text-xs text-slate-400">
+              For a shipment that&apos;s already booked elsewhere (a courier not in the list above, or booked directly on a
+              courier&apos;s own site) — no API call is made here, this just records the weight/dims/charges so the cost shows up
+              in Track Shipments and the Freight Bill reconciliation.
+            </p>
+
+            {showManual && (
+              <form action={manualAction} className="mt-3 space-y-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
+                <input type="hidden" name="order_id" value={order.id} />
+                {manualState.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{manualState.error}</p>}
+                {manualState.success && (
+                  <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    Manual shipment recorded{manualState.awbNo ? ` — AWB ${manualState.awbNo}` : " (no AWB on file yet)"}.
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                  <div>
+                    <label className={labelClass}>Courier *</label>
+                    <select
+                      name="manual_courier_choice"
+                      value={manualCourier}
+                      onChange={(e) => setManualCourier(e.target.value as ManualBookingCourierChoice)}
+                      className={inputClass}
+                    >
+                      {MANUAL_BOOKING_COURIERS.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {manualCourier === "other" && (
+                    <div>
+                      <label className={labelClass}>Courier / Process Name *</label>
+                      <input name="manual_courier_name" required placeholder="e.g. Local hand-carry, XPS Cargo" className={inputClass} />
+                    </div>
+                  )}
+                  <div>
+                    <label className={labelClass}>AWB / Tracking No. (if known)</label>
+                    <input name="awb_no" className={inputClass} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <div>
+                    <label className={labelClass}>Weight (kg) *</label>
+                    <input
+                      name="package_weight_kg"
+                      type="number"
+                      step="0.001"
+                      required
+                      defaultValue={order.shippingWeightKg ?? ""}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Length (cm) *</label>
+                    <input name="package_length_cm" type="number" required defaultValue={order.lengthCm ?? ""} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Width (cm) *</label>
+                    <input name="package_width_cm" type="number" required defaultValue={order.widthCm ?? ""} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Height (cm) *</label>
+                    <input name="package_height_cm" type="number" required defaultValue={order.heightCm ?? ""} className={inputClass} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                  <div>
+                    <label className={labelClass}>Courier Charges Amount *</label>
+                    <input name="booked_amt" type="number" step="0.01" required className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Currency</label>
+                    <input name="booked_currency" defaultValue="INR" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Note (optional)</label>
+                    <input name="remark" className={inputClass} />
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={manualPending}
+                  className="rounded-lg bg-slate-700 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {manualPending ? "Saving..." : "Save Manual Entry"}
+                </button>
+              </form>
+            )}
+          </div>
         </div>
       )}
     </div>

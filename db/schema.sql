@@ -1078,13 +1078,17 @@ CREATE TABLE order_shipments (
   created_at              timestamptz NOT NULL DEFAULT now(),
   -- 2026-09-01: what the courier quoted/charged (or, failing that, a
   -- Courier Rate Card estimate) at booking time — see
-  -- db/2026-09-01-multi-courier-booking-and-freight-recon.sql. NULL for
-  -- shipments entered manually with no API booking behind them. Compared
-  -- against the real courier bill at Freight Bill entry time via
-  -- freight_bill_awb_assignments.billed_freight_amt below.
+  -- db/2026-09-01-multi-courier-booking-and-freight-recon.sql. 2026-09-04:
+  -- 'manual' added — a Manual Entry (Booked Outside) shipment, entered by
+  -- staff with no API booking behind it at all (see
+  -- db/2026-09-04-manual-external-booking.sql and courier-booking/
+  -- manual-booking-actions.ts). NULL only for shipments predating this
+  -- feature entirely. Compared against the real courier bill at Freight
+  -- Bill entry time via freight_bill_awb_assignments.billed_freight_amt
+  -- below.
   booked_freight_amt      numeric(14,2),
   booked_currency         text,
-  booked_amount_source    text CHECK (booked_amount_source IN ('api', 'rate_card_estimate')),
+  booked_amount_source    text CHECK (booked_amount_source IN ('api', 'rate_card_estimate', 'manual')),
   CHECK (shipment_no > 0),
   UNIQUE (order_id, shipment_no)
 );
@@ -3343,6 +3347,63 @@ CREATE UNIQUE INDEX idx_daily_work_logs_carried_from_unique
   ON daily_work_logs(carried_from_log_id) WHERE carried_from_log_id IS NOT NULL;
 CREATE INDEX idx_daily_work_logs_submitted ON daily_work_logs(company_id, submitted_at);
 
+-- 2026-09-04 — Daily Work Planner (fixed/recurring templates). Admin/HR
+-- builds a per-ROLE baseline (scope='role', matched to
+-- getAuthedEmployee().roleName — see require-capability.ts) AND each
+-- employee can add their own personal recurring items on top
+-- (scope='employee'). Both layers apply at once. Every day,
+-- materializeWorkPlanTemplatesForToday() (src/lib/attendance/
+-- work-plan-templates.ts, called from attendance/page.tsx the same way
+-- carryOverPendingDailyLogs() already is) auto-inserts one daily_work_logs
+-- row per still-missing active template item for that employee+day, tagged
+-- via source_template_id below — from there it's a completely normal
+-- Today's Work row (editable/completable/carry-forward-able), just badged
+-- "🗂️ Template" the same spirit as the existing "📋 From Task" badge
+-- (markTaskDone(), tasks/actions.ts) but with a real FK instead of that
+-- badge's description-prefix convention.
+--
+-- role_name (not role_id): getAuthedEmployee() already resolves and
+-- returns roleName on every request with no extra query paid by this
+-- feature; roles.name is UNIQUE NOT NULL so REFERENCES roles(name) is as
+-- safe as an id FK. scope + the CHECK constraint below (rather than two
+-- separate tables) keeps "exactly one of role_name/employee_id" enforced
+-- at the DB level, not just in the admin/employee CRUD actions.
+CREATE TABLE work_plan_templates (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id    uuid NOT NULL REFERENCES companies(id),
+  scope         text NOT NULL CHECK (scope IN ('role', 'employee')),
+  role_name     text REFERENCES roles(name),   -- set only when scope = 'role'
+  employee_id   uuid REFERENCES employees(id), -- set only when scope = 'employee'
+  category      text,
+  description   text NOT NULL,
+  target_qty    text,
+  sort_order    int NOT NULL DEFAULT 0,
+  active        boolean NOT NULL DEFAULT true,
+  created_by    uuid NOT NULL REFERENCES employees(id),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT work_plan_templates_scope_target_chk CHECK (
+    (scope = 'role'     AND role_name IS NOT NULL AND employee_id IS NULL) OR
+    (scope = 'employee' AND employee_id IS NOT NULL AND role_name IS NULL)
+  )
+);
+CREATE INDEX idx_work_plan_templates_role_scope ON work_plan_templates(company_id, role_name) WHERE scope = 'role';
+CREATE INDEX idx_work_plan_templates_employee_scope ON work_plan_templates(employee_id) WHERE scope = 'employee';
+
+-- Added via ALTER (rather than inline in the CREATE TABLE above) purely
+-- because work_plan_templates has to exist first for this FK to resolve —
+-- daily_work_logs itself was created earlier in this file. Set only on a
+-- row auto-materialized from a template — see work_plan_templates' own
+-- comment above.
+ALTER TABLE daily_work_logs
+  ADD COLUMN source_template_id uuid REFERENCES work_plan_templates(id);
+-- Idempotency: at most one materialized row per (employee, day, template)
+-- — same partial-unique-index shape as idx_daily_work_logs_carried_from_unique
+-- above (see db/2026-09-01-daily-work-carry-forward.sql's header comment
+-- for that precedent).
+CREATE UNIQUE INDEX idx_daily_work_logs_source_template_unique
+  ON daily_work_logs(employee_id, log_date, source_template_id) WHERE source_template_id IS NOT NULL;
+
 -- 2026-08-11 (round 2): Task Assignment — direct rebuild of the legacy
 -- "NYKO MART — Work & Performance System" Apps Script tool's Tasks sheet
 -- (id/from/to/website/category/priority/deadline/status/description/
@@ -3827,7 +3888,11 @@ CREATE TABLE courier_shipper_profiles (
 
 CREATE TABLE courier_shipments (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  courier             text NOT NULL CHECK (courier IN ('fedex', 'ups', 'aramex', 'delhivery', 'shiprocket', 'dhl')),
+  -- 2026-09-04: 'other' added — a Manual Entry (Booked Outside) row for a
+  -- courier that isn't one of the 6 integrated ones (or wasn't
+  -- identified); manual_courier_name below carries the free-text name in
+  -- that case. See db/2026-09-04-manual-external-booking.sql.
+  courier             text NOT NULL CHECK (courier IN ('fedex', 'ups', 'aramex', 'delhivery', 'shiprocket', 'dhl', 'other')),
   order_id            uuid NOT NULL REFERENCES orders(id),
   order_shipment_id   uuid REFERENCES order_shipments(id),
   service_code        text,
@@ -3837,7 +3902,7 @@ CREATE TABLE courier_shipments (
   label_url           text,
   booked_amt          numeric(14,2),
   booked_currency     text,
-  booked_amount_source text CHECK (booked_amount_source IN ('api', 'rate_card_estimate')),
+  booked_amount_source text CHECK (booked_amount_source IN ('api', 'rate_card_estimate', 'manual')),
   request_payload     jsonb,
   response_payload    jsonb,
   error_message       text,
@@ -3846,6 +3911,9 @@ CREATE TABLE courier_shipments (
   cancel_reason        text,
   cancel_remark        text,
   cancelled_at          timestamptz,
+  -- 2026-09-04: Manual Entry (Booked Outside) — see comment on `courier`
+  -- above and db/2026-09-04-manual-external-booking.sql.
+  manual_courier_name   text,
   created_by          uuid REFERENCES employees(id),
   created_at          timestamptz NOT NULL DEFAULT now(),
   UNIQUE (order_id, courier)

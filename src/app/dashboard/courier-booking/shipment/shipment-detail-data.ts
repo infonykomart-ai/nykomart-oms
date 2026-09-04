@@ -32,7 +32,7 @@ export type TimelineStage = {
 export type ShipmentChargeInfo = {
   bookedAmt: number | null;
   bookedCurrency: string | null;
-  bookedAmountSource: "api" | "rate_card_estimate" | null;
+  bookedAmountSource: "api" | "rate_card_estimate" | "manual" | null;
   // Only populated once a Freight Bill has actually been entered against
   // this AWB (freight_bill_awb_assignments) — the real courier-billed
   // amount, reconciled against bookedAmt above. NOT populated for most
@@ -49,7 +49,7 @@ export type ShipmentChargeInfo = {
 
 export type ShipmentDetail = {
   id: string;
-  courier: CourierKey;
+  courier: CourierKey | "other";
   courierLabel: string;
   status: "pending" | "created" | "failed" | "cancelled";
   awbNo: string | null;
@@ -109,7 +109,7 @@ export async function getShipmentDetail(supabase: ServiceClient, companyIds: str
   const { data: shipment } = await supabase
     .from("courier_shipments")
     .select(
-      "id, courier, order_id, order_shipment_id, service_code, ddp_ddu, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, error_message, created_at, cancel_reason, cancel_remark, cancelled_at"
+      "id, courier, manual_courier_name, order_id, order_shipment_id, service_code, ddp_ddu, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, error_message, created_at, cancel_reason, cancel_remark, cancelled_at"
     )
     .eq("id", courierShipmentId)
     .maybeSingle();
@@ -160,7 +160,8 @@ export async function getShipmentDetail(supabase: ServiceClient, companyIds: str
   // a long-running IN_TRANSIT AWB might log the same bucket dozens of
   // times, only the first is a real "stage reached" moment) + Delivered
   // from order_shipments if that's more authoritative than the log.
-  const timeline: TimelineStage[] = [{ stage: "Booked", at: shipment.created_at, detail: `Booking created with ${COURIER_LABELS[shipment.courier as CourierKey]}` }];
+  const courierLabel = shipment.courier === "other" ? shipment.manual_courier_name ?? "Other (manual)" : COURIER_LABELS[shipment.courier as CourierKey] ?? shipment.courier;
+  const timeline: TimelineStage[] = [{ stage: "Booked", at: shipment.created_at, detail: `Booking created with ${courierLabel}` }];
   const seenStages = new Set<string>();
   for (const event of webhookEvents ?? []) {
     if (event.error_message) continue; // a parse-error log row carries no real status
@@ -181,8 +182,8 @@ export async function getShipmentDetail(supabase: ServiceClient, companyIds: str
 
   return {
     id: shipment.id,
-    courier: shipment.courier as CourierKey,
-    courierLabel: COURIER_LABELS[shipment.courier as CourierKey] ?? shipment.courier,
+    courier: shipment.courier as CourierKey | "other",
+    courierLabel,
     status: shipment.status as ShipmentDetail["status"],
     awbNo: shipment.awb_no,
     labelUrl: shipment.label_url,

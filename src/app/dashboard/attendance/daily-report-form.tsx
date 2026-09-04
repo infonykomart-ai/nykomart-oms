@@ -88,6 +88,11 @@ type LogRow = {
   submittedAt: string | null;
   priority: string;
   carriedToDate: string | null;
+  // 2026-09-04 — Daily Work Planner: set only on a row auto-materialized
+  // from a fixed role/personal template (work_plan_templates) — drives the
+  // "🗂️ Template" badge below, same spirit as the "Carried from yesterday"
+  // badge above it.
+  sourceTemplateId: string | null;
 };
 
 type ServerLog = {
@@ -106,6 +111,7 @@ type ServerLog = {
   submitted_at: string | null;
   priority: string;
   carried_to_date: string | null;
+  source_template_id: string | null;
 };
 
 function splitHM(totalMinutes: number): { h: string; m: string } {
@@ -136,6 +142,7 @@ function fromServer(l: ServerLog): LogRow {
     submittedAt: l.submitted_at,
     priority: l.priority || "Medium",
     carriedToDate: l.carried_to_date,
+    sourceTemplateId: l.source_template_id,
   };
 }
 
@@ -159,6 +166,7 @@ function blankRow(today: string): LogRow {
     submittedAt: null,
     priority: "Medium",
     carriedToDate: null,
+    sourceTemplateId: null,
   };
 }
 
@@ -409,6 +417,7 @@ export function DailyReportForm({
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-2 text-xs">
                 {row.carriedFromLogId && <span className="rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">Carried from yesterday</span>}
+                {row.sourceTemplateId && <span className="rounded-full bg-teal-100 px-2 py-0.5 font-medium text-teal-700">🗂️ Template</span>}
                 {row.workStatus === "Carried Forward" ? (
                   <span className="rounded-full bg-purple-100 px-2 py-0.5 font-medium text-purple-700">
                     ↪ Carried Forward{row.carriedToDate ? ` to ${row.carriedToDate}` : ""}
@@ -438,6 +447,7 @@ export function DailyReportForm({
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs text-slate-400">
                 {row.carriedFromLogId && <span className="mr-2 rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">Carried from yesterday</span>}
+                {row.sourceTemplateId && <span className="mr-2 rounded-full bg-teal-100 px-2 py-0.5 font-medium text-teal-700">🗂️ Template</span>}
                 {savingIds.has(row.clientId) ? "Saving..." : row.id ? "Saved (draft)" : "Not saved yet — start typing"}
               </span>
               <button type="button" onClick={() => removeRow(row.clientId)} className="text-xs text-rose-600 hover:underline">

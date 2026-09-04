@@ -330,3 +330,84 @@ body {
 .oms-scroll::-webkit-scrollbar-thumb:hover {
   background-color: #b8863a;
 }
+
+/*
+ * 2026-09-04 — DashboardDock (dashboard-dock.tsx): macOS-Dock-style
+ * bottom-center nav bar, opt-in alternative to the left sidebar (see
+ * nav-style-context.tsx). Hover/focus "magnify" is pure CSS, not a
+ * mousemove-driven JS/state loop — with every tile visible at once (same
+ * ~30-tile shape as the sidebar grid), that would re-render the whole dock
+ * on every pixel of pointer movement for no real benefit.
+ *
+ * Only `.oms-dock-icon-wrap` (the icon itself) scales — never the outer
+ * `.oms-dock-tile` — so the tooltip, which is positioned relative to the
+ * unscaled outer tile, doesn't get dragged along by its neighbor's scale.
+ * `transform-origin: bottom` makes the icon grow upward from a fixed
+ * baseline, like a real dock, instead of growing in both directions.
+ *
+ * Neighbor magnify uses `:has()`, which degrades gracefully: on any
+ * browser old enough not to support it, only the hovered/focused tile
+ * itself magnifies (still a fully working dock, just without the
+ * neighbor's smaller bump).
+ */
+.oms-dock-icon-wrap {
+  transform-origin: bottom center;
+  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.oms-dock-tile:hover .oms-dock-icon-wrap,
+.oms-dock-tile:focus-visible .oms-dock-icon-wrap {
+  transform: scale(1.3);
+}
+
+.oms-dock-tile:has(+ .oms-dock-tile:hover) .oms-dock-icon-wrap,
+.oms-dock-tile:has(+ .oms-dock-tile:focus-visible) .oms-dock-icon-wrap,
+.oms-dock-tile:hover + .oms-dock-tile .oms-dock-icon-wrap,
+.oms-dock-tile:focus-visible + .oms-dock-tile .oms-dock-icon-wrap {
+  transform: scale(1.12);
+}
+
+.oms-dock-tooltip {
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.oms-dock-tile:hover .oms-dock-tooltip,
+.oms-dock-tile:focus-visible .oms-dock-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* Thin, theme-neutral scrollbar for the dock's own horizontal scroll
+   (~30+ tiles at once can exceed even a wide viewport) — deliberately not
+   .oms-scroll's always-visible amber bar, which would look out of place
+   on a floating pill in every theme. */
+.oms-dock-inner {
+  scrollbar-width: thin;
+}
+
+.oms-dock-inner::-webkit-scrollbar {
+  height: 6px;
+}
+
+.oms-dock-inner::-webkit-scrollbar-thumb {
+  background-color: var(--oms-sidebar-tile-border);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oms-dock-icon-wrap,
+  .oms-dock-tooltip {
+    transition: none;
+  }
+
+  .oms-dock-tile:hover .oms-dock-icon-wrap,
+  .oms-dock-tile:focus-visible .oms-dock-icon-wrap,
+  .oms-dock-tile:has(+ .oms-dock-tile:hover) .oms-dock-icon-wrap,
+  .oms-dock-tile:has(+ .oms-dock-tile:focus-visible) .oms-dock-icon-wrap,
+  .oms-dock-tile:hover + .oms-dock-tile .oms-dock-icon-wrap,
+  .oms-dock-tile:focus-visible + .oms-dock-tile .oms-dock-icon-wrap {
+    transform: none;
+  }
+}

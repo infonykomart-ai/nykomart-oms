@@ -153,7 +153,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
         a.debit_note_no ? `DN ${a.debit_note_no} +₹${a.debit_note_amt}` : null,
         shipment?.booked_freight_amt != null
           ? `Booked ${shipment.booked_currency} ${Number(shipment.booked_freight_amt).toFixed(2)}${
-              shipment.booked_amount_source === "rate_card_estimate" ? " (est.)" : ""
+              shipment.booked_amount_source === "rate_card_estimate" ? " (est.)" : shipment.booked_amount_source === "manual" ? " (manual)" : ""
             }${
               a.billed_freight_amt != null
                 ? ` vs Billed ${shipment.booked_currency} ${Number(a.billed_freight_amt).toFixed(2)} (Diff ${(
