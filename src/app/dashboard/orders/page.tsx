@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
+import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { OrderListTable } from "./order-list-table";
 
 const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
@@ -51,12 +52,11 @@ export default async function OrdersPage({
     supabase.from("currencies").select("code, name").order("code"),
     supabase.from("parties").select("id, name").order("name"),
   ]);
-  const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
   let query = supabase
     .from("orders")
     .select(
-      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, vendor_party_id"
+      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, vendor_party_id, advance_tracking, final_tracking"
     )
     .in("company_id", effectiveCompanyIds)
     .order("entry_timestamp", { ascending: false })
@@ -116,91 +116,66 @@ export default async function OrdersPage({
     new Set((orders ?? []).map((o) => normalizeOrderNo(o.marketplace_order_no)).filter((x): x is string => !!x))
   );
 
-  // 2026-08-17 performance fix — these 6 queries (purchaseBills through
-  // amazonLines) each only depend on orderIds/marketplaceOrderNos computed
-  // above, never on each other's results, but were previously awaited one
-  // at a time — a fully sequential chain of round-trips on every Orders
-  // hub page load. Running them together cuts that to the slowest single
-  // query instead of the sum of all 6. Same empty-array short-circuit as
-  // before (skip the query entirely, resolve to { data: [] }) — Promise.all
-  // accepts a plain value alongside real promises just fine.
-  const [
-    { data: purchaseBills },
-    { data: dispatchInvoices },
-    { data: refunds },
-    { data: etsyLines },
-    { data: ebayTaxLines },
-    { data: amazonLines },
-  ] = await Promise.all([
-    orderIds.length
-      ? supabase.from("purchase_bills").select("order_id, vendor_party_id, vendor_invoice_no").in("order_id", orderIds)
-      : { data: [] },
-    orderIds.length
-      ? supabase
-          .from("dispatch_invoices")
-          .select("order_id, awb_no, courier_name, delivered_status, delivered_date")
-          .in("order_id", orderIds)
-      : { data: [] },
-    orderIds.length
-      ? supabase
-          .from("order_refunds")
-          .select("order_id, refund_amount, refund_currency, refund_date, credit_note_id")
-          .in("order_id", orderIds)
-      : { data: [] },
-    marketplaceOrderNos.length
-      ? supabase
-          .from("etsy_ledger_lines")
-          .select("company_id, order_number, txn_date, type, title, info, amount, fees_and_taxes, net, currency")
-          .in("company_id", effectiveCompanyIds)
-          .in("order_number", marketplaceOrderNos)
-      : { data: [] },
-    marketplaceOrderNos.length
-      ? supabase
-          .from("ebay_tax_invoice_lines")
-          .select("company_id, order_number, txn_date, description, memo, fee_type, currency, net_amount, igst_amount, total_amount")
-          .in("company_id", effectiveCompanyIds)
-          .in("order_number", marketplaceOrderNos)
-      : { data: [] },
-    marketplaceOrderNos.length
-      ? supabase
-          .from("amazon_transactions")
-          .select("company_id, order_id, txn_date, transaction_type, product_details, amazon_fees, total_amount, currency")
-          .in("company_id", effectiveCompanyIds)
-          .in("order_id", marketplaceOrderNos)
-      : { data: [] },
-  ]);
-
-  const purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]> = {};
-  for (const pb of purchaseBills ?? []) {
-    if (!pb.order_id) continue;
-    (purchasesByOrder[pb.order_id] ??= []).push({
-      vendorName: partyName.get(pb.vendor_party_id) ?? "—",
-      vendorInvoiceNo: pb.vendor_invoice_no ?? "—",
-    });
-  }
-
-  // 2026-08-08 (pending item 7's UI half — "Order section should show
-  // status: In Transit / Delivered / red alert... with a More Details
-  // click-through") — courier tracking info (AWB/courier/delivered date),
-  // filled in via Bulk Courier Tracking Update (item 8, manual for now
-  // since the live courier-API integration itself is still blocked).
-  const trackingByOrder: Record<
-    string,
-    { awbNo: string | null; courierName: string | null; deliveredStatus: string | null; deliveredDate: string | null }
-  > = {};
-  for (const di of dispatchInvoices ?? []) {
-    trackingByOrder[di.order_id] = {
-      awbNo: di.awb_no,
-      courierName: di.courier_name,
-      deliveredStatus: di.delivered_status,
-      deliveredDate: di.delivered_date,
-    };
-  }
+  // 2026-08-17 performance fix — these queries each only depend on
+  // orderIds/marketplaceOrderNos computed above, never on each other's
+  // results, but were previously awaited one at a time — a fully
+  // sequential chain of round-trips on every Orders hub page load. Running
+  // them together cuts that to the slowest single query instead of the sum
+  // of all of them. Same empty-array short-circuit as before (skip the
+  // query entirely, resolve to { data: [] }) — Promise.all accepts a plain
+  // value alongside real promises just fine.
+  //
+  // 2026-09-04 — purchase_bills/dispatch_invoices were fetched and reduced
+  // into purchasesByOrder/trackingByOrder right here; that's now
+  // getOrderStatusSummaries() (src/lib/orders/order-status-summary.ts),
+  // shared with the order detail page and the Orders Report so the
+  // purchased-from/Purchase-Bill/delivered/tracking/freight sourcing rules
+  // live in exactly one place. Run alongside the other independent queries
+  // below, same Promise.all batching as before.
+  const [{ data: refunds }, { data: etsyLines }, { data: ebayTaxLines }, { data: amazonLines }, statusByOrder] =
+    await Promise.all([
+      orderIds.length
+        ? supabase
+            .from("order_refunds")
+            .select("order_id, refund_amount, refund_currency, refund_date, credit_note_id")
+            .in("order_id", orderIds)
+        : { data: [] },
+      marketplaceOrderNos.length
+        ? supabase
+            .from("etsy_ledger_lines")
+            .select("company_id, order_number, txn_date, type, title, info, amount, fees_and_taxes, net, currency")
+            .in("company_id", effectiveCompanyIds)
+            .in("order_number", marketplaceOrderNos)
+        : { data: [] },
+      marketplaceOrderNos.length
+        ? supabase
+            .from("ebay_tax_invoice_lines")
+            .select("company_id, order_number, txn_date, description, memo, fee_type, currency, net_amount, igst_amount, total_amount")
+            .in("company_id", effectiveCompanyIds)
+            .in("order_number", marketplaceOrderNos)
+        : { data: [] },
+      marketplaceOrderNos.length
+        ? supabase
+            .from("amazon_transactions")
+            .select("company_id, order_id, txn_date, transaction_type, product_details, amazon_fees, total_amount, currency")
+            .in("company_id", effectiveCompanyIds)
+            .in("order_id", marketplaceOrderNos)
+        : { data: [] },
+      getOrderStatusSummaries(
+        supabase,
+        (orders ?? []).map((o) => ({
+          id: o.id,
+          vendor_party_id: o.vendor_party_id,
+          advance_tracking: o.advance_tracking,
+          final_tracking: o.final_tracking,
+        }))
+      ),
+    ]);
 
   // Pending item 2 (Hold/Cancel/Refund) — surface any refund(s) already
   // entered against each order, and whether one auto-generated a Credit
   // Note, right on the Orders hub (same "link everything" principle as
-  // purchasesByOrder/trackingByOrder above).
+  // statusByOrder above).
   const refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]> = {};
   for (const r of refunds ?? []) {
     (refundsByOrder[r.order_id] ??= []).push({
@@ -449,8 +424,7 @@ export default async function OrdersPage({
         companies={companies ?? []}
         statuses={STATUSES}
         todayStr={todayStr}
-        purchasesByOrder={purchasesByOrder}
-        trackingByOrder={trackingByOrder}
+        statusByOrder={statusByOrder}
         refundsByOrder={refundsByOrder}
         etsyFeesByOrder={etsyFeesByOrder}
         ebayFeesByOrder={ebayFeesByOrder}

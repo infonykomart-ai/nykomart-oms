@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import type { OrderStatusSummary } from "@/lib/orders/order-status-summary";
 
 // Read-only order detail/print view — mirrors invoice-view.tsx's structure
 // (header block -> info grids -> item table -> value breakdown -> footer)
@@ -260,6 +261,7 @@ export function OrderView({
   hsnCode,
   invoice,
   vendorName,
+  statusSummary = null,
   debitNotes = [],
   creditNotes = [],
 }: {
@@ -271,6 +273,11 @@ export function OrderView({
   hsnCode: string;
   invoice: Invoice;
   vendorName: string | null;
+  // 2026-09-04 — the 5-fields-per-order summary (purchased-from vendor,
+  // Purchase Bill entry, delivered status, tracking no., freight/store
+  // expense), shared with the Orders list and Orders Report — see
+  // src/lib/orders/order-status-summary.ts.
+  statusSummary?: OrderStatusSummary | null;
   debitNotes?: OrderDebitNote[];
   creditNotes?: OrderCreditNote[];
 }) {
@@ -301,6 +308,62 @@ export function OrderView({
           <Link href={`/dashboard/invoices/${invoice.id}`} className="text-sm text-amber-600 underline">
             View full Invoice →
           </Link>
+        </div>
+      )}
+
+      {/* 2026-09-04 — "store expense/freight, purchased-from vendor, whether
+          a Purchase Bill entry was made, delivered status, tracking no." —
+          the 5 fields a non-technical user flagged as missing from this
+          page. Screen-only (print:hidden) rather than folded into the
+          formal print sheet above — same treatment as the debit/credit
+          notes block below, since this is operational status, not part of
+          the order document itself. Sourced from the shared statusSummary
+          (see src/lib/orders/order-status-summary.ts) — same function the
+          Orders list and Orders Report use, so this can never disagree with
+          them. */}
+      {statusSummary && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-xs print:hidden">
+          <p className="mb-2 font-semibold text-slate-700">Purchase &amp; Shipping Status</p>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            <div>
+              <dt className="text-slate-400">Purchased From</dt>
+              <dd className="text-slate-700">
+                {statusSummary.purchasedFromName
+                  ? `${statusSummary.purchasedFromName}${statusSummary.purchasedFromIsPlanned ? " (planned)" : ""}`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Purchase Bill Entry</dt>
+              <dd className={statusSummary.purchaseBillCount > 0 ? "text-emerald-700" : "text-slate-400"}>
+                {statusSummary.purchaseBillCount > 0 ? `✓ ${statusSummary.purchaseBillLabel}` : "No Purchase Bill yet"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Delivered</dt>
+              <dd className="text-slate-700">
+                {statusSummary.deliveredStatus
+                  ? `${statusSummary.deliveredStatus}${statusSummary.deliveredDate ? ` · ${statusSummary.deliveredDate}` : ""}`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Tracking</dt>
+              <dd className="text-slate-700">
+                {statusSummary.trackingNo
+                  ? `${statusSummary.trackingNo}${statusSummary.courierName ? ` (${statusSummary.courierName})` : ""}`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Freight / Store Expense</dt>
+              <dd className="text-slate-700">
+                {statusSummary.freightAmt != null
+                  ? `${statusSummary.freightAmt.toFixed(2)}${statusSummary.freightCurrency ? ` ${statusSummary.freightCurrency}` : ""}`
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
         </div>
       )}
 

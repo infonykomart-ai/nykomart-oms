@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
+import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { OrdersReportTable } from "./orders-report-table";
 
 // First real report built on the Universal Reports/Export/Send system
@@ -39,7 +40,7 @@ export default async function ReportsPage({
   let query = supabase
     .from("orders")
     .select(
-      "id, ref_no, order_date, company_id, status, buyer_name_address, contact_no, item_category_id, size_label, qty, order_value_original, order_currency, order_value_usd, order_value_inr, dispatch_date, entry_timestamp"
+      "id, ref_no, order_date, company_id, status, buyer_name_address, contact_no, item_category_id, size_label, qty, order_value_original, order_currency, order_value_usd, order_value_inr, dispatch_date, entry_timestamp, vendor_party_id, advance_tracking, final_tracking"
     )
     .in("company_id", companyId ? [companyId] : employee.companyIds)
     .order("entry_timestamp", { ascending: false })
@@ -54,11 +55,38 @@ export default async function ReportsPage({
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const categoryName = new Map((itemCategories ?? []).map((c) => [c.id, c.name]));
 
-  const rows = (orders ?? []).map((o) => ({
-    ...o,
-    company_name: companyName.get(o.company_id) ?? "",
-    item_category_name: categoryName.get(o.item_category_id) ?? "",
-  }));
+  // 2026-09-04 — the same "purchased-from vendor / Purchase Bill entry /
+  // delivered status / tracking no. / freight" 5-fields-per-order summary
+  // the Orders list and order detail page use (see
+  // src/lib/orders/order-status-summary.ts) — one batch query per source
+  // table for every order on this report, never one query per row.
+  const statusByOrder = await getOrderStatusSummaries(
+    supabase,
+    (orders ?? []).map((o) => ({
+      id: o.id,
+      vendor_party_id: o.vendor_party_id,
+      advance_tracking: o.advance_tracking,
+      final_tracking: o.final_tracking,
+    }))
+  );
+
+  const rows = (orders ?? []).map((o) => {
+    const s = statusByOrder[o.id];
+    return {
+      ...o,
+      company_name: companyName.get(o.company_id) ?? "",
+      item_category_name: categoryName.get(o.item_category_id) ?? "",
+      purchased_from: s?.purchasedFromName
+        ? `${s.purchasedFromName}${s.purchasedFromIsPlanned ? " (planned)" : ""}`
+        : "",
+      pb_entry: s && s.purchaseBillCount > 0 ? s.purchaseBillLabel ?? "Yes" : "No PB yet",
+      delivered_status: s?.deliveredStatus ?? "",
+      delivered_date: s?.deliveredDate ?? null,
+      tracking_no: s?.trackingNo ? (s.courierName ? `${s.trackingNo} (${s.courierName})` : s.trackingNo) : "",
+      freight_amt: s?.freightAmt ?? null,
+      freight_currency: s?.freightCurrency ?? null,
+    };
+  });
 
   return (
     <div>

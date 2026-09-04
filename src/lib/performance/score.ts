@@ -161,6 +161,77 @@ export function compositeScore(c: ScoreComponents): number {
   return totalWeight > 0 ? Math.round(weighted / totalWeight) : 0;
 }
 
+// --- Task completion rate (admin-only) -----------------------------------
+// 2026-09-04: owner (non-technical, Hindi/Hinglish) asked, on the
+// attendance admin page's Daily Work Report data, "kitna kaam kiya hai
+// kitna nahi" (how much work actually got done vs. not) — no
+// completion-rate number existed anywhere before this. Two numbers, shown
+// together, because they answer different questions: task-count % answers
+// "of the things they logged, how many did they actually finish" (a row
+// counts once no matter how big the job), qty-based % answers "of the
+// actual volume of work committed to, how much landed" (a big row with a
+// high target_qty carries more weight than a small one). Neither alone
+// tells the full story, so both are always returned together.
+//
+// ADMIN-ONLY, deliberately not wired into workEfficiencyScore/
+// compositeScore above or exposed on the employee's own self-view — same
+// discipline as businessImpactScoreSelf vs. businessImpactScoreRanked
+// (see module header, point 4): this is purely a surfaced admin metric,
+// not a scoring input, and the employee's own "My Performance" page must
+// never call this.
+//
+// target_qty/qty_done are free-text numeric fields on daily_work_logs
+// (Postgres text columns, not numeric — see database.ts) so a row can
+// have "", null, or a non-numeric typo in either; both are parsed
+// defensively and non-numeric/blank values are simply skipped rather than
+// treated as 0 (a blank target_qty shouldn't drag the qty-based % down as
+// if the employee had promised 0 and delivered 0).
+export type WorkLogForCompletion = {
+  work_status: string | null;
+  target_qty: string | null;
+  qty_done: string | null;
+};
+
+export type TaskCompletionSummary = {
+  totalTasks: number;
+  completedTasks: number;
+  // null (not 0) when totalTasks is 0 — "no reports in range" is a
+  // different fact from "reported but 0% completed", and the UI should
+  // say "—" for the former.
+  taskCompletionPct: number | null;
+  qtySum: number;
+  targetSum: number;
+  // null when targetSum is 0 — nothing to divide by (no row in range had
+  // a numeric target_qty), never silently rendered as 0% or 100%.
+  qtyCompletionPct: number | null;
+};
+
+function parseNumericField(raw: string | null): number | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function taskCompletionSummary(logs: WorkLogForCompletion[]): TaskCompletionSummary {
+  const totalTasks = logs.length;
+  const completedTasks = logs.filter((l) => l.work_status === "Completed").length;
+  const taskCompletionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : null;
+
+  let qtySum = 0;
+  let targetSum = 0;
+  for (const l of logs) {
+    const target = parseNumericField(l.target_qty);
+    const done = parseNumericField(l.qty_done);
+    if (target !== null) targetSum += target;
+    if (done !== null) qtySum += done;
+  }
+  const qtyCompletionPct = targetSum > 0 ? Math.round((qtySum / targetSum) * 100) : null;
+
+  return { totalTasks, completedTasks, taskCompletionPct, qtySum, targetSum, qtyCompletionPct };
+}
+
 // A short, factual "why this person ranks where they do" string for the
 // admin ranking view — describes which component(s) they lead in, never
 // names or suggests a specific award (that decision stays with HR/MD, per

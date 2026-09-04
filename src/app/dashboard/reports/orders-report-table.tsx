@@ -21,6 +21,19 @@ type OrderRow = {
   dispatch_date: string | null;
   company_name: string;
   item_category_name: string;
+  // 2026-09-04 — the 5 fields a non-technical user asked to see per order
+  // again: store expense/freight, purchased-from vendor, whether a
+  // Purchase Bill entry was made, delivered status, tracking no. Computed
+  // by the shared getOrderStatusSummaries() (src/lib/orders/order-status-
+  // summary.ts) in page.tsx and flattened onto each row here, same as
+  // company_name/item_category_name above.
+  purchased_from: string;
+  pb_entry: string;
+  delivered_status: string;
+  delivered_date: string | null;
+  tracking_no: string;
+  freight_amt: number | null;
+  freight_currency: string | null;
 };
 
 const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Cancelled", "Returned"];
@@ -40,6 +53,24 @@ const COLUMNS: ExportColumn<OrderRow>[] = [
   { key: "order_value_usd", label: "Value (USD)", value: (r) => r.order_value_usd },
   { key: "order_value_inr", label: "Value (INR)", value: (r) => r.order_value_inr },
   { key: "dispatch_date", label: "Dispatch Date", value: (r) => r.dispatch_date },
+  // 2026-09-04 — 5 new report columns, threaded through the exact same
+  // { key, label, value } shape as every column above so they come for
+  // free in every export format (CSV/Excel/Word/PDF/Email/WhatsApp) via
+  // <ExportBar /> — no per-format code to touch (see export-table.ts's own
+  // header comment on why that's true for every report on this pattern).
+  { key: "purchased_from", label: "Purchased From", value: (r) => r.purchased_from },
+  { key: "pb_entry", label: "PB Entry", value: (r) => r.pb_entry },
+  {
+    key: "delivered",
+    label: "Delivered",
+    value: (r) => (r.delivered_status ? `${r.delivered_status}${r.delivered_date ? ` (${r.delivered_date})` : ""}` : ""),
+  },
+  { key: "tracking", label: "Tracking", value: (r) => r.tracking_no },
+  {
+    key: "freight",
+    label: "Freight",
+    value: (r) => (r.freight_amt != null ? `${r.freight_amt.toFixed(2)}${r.freight_currency ? ` ${r.freight_currency}` : ""}` : ""),
+  },
 ];
 
 export function OrdersReportTable({

@@ -383,10 +383,21 @@ export function DailyReportForm({
     }
   }
 
-  return (
-    <div className="space-y-3">
-      {rows.map((row) =>
-        row.submittedAt ? (
+  // 2026-09-04: "aaj ka kaam or pichle 6 din ka backdated kaam ek hi flat
+  // list me mix ho ke aa raha hai, samajh nahi aata" — split the same
+  // `rows` array (still one source of truth, still the full 7-day
+  // editable/backdate window — this is a display/grouping change only,
+  // backdating itself keeps working exactly as before) into TODAY's
+  // entries (shown by default) and the last 6 days' entries (collapsed by
+  // default, in their own clearly-labeled section below). A fresh blank
+  // row and "+ Add more work" both default logDate to `today`, so they
+  // always land in the always-visible group, never inside the collapsed
+  // one.
+  const todayRows = rows.filter((row) => row.logDate === today);
+  const backdatedRows = rows.filter((row) => row.logDate !== today);
+
+  function renderRow(row: LogRow) {
+    return row.submittedAt ? (
           // 2026-09-01: a "Carried Forward" row is ALSO finalized/read-only
           // (submittedAt gets set by carryForwardDailyLog specifically so
           // it's visible everywhere else on this table's submitted_at IS
@@ -592,8 +603,26 @@ export function DailyReportForm({
               </Field>
             </div>
           </div>
-        )
+        );
+  }
+
+  return (
+    <div className="space-y-3">
+      {todayRows.length > 0 ? (
+        todayRows.map((row) => renderRow(row))
+      ) : (
+        <p className="text-xs text-slate-400">Nothing for today yet — use &quot;+ Add more work&quot; below.</p>
       )}
+
+      {backdatedRows.length > 0 && (
+        <details className="rounded-xl border border-slate-200 bg-slate-50">
+          <summary className="cursor-pointer select-none rounded-xl px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+            🕘 Backdated entries (last 6 days) ({backdatedRows.length})
+          </summary>
+          <div className="space-y-3 p-3 pt-0">{backdatedRows.map((row) => renderRow(row))}</div>
+        </details>
+      )}
+
       <button
         type="button"
         onClick={() => setRows((prev) => [...prev, blankRow(today)])}

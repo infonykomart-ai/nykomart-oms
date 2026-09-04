@@ -10,6 +10,7 @@ import { CustomerWhatsAppButton } from "./customer-whatsapp-button";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
+import type { OrderStatusSummary } from "@/lib/orders/order-status-summary";
 
 // company_id isn't part of EditableOrder (that type is shared with the Edit
 // form, which never needs to change an order's company) but it IS selected
@@ -21,8 +22,6 @@ type OrderRow = EditableOrder & {
   entry_timestamp: string;
   shipment_status: string | null;
 };
-
-type TrackingInfo = { awbNo: string | null; courierName: string | null; deliveredStatus: string | null; deliveredDate: string | null };
 
 type EtsyFeeLine = {
   date: string | null;
@@ -136,8 +135,7 @@ export function OrderListTable({
   companies,
   statuses,
   todayStr,
-  purchasesByOrder,
-  trackingByOrder,
+  statusByOrder,
   refundsByOrder,
   etsyFeesByOrder,
   ebayFeesByOrder,
@@ -151,8 +149,11 @@ export function OrderListTable({
   companies: { id: string; name: string }[];
   statuses: string[];
   todayStr: string;
-  purchasesByOrder: Record<string, { vendorName: string; vendorInvoiceNo: string }[]>;
-  trackingByOrder: Record<string, TrackingInfo>;
+  // Purchased-from vendor, Purchase Bill entry, delivered status, tracking
+  // no. and freight/store expense — one shared lookup for all 5 (see
+  // src/lib/orders/order-status-summary.ts) instead of the old separate
+  // purchasesByOrder/trackingByOrder maps this replaced.
+  statusByOrder: Record<string, OrderStatusSummary>;
   refundsByOrder: Record<string, { amount: number; currency: string; date: string; hasCreditNote: boolean }[]>;
   etsyFeesByOrder: Record<string, EtsyFeeMatch>;
   ebayFeesByOrder: Record<string, EbayFeeMatch>;
@@ -180,7 +181,6 @@ export function OrderListTable({
     }
   });
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
-  const partyName = new Map(parties.map((p) => [p.id, p.name]));
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
   const categoryOptions = Array.from(new Set(itemCategories.map((c) => c.name))).sort();
 
@@ -200,10 +200,14 @@ export function OrderListTable({
     persistHidden(next);
   }
 
-  function vendorText(o: OrderRow): string {
-    if (purchasesByOrder[o.id]) return purchasesByOrder[o.id].map((p) => p.vendorName).join(", ");
-    if (o.vendor_party_id) return `${partyName.get(o.vendor_party_id) ?? "—"} (planned)`;
-    return "";
+  // 2026-09-04 — reads the shared statusByOrder summary now (see
+  // src/lib/orders/order-status-summary.ts) instead of re-deriving
+  // purchased-from-vendor here; "(planned)" still means the same thing it
+  // always did — orders.vendor_party_id with no Purchase Bill raised yet.
+  function purchasedFromText(o: OrderRow): string {
+    const s = statusByOrder[o.id];
+    if (!s?.purchasedFromName) return "";
+    return s.purchasedFromIsPlanned ? `${s.purchasedFromName} (planned)` : s.purchasedFromName;
   }
 
   function vatIossTax(o: OrderRow): string {
@@ -362,11 +366,79 @@ export function OrderListTable({
     },
     {
       key: "vendor",
-      label: "Vendor",
+      label: "Purchased From",
       filter: "text",
       tdClass: "max-w-[160px] truncate",
-      filterValue: vendorText,
-      cell: (o) => vendorText(o) || "—",
+      filterValue: purchasedFromText,
+      cellTitle: (o) => purchasedFromText(o) || "",
+      cell: (o) => purchasedFromText(o) || "—",
+    },
+    // 2026-09-04 — 4 new columns: Purchase Bill entry, Delivered status,
+    // Tracking no. and Freight/store expense. Previously only reachable via
+    // the per-row "▾ More details" expand panel (and freight wasn't shown
+    // anywhere at all) — user asked for all 5 of these to be always-visible
+    // columns, same as the report and detail page. Sourced from the shared
+    // statusByOrder summary (src/lib/orders/order-status-summary.ts).
+    {
+      key: "pbEntry",
+      label: "PB Entry",
+      filter: "select",
+      filterOptions: ["Yes", "No"],
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => (statusByOrder[o.id]?.purchaseBillCount ? "Yes" : "No"),
+      cell: (o) => {
+        const s = statusByOrder[o.id];
+        return s && s.purchaseBillCount > 0 ? (
+          <span className="text-emerald-700">✓ {s.purchaseBillLabel}</span>
+        ) : (
+          <span className="text-slate-400">No PB yet</span>
+        );
+      },
+    },
+    {
+      key: "delivered",
+      label: "Delivered",
+      filter: "select",
+      filterOptions: ["Delivered", "NOT Delivered", "Unknown"],
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => statusByOrder[o.id]?.deliveredStatus ?? "Unknown",
+      cell: (o) => {
+        const s = statusByOrder[o.id];
+        if (!s?.deliveredStatus) return <span className="text-slate-300">—</span>;
+        return (
+          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${shipmentBadgeClass(s.deliveredStatus)}`}>
+            {s.deliveredStatus}
+            {s.deliveredDate ? ` · ${s.deliveredDate}` : ""}
+          </span>
+        );
+      },
+    },
+    {
+      key: "trackingNo",
+      label: "Tracking",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => statusByOrder[o.id]?.trackingNo ?? "",
+      cellTitle: (o) => statusByOrder[o.id]?.courierName ?? "",
+      cell: (o) => {
+        const s = statusByOrder[o.id];
+        if (!s?.trackingNo) return "—";
+        return s.courierName ? `${s.trackingNo} (${s.courierName})` : s.trackingNo;
+      },
+    },
+    {
+      key: "freight",
+      label: "Freight",
+      filter: "text",
+      tdClass: "whitespace-nowrap text-right",
+      filterValue: (o) => (statusByOrder[o.id]?.freightAmt != null ? String(statusByOrder[o.id]!.freightAmt) : ""),
+      cell: (o) => {
+        const s = statusByOrder[o.id];
+        // null = never captured ("—"); a real recorded 0 is shown as 0, not
+        // conflated with "not captured" — see order-status-summary.ts.
+        if (!s || s.freightAmt == null) return "—";
+        return `${s.freightAmt.toFixed(2)}${s.freightCurrency ? ` ${s.freightCurrency}` : ""}`;
+      },
     },
     {
       key: "buyer",
@@ -509,21 +581,32 @@ export function OrderListTable({
     order_currency: string;
     dispatch_date: string | null;
     purchased_from: string;
+    pb_entry: string;
+    delivered: string;
+    tracking_no: string;
+    freight: string;
   };
-  const exportRows: ExportRow[] = filteredOrders.map((o) => ({
-    ref_no: o.ref_no,
-    order_date: o.order_date,
-    status: o.status,
-    buyer_name_address: o.buyer_name_address,
-    contact_no: o.contact_no,
-    item_category_name: categoryName.get(o.item_category_id) ?? "",
-    size_label: o.size_label,
-    qty: o.qty,
-    order_value_original: o.order_value_original,
-    order_currency: o.order_currency,
-    dispatch_date: o.dispatch_date,
-    purchased_from: purchasesByOrder[o.id]?.map((p) => p.vendorName).join(", ") ?? "",
-  }));
+  const exportRows: ExportRow[] = filteredOrders.map((o) => {
+    const s = statusByOrder[o.id];
+    return {
+      ref_no: o.ref_no,
+      order_date: o.order_date,
+      status: o.status,
+      buyer_name_address: o.buyer_name_address,
+      contact_no: o.contact_no,
+      item_category_name: categoryName.get(o.item_category_id) ?? "",
+      size_label: o.size_label,
+      qty: o.qty,
+      order_value_original: o.order_value_original,
+      order_currency: o.order_currency,
+      dispatch_date: o.dispatch_date,
+      purchased_from: purchasedFromText(o),
+      pb_entry: s && s.purchaseBillCount > 0 ? s.purchaseBillLabel ?? "Yes" : "No PB yet",
+      delivered: s?.deliveredStatus ?? "Unknown",
+      tracking_no: s?.trackingNo ? (s.courierName ? `${s.trackingNo} (${s.courierName})` : s.trackingNo) : "",
+      freight: s && s.freightAmt != null ? `${s.freightAmt.toFixed(2)}${s.freightCurrency ? ` ${s.freightCurrency}` : ""}` : "",
+    };
+  });
   const EXPORT_COLUMNS: ExportColumn<ExportRow>[] = [
     { key: "ref_no", label: "PO/RF/RG No.", value: (r) => r.ref_no },
     { key: "order_date", label: "Order Date", value: (r) => r.order_date },
@@ -537,6 +620,10 @@ export function OrderListTable({
     { key: "order_currency", label: "Currency", value: (r) => r.order_currency },
     { key: "dispatch_date", label: "Dispatch Date", value: (r) => r.dispatch_date },
     { key: "purchased_from", label: "Purchased From", value: (r) => r.purchased_from },
+    { key: "pb_entry", label: "PB Entry", value: (r) => r.pb_entry },
+    { key: "delivered", label: "Delivered", value: (r) => r.delivered },
+    { key: "tracking_no", label: "Tracking", value: (r) => r.tracking_no },
+    { key: "freight", label: "Freight", value: (r) => r.freight },
   ];
 
   function handleDelete(orderId: string, refNo: string) {
@@ -550,16 +637,12 @@ export function OrderListTable({
     });
   }
 
+  // 2026-09-04 — purchased-from/tracking are no longer part of "extra"
+  // detail (they're always-visible columns now, see ALL_COLUMNS above);
+  // this now only flags refunds and marketplace-fee matches, the content
+  // that's actually still tucked behind the expand panel.
   const hasExtraDetail = (o: OrderRow) =>
-    !!(
-      purchasesByOrder[o.id] ||
-      o.vendor_party_id ||
-      trackingByOrder[o.id] ||
-      (refundsByOrder[o.id] ?? []).length ||
-      etsyFeesByOrder[o.id] ||
-      ebayFeesByOrder[o.id] ||
-      amazonFeesByOrder[o.id]
-    );
+    !!((refundsByOrder[o.id] ?? []).length || etsyFeesByOrder[o.id] || ebayFeesByOrder[o.id] || amazonFeesByOrder[o.id]);
 
   return (
     <div>
@@ -812,25 +895,12 @@ export function OrderListTable({
                         <tr className={rowBg}>
                           <td className={`${CELL} print:hidden`} colSpan={visibleColumns.length + 2}>
                             <div className="flex flex-wrap items-start justify-between gap-4 p-2">
+                              {/* 2026-09-04 — purchased-from/Purchase Bill/tracking/
+                                  delivered/freight used to be shown here, behind this
+                                  click; they're now always-visible columns (see
+                                  ALL_COLUMNS above), so this panel is refunds + the
+                                  marketplace fee-match sections only. */}
                               <div className="min-w-0 flex-1 space-y-1.5">
-                                {purchasesByOrder[o.id] ? (
-                                  <p className="text-xs text-purple-700">
-                                    🛒 Purchased from: {purchasesByOrder[o.id].map((p) => `${p.vendorName} (${p.vendorInvoiceNo})`).join(", ")}
-                                  </p>
-                                ) : o.vendor_party_id ? (
-                                  <p className="text-xs text-amber-700">
-                                    🏷️ Planned vendor: {partyName.get(o.vendor_party_id) ?? "—"} (no Purchase Bill yet)
-                                  </p>
-                                ) : (
-                                  <p className="text-xs text-slate-400">No Purchase Bill linked yet.</p>
-                                )}
-                                {trackingByOrder[o.id] && (trackingByOrder[o.id].awbNo || trackingByOrder[o.id].courierName) && (
-                                  <p className="text-xs text-teal-700">
-                                    🚚 {trackingByOrder[o.id].courierName || "Courier"}
-                                    {trackingByOrder[o.id].awbNo ? ` · AWB ${trackingByOrder[o.id].awbNo}` : ""}
-                                    {trackingByOrder[o.id].deliveredDate ? ` · Delivered ${trackingByOrder[o.id].deliveredDate}` : ""}
-                                  </p>
-                                )}
                                 {(refundsByOrder[o.id] ?? []).map((r, i) => (
                                   <p key={i} className="text-xs text-teal-700">
                                     💸 Refund: {r.amount} {r.currency} on {r.date}
@@ -987,7 +1057,15 @@ export function OrderListTable({
                                     size_label: o.size_label,
                                     qty: o.qty,
                                   }}
-                                  tracking={trackingByOrder[o.id]}
+                                  tracking={
+                                    statusByOrder[o.id]
+                                      ? {
+                                          awbNo: statusByOrder[o.id].trackingNo,
+                                          courierName: statusByOrder[o.id].courierName,
+                                          deliveredDate: statusByOrder[o.id].deliveredDate,
+                                        }
+                                      : undefined
+                                  }
                                 />
                                 <Link
                                   href={`/dashboard/orders/${o.id}`}

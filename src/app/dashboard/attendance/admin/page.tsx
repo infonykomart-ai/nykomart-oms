@@ -12,6 +12,7 @@ import {
   compositeScore,
   growthPct,
   topReasonFor,
+  taskCompletionSummary,
 } from "@/lib/performance/score";
 import { HolidayForm } from "./holiday-form";
 import { WeeklyOffForm } from "./weekly-off-form";
@@ -59,7 +60,7 @@ export default async function AttendanceAdminPage({
   // bug found and fixed this round in salary/actions.ts + salary/page.tsx.
   const monthEnd = `${monthParam}-${String(daysInMonth(year, month)).padStart(2, "0")}`;
 
-  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }, { data: pendingWorkRows }] = await Promise.all([
+  const [{ data: teamEmployees }, { data: attendanceRows }, { data: holidays }, { data: dailyLogs }, { data: pendingWorkRows }, { data: completionRows }] = await Promise.all([
     supabase.from("employees").select("id, name, date_of_joining, role_id").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
     supabase.from("holidays").select("id, holiday_date, name, company_id").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd).order("holiday_date"),
@@ -91,6 +92,22 @@ export default async function AttendanceAdminPage({
       .is("submitted_at", null)
       .order("log_date", { ascending: false })
       .limit(300),
+    // 2026-09-04: "kitna kaam kiya hai kitna nahi" — Task Completion Rate
+    // panel below. Deliberately its OWN uncapped query (not a reuse of
+    // `dailyLogs` above, which is `.limit(200)`-capped for the Team Daily
+    // Work Log display) — the same reasoning as the UNCAPPED `allMonthLogs`
+    // query further down for performance ranking: a capped read would
+    // silently under-count a busy team/month here too. Scoped to the same
+    // selectedCompanyId/monthStart/monthEnd as every other query on this
+    // page, submitted rows only (drafts still being typed shouldn't count
+    // against/for anyone).
+    dwlSupabase
+      .from("daily_work_logs")
+      .select("employee_id, work_status, target_qty, qty_done")
+      .eq("company_id", selectedCompanyId)
+      .gte("log_date", monthStart)
+      .lte("log_date", monthEnd)
+      .not("submitted_at", "is", null),
   ]);
 
   const employeeName = new Map((teamEmployees ?? []).map((e) => [e.id, e.name]));
@@ -140,6 +157,23 @@ export default async function AttendanceAdminPage({
     });
     return { employee: e, summary: summarizeCategories(days) };
   });
+
+  // 2026-09-04: Task Completion Rate — Team. Admin-only (gated by the same
+  // attendance_admin capability as the rest of this page, not the more
+  // restrictive performance_admin — this is raw completion data, not a
+  // ranked/scored judgement of anyone). See taskCompletionSummary's doc
+  // comment (score.ts) for why both the task-count % and the qty-based %
+  // are always shown together.
+  const completionLogsByEmployee = new Map<string, { work_status: string | null; target_qty: string | null; qty_done: string | null }[]>();
+  for (const r of completionRows ?? []) {
+    if (!completionLogsByEmployee.has(r.employee_id)) completionLogsByEmployee.set(r.employee_id, []);
+    completionLogsByEmployee.get(r.employee_id)!.push(r);
+  }
+  const teamCompletion = teamSummary.map(({ employee: e }) => ({
+    employeeId: e.id,
+    name: e.name,
+    ...taskCompletionSummary(completionLogsByEmployee.get(e.id) ?? []),
+  }));
 
   // 2026-09-02: "Performance & Awards" team-wide ranking — HR/MD only
   // (performance_admin capability, deliberately more restrictive than
@@ -637,6 +671,57 @@ export default async function AttendanceAdminPage({
               <p className="mt-0.5 text-slate-600">{l.description}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* 2026-09-04: "kitna kaam kiya hai kitna nahi" — how much of the
+          logged work actually got DONE, per employee, for the same
+          Company/Month selected at the top of this page. Two numbers on
+          purpose: task-count % (how many logged items are Completed) and
+          qty-based % (sum qty_done / sum target_qty — weights bigger jobs
+          more than small ones). See taskCompletionSummary in score.ts. */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold text-slate-700">✅ Task Completion Rate — Team ({monthParam})</h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Of the Daily Work Report items each employee submitted this month: how many are marked Completed
+          (task-count %), and how much of the committed quantity actually got done (qty-based %, sum of Qty Done ÷
+          sum of Target Qty). &quot;—&quot; means there&apos;s nothing to calculate that % from yet (no reports, or no
+          numeric target entered on any of them).
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="py-1 pr-3">Employee</th>
+                <th className="px-2">Tasks Completed</th>
+                <th className="px-2">Task-Count %</th>
+                <th className="px-2">Qty Done / Target</th>
+                <th className="px-2">Qty %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {teamCompletion.map((r) => (
+                <tr key={r.employeeId} className="border-t border-slate-100">
+                  <td className="py-1.5 pr-3 font-medium text-slate-800">{r.name}</td>
+                  <td className="px-2">
+                    {r.completedTasks}/{r.totalTasks} done
+                  </td>
+                  <td className="px-2 font-semibold text-slate-900">
+                    {r.taskCompletionPct === null ? <span className="text-slate-300">—</span> : `${r.taskCompletionPct}%`}
+                  </td>
+                  <td className="px-2">
+                    {r.qtySum} / {r.targetSum}
+                  </td>
+                  <td className="px-2 font-semibold text-slate-900">
+                    {r.qtyCompletionPct === null ? <span className="text-slate-300">—</span> : `${r.qtyCompletionPct}%`}
+                  </td>
+                </tr>
+              ))}
+              {teamCompletion.length === 0 && (
+                <tr><td colSpan={5} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
