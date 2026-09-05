@@ -9,6 +9,7 @@
 // own comment describes.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 
 export type ToggleResult = { error: string | null };
@@ -25,7 +26,7 @@ export async function toggleRoleCapability(
   capabilityCode: string,
   grant: boolean
 ): Promise<ToggleResult> {
-  await requireCapability("permissions_admin");
+  const employee = await requireCapability("permissions_admin");
   const supabase = createServiceRoleClient();
 
   if (!grant && capabilityCode === "permissions_admin") {
@@ -51,6 +52,19 @@ export async function toggleRoleCapability(
       .eq("capability_code", capabilityCode);
     if (error) return { error: error.message };
   }
+
+  // Only reached on an actual, successful data change — the lockout-refusal
+  // branch above returns early and never logs.
+  const { data: role } = await supabase.from("roles").select("name").eq("id", roleId).maybeSingle();
+  await logAudit(supabase, {
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: grant ? "role_capability.granted" : "role_capability.revoked",
+    entityType: "role_capability",
+    entityId: `${roleId}:${capabilityCode}`,
+    entityLabel: role ? `${role.name} — ${capabilityCode}` : capabilityCode,
+    changes: { granted: { from: !grant, to: grant } },
+  });
 
   revalidatePath("/dashboard/admin/permissions");
   revalidatePath("/dashboard");

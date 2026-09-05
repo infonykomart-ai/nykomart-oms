@@ -464,3 +464,174 @@ body {
     transform: none;
   }
 }
+
+/* 2026-09-05 — AI desktop companion mockup (src/app/dashboard/
+ * companion-preview/). MOCKUP ONLY — see that route's page.tsx header
+ * comment; not reachable from any nav. Every animated piece here keys off
+ * `data-companion-state` set on the mascot's own <svg> (companion.tsx),
+ * so swapping the simulated signal on the preview page is just a prop
+ * change, no JS animation driving needed.
+ *
+ * All px-valued `transform-origin`s used by these rules/inline styles are
+ * meant as coordinates in the mascot's own 0..200 / 0..240 viewBox, so
+ * every animated element below is pinned to `transform-box: view-box` —
+ * without it browsers vary on which box `transform-origin` resolves
+ * against for SVG children and the pivot points drift off target.
+ */
+.oms-companion-body-group {
+  transform-box: view-box;
+  transform-origin: 100px 205px;
+}
+
+.oms-companion-arm {
+  transform-box: view-box;
+  transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.oms-companion-eyelid {
+  transform-box: view-box;
+  transform: scaleY(0.05);
+  animation: oms-companion-blink 5s ease-in-out infinite;
+}
+
+.oms-companion-sparkle {
+  transform-box: view-box;
+  animation: oms-companion-sparkle-pulse 1.1s ease-in-out infinite;
+}
+
+.oms-companion-sweat {
+  transform-box: view-box;
+  animation: oms-companion-sweat-drip 1.6s ease-in-out infinite;
+}
+
+.oms-companion-alert {
+  transform-box: view-box;
+  animation: oms-companion-alert-pulse 1s ease-in-out infinite;
+}
+
+.oms-companion-rays line {
+  transform-box: view-box;
+  animation: oms-companion-ray-pulse 1.2s ease-in-out infinite;
+}
+
+.oms-companion-zzz {
+  opacity: 0;
+  animation: oms-companion-zzz-float 3s ease-in infinite;
+}
+
+[data-companion-state="punch_in"] .oms-companion-body-group {
+  animation: oms-companion-bounce-happy 0.6s ease-in-out infinite;
+}
+
+[data-companion-state="task_completed"] .oms-companion-body-group {
+  animation: oms-companion-jump-celebrate 0.9s ease-in-out infinite;
+}
+
+[data-companion-state="overdue"] .oms-companion-body-group {
+  animation: oms-companion-shake-concerned 2.6s ease-in-out infinite;
+}
+
+[data-companion-state="idle_night"] .oms-companion-body-group {
+  animation: oms-companion-sway-sleepy 3.4s ease-in-out infinite;
+}
+
+[data-companion-state="focused"] .oms-companion-body-group {
+  animation: oms-companion-bob-neutral 2.8s ease-in-out infinite;
+}
+
+@keyframes oms-companion-bounce-happy {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-16px); }
+}
+
+@keyframes oms-companion-jump-celebrate {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-26px) rotate(-8deg); }
+  50% { transform: translateY(-6px) rotate(6deg); }
+  75% { transform: translateY(-20px) rotate(-4deg); }
+}
+
+@keyframes oms-companion-sway-sleepy {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+
+@keyframes oms-companion-shake-concerned {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes oms-companion-bob-neutral {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes oms-companion-blink {
+  0%, 92%, 100% { transform: scaleY(0.05); }
+  94%, 97% { transform: scaleY(1); }
+}
+
+@keyframes oms-companion-sparkle-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.6) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.15) rotate(25deg); }
+}
+
+@keyframes oms-companion-sweat-drip {
+  0%, 100% { transform: translateY(0); opacity: 0.9; }
+  50% { transform: translateY(6px); opacity: 0.5; }
+}
+
+@keyframes oms-companion-alert-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+@keyframes oms-companion-ray-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes oms-companion-zzz-float {
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(-22px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oms-companion-body-group,
+  .oms-companion-arm,
+  .oms-companion-eyelid,
+  .oms-companion-sparkle,
+  .oms-companion-sweat,
+  .oms-companion-alert,
+  .oms-companion-rays line,
+  .oms-companion-zzz {
+    animation: none;
+    transition: none;
+  }
+
+  /* Freeze each piece in a legible static pose instead of whatever the
+     mid-keyframe computed style happens to be with the animation removed
+     (e.g. the blinking eyelid would otherwise render fully closed). */
+  .oms-companion-body-group {
+    transform: none;
+  }
+
+  .oms-companion-eyelid {
+    transform: scaleY(0.05);
+  }
+
+  .oms-companion-sparkle,
+  .oms-companion-sweat,
+  .oms-companion-zzz {
+    opacity: 1;
+    transform: none;
+  }
+
+  .oms-companion-rays line {
+    opacity: 0.45;
+  }
+}

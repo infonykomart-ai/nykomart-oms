@@ -22,10 +22,11 @@
 // booking still succeeds, just with booked_freight_amt left null and
 // booked_amount_source null (never blocks the booking itself).
 import { revalidatePath } from "next/cache";
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
+import { generateInvoiceCore } from "@/app/dashboard/invoices/actions";
 import { createFedexShipment, type FedexDdpDdu } from "@/lib/couriers/fedex-ship";
 import { createUpsShipment, type UpsDdpDdu } from "@/lib/couriers/ups-ship";
 import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-shipping";
@@ -316,6 +317,115 @@ async function writeOrderShipmentFromBooking(
 }
 
 // -----------------------------------------------------------------------
+// Auto-invoice on booking (2026-09-04) — "auto-generate the sales invoice
+// automatically when a shipment is booked", the one remaining piece of the
+// booking-flow redesign flagged in BRAIN.md §30 item 4. Reuses
+// generateInvoiceCore() from invoices/actions.ts exactly (CSB-V only, its
+// existing auto-derivation/numbering/dispatch-marking logic untouched) —
+// this function is ONLY the decision of whether/how to call it from here.
+//
+// SCOPE, deliberately narrow per the decided round:
+// - Real API bookings only (the 6 create*Booking functions below), never
+//   manual-booking-actions.ts's createManualBooking — that file is not
+//   imported or touched by this change at all.
+// - CSB-V only — CSB-IV's value breakdown is manual-only by design
+//   (generateInvoiceCore's own header comment), so it can never be a safe
+//   auto-generation default.
+// - International bookings only. Delhivery and Shiprocket are domestic-only
+//   (see their own booking functions' header comments — no DDP/DDU
+//   incoterm, recipient country hardcoded/defaulted to India) — a domestic
+//   shipment is not an export/customs shipment, so `ddpDdu == null` is used
+//   as the signal to skip these two couriers entirely, not just a missing-
+//   field workaround.
+// - Never for a Combine-booking batch, primary order included. The only
+//   signal available here for "is this booking part of a Combine batch" is
+//   whether the same "combined_order_ids" hidden field
+//   applyCombinedSiblingShipments() below reads is non-empty — when it is,
+//   this call is skipped entirely for the primary order too (never just for
+//   the siblings), exactly as scoped: a shared-AWB, multi-order batch would
+//   need its own multi-order invoice batching decision (which orders group
+//   together, whose company/store, etc.) that was NOT decided this round —
+//   skipping is the safe choice over guessing at that shape.
+// - Idempotent: generateInvoiceCore() itself rejects any order that already
+//   has orders.invoice_id set ("already used in an invoice") before it ever
+//   reserves an invoice number — that existing check IS the idempotency
+//   guard here, not a separate mechanism.
+// - Never blocks or fails the booking. Every failure path below only
+//   console.error()s and returns — the booking's own try/catch (which wraps
+//   the call site in each create*Booking function) never sees this as an
+//   exception, so a booking that succeeded stays reported as a success even
+//   if invoice generation errors (e.g. missing store/company invoice
+//   prefix, a numbering RPC failure).
+async function maybeAutoGenerateCsbVInvoiceForBooking(
+  supabase: ServiceClient,
+  employee: AuthedEmployee,
+  args: {
+    formData: FormData;
+    orderId: string;
+    courierLabel: string;
+    awbNo: string;
+    weightKg: number;
+    dimsCm: { length: number; width: number; height: number };
+    ddpDdu: "DDP" | "DDU" | null;
+  }
+): Promise<void> {
+  if (!args.ddpDdu) return; // domestic (Delhivery/Shiprocket) — not an export shipment, no CSB invoice applies.
+  if (str(args.formData, "combined_order_ids")) return; // Combine batch — see header comment, skipped entirely.
+
+  try {
+    const result = await generateInvoiceCore(employee, supabase, {
+      orderIds: [args.orderId],
+      shipmentTerm: args.ddpDdu, // "DDP" | "DDU" — matches dutyPayableByForShipmentTerm()'s .includes() check exactly.
+      csbType: "CSB-V",
+      courierCompany: args.courierLabel,
+      // Left null, same as every field below with a comment to that effect
+      // — generateInvoiceCore auto-pulls each of these from the order row
+      // itself when not explicitly supplied (its own established "never
+      // overwrite an explicit value with a blank auto-pull" behavior),
+      // which is exactly what should happen here too: this call has no
+      // buyer-address/VAT/EORI/IOSS override of its own, only what the
+      // booking form itself captured (AWB + package dims/weight below).
+      destinationCountry: null,
+      iossNumber: null,
+      weightKg: args.weightKg,
+      lengthCm: args.dimsCm.length,
+      widthCm: args.dimsCm.width,
+      heightCm: args.dimsCm.height,
+      remark: "Auto-generated on courier booking.",
+      buyerNameAddressOverride: null,
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      awbNo: args.awbNo,
+      vesselFlightNo: null,
+      portOfDischarge: null,
+      marksAndNos: null,
+      noOfPackages: 1,
+      buyerEmail: null,
+      buyerPhone: null,
+      otherThanConsignee: null,
+      vatNumber: null,
+      eoriNumber: null,
+      // CSB-IV-only fields — irrelevant for CSB-V, generateInvoiceCore
+      // ignores these entirely when csbType is CSB-V.
+      manualInvoiceValueUsd: null,
+      manualItemCostTotal: null,
+      manualInsuranceTotal: null,
+      manualFreightTotal: null,
+      brokerName: null,
+      brokerTel: null,
+      brokerContact: null,
+    });
+    if (result.error) {
+      console.error(`[auto-invoice] booking for order ${args.orderId} succeeded, but CSB-V auto-invoice generation failed: ${result.error}`);
+    }
+  } catch (err) {
+    // Belt-and-braces — generateInvoiceCore returns errors rather than
+    // throwing, but this must never let ANY failure shape here roll back or
+    // block an already-successful booking.
+    console.error(`[auto-invoice] booking for order ${args.orderId} succeeded, but CSB-V auto-invoice generation threw:`, err);
+  }
+}
+
+// -----------------------------------------------------------------------
 // Combine booking (EGS-integration round, 2026-09-04) — "Show Orders
 // Combine" from the Pending Orders staging tab: same buyer-batch
 // (company_id, store_id, ref_no_base) as the Invoice Generation module
@@ -526,6 +636,16 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       createdBy: employee.id,
     });
 
+    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+      formData,
+      orderId,
+      courierLabel: "FedEx",
+      awbNo: result.trackingNo,
+      weightKg,
+      dimsCm: dims,
+      ddpDdu: input.ddpDdu,
+    });
+
     await applyCombinedSiblingShipments(supabase, {
       formData,
       primaryOrderId: orderId,
@@ -654,6 +774,16 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+      formData,
+      orderId,
+      courierLabel: "UPS",
+      awbNo: result.trackingNo,
+      weightKg,
+      dimsCm: dims,
+      ddpDdu: input.ddpDdu,
     });
 
     await applyCombinedSiblingShipments(supabase, {
@@ -795,6 +925,16 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
       createdBy: employee.id,
     });
 
+    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+      formData,
+      orderId,
+      courierLabel: "Aramex",
+      awbNo: result.trackingNo,
+      weightKg,
+      dimsCm: dims,
+      ddpDdu,
+    });
+
     await applyCombinedSiblingShipments(supabase, {
       formData,
       primaryOrderId: orderId,
@@ -904,6 +1044,19 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    // Delhivery is domestic-only (no DDP/DDU) — maybeAutoGenerateCsbVInvoiceForBooking
+    // skips whenever ddpDdu is null, so this call is included for consistency with
+    // every other courier but will always no-op here. See that function's header comment.
+    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+      formData,
+      orderId,
+      courierLabel: "Delhivery",
+      awbNo: result.trackingNo,
+      weightKg,
+      dimsCm: dims,
+      ddpDdu: null,
     });
 
     await applyCombinedSiblingShipments(supabase, {
@@ -1020,6 +1173,17 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    // Shiprocket is domestic-only (no DDP/DDU) — see the same note on Delhivery above.
+    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+      formData,
+      orderId,
+      courierLabel: "Shiprocket",
+      awbNo: result.trackingNo,
+      weightKg,
+      dimsCm: dims,
+      ddpDdu: null,
     });
 
     await applyCombinedSiblingShipments(supabase, {
@@ -1161,6 +1325,16 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
       bookedAmountSource: bookedSource,
       responsePayload: result.raw,
       createdBy: employee.id,
+    });
+
+    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+      formData,
+      orderId,
+      courierLabel: "DHL",
+      awbNo: result.trackingNo,
+      weightKg,
+      dimsCm: dims,
+      ddpDdu,
     });
 
     await applyCombinedSiblingShipments(supabase, {

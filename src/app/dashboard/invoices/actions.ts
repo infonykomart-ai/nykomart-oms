@@ -98,8 +98,19 @@ type GenerateInvoiceParams = {
  * file, same "core function, thin per-caller wrapper" pattern as
  * createOrderCore() in orders/new/actions.ts. See claude/invoice-origin-
  * declarations-and-numbering.md for the full spec this implements.
+ *
+ * 2026-09-04 — exported (was module-private) so courier-booking/actions.ts's
+ * auto-invoice-on-booking hook can call it directly with a synthesized
+ * CSB-V params object, reusing every bit of its auto-derivation/numbering/
+ * dispatch-marking logic rather than re-implementing any of it. Note this
+ * bypasses the `invoicing` capability check on purpose — that check lives on
+ * generateInvoice()'s wrapper below, not here, and an auto-generation
+ * triggered by a successful booking is a system action, not something the
+ * booking employee is themselves invoking — same reasoning bulkGenerateInvoices()
+ * already relies on (it too calls this Core directly, after its OWN
+ * `invoicing` capability check, not a second one per row).
  */
-async function generateInvoiceCore(
+export async function generateInvoiceCore(
   employee: AuthedEmployee,
   supabase: ServiceClient,
   params: GenerateInvoiceParams
@@ -668,15 +679,20 @@ export type SimpleResult = { error: string | null; success: boolean };
  * Notes/Debit Notes only store invoice_no as free text (a copy, not a
  * link, see db/schema.sql section 9) — so there's no other guard needed.
  */
-export async function deleteInvoice(invoiceId: string): Promise<SimpleResult> {
-  const employee = await requireCapability("invoicing");
-  const supabase = createServiceRoleClient();
-
-  const { data: invoice } = await supabase.from("sales_invoices").select("id, company_id").eq("id", invoiceId).single();
-  if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
-    return { error: "Invoice not found or you don't have access to this company.", success: false };
-  }
-
+/**
+ * The actual unlink-then-delete logic, pulled out of deleteInvoice() so
+ * courier-booking's cancelShipment() (2026-09-04 — auto-invoice teardown on
+ * a cancelled shipment) can reuse it EXACTLY as-is, without also re-running
+ * deleteInvoice()'s own `requireCapability("invoicing")` check — cancelling
+ * a shipment is already authorized via `courier_booking_shipment` +
+ * company-scoping in that file, and a member of staff without the separate
+ * `invoicing` capability must still be able to cancel a shipment (the
+ * invoice cleanup is a side effect of THAT action, not a new one of the
+ * employee's own invoicing actions). Same "Core does the real work, a
+ * capability-gated wrapper sits in front of it" split as
+ * generateInvoiceCore/generateInvoice above.
+ */
+export async function deleteInvoiceCore(supabase: ServiceClient, invoiceId: string): Promise<SimpleResult> {
   const { error: unlinkError } = await supabase.from("orders").update({ invoice_id: null }).eq("invoice_id", invoiceId);
   if (unlinkError) return { error: `Could not unlink orders from this invoice: ${unlinkError.message}`, success: false };
 
@@ -686,6 +702,18 @@ export async function deleteInvoice(invoiceId: string): Promise<SimpleResult> {
   revalidatePath("/dashboard/invoices");
   revalidatePath(`/dashboard/invoices/${invoiceId}`);
   return { error: null, success: true };
+}
+
+export async function deleteInvoice(invoiceId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("invoicing");
+  const supabase = createServiceRoleClient();
+
+  const { data: invoice } = await supabase.from("sales_invoices").select("id, company_id").eq("id", invoiceId).single();
+  if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
+    return { error: "Invoice not found or you don't have access to this company.", success: false };
+  }
+
+  return deleteInvoiceCore(supabase, invoiceId);
 }
 
 export async function updateInvoiceFields(
