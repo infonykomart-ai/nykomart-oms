@@ -18,6 +18,7 @@ import { MessengerPopup } from "@/components/messages/messenger-popup";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { ThemedShell } from "@/components/theme/themed-shell";
 import { PageTransition } from "@/components/page-transition";
+import { CompanionLiveProvider } from "@/components/companion/companion-live-provider";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   let employee;
@@ -117,7 +118,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       // above for messagingEmployees etc.), though this one is hard-scoped
       // to the caller's own id regardless.
       //
-      bprClient.from("employees").select("theme_id, custom_accent_color").eq("id", employee.id).single(),
+      // 2026-09-05 — same single-row query, now also carrying
+      // companion_enabled (db/2026-09-05-ai-companion-live.sql) so the very
+      // first paint already knows whether to mount the live AI Companion
+      // widget for this employee — no separate query needed.
+      bprClient.from("employees").select("theme_id, custom_accent_color, companion_enabled").eq("id", employee.id).single(),
       // 2026-09-02 — unread count for the new Messenger popup's group
       // badge (messenger-popup.tsx). Same RPC the popup itself re-calls on
       // resync (get_unread_group_message_count, db/2026-09-02-group-
@@ -196,6 +201,13 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             initialDirectUnread={unreadMessageCount ?? 0}
             initialGroupUnread={typeof unreadGroupMessageCount === "number" ? unreadGroupMessageCount : 0}
           />
+          {/* 2026-09-05 — AI Companion, live. Only mounted (subscribes to
+              nothing, renders nothing) for employees an Admin/MD has
+              explicitly turned on via /dashboard/admin/companion-access —
+              everyone else pays zero cost for this feature existing. */}
+          {myThemePrefs?.companion_enabled ? (
+            <CompanionLiveProvider employeeId={employee.id} employeeName={employee.name} />
+          ) : null}
         </HelpCenterProvider>
       </CelebrationProvider>
     </PresenceProvider>

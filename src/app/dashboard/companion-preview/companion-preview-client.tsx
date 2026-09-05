@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { Companion } from "./companion";
+import { CompanionCharacter } from "@/components/companion/companion-character";
 import {
   COMPANION_STATES,
   COMPANION_OUTFITS,
@@ -9,15 +9,26 @@ import {
   DEFAULT_COMPANION_STATE,
   DEFAULT_OUTFIT,
   DEFAULT_HAIR,
+  DEFAULT_GLASSES,
   type CompanionStateId,
   type OutfitId,
   type HairId,
-} from "./companion-config";
+} from "@/components/companion/companion-config";
 
+// 2026-09-05 — this page is now a wardrobe/simulate PLAYGROUND for the same
+// character the live widget uses (companion-live-provider.tsx), not a
+// throwaway mockup — both import companion-character.tsx +
+// companion-config.ts from src/components/companion/ so there is exactly
+// one character definition. The "PREVIEW / MOCKUP" banner below is kept
+// (buttons here still simulate rather than read real events — that's a
+// genuinely accurate description now too, for trying out looks/moods
+// without waiting for a real order/task), just no longer implies the
+// character itself is throwaway.
 export function CompanionPreviewClient() {
   const [stateId, setStateId] = useState<CompanionStateId>(DEFAULT_COMPANION_STATE);
   const [outfit, setOutfit] = useState<OutfitId>(DEFAULT_OUTFIT);
   const [hair, setHair] = useState<HairId>(DEFAULT_HAIR);
+  const [glasses, setGlasses] = useState<boolean>(DEFAULT_GLASSES);
 
   const active = COMPANION_STATES.find((s) => s.id === stateId) ?? COMPANION_STATES[0];
 
@@ -61,7 +72,7 @@ export function CompanionPreviewClient() {
           }
         >
           <div className="flex h-64 w-64 items-center justify-center sm:h-72 sm:w-72">
-            <Companion state={stateId} outfit={outfit} hair={hair} className="h-full w-full" />
+            <CompanionCharacter state={stateId} outfit={outfit} hair={hair} glasses={glasses} className="h-full w-full" />
           </div>
           <div className="text-center">
             <p className="text-base font-semibold text-[var(--oms-text)]">{active.label}</p>
@@ -153,6 +164,23 @@ export function CompanionPreviewClient() {
                   {h.label}
                 </button>
               ))}
+            </div>
+
+            <p className="mt-4 text-xs font-medium text-[var(--oms-text-muted)]">Glasses</p>
+            <div className="mt-1.5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setGlasses((g) => !g)}
+                aria-pressed={glasses}
+                className="rounded-lg border px-3 py-1.5 text-sm font-medium"
+                style={{
+                  borderColor: glasses ? "var(--oms-text)" : "var(--oms-surface-border)",
+                  background: glasses ? "var(--oms-canvas)" : "transparent",
+                  color: "var(--oms-text)",
+                }}
+              >
+                {glasses ? "On 👓" : "Off"}
+              </button>
             </div>
           </section>
 

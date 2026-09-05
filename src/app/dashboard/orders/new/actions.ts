@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { buyerMatchKey } from "@/lib/orders/buyer-match";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/currency";
+import { notifyCompanion } from "@/lib/companion/notify";
 import { revalidatePath } from "next/cache";
 
 export type OrderFormState = {
@@ -416,6 +417,17 @@ export async function createOrderCore(
   }
 
   const finalRefNo = batch && batch.length > 1 ? `${baseRefNo} (batch of ${batch.length})` : baseRefNo!;
+
+  // 2026-09-05 — AI Companion: "kisi ne order dala to vo kabhi left se
+  // aakr bolegi congratulation order successfully save in OMS" — notifies
+  // the employee who just entered the order (never blocks/slows this
+  // return either way — see notify.ts's own try/catch).
+  await notifyCompanion(supabase, {
+    employeeId: employee.id,
+    eventType: "order_placed",
+    message: `Congratulations! Order ${finalRefNo} successfully saved in OMS 🎉`,
+  });
+
   return { error: null, refNo: finalRefNo };
 }
 

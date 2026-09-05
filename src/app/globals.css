@@ -635,3 +635,113 @@ body {
     opacity: 0.45;
   }
 }
+
+/* ===========================================================================
+   2026-09-05 — AI Companion LIVE widget (companion-live-provider.tsx).
+   The mascot art/pose rules above are unchanged; these are new rules for
+   the floating container itself: the small always-visible "dock" avatar
+   (bottom-left, opens the chat panel), the slide-in-from-left + speech-
+   bubble treatment for a real event ("kabhi left se aakr bolegi" — the
+   user's own words), and the chat panel drawer.
+   =========================================================================== */
+
+.oms-companion-dock {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 60;
+  width: 64px;
+  height: 64px;
+  border-radius: 9999px;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  background: var(--oms-surface);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+  transition: transform 0.2s ease;
+}
+.oms-companion-dock:hover {
+  transform: scale(1.06);
+}
+.oms-companion-dock:focus-visible {
+  outline: 2px solid var(--oms-accent, #2563eb);
+  outline-offset: 2px;
+}
+
+/* The reactive "event" popup — character + speech bubble, slides in from
+   the left edge, holds, then slides back out. `--companion-visible` (0/1)
+   is toggled from JS by adding/removing this class rather than driving the
+   transform from React inline styles, so the exit transition (which needs
+   the OLD state held briefly) is just plain CSS rather then juggled in JS. */
+.oms-companion-event {
+  position: fixed;
+  left: 16px;
+  bottom: 90px;
+  z-index: 61;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  transform: translateX(-140%);
+  opacity: 0;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
+  pointer-events: none;
+}
+.oms-companion-event.oms-companion-event-visible {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.oms-companion-event-figure {
+  width: 84px;
+  height: 100px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18));
+}
+
+.oms-companion-bubble {
+  max-width: 220px;
+  margin-bottom: 28px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+  background: var(--oms-surface);
+  border: 1px solid var(--oms-surface-border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--oms-text);
+}
+
+/* Chat panel drawer — anchored above the dock avatar. */
+.oms-companion-chat-panel {
+  position: fixed;
+  left: 16px;
+  bottom: 90px;
+  z-index: 62;
+  width: min(340px, calc(100vw - 32px));
+  height: min(460px, calc(100vh - 140px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--oms-surface);
+  border: 1px solid var(--oms-surface-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  transform-origin: bottom left;
+  animation: oms-companion-panel-in 0.2s ease-out;
+}
+
+@keyframes oms-companion-panel-in {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oms-companion-event {
+    transition: opacity 0.2s ease;
+    transform: none;
+  }
+  .oms-companion-chat-panel {
+    animation: none;
+  }
+}

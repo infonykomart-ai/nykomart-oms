@@ -29,6 +29,7 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
+import { notifyCompanion } from "@/lib/companion/notify";
 
 export type SimpleActionState = { error: string | null; success: boolean };
 
@@ -77,6 +78,15 @@ export async function assignTask(_prev: SimpleActionState, formData: FormData): 
     description,
   });
   if (error) return { error: error.message, success: false };
+
+  // 2026-09-05 — AI Companion: "kisi ne task assin kiya to bole ki you
+  // have recvie task" — notifies the ASSIGNEE (target), not the person who
+  // assigned it.
+  await notifyCompanion(supabase, {
+    employeeId: target.id,
+    eventType: "task_assigned",
+    message: `You have received a task: ${description}`,
+  });
 
   revalidatePath("/dashboard/attendance");
   revalidatePath("/dashboard/attendance/admin");

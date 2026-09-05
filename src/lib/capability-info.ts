@@ -118,6 +118,12 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Who changed or deleted what, and when — order status changes, bill/expense/shipment deletions." },
   { code: "automation_admin", label: "Automation Rules", icon: "🤖", href: "/dashboard/admin/automation",
     description: "Trigger → condition → action rules that run automatically on order status changes (internal-only actions, no customer messaging)." },
+  // 2026-09-05: AI Companion — finalized from the companion-preview mockup.
+  // Per-EMPLOYEE toggle (employees.companion_enabled), not a role grant —
+  // this capability only gates who may SEE/USE this admin screen, same
+  // pattern as permissions_admin. See db/2026-09-05-ai-companion-live.sql.
+  { code: "companion_admin", label: "AI Companion Access", icon: "🧚", href: "/dashboard/admin/companion-access",
+    description: "Turn the live AI companion on/off for specific employees — a per-person switch, not a role permission." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

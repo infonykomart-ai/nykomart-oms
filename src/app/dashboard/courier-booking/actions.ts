@@ -34,6 +34,7 @@ import { createDelhiveryShipment } from "@/lib/couriers/delhivery-ship";
 import { createShiprocketShipment } from "@/lib/couriers/shiprocket-ship";
 import { createDhlShipment, type DhlDdpDdu } from "@/lib/couriers/dhl-ship";
 import { resolveCourierCredentials } from "@/lib/couriers/credentials";
+import { notifyCompanion } from "@/lib/companion/notify";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 type Courier = "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
@@ -646,6 +647,12 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       ddpDdu: input.ddpDdu,
     });
 
+    await notifyCompanion(supabase, {
+      employeeId: employee.id,
+      eventType: "shipment_booked",
+      message: `Shipment booked with FedEx — AWB ${result.trackingNo}`,
+    });
+
     await applyCombinedSiblingShipments(supabase, {
       formData,
       primaryOrderId: orderId,
@@ -784,6 +791,12 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
       weightKg,
       dimsCm: dims,
       ddpDdu: input.ddpDdu,
+    });
+
+    await notifyCompanion(supabase, {
+      employeeId: employee.id,
+      eventType: "shipment_booked",
+      message: `Shipment booked with UPS — AWB ${result.trackingNo}`,
     });
 
     await applyCombinedSiblingShipments(supabase, {
@@ -935,6 +948,12 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
       ddpDdu,
     });
 
+    await notifyCompanion(supabase, {
+      employeeId: employee.id,
+      eventType: "shipment_booked",
+      message: `Shipment booked with Aramex — AWB ${result.trackingNo}`,
+    });
+
     await applyCombinedSiblingShipments(supabase, {
       formData,
       primaryOrderId: orderId,
@@ -1057,6 +1076,12 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
       weightKg,
       dimsCm: dims,
       ddpDdu: null,
+    });
+
+    await notifyCompanion(supabase, {
+      employeeId: employee.id,
+      eventType: "shipment_booked",
+      message: `Shipment booked with Delhivery — AWB ${result.trackingNo}`,
     });
 
     await applyCombinedSiblingShipments(supabase, {
@@ -1184,6 +1209,12 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
       weightKg,
       dimsCm: dims,
       ddpDdu: null,
+    });
+
+    await notifyCompanion(supabase, {
+      employeeId: employee.id,
+      eventType: "shipment_booked",
+      message: `Shipment booked with Shiprocket — AWB ${result.trackingNo}`,
     });
 
     await applyCombinedSiblingShipments(supabase, {
@@ -1335,6 +1366,12 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
       weightKg,
       dimsCm: dims,
       ddpDdu,
+    });
+
+    await notifyCompanion(supabase, {
+      employeeId: employee.id,
+      eventType: "shipment_booked",
+      message: `Shipment booked with DHL — AWB ${result.trackingNo}`,
     });
 
     await applyCombinedSiblingShipments(supabase, {

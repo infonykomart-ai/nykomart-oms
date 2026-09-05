@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { todayIST, nowISOInstant, nowISTTime } from "./ist-date";
+import { notifyCompanion } from "@/lib/companion/notify";
 
 // HH:MM (IST, 24h) — same config-constant convention as the old system's
 // ATTENDANCE_LATE_CUTOFF_HOUR/MINUTE. No admin UI to change this yet
@@ -60,6 +61,18 @@ export async function recordPunchIn(
     });
     if (error) return { ok: false, error: error.message };
   }
+
+  // 2026-09-05 — AI Companion: fires from here (not the manual-button
+  // action, or the login-hook action separately) so BOTH the automatic
+  // login punch-in ("Web Punch") and the manual backup button ("Manual
+  // Entry") trigger exactly one reaction — and never a repeat one on a
+  // later call the same day (alreadyPunchedIn already returned early above).
+  await notifyCompanion(supabase, {
+    employeeId,
+    eventType: "attendance_marked",
+    message: `Attendance marked for today (${status}) 🕒`,
+  });
+
   return { ok: true, alreadyPunchedIn: false, status };
 }
 

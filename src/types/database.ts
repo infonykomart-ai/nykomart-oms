@@ -1475,6 +1475,38 @@ export type Database = {
           },
         ];
       };
+      companion_events: {
+        Row: {
+          id: string;
+          employee_id: string;
+          event_type: string;
+          message: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          event_type: string;
+          message: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          event_type?: string;
+          message?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "companion_events_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       conversation_messages: {
         Row: {
           id: string;
@@ -2749,6 +2781,7 @@ export type Database = {
           family_contact_2_number: string | null;
           theme_id: string | null;
           custom_accent_color: string | null;
+          companion_enabled: boolean;
           created_at: string;
         };
         Insert: {
@@ -2777,6 +2810,7 @@ export type Database = {
           family_contact_2_number?: string | null;
           theme_id?: string | null;
           custom_accent_color?: string | null;
+          companion_enabled?: boolean;
           created_at?: string;
         };
         Update: {
@@ -2805,6 +2839,7 @@ export type Database = {
           family_contact_2_number?: string | null;
           theme_id?: string | null;
           custom_accent_color?: string | null;
+          companion_enabled?: boolean;
           created_at?: string;
         };
         Relationships: [

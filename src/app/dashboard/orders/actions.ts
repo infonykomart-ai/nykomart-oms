@@ -9,6 +9,7 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
+import { notifyCompanion } from "@/lib/companion/notify";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -353,7 +354,7 @@ export async function saveOrderRefundCore(
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label, qty"
+      "id, ref_no, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label, qty"
     )
     .eq("id", orderId)
     .single();
@@ -489,6 +490,16 @@ export async function saveOrderRefundCore(
       entry_by_employee_id: employee.id,
     });
   }
+
+  // 2026-09-05 — AI Companion: return/refund is one of the "zyada events"
+  // (returns, shipment, attendance, etc.) the user asked to wire in
+  // alongside order-placed and task-assigned. Notifies the employee who
+  // processed the refund.
+  await notifyCompanion(supabase, {
+    employeeId: employee.id,
+    eventType: "return_processed",
+    message: `Return/refund processed for order ${order.ref_no ?? order.id}`,
+  });
 
   return { error: null, success: { creditNoteNo } };
 }
