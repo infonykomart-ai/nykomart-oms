@@ -28,28 +28,22 @@
 // is a rarer, single-shipment, staff-typed-it-in path. One manual entry =
 // one order. Combine can be added later the same way actions.ts does it,
 // if this turns out to be needed for manual entries too.
+//
+// 2026-09-05 FIX: ManualBookingCourierChoice/MANUAL_BOOKING_COURIERS used
+// to live here, but this is a "use server" file and Next.js requires every
+// export of one to be an async function — the moment create-shipment-
+// form.tsx (a client component) imported that array directly from here,
+// it crashed the whole /dashboard/courier-booking page with "A 'use
+// server' file can only export async functions, found object." Moved to
+// manual-booking-config.ts (plain data, no directive); both this file and
+// the form now import from there instead of from each other.
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+import type { ManualBookingCourierChoice } from "./manual-booking-config";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
-
-// The 6 real couriers can also be picked here (staff sometimes book WITH
-// one of these 6 through that courier's own website/app instead of this
-// one, rather than with an unrelated courier entirely) — "other" covers
-// everything else, with the free-text manual_courier_name column.
-export type ManualBookingCourierChoice = "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
-
-export const MANUAL_BOOKING_COURIERS: { value: ManualBookingCourierChoice; label: string }[] = [
-  { value: "fedex", label: "FedEx" },
-  { value: "ups", label: "UPS" },
-  { value: "aramex", label: "Aramex" },
-  { value: "delhivery", label: "Delhivery" },
-  { value: "shiprocket", label: "Shiprocket" },
-  { value: "dhl", label: "DHL" },
-  { value: "other", label: "Other (type the name)" },
-];
 
 const COURIER_DISPLAY_LABEL: Record<Exclude<ManualBookingCourierChoice, "other">, string> = {
   fedex: "FedEx",

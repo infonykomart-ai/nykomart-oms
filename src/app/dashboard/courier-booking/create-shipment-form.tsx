@@ -13,12 +13,8 @@ import {
   type CourierBookingCreateState,
   type CourierBookingLookupOrder,
 } from "./actions";
-import {
-  createManualBooking,
-  MANUAL_BOOKING_COURIERS,
-  type ManualBookingState,
-  type ManualBookingCourierChoice,
-} from "./manual-booking-actions";
+import { createManualBooking, type ManualBookingState } from "./manual-booking-actions";
+import { MANUAL_BOOKING_COURIERS, type ManualBookingCourierChoice } from "./manual-booking-config";
 
 const lookupInitial: CourierBookingLookupState = { error: null, order: null };
 const createInitial: CourierBookingCreateState = {
