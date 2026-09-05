@@ -40,12 +40,31 @@ interface CompanionCharacterProps {
   hair: HairId;
   glasses?: boolean;
   className?: string;
+  // 2026-09-05 — "REAL AI-GENERATED IMAGE BANWAO": once an Admin/MD has
+  // generated one from /dashboard/admin/companion-access (companion_
+  // character_image table), the live widget passes its public URL here and
+  // this component shows THAT instead of the hand-drawn SVG below — pure
+  // upgrade, nothing else about how this component is called needs to
+  // change. Wardrobe props (outfit/hair/glasses) have no effect on a real
+  // photo, so they're simply ignored in this branch — the companion-
+  // preview/lab page never passes imageUrl, so it keeps testing the SVG
+  // wardrobe exactly as before.
+  imageUrl?: string | null;
 }
 
-export function CompanionCharacter({ state, outfit, hair, glasses = false, className }: CompanionCharacterProps) {
+export function CompanionCharacter({ state, outfit, hair, glasses = false, className, imageUrl }: CompanionCharacterProps) {
   const outfitConfig = COMPANION_OUTFITS.find((o) => o.id === outfit) ?? COMPANION_OUTFITS[0];
   const hairConfig = COMPANION_HAIR.find((h) => h.id === hair) ?? COMPANION_HAIR[0];
   const pose = ARM_POSE[state];
+
+  if (imageUrl) {
+    return (
+      <div className={className} data-companion-state={state} style={{ position: "relative" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- external Supabase Storage URL, not a local/optimizable asset */}
+        <img src={imageUrl} alt={`Companion mascot, currently ${state.replace(/_/g, " ")}`} className="oms-companion-photo" />
+      </div>
+    );
+  }
 
   return (
     <svg

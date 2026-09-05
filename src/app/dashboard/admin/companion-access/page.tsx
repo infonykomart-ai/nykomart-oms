@@ -1,6 +1,10 @@
 // 2026-09-05 — AI Companion Access — MD/Admin picks exactly which
 // employees see the live companion (companion_enabled), one person at a
 // time. See actions.ts and db/2026-09-05-ai-companion-live.sql.
+//
+// 2026-09-05, round 2 — also where the real AI-generated character image
+// gets generated (companion_character_image, db/2026-09-05-ai-companion-
+// refinements.sql) — see actions.ts's generateCompanionCharacterImage().
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { CompanionAccessClient } from "./companion-access-client";
@@ -9,12 +13,13 @@ export default async function CompanionAccessAdminPage() {
   await requireCapability("companion_admin");
   const supabase = await createClient();
 
-  const [{ data: employees }, { data: roles }] = await Promise.all([
+  const [{ data: employees }, { data: roles }, { data: characterImage }] = await Promise.all([
     supabase
       .from("employees")
       .select("id, name, role_id, active, photo_url, companion_enabled")
       .order("name"),
     supabase.from("roles").select("id, name"),
+    supabase.from("companion_character_image").select("image_url, prompt, generated_at").eq("id", "default").maybeSingle(),
   ]);
 
   const roleNameById = Object.fromEntries((roles ?? []).map((r) => [r.id, r.name]));
@@ -37,7 +42,12 @@ export default async function CompanionAccessAdminPage() {
         </p>
       </div>
 
-      <CompanionAccessClient employees={rows} />
+      <CompanionAccessClient
+        employees={rows}
+        initialImageUrl={characterImage?.image_url ?? null}
+        initialPrompt={characterImage?.prompt ?? null}
+        initialGeneratedAt={characterImage?.generated_at ?? null}
+      />
     </div>
   );
 }

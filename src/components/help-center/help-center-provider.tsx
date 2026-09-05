@@ -22,7 +22,24 @@ function matches(article: HelpArticle, query: string): boolean {
   return article.keywords.some((k) => k.toLowerCase().includes(q));
 }
 
-export function HelpCenterProvider({ articles, children }: { articles: HelpArticle[]; children: React.ReactNode }) {
+export function HelpCenterProvider({
+  articles,
+  hideButton = false,
+  children,
+}: {
+  articles: HelpArticle[];
+  // 2026-09-05 — "JO HELP BUTTON HAI USKI JAGH PAR LAGAO HELP BUTTON KI
+  // JARURT NAHI PADEGI JAB YE HOGI TO": once an employee has the live AI
+  // Companion on, its own dock (bottom-right — the same spot this button
+  // used to sit) replaces this one, and the companion's chatbot has the
+  // same help_articles content folded into its own prompt (see
+  // /api/companion-chat/route.ts) so it can still answer the same
+  // questions. Passed from dashboard/layout.tsx as
+  // `myThemePrefs?.companion_enabled` — everyone without the companion on
+  // keeps seeing this button exactly as before.
+  hideButton?: boolean;
+  children: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -43,16 +60,18 @@ export function HelpCenterProvider({ articles, children }: { articles: HelpArtic
     <>
       {children}
 
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title="Help"
-        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500 text-2xl text-white shadow-lg shadow-amber-500/30 transition hover:scale-105 hover:bg-amber-600"
-      >
-        {open ? "✕" : "🤖"}
-      </button>
+      {!hideButton && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          title="Help"
+          className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500 text-2xl text-white shadow-lg shadow-amber-500/30 transition hover:scale-105 hover:bg-amber-600"
+        >
+          {open ? "✕" : "🤖"}
+        </button>
+      )}
 
-      {open && (
+      {!hideButton && open && (
         <div className="fixed bottom-24 right-6 z-40 flex h-[32rem] w-96 max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <div className="flex items-center justify-between border-b border-slate-100 bg-slate-900 px-4 py-3">
             <div>

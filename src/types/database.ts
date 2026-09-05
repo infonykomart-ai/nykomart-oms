@@ -1475,6 +1475,38 @@ export type Database = {
           },
         ];
       };
+      companion_character_image: {
+        Row: {
+          id: string;
+          image_url: string;
+          prompt: string | null;
+          generated_at: string;
+          generated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          image_url: string;
+          prompt?: string | null;
+          generated_at?: string;
+          generated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          image_url?: string;
+          prompt?: string | null;
+          generated_at?: string;
+          generated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "companion_character_image_generated_by_fkey";
+            columns: ["generated_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       companion_events: {
         Row: {
           id: string;
@@ -2782,6 +2814,7 @@ export type Database = {
           theme_id: string | null;
           custom_accent_color: string | null;
           companion_enabled: boolean;
+          companion_name: string | null;
           created_at: string;
         };
         Insert: {
@@ -2811,6 +2844,7 @@ export type Database = {
           theme_id?: string | null;
           custom_accent_color?: string | null;
           companion_enabled?: boolean;
+          companion_name?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2840,6 +2874,7 @@ export type Database = {
           theme_id?: string | null;
           custom_accent_color?: string | null;
           companion_enabled?: boolean;
+          companion_name?: string | null;
           created_at?: string;
         };
         Relationships: [

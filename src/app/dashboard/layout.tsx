@@ -73,6 +73,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     { count: overdueBillsCount },
     { data: myThemePrefs },
     { data: unreadGroupMessageCount },
+    { data: companionCharacterImage },
   ] =
     await Promise.all([
       getHelpArticles(),
@@ -122,7 +123,16 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       // companion_enabled (db/2026-09-05-ai-companion-live.sql) so the very
       // first paint already knows whether to mount the live AI Companion
       // widget for this employee — no separate query needed.
-      bprClient.from("employees").select("theme_id, custom_accent_color, companion_enabled").eq("id", employee.id).single(),
+      //
+      // 2026-09-05, round 2 — also companion_name (db/2026-09-05-ai-
+      // companion-refinements.sql), this employee's own custom name for
+      // their companion (set from the chat panel — src/lib/companion/
+      // actions.ts), so the dock/chat panel already show it on first paint.
+      bprClient
+        .from("employees")
+        .select("theme_id, custom_accent_color, companion_enabled, companion_name")
+        .eq("id", employee.id)
+        .single(),
       // 2026-09-02 — unread count for the new Messenger popup's group
       // badge (messenger-popup.tsx). Same RPC the popup itself re-calls on
       // resync (get_unread_group_message_count, db/2026-09-02-group-
@@ -130,6 +140,14 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       // paint is already correct, same reasoning as unreadMessageCount
       // above for the 1:1 badge.
       bprClient.rpc("get_unread_group_message_count", { p_employee_id: employee.id }),
+      // 2026-09-05, round 2 — the real AI-generated character image, if an
+      // Admin/MD has ever generated one from /dashboard/admin/companion-
+      // access (db/2026-09-05-ai-companion-refinements.sql). A single
+      // shared row (id='default'), not per-employee — cheap PK lookup,
+      // fine to run unconditionally alongside every other layout query even
+      // for employees without the companion on, same reasoning as the
+      // approval-count queries above being harmless no-ops when unused.
+      bprClient.from("companion_character_image").select("image_url, generated_at").eq("id", "default").maybeSingle(),
     ]);
 
   const notificationItems = [
@@ -162,7 +180,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   return (
     <PresenceProvider meId={employee.id}>
       <CelebrationProvider>
-        <HelpCenterProvider articles={helpArticles}>
+        <HelpCenterProvider articles={helpArticles} hideButton={myThemePrefs?.companion_enabled === true}>
           <ThemeProvider initialThemeId={myThemePrefs?.theme_id ?? null} initialCustomAccent={myThemePrefs?.custom_accent_color ?? null}>
             <ThemedShell>
               <NavStyleProvider>
@@ -206,7 +224,20 @@ export default async function DashboardLayout({ children }: { children: ReactNod
               explicitly turned on via /dashboard/admin/companion-access —
               everyone else pays zero cost for this feature existing. */}
           {myThemePrefs?.companion_enabled ? (
-            <CompanionLiveProvider employeeId={employee.id} employeeName={employee.name} />
+            <CompanionLiveProvider
+              employeeId={employee.id}
+              employeeName={employee.name}
+              companionName={myThemePrefs?.companion_name ?? null}
+              // Cache-busted with the row's own generated_at so a fresh
+              // regeneration (same public URL, upsert: true) is picked up
+              // immediately instead of every browser's cached copy of the
+              // old image sticking around.
+              companionImageUrl={
+                companionCharacterImage?.image_url
+                  ? `${companionCharacterImage.image_url}?v=${encodeURIComponent(companionCharacterImage.generated_at)}`
+                  : null
+              }
+            />
           ) : null}
         </HelpCenterProvider>
       </CelebrationProvider>

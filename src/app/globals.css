@@ -638,16 +638,33 @@ body {
 
 /* ===========================================================================
    2026-09-05 — AI Companion LIVE widget (companion-live-provider.tsx).
-   The mascot art/pose rules above are unchanged; these are new rules for
-   the floating container itself: the small always-visible "dock" avatar
-   (bottom-left, opens the chat panel), the slide-in-from-left + speech-
-   bubble treatment for a real event ("kabhi left se aakr bolegi" — the
-   user's own words), and the chat panel drawer.
+   The mascot art/pose rules above are unchanged; these are rules for the
+   floating container itself: the always-visible "dock" avatar, the event
+   popup (character + speech bubble), and the chat panel drawer.
+
+   2026-09-05, round 2 refinements:
+   - Dock + chat panel moved from bottom-LEFT to bottom-RIGHT — "JO HELP
+     BUTTON HAI USKI JAGH PAR LAGAO": this is now where the old Help Center
+     bubble used to sit (see help-center-provider.tsx's `hideButton` prop,
+     now true whenever the companion is on for an employee, so the two
+     never both show).
+   - The event popup no longer has a fixed left/bottom + a single hardcoded
+     slide-in direction baked into this CSS. "KOI JARURI NAHI HAI YE LEFT
+     SE NIKLE ... PURE DESKTOP SE KAHI SE BHI NIKAL SAKTI HAI" — position
+     and the enter/exit transform are now computed PER EVENT in
+     companion-live-provider.tsx (a random edge — top/bottom/left/right —
+     and a random point along it) and set as inline style, since each
+     on-screen instance needs its own values; this class now only carries
+     what's the same for every instance (flex layout, opacity fade,
+     transition timing, pointer-events).
+   - .oms-companion-event-figure gets a solid card background — "ISKO
+     TRANSPARRENT KYU RAKHA AHI" / "character ke peeche ka background": it
+     used to be the bare SVG with only a drop-shadow, no backing at all.
    =========================================================================== */
 
 .oms-companion-dock {
   position: fixed;
-  left: 16px;
+  right: 16px;
   bottom: 16px;
   z-index: 60;
   width: 64px;
@@ -668,26 +685,21 @@ body {
   outline-offset: 2px;
 }
 
-/* The reactive "event" popup — character + speech bubble, slides in from
-   the left edge, holds, then slides back out. `--companion-visible` (0/1)
-   is toggled from JS by adding/removing this class rather than driving the
-   transform from React inline styles, so the exit transition (which needs
-   the OLD state held briefly) is just plain CSS rather then juggled in JS. */
+/* The reactive "event" popup — character + speech bubble. Position,
+   flex-direction (so the bubble always sits on the "inward" side of the
+   character regardless of which edge it entered from) and the enter/exit
+   transform are all set inline per instance — see randomEntry() in
+   companion-live-provider.tsx. This class only carries what every
+   instance shares. */
 .oms-companion-event {
-  position: fixed;
-  left: 16px;
-  bottom: 90px;
-  z-index: 61;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
-  transform: translateX(-140%);
   opacity: 0;
   transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
   pointer-events: none;
 }
 .oms-companion-event.oms-companion-event-visible {
-  transform: translateX(0);
   opacity: 1;
 }
 
@@ -695,15 +707,20 @@ body {
   width: 84px;
   height: 100px;
   flex-shrink: 0;
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 20px;
+  background: var(--oms-surface);
+  border: 1px solid var(--oms-surface-border);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
 }
 
 .oms-companion-bubble {
   max-width: 220px;
-  margin-bottom: 28px;
   padding: 10px 14px;
   border-radius: 16px;
-  border-bottom-left-radius: 4px;
   background: var(--oms-surface);
   border: 1px solid var(--oms-surface-border);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
@@ -712,10 +729,43 @@ body {
   color: var(--oms-text);
 }
 
+/* A real generated photo (companion-character.tsx's imageUrl branch)
+   instead of the SVG — reuses the same per-state animation classes as the
+   SVG's .oms-companion-body-group where it makes sense (transform-only
+   keyframes work fine on a whole <img>), applied to the image itself via
+   the parent's data-companion-state. */
+.oms-companion-photo {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.oms-companion-dock .oms-companion-photo {
+  object-fit: cover;
+  border-radius: 9999px;
+}
+.oms-companion-event-figure .oms-companion-photo {
+  object-fit: contain;
+}
+[data-companion-state="punch_in"] .oms-companion-photo {
+  animation: oms-companion-bounce-happy 0.6s ease-in-out infinite;
+}
+[data-companion-state="task_completed"] .oms-companion-photo {
+  animation: oms-companion-jump-celebrate 0.9s ease-in-out infinite;
+}
+[data-companion-state="overdue"] .oms-companion-photo {
+  animation: oms-companion-shake-concerned 2.6s ease-in-out infinite;
+}
+[data-companion-state="idle_night"] .oms-companion-photo {
+  animation: oms-companion-sway-sleepy 3.4s ease-in-out infinite;
+}
+[data-companion-state="focused"] .oms-companion-photo {
+  animation: oms-companion-bob-neutral 2.8s ease-in-out infinite;
+}
+
 /* Chat panel drawer — anchored above the dock avatar. */
 .oms-companion-chat-panel {
   position: fixed;
-  left: 16px;
+  right: 16px;
   bottom: 90px;
   z-index: 62;
   width: min(340px, calc(100vw - 32px));
@@ -727,7 +777,7 @@ body {
   background: var(--oms-surface);
   border: 1px solid var(--oms-surface-border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
-  transform-origin: bottom left;
+  transform-origin: bottom right;
   animation: oms-companion-panel-in 0.2s ease-out;
 }
 
@@ -737,11 +787,14 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .oms-companion-event {
-    transition: opacity 0.2s ease;
-    transform: none;
-  }
+  /* The slide transform itself is skipped in JS when this is set (see
+     prefersReducedMotion in companion-live-provider.tsx) — a media query
+     here can't win against the per-instance inline transform it's fighting
+     against, so this only needs to cover what's still plain CSS. */
   .oms-companion-chat-panel {
     animation: none;
+  }
+  .oms-companion-photo {
+    animation: none !important;
   }
 }

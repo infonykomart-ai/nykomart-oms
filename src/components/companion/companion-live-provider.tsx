@@ -12,7 +12,17 @@
 // by MessageToastProvider (message-toast-provider.tsx) — one channel per
 // employee, RLS is the real guard, this filter is just an optimization so
 // the client never even receives another employee's rows.
-import { useEffect, useState, type CSSProperties } from "react";
+//
+// 2026-09-05, round 2 — 4 more asks folded in here:
+//   - randomized entry edge/position per event (see randomEntry() below)
+//   - a real generated photo when one exists (companionImageUrl), falling
+//     back to the SVG mascot otherwise — passed straight through to
+//     CompanionCharacter, which does the branching
+//   - the per-employee custom name (companionName), threaded down to the
+//     chat panel, which is also where it gets renamed
+//   - dock/chat panel moved to bottom-right in globals.css (this file only
+//     changed what needs JS: the event popup's position + direction)
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { CompanionCharacter } from "./companion-character";
 import { CompanionChatPanel } from "./companion-chat-panel";
@@ -26,21 +36,92 @@ import {
 } from "./companion-config";
 
 type QueuedEvent = { id: string; eventType: CompanionEventType; message: string };
+type Edge = "top" | "bottom" | "left" | "right";
 
 const SHOW_MS = 5500;
 const EXIT_TRANSITION_MS = 450;
 const GAP_MS = 300;
+const EDGES: Edge[] = ["top", "bottom", "left", "right"];
 
-export function CompanionLiveProvider({ employeeId, employeeName }: { employeeId: string; employeeName: string }) {
+// Picks a random edge of the screen + a random point along it, and the
+// matching flex layout (so the speech bubble always sits on the "inward"
+// side of the character, never off past the edge it just entered from)
+// plus the transform the character sits at BEFORE it slides in from that
+// edge. "PURE DESKTOP SE KAHI SE BHI NIKAL SAKTI HAI" — no fixed left-slide
+// any more, a fresh roll every time a new event appears.
+function randomEntry(): { style: CSSProperties; hiddenTransform: string } {
+  const edge = EDGES[Math.floor(Math.random() * EDGES.length)];
+  // Kept within the middle 60% of the perpendicular axis so it never lands
+  // right on top of the dock/chat panel corner (bottom-right) or spills
+  // past a screen edge.
+  const along = 15 + Math.random() * 60;
+  const base: CSSProperties = { position: "fixed", zIndex: 61 };
+
+  switch (edge) {
+    case "left":
+      return {
+        style: { ...base, left: 16, top: `${along}%`, flexDirection: "row" },
+        hiddenTransform: "translateX(-140%)",
+      };
+    case "right":
+      return {
+        style: { ...base, right: 16, top: `${along}%`, flexDirection: "row-reverse" },
+        hiddenTransform: "translateX(140%)",
+      };
+    case "top":
+      return {
+        style: { ...base, top: 16, left: `${along}%`, flexDirection: "column" },
+        hiddenTransform: "translateY(-140%)",
+      };
+    case "bottom":
+    default:
+      return {
+        style: { ...base, bottom: 16, left: `${along}%`, flexDirection: "column-reverse" },
+        hiddenTransform: "translateY(140%)",
+      };
+  }
+}
+
+export function CompanionLiveProvider({
+  employeeId,
+  employeeName,
+  companionImageUrl = null,
+  companionName = null,
+}: {
+  employeeId: string;
+  employeeName: string;
+  companionImageUrl?: string | null;
+  companionName?: string | null;
+}) {
   const [queue, setQueue] = useState<QueuedEvent[]>([]);
   const [visible, setVisible] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [name, setName] = useState(companionName);
+  // Lazy initializer (not an effect) so this never needs a synchronous
+  // setState-in-effect on mount — only the "it changed later" case below
+  // needs an effect at all, and that one only calls setState from inside
+  // the event listener callback, not the effect body itself.
+  const [reducedMotion, setReducedMotion] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 
   // The event currently on screen is always just the head of the queue —
   // derived, never its own piece of state, so nothing here ever needs to
   // call setState synchronously from inside an effect body (every setState
   // below runs inside a setTimeout callback instead, which is fine).
   const active = queue[0] ?? null;
+
+  // A fresh random edge/position is rolled once per event id — not on
+  // every render — so it stays put for that event's whole on-screen life.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const entry = useMemo(() => (active ? randomEntry() : null), [active?.id]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handler = () => setReducedMotion(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   useEffect(() => {
     const supabase = createClient();
@@ -87,14 +168,21 @@ export function CompanionLiveProvider({ employeeId, employeeName }: { employeeId
 
   return (
     <>
-      {active ? (
-        <div className={`oms-companion-event${visible ? " oms-companion-event-visible" : ""}`}>
+      {active && entry ? (
+        <div
+          className={`oms-companion-event${visible ? " oms-companion-event-visible" : ""}`}
+          style={{
+            ...entry.style,
+            transform: reducedMotion ? "none" : visible ? "translate(0, 0)" : entry.hiddenTransform,
+          }}
+        >
           <div className="oms-companion-event-figure" style={{ "--companion-aura": dockAura } as CSSProperties}>
             <CompanionCharacter
               state={EVENT_TYPE_TO_MOOD[active.eventType]}
               outfit={DEFAULT_OUTFIT}
               hair={DEFAULT_HAIR}
               glasses={DEFAULT_GLASSES}
+              imageUrl={companionImageUrl}
               className="h-full w-full"
             />
           </div>
@@ -106,14 +194,26 @@ export function CompanionLiveProvider({ employeeId, employeeName }: { employeeId
         type="button"
         className="oms-companion-dock"
         onClick={() => setChatOpen((v) => !v)}
-        aria-label={chatOpen ? "Close AI Companion chat" : "Open AI Companion chat"}
+        aria-label={chatOpen ? `Close ${name || "AI Companion"} chat` : `Open ${name || "AI Companion"} chat`}
         style={{ "--companion-aura": dockAura } as CSSProperties}
       >
-        <CompanionCharacter state="focused" outfit={DEFAULT_OUTFIT} hair={DEFAULT_HAIR} glasses={DEFAULT_GLASSES} className="h-full w-full" />
+        <CompanionCharacter
+          state="focused"
+          outfit={DEFAULT_OUTFIT}
+          hair={DEFAULT_HAIR}
+          glasses={DEFAULT_GLASSES}
+          imageUrl={companionImageUrl}
+          className="h-full w-full"
+        />
       </button>
 
       {chatOpen ? (
-        <CompanionChatPanel employeeName={employeeName} onClose={() => setChatOpen(false)} />
+        <CompanionChatPanel
+          employeeName={employeeName}
+          companionName={name}
+          onRename={setName}
+          onClose={() => setChatOpen(false)}
+        />
       ) : null}
     </>
   );
