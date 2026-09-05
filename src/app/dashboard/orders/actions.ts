@@ -59,6 +59,14 @@ function strOrNull(formData: FormData, key: string): string | null {
   const v = str(formData, key);
   return v ? v : null;
 }
+function numOrNull(formData: FormData, key: string): number | null {
+  const v = str(formData, key);
+  return v ? Number(v) : null;
+}
+function numOrZero(formData: FormData, key: string): number {
+  const v = str(formData, key);
+  return v ? Number(v) : 0;
+}
 
 export type OrderEditState = { error: string | null; success: boolean };
 
@@ -302,6 +310,14 @@ export type OrderRefundParams = {
   refundCurrency: string;
   refundDate: string;
   reason: string | null;
+  // Refund calculator breakdown (order-hold-cancel-actions.tsx) — all
+  // optional so bulkSaveRefunds (documents/actions.ts), which has no
+  // calculator UI, keeps working unchanged: refundBasisPercent null and
+  // the three amount fields default to 0, same as "calculator not used".
+  refundBasisPercent?: number | null;
+  orderValueRefundAmount?: number;
+  shippingRefundAmount?: number;
+  dutyRefundAmount?: number;
 };
 
 /**
@@ -318,7 +334,17 @@ export async function saveOrderRefundCore(
   supabase: ReturnType<typeof createServiceRoleClient>,
   p: OrderRefundParams
 ): Promise<OrderRefundState> {
-  const { orderId, refundAmount, refundCurrency, refundDate, reason } = p;
+  const {
+    orderId,
+    refundAmount,
+    refundCurrency,
+    refundDate,
+    reason,
+    refundBasisPercent = null,
+    orderValueRefundAmount = 0,
+    shippingRefundAmount = 0,
+    dutyRefundAmount = 0,
+  } = p;
 
   if (!orderId) return { error: "Order missing.", success: null };
   if (!Number.isFinite(refundAmount) || refundAmount < 0) return { error: "Refund amount must be a valid number.", success: null };
@@ -327,13 +353,43 @@ export async function saveOrderRefundCore(
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, company_id, store_id, buyer_name_address, invoice_id, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label"
+      "id, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label, qty"
     )
     .eq("id", orderId)
     .single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: null };
   }
+
+  // Refund cap — the total refunded against this order must never exceed
+  // the order's own value, compared strictly in the order's OWN currency
+  // (order_currency/order_value_original) — never cross-currency (e.g.
+  // never comparing a USD order against an INR-converted refund total).
+  // Only refund rows already entered in that same currency are summed on
+  // either side of the check; a refund entered in a different currency
+  // than the order can't be compared without a conversion, so — per that
+  // "never cross-currency" rule — it's left out of this cap entirely
+  // rather than approximated.
+  if (refundCurrency === order.order_currency) {
+    const { data: existingRefunds } = await supabase
+      .from("order_refunds")
+      .select("refund_amount, refund_currency")
+      .eq("order_id", order.id);
+    const existingSameCurrencyTotal = (existingRefunds ?? [])
+      .filter((r) => r.refund_currency === order.order_currency)
+      .reduce((sum, r) => sum + Number(r.refund_amount), 0);
+    const prospectiveTotal = existingSameCurrencyTotal + refundAmount;
+    // Small epsilon for float rounding on values that flowed through the
+    // calculator's own addition above.
+    if (prospectiveTotal > Number(order.order_value_original) + 0.01) {
+      return {
+        error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${Number(order.order_value_original).toFixed(2)} ${order.order_currency}.`,
+        success: null,
+      };
+    }
+  }
+
+  const conversion = await computeCurrencyConversion(supabase, refundCurrency, refundDate, refundAmount);
 
   let creditNoteId: string | null = null;
   let creditNoteNo: string | null = null;
@@ -375,18 +431,31 @@ export async function saveOrderRefundCore(
     reason,
     credit_note_id: creditNoteId,
     entry_by_employee_id: employee.id,
+    refund_basis_percent: refundBasisPercent,
+    order_value_refund_amount: orderValueRefundAmount,
+    shipping_refund_amount: shippingRefundAmount,
+    duty_refund_amount: dutyRefundAmount,
+    refund_amount_inr: conversion.inr,
+    refund_amount_usd: conversion.usd,
   });
   if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
 
-  // Pending item 4 (Inventory) — "order placed -> cancelled -> refunded,
-  // but a Purchase entry was already made for it -> that stock should
-  // automatically flow into Inventory instead of sitting orphaned." Only
-  // fires when a purchase_bills row already exists against this order;
-  // the purchased qty (not the order's own qty) is what flows into stock,
-  // since that's the amount actually paid for and sitting in hand.
+  // Inventory — every processed return/refund puts the item back into
+  // sellable stock. Originally this only fired for the "order placed ->
+  // cancelled -> refunded, but a Purchase entry was already made for it"
+  // orphaned-purchase case (Pending item 4), gated on a purchase_bills row
+  // existing for this order. Widened: restock now runs unconditionally on
+  // every refund. Qty restocked is still the purchased qty when a
+  // purchase_bills row exists (the amount actually paid for and sitting in
+  // hand, same as before); otherwise it falls back to the order's own qty
+  // (the amount actually returned). There's no "is this item still
+  // sellable" signal anywhere in the schema (no damaged/condition flag), so
+  // — per the decided scope — this restocks unconditionally rather than
+  // trying to infer sellability.
   const { data: purchases } = await supabase.from("purchase_bills").select("qty").eq("order_id", order.id);
   const purchasedQty = (purchases ?? []).reduce((sum, p) => sum + Number(p.qty || 0), 0);
-  if (purchasedQty > 0) {
+  const restockQty = purchasedQty > 0 ? purchasedQty : Number(order.qty || 0);
+  if (restockQty > 0) {
     const skuLabel = order.sku_label ?? "";
     const sizeLabel = order.size_label ?? "";
     const { data: existingStock } = await supabase
@@ -400,22 +469,22 @@ export async function saveOrderRefundCore(
     if (existingStock) {
       await supabase
         .from("finished_stock")
-        .update({ qty: existingStock.qty + purchasedQty, updated_at: new Date().toISOString() })
+        .update({ qty: existingStock.qty + restockQty, updated_at: new Date().toISOString() })
         .eq("id", existingStock.id);
     } else {
       await supabase.from("finished_stock").insert({
         item_category_id: order.item_category_id,
         sku_label: skuLabel,
         size_label: sizeLabel,
-        qty: purchasedQty,
+        qty: restockQty,
       });
     }
     await supabase.from("finished_stock_movements").insert({
       item_category_id: order.item_category_id,
       sku_label: skuLabel,
       size_label: sizeLabel,
-      qty_change: purchasedQty,
-      reason: "auto_restock_cancelled_order",
+      qty_change: restockQty,
+      reason: "auto_restock_return_refund",
       order_id: order.id,
       entry_by_employee_id: employee.id,
     });
@@ -434,6 +503,10 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
     refundCurrency: str(formData, "refund_currency") || "USD",
     refundDate: str(formData, "refund_date"),
     reason: strOrNull(formData, "reason"),
+    refundBasisPercent: numOrNull(formData, "refund_basis_percent"),
+    orderValueRefundAmount: numOrZero(formData, "order_value_refund_amount"),
+    shippingRefundAmount: numOrZero(formData, "shipping_refund_amount"),
+    dutyRefundAmount: numOrZero(formData, "duty_refund_amount"),
   });
 
   if (result.error) return result;
@@ -441,5 +514,6 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/returns");
   return result;
 }
