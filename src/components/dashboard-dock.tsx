@@ -17,11 +17,16 @@ import { useNavStyle } from "@/components/nav-style-context";
  * mount — see nav-style-context.tsx.
  *
  * REDESIGNED 2026-09-04 (same day, user feedback on the first cut):
- * 1. **Glass pill, not a solid bar** — background is now a low-opacity
- *    tint of `--oms-sidebar-bg` + heavy `backdrop-blur`, so every
- *    per-company theme (see globals.css's per-company `--oms-*` blocks)
- *    still colors the dock, it's just translucent instead of a near-opaque
- *    slab.
+ * 1. **Glass pill, not a solid bar** — the fill is fully transparent
+ *    (`bg-transparent`, no tint at all — an earlier pass tried a 25%-opacity
+ *    tint of `--oms-sidebar-bg` via Tailwind's `bg-[var(...)]/25` syntax,
+ *    but that still reads as a visible solid-colored box, which is exactly
+ *    what the user asked to have removed). Only `backdrop-blur-2xl` (a
+ *    frosted-glass distortion of whatever is behind the dock, not a color)
+ *    plus the `--oms-sidebar-border` outline remain, so the pill's outline
+ *    and icons stay visible while the inside of the pill shows no fill
+ *    color at all, in any per-company theme (see globals.css's per-company
+ *    `--oms-*` blocks).
  * 2. **A capped-width "viewport" window, not a native horizontal
  *    scrollbar.** Only ~9-10 tiles show at once; the rest are panned into
  *    view by moving the mouse left/right over the dock (`onPointerMove`
@@ -124,7 +129,7 @@ export function DashboardDock({ capabilities }: { capabilities: string[] }) {
 
   return (
     <nav aria-label="Work menu (dock)" className="pointer-events-none fixed inset-x-0 bottom-3 z-40 flex justify-center px-3">
-      <div className="oms-dock-inner pointer-events-auto flex w-[min(94vw,580px)] items-center gap-1 rounded-2xl border border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)]/25 px-2 pb-2 pt-10 shadow-2xl backdrop-blur-2xl">
+      <div className="oms-dock-inner pointer-events-auto flex w-[min(94vw,580px)] items-center gap-1 rounded-2xl border border-[var(--oms-sidebar-border)] bg-transparent px-2 pb-2 pt-10 shadow-2xl backdrop-blur-2xl">
         <div
           ref={viewportRef}
           className="oms-dock-viewport relative min-w-0 flex-1 overflow-hidden"
