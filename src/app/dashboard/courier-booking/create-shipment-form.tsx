@@ -86,6 +86,17 @@ function SharedShipmentFields({ order }: { order: CourierBookingLookupOrder }) {
     <>
       <div className="border-t border-slate-100 pt-3">
         <p className="mb-2 text-xs font-semibold text-slate-600">Recipient</p>
+        {order.buyerNameAddress && (
+          <div className="mb-3">
+            <label className={labelClass}>As entered at order time (reference only — split this into the fields below)</label>
+            <textarea
+              readOnly
+              rows={3}
+              value={order.buyerNameAddress}
+              className={`${inputClass} whitespace-pre-wrap bg-slate-50 text-slate-600`}
+            />
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           <div>
             <label className={labelClass}>Name *</label>

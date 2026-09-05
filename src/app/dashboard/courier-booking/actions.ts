@@ -66,6 +66,17 @@ export type CourierBookingLookupOrder = {
   id: string;
   refNo: string;
   buyerName: string | null;
+  // Raw free-text "Buyer Name & Address" the order was entered/imported
+  // with (orders.buyer_name_address — a multi-line paste-in-one-blob field,
+  // NOT split into name/address1/city/state/postcode anywhere in this
+  // schema; see order-form.tsx's textarea). Shown as a reference block in
+  // the form (create-shipment-form.tsx) so the employee can read the real
+  // address and type it into the structured fields below — it must NEVER
+  // be used as a `buyerName`/recipient-name value itself (that was the
+  // 2026-09-05 bug: dumping this whole multi-line blob into the single-line
+  // Name input produced a garbled, unreadable name with no visible
+  // separators, since a text <input> renders embedded newlines as nothing).
+  buyerNameAddress: string | null;
   buyerMail: string | null;
   buyerContact: string | null;
   buyerCountry: string | null;
@@ -108,7 +119,7 @@ export async function lookupOrderForCourierBooking(
 
   const { data: orders, error: orderError } = await supabase
     .from("orders")
-    .select("id, ref_no, buyer_name_address, contact_no, email_id, sku_label, qty, order_value_inr")
+    .select("id, ref_no, buyer_name_address, contact_no, email_id, sku_label, qty, order_value_inr, buyer_country")
     .eq("ref_no", refNo)
     .in("company_id", employee.companyIds);
 
@@ -146,10 +157,21 @@ export async function lookupOrderForCourierBooking(
     order: {
       id: order.id,
       refNo: order.ref_no,
-      buyerName: dispatch?.buyer_name ?? order.buyer_name_address,
+      // Only a real, clean single-line name (dispatch_invoices.buyer_name,
+      // captured post-dispatch) goes into buyerName. Pre-dispatch, there is
+      // no clean name anywhere on this order — leave it null (matching how
+      // address1/city/state/postcode below have always required manual
+      // entry) rather than falling back to the buyer_name_address blob. See
+      // buyerNameAddress above for why that fallback was wrong.
+      buyerName: dispatch?.buyer_name ?? null,
+      buyerNameAddress: order.buyer_name_address,
       buyerMail: dispatch?.buyer_mail ?? order.email_id,
       buyerContact: dispatch?.buyer_contact ?? order.contact_no,
-      buyerCountry: dispatch?.buyer_country ?? null,
+      // Was dispatch-only (always null pre-dispatch, same root gap as
+      // buyerName above — see comment there) — orders.buyer_country is
+      // captured at order-entry time and is now used as the fallback, same
+      // pattern as the other buyer_* fields.
+      buyerCountry: dispatch?.buyer_country ?? order.buyer_country ?? null,
       hsnNo: dispatch?.hsn_no ?? null,
       skuLabel: order.sku_label,
       qty: order.qty,

@@ -141,6 +141,15 @@ export async function createFedexShipment(
           countryOfManufacture: input.shipper.countryCode,
           quantity: 1,
           quantityUnits: "PCS",
+          // Required by FedEx on every commodity line once
+          // customsClearanceDetail is present — without it FedEx rejects
+          // the whole shipment with "Insufficient information for
+          // commodity 1 ... Commodity weight is missing or invalid.", even
+          // though the package-level weight above (requestedPackageLineItems)
+          // is already set. One commodity line = the whole package here (no
+          // multi-line commodity breakdown in this app), so it carries the
+          // full package weight.
+          weight: { units: "KG", value: input.packageWeightKg },
           unitPrice: { amount: input.customsValue ?? 0, currency: input.currencyCode },
           customsValue: { amount: input.customsValue ?? 0, currency: input.currencyCode },
         },
