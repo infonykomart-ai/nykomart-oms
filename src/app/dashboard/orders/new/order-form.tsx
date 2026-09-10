@@ -4,6 +4,7 @@ import { useActionState, useRef, useEffect, useState, type FormEvent } from "rea
 import { createOrder, checkFinishedStockAction, type OrderFormState } from "./actions";
 import { PhotoUrlField } from "../photo-url-field";
 import { lookupPostalCode } from "@/lib/postal-lookup";
+import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
 const initialState: OrderFormState = { error: null, success: null };
 
@@ -230,6 +231,72 @@ export function OrderForm({
     if (stateInput && !stateInput.value.trim()) stateInput.value = result.state;
   }
 
+  // 2026-09-10 — "ORDER SE FIRST LINE SECOND LINE SE ADDRESSH UTH KE NAHI
+  // AARA": Address Line 1 here has always been one plain box with zero
+  // guidance, so an employee pasting the buyer's FULL address (name +
+  // street + city + state + zip + country, the way it's usually copied
+  // from a marketplace order) naturally pastes the whole thing in here —
+  // exactly like the old single free-text field always let them. That left
+  // City/State/Postcode blank, which is what caused a real FedEx booking
+  // to fail with a confusing "Recipient state and postal code mismatch"
+  // (see src/lib/parse-full-address.ts for the full root-cause writeup).
+  //
+  // Fix: intercept the paste, read the RAW clipboard text (still has real
+  // line breaks at this point, before the browser would otherwise collapse
+  // them into a single line) and auto-split it into Address Line 1/2,
+  // City, State, Postcode, Destination Country — and, if it starts with
+  // what looks like a plain name, Buyer Name too. Only intercepts when the
+  // pasted text actually looks like a full address (looksLikeFullAddress)
+  // — a normal "123 Main St" paste behaves exactly as before. Every field
+  // this touches stays an ordinary editable input either way — nothing
+  // here is ever silently trusted without a look.
+  function applyParsedAddress(parsed: ParsedAddress) {
+    const address1Input = document.getElementById("buyer_address1") as HTMLInputElement | null;
+    const address2Input = document.getElementById("buyer_address2") as HTMLInputElement | null;
+    const cityInput = document.getElementById("buyer_city") as HTMLInputElement | null;
+    const stateInput = document.getElementById("buyer_state") as HTMLInputElement | null;
+    const postalInput = document.getElementById("buyer_postal_code") as HTMLInputElement | null;
+    const countryInput = document.getElementById("destination_country") as HTMLInputElement | null;
+    const nameInput = document.getElementById("buyer_name_address") as HTMLInputElement | null;
+
+    let address1 = parsed.address1;
+    // Peel a leading plain-looking name (letters only, up to 4 words,
+    // followed by a street number) off Address Line 1 into Buyer Name —
+    // only when Buyer Name is still empty, so a name already typed is
+    // never overwritten.
+    if (nameInput && !nameInput.value.trim()) {
+      const nameMatch = address1.match(/^([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){0,3})\s+(\d.*)$/);
+      if (nameMatch) {
+        nameInput.value = nameMatch[1].trim();
+        address1 = nameMatch[2].trim();
+      }
+    }
+
+    if (address1Input) address1Input.value = address1;
+    if (address2Input && !address2Input.value.trim() && parsed.address2) address2Input.value = parsed.address2;
+    if (cityInput && !cityInput.value.trim() && parsed.city) cityInput.value = parsed.city;
+    if (stateInput && !stateInput.value.trim() && parsed.state) stateInput.value = parsed.state;
+    if (postalInput && !postalInput.value.trim() && parsed.postalCode) postalInput.value = parsed.postalCode;
+    if (countryInput && !countryInput.value.trim() && parsed.country) countryInput.value = parsed.country;
+  }
+
+  function handleAddress1Paste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const pasted = e.clipboardData.getData("text/plain");
+    if (!looksLikeFullAddress(pasted)) return; // plain street paste — behave exactly as before
+    e.preventDefault();
+    applyParsedAddress(parseFullAddress(pasted));
+  }
+
+  // "Split Address" button — same parser, but re-run against whatever is
+  // ALREADY sitting in Address Line 1 (handles text typed by hand, pasted
+  // before this fix existed, or pasted through a path that couldn't be
+  // intercepted, e.g. a phone's "Paste" menu).
+  function handleSplitAddressClick() {
+    const address1Input = document.getElementById("buyer_address1") as HTMLInputElement | null;
+    if (!address1Input || !address1Input.value.trim()) return;
+    applyParsedAddress(parseFullAddress(address1Input.value));
+  }
+
   return (
     <form ref={formRef} action={formAction} onSubmit={handleSubmit} className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       {state.success && (
@@ -373,20 +440,31 @@ export function OrderForm({
           <p className="mb-3 text-sm font-semibold text-slate-900">Structured Address</p>
           <p className="mb-3 text-xs text-slate-500">
             Used to pre-fill address fields automatically when booking a courier shipment for this order — please
-            fill this in accurately.
+            fill this in accurately. Tip: paste the buyer&apos;s full address (name, street, city, state, zip,
+            country) straight into Address Line 1 — it will split itself automatically into the fields below.
           </p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className={labelClass} htmlFor="buyer_address1">Address Line 1</label>
-              <input id="buyer_address1" name="buyer_address1" className={inputClass} />
+              <div className="flex items-center justify-between">
+                <label className={labelClass} htmlFor="buyer_address1">Address Line 1</label>
+                {/* 2026-09-10 — one-click fix for text already pasted in
+                    full (typed by hand, pasted before this feature existed,
+                    or pasted through a path onPaste couldn't intercept) —
+                    re-runs the same auto-split against the current value. */}
+                <button
+                  type="button"
+                  onClick={handleSplitAddressClick}
+                  className="mb-1 text-xs font-medium text-amber-700 hover:underline"
+                  title="If the full address got pasted into this one box, click to split it into City/State/Postcode below"
+                >
+                  ✂ Split Address
+                </button>
+              </div>
+              <input id="buyer_address1" name="buyer_address1" onPaste={handleAddress1Paste} className={inputClass} />
             </div>
             <div className="sm:col-span-2">
               <label className={labelClass} htmlFor="buyer_address2">Address Line 2</label>
               <input id="buyer_address2" name="buyer_address2" className={inputClass} />
-            </div>
-            <div className="sm:col-span-2">
-              <label className={labelClass} htmlFor="buyer_address3">Address Line 3</label>
-              <input id="buyer_address3" name="buyer_address3" className={inputClass} />
             </div>
             <div>
               <label className={labelClass} htmlFor="buyer_city">City</label>

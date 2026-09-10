@@ -151,12 +151,17 @@ function matchLineToCountry(rawLine: string): string | null {
   return null;
 }
 
-const US_STATES = new Set([
+// Exported (2026-09-10 follow-up) — src/lib/parse-full-address.ts reuses
+// these same two sets so a US/Australia state abbreviation is recognized
+// identically whether we're just detecting the country or fully splitting
+// an address into Address Line/City/State/Postcode. Kept as one source of
+// truth rather than a second hand-copied list that could drift out of sync.
+export const US_STATES = new Set([
   "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME",
   "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA",
   "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
 ]);
-const AU_STATES = new Set(["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]);
+export const AU_STATES = new Set(["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]);
 const INDIA_KEYWORDS = [
   "india", "delhi", "new delhi", "mumbai", "bengaluru", "bangalore", "chennai", "kolkata", "hyderabad", "pune",
   "karnataka", "maharashtra", "gujarat", "punjab", "rajasthan", "tamil nadu", "telangana", "kerala", "uttar pradesh",

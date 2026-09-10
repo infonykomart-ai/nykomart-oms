@@ -4,6 +4,7 @@ import { useActionState, useEffect } from "react";
 import { updateOrder, type OrderEditState } from "./actions";
 import { PhotoUrlField } from "./photo-url-field";
 import { lookupPostalCode } from "@/lib/postal-lookup";
+import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
 const initialState: OrderEditState = { error: null, success: false };
 
@@ -106,6 +107,56 @@ export function OrderEditForm({
     const stateInput = document.getElementById(`buyer_state-${order.id}`) as HTMLInputElement | null;
     if (cityInput && !cityInput.value.trim()) cityInput.value = result.city;
     if (stateInput && !stateInput.value.trim()) stateInput.value = result.state;
+  }
+
+  // 2026-09-10 — same auto-split as new/order-form.tsx (see
+  // src/lib/parse-full-address.ts for the full root-cause writeup: this is
+  // exactly the screen that fixes an already-broken order like the one in
+  // the bug report — a paste-in-full-address habit left City/State/Postcode
+  // blank, which is what made a real FedEx booking fail with "Recipient
+  // state and postal code mismatch"). Only fills a field when it's still
+  // empty (except Address Line 1 itself, the field being split, and Buyer
+  // Name only when it too is empty) — nothing already typed is overwritten.
+  function applyParsedAddress(parsed: ParsedAddress) {
+    const address1Input = document.getElementById(`buyer_address1-${order.id}`) as HTMLInputElement | null;
+    const address2Input = document.getElementById(`buyer_address2-${order.id}`) as HTMLInputElement | null;
+    const cityInput = document.getElementById(`buyer_city-${order.id}`) as HTMLInputElement | null;
+    const stateInput = document.getElementById(`buyer_state-${order.id}`) as HTMLInputElement | null;
+    const postalInput = document.getElementById(`buyer_postal_code-${order.id}`) as HTMLInputElement | null;
+    const countryInput = document.getElementById(`destination_country-${order.id}`) as HTMLInputElement | null;
+    const nameInput = document.getElementById(`buyer_name_address-${order.id}`) as HTMLInputElement | null;
+
+    let address1 = parsed.address1;
+    if (nameInput && !nameInput.value.trim()) {
+      const nameMatch = address1.match(/^([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){0,3})\s+(\d.*)$/);
+      if (nameMatch) {
+        nameInput.value = nameMatch[1].trim();
+        address1 = nameMatch[2].trim();
+      }
+    }
+
+    if (address1Input) address1Input.value = address1;
+    if (address2Input && !address2Input.value.trim() && parsed.address2) address2Input.value = parsed.address2;
+    if (cityInput && !cityInput.value.trim() && parsed.city) cityInput.value = parsed.city;
+    if (stateInput && !stateInput.value.trim() && parsed.state) stateInput.value = parsed.state;
+    if (postalInput && !postalInput.value.trim() && parsed.postalCode) postalInput.value = parsed.postalCode;
+    if (countryInput && !countryInput.value.trim() && parsed.country) countryInput.value = parsed.country;
+  }
+
+  function handleAddress1Paste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const pasted = e.clipboardData.getData("text/plain");
+    if (!looksLikeFullAddress(pasted)) return;
+    e.preventDefault();
+    applyParsedAddress(parseFullAddress(pasted));
+  }
+
+  // "Split Address" — re-parses whatever is ALREADY in Address Line 1.
+  // This is the one-click fix for an order that already has the whole
+  // address jammed into Address Line 1 from before this feature existed.
+  function handleSplitAddressClick() {
+    const address1Input = document.getElementById(`buyer_address1-${order.id}`) as HTMLInputElement | null;
+    if (!address1Input || !address1Input.value.trim()) return;
+    applyParsedAddress(parseFullAddress(address1Input.value));
   }
 
   return (
@@ -239,20 +290,33 @@ export function OrderEditForm({
           <p className="mb-2 text-xs font-semibold text-slate-700">Structured Address</p>
           <p className="mb-2 text-[11px] text-slate-400">
             Used to pre-fill address fields automatically when booking a courier shipment for this order — please
-            fill this in accurately.
+            fill this in accurately. If the full address ever ends up jammed into Address Line 1 (e.g. pasted in one
+            go), click &quot;Split Address&quot; to auto-fill City/State/Postcode from it.
           </p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="sm:col-span-2">
-              <label className={labelClass} htmlFor={`buyer_address1-${order.id}`}>Address Line 1</label>
-              <input id={`buyer_address1-${order.id}`} name="buyer_address1" defaultValue={order.buyer_address1 ?? ""} className={inputClass} />
+              <div className="flex items-center justify-between">
+                <label className={labelClass} htmlFor={`buyer_address1-${order.id}`}>Address Line 1</label>
+                <button
+                  type="button"
+                  onClick={handleSplitAddressClick}
+                  className="mb-1 text-[11px] font-medium text-amber-700 hover:underline"
+                  title="If the full address got pasted into this one box, click to split it into City/State/Postcode below"
+                >
+                  ✂ Split Address
+                </button>
+              </div>
+              <input
+                id={`buyer_address1-${order.id}`}
+                name="buyer_address1"
+                defaultValue={order.buyer_address1 ?? ""}
+                onPaste={handleAddress1Paste}
+                className={inputClass}
+              />
             </div>
             <div className="sm:col-span-2">
               <label className={labelClass} htmlFor={`buyer_address2-${order.id}`}>Address Line 2</label>
               <input id={`buyer_address2-${order.id}`} name="buyer_address2" defaultValue={order.buyer_address2 ?? ""} className={inputClass} />
-            </div>
-            <div className="sm:col-span-2">
-              <label className={labelClass} htmlFor={`buyer_address3-${order.id}`}>Address Line 3</label>
-              <input id={`buyer_address3-${order.id}`} name="buyer_address3" defaultValue={order.buyer_address3 ?? ""} className={inputClass} />
             </div>
             <div>
               <label className={labelClass} htmlFor={`buyer_city-${order.id}`}>City</label>

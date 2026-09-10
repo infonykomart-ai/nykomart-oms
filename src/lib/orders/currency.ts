@@ -35,13 +35,17 @@ async function officialRate(
 
 // Live-market fallback (Frankfurter — free, no API key, ECB reference
 // rates). Only reached when no Exchange Rate Master entry covers this date.
-// This sandbox's own network is allowlisted and can't reach this host to
-// test it live, but it runs fine once deployed (Vercel has normal network
-// access) — wrapped defensively so a network hiccup degrades to
-// "unavailable" rather than throwing and losing the whole order entry.
+// 2026-09-10: switched from api.frankfurter.app to api.frankfurter.dev —
+// verified LIVE (fetched both URLs for real this round): the old .app
+// domain still works today but only via a 302 redirect to .dev/v1/..., so
+// calling .dev directly removes a dependency on that redirect continuing
+// to exist. Response shape is identical (`{ rates: { <TO>: <number> } }`),
+// so no other change was needed. Wrapped defensively either way — a
+// network hiccup degrades to "unavailable" (see computeCurrencyConversion
+// below) rather than throwing and losing the whole order entry.
 async function liveRate(from: string, to: string): Promise<number | null> {
   try {
-    const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=${to}`, {
+    const res = await fetch(`https://api.frankfurter.dev/v1/latest?from=${from}&to=${to}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;

@@ -37,6 +37,7 @@ import { resolveCourierCredentials } from "@/lib/couriers/credentials";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { countryCodeFor } from "@/lib/postal-lookup";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
+import { parseFullAddress, looksLikeFullAddress } from "@/lib/parse-full-address";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 type Courier = "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
@@ -84,6 +85,30 @@ function resolveRecipientCountryCode(formData: FormData): { code: string } | { e
     return { error: `Recipient Country Code "${raw}" isn't a recognized 2-letter code or country name — enter something like "US", "GB", "AE", or "United States".` };
   }
   return { code };
+}
+
+// 2026-09-10 — a real reported case: an order whose City/State/Postcode
+// had never been filled in (because the whole address had been pasted
+// into Address Line 1 instead — see src/lib/parse-full-address.ts) still
+// let the form be submitted with those blank, and FedEx (and UPS/Aramex/
+// DHL, which share this exact recipient-fields shape) rejected it with a
+// confusing "Recipient state and postal code mismatch" — a courier saying
+// that when it was actually just handed empty strings for both. Appends a
+// clear, actionable Hinglish hint pointing at the actual fix whenever the
+// courier's own error text looks like this kind of mismatch AND
+// City/State/Postcode really were blank at submit time; otherwise (a
+// GENUINE mismatch — real values that just don't agree) leaves the
+// courier's message as-is, since second-guessing a real validation isn't
+// something this app should silently do.
+function withAddressErrorHint(message: string, formData: FormData): string {
+  if (!/state.{0,25}postal|postal.{0,25}state|postcode.{0,25}state/i.test(message)) return message;
+  const city = str(formData, "recipient_city");
+  const state = str(formData, "recipient_state");
+  const postcode = str(formData, "recipient_postcode");
+  if (!city || !state || !postcode) {
+    return `${message} — City/State/Postcode me se koi field khali thi. Order ke "Structured Address" section me jaakar "✂ Split Address" button try karein (agar poora address Address Line 1 me paste ho gaya tha), ya yahan seedha bhar dein aur dobara try karein.`;
+  }
+  return `${message} — City, State aur Postcode dubara check karein (in teeno ka aapas me match hona zaroori hai).`;
 }
 
 // -----------------------------------------------------------------------
@@ -205,6 +230,30 @@ export async function lookupOrderForCourierBooking(
   const siblingRows = (siblings ?? []).filter((s) => s.id !== order.id);
   const combinedValue = siblingRows.reduce((sum, s) => sum + (s.order_value_inr ?? 0), order.order_value_inr ?? 0);
 
+  // 2026-09-10 — self-healing fallback for exactly the bug report that
+  // prompted this: an order entered by pasting the buyer's FULL address
+  // (name + street + city + state + zip + country) into the single
+  // Address Line 1 box instead of splitting it across the structured
+  // fields, leaving City/State/Postcode blank. That's what made a real
+  // FedEx booking fail with "Recipient state and postal code mismatch" —
+  // City/State/Postcode came through to FedEx as empty strings. Rather
+  // than requiring every such order to be manually re-edited first (see
+  // orders/order-edit-form.tsx's new "Split Address" button for that
+  // manual path), this booking-time lookup ALSO tries the same parser
+  // automatically whenever City/State/Postcode are all still blank and
+  // Address Line 1 looks like it's carrying a full address — so the
+  // Create Shipment screen's defaults come up correct the first time this
+  // order is booked, with zero action required on the order itself. Only
+  // ever used as a DEFAULT (see create-shipment-form.tsx) — still a plain
+  // editable input, never silently submitted without a look. An order
+  // that already has real City/State/Postcode on file is never touched by
+  // this (structuredAddressMissing guards that).
+  const structuredAddressMissing = !order.buyer_city && !order.buyer_state && !order.buyer_postal_code;
+  const parsedFallback =
+    structuredAddressMissing && order.buyer_address1 && looksLikeFullAddress(order.buyer_address1)
+      ? parseFullAddress(order.buyer_address1)
+      : null;
+
   return {
     error: null,
     order: {
@@ -225,13 +274,13 @@ export async function lookupOrderForCourierBooking(
       // captured at order-entry time and is now used as the fallback, same
       // pattern as the other buyer_* fields.
       buyerCountry: dispatch?.buyer_country ?? order.buyer_country ?? null,
-      buyerAddress1: order.buyer_address1,
-      buyerAddress2: order.buyer_address2,
+      buyerAddress1: parsedFallback ? parsedFallback.address1 || order.buyer_address1 : order.buyer_address1,
+      buyerAddress2: parsedFallback && parsedFallback.address2 ? parsedFallback.address2 : order.buyer_address2,
       buyerAddress3: order.buyer_address3,
-      buyerCity: order.buyer_city,
-      buyerState: order.buyer_state,
-      buyerPostalCode: order.buyer_postal_code,
-      buyerDestinationCountry: order.destination_country,
+      buyerCity: parsedFallback && parsedFallback.city ? parsedFallback.city : order.buyer_city,
+      buyerState: parsedFallback && parsedFallback.state ? parsedFallback.state : order.buyer_state,
+      buyerPostalCode: parsedFallback && parsedFallback.postalCode ? parsedFallback.postalCode : order.buyer_postal_code,
+      buyerDestinationCountry: order.destination_country ?? (parsedFallback && parsedFallback.country ? parsedFallback.country : null),
       hsnNo: dispatch?.hsn_no ?? null,
       skuLabel: order.sku_label,
       qty: order.qty,
@@ -781,7 +830,7 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "fedex", orderId, serviceCode: input.serviceType, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `FedEx booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };
@@ -942,7 +991,7 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "ups", orderId, serviceCode: input.serviceCode, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `UPS booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };
@@ -1112,7 +1161,7 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "aramex", orderId, serviceCode: input.productType, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `Aramex booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };
@@ -1243,7 +1292,7 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "delhivery", orderId, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `Delhivery booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };
@@ -1395,7 +1444,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "shiprocket", orderId, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `Shiprocket booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };
@@ -1567,7 +1616,7 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "dhl", orderId, serviceCode: input.productCode, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `DHL booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };

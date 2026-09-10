@@ -21,6 +21,7 @@ import {
 // db/2026-09-01-multi-courier-booking-and-freight-recon.sql and
 // src/lib/couriers/rate-card-fallback.ts's header comment.
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
+import { parseFullAddress, looksLikeFullAddress } from "@/lib/parse-full-address";
 
 export type ShipglobalLookupOrder = {
   id: string;
@@ -102,6 +103,19 @@ export async function lookupOrderForShipglobal(
     .eq("order_id", order.id)
     .maybeSingle();
 
+  // 2026-09-10 — same self-healing fallback as courier-booking/actions.ts's
+  // lookupOrderForCourierBooking (see the comment there and
+  // src/lib/parse-full-address.ts for the full root-cause writeup): an
+  // order entered by pasting the buyer's full address into Address Line 1
+  // instead of the structured fields leaves City/State/Postcode blank,
+  // which is exactly what caused a real courier "state and postal code
+  // mismatch" rejection. Only used when City/State/Postcode are ALL blank.
+  const structuredAddressMissing = !order.buyer_city && !order.buyer_state && !order.buyer_postal_code;
+  const parsedFallback =
+    structuredAddressMissing && order.buyer_address1 && looksLikeFullAddress(order.buyer_address1)
+      ? parseFullAddress(order.buyer_address1)
+      : null;
+
   return {
     error: null,
     order: {
@@ -111,13 +125,13 @@ export async function lookupOrderForShipglobal(
       buyerMail: dispatch?.buyer_mail ?? order.email_id,
       buyerContact: dispatch?.buyer_contact ?? order.contact_no,
       buyerCountry: dispatch?.buyer_country ?? null,
-      buyerAddress1: order.buyer_address1,
-      buyerAddress2: order.buyer_address2,
+      buyerAddress1: parsedFallback ? parsedFallback.address1 || order.buyer_address1 : order.buyer_address1,
+      buyerAddress2: parsedFallback && parsedFallback.address2 ? parsedFallback.address2 : order.buyer_address2,
       buyerAddress3: order.buyer_address3,
-      buyerCity: order.buyer_city,
-      buyerState: order.buyer_state,
-      buyerPostalCode: order.buyer_postal_code,
-      buyerDestinationCountry: order.destination_country,
+      buyerCity: parsedFallback && parsedFallback.city ? parsedFallback.city : order.buyer_city,
+      buyerState: parsedFallback && parsedFallback.state ? parsedFallback.state : order.buyer_state,
+      buyerPostalCode: parsedFallback && parsedFallback.postalCode ? parsedFallback.postalCode : order.buyer_postal_code,
+      buyerDestinationCountry: order.destination_country ?? (parsedFallback && parsedFallback.country ? parsedFallback.country : null),
       hsnNo: dispatch?.hsn_no ?? null,
       skuLabel: order.sku_label,
       qty: order.qty,
