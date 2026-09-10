@@ -5,11 +5,11 @@ import { CreateShipmentForm, type CourierBookingPrefill, type BookPrefill } from
 import { AccountSetupForm } from "./account-setup-form";
 import { ShipmentsTracking } from "./shipments-tracking";
 import { CourierBookingTabs, type CourierBookingTab } from "./courier-booking-tabs";
-import { COURIERS, getCourierCredentialStatus, getNonSecretCredentialValues, type CourierKey } from "@/lib/couriers/credentials";
+import { COURIERS, getCourierCredentialStatus, getNonSecretCredentialValues } from "@/lib/couriers/credentials";
 import { getTrackedShipments, type TrackingFilters } from "./tracking-data";
 import { getPendingOrders, groupIntoBatches, type PendingOrdersFilters } from "./pending-orders-data";
 import { PendingOrders } from "./pending-orders";
-import { getPickupCandidateAwbs, listPickupRequests, type PickupCandidateAwb } from "./pickup-request-data";
+import { getPickupCandidatesForAllCouriers, listPickupRequests } from "./pickup-request-data";
 import { PickupRequest } from "./pickup-request";
 import { getDailyShipmentReport, type DailyReportFilters } from "./daily-report-data";
 import { DailyShipmentReport } from "./daily-shipment-report";
@@ -91,6 +91,7 @@ export default async function CourierBookingPage({
     dailyReportRows,
     ndrSummary,
     performanceReport,
+    candidatesByCourier,
     ...prefillByCourier
   ] = await Promise.all([
     supabase.from("courier_shipper_profiles").select("*").eq("company_id", employee.currentCompanyId).maybeSingle(),
@@ -102,6 +103,12 @@ export default async function CourierBookingPage({
     getDailyShipmentReport(serviceSupabase, employee.currentCompanyId, reportFilters, false),
     getUnresolvedNdrSummary(serviceSupabase, employee.companyIds),
     getCourierPerformanceReport(serviceSupabase, employee.currentCompanyId, performanceFilters),
+    // 2026-09-10 perf fix — this Pickup Request tab's candidate list used
+    // to be fetched in a SECOND, separate `await Promise.all(...)` AFTER
+    // this whole block had already resolved (see getPickupCandidatesForAllCouriers's
+    // own header comment) — a fully avoidable extra sequential round-trip
+    // on every load. Now it's just one more entry in this same batch.
+    getPickupCandidatesForAllCouriers(serviceSupabase, employee.companyIds),
     ...COURIERS.map((c) => getNonSecretCredentialValues(serviceSupabase, employee.currentCompanyId, c.key)),
   ]);
 
@@ -115,9 +122,6 @@ export default async function CourierBookingPage({
   const defaultPickupAddress = shipper
     ? `${shipper.contact_name}, ${shipper.company_name}, ${shipper.address1}${shipper.address2 ? `, ${shipper.address2}` : ""}, ${shipper.city}, ${shipper.state} ${shipper.postcode}, ${shipper.country_code}`
     : "";
-  const candidatesByCourier = Object.fromEntries(
-    await Promise.all(COURIERS.map(async (c) => [c.key, await getPickupCandidateAwbs(serviceSupabase, employee.companyIds, c.key)] as const))
-  ) as Record<CourierKey, PickupCandidateAwb[]>;
 
   return (
     <div className="space-y-6">

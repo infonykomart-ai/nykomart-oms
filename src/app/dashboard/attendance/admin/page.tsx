@@ -1,5 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { todayIST, addDaysToDateStr, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories } from "@/lib/attendance/payroll";
 import { formatDuration, liveElapsedSeconds, liveElapsedSecondsForToday } from "@/lib/attendance/timer";
@@ -479,6 +480,8 @@ export default async function AttendanceAdminPage({
 
   return (
     <div>
+      {/* 2026-09-10 — near-live data sync (see src/components/auto-refresh.tsx). */}
+      <AutoRefresh intervalMs={15000} />
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🗓️ Attendance Admin</h1>
         <p className="mt-1 text-sm text-slate-500">Holiday calendar, weekly off, team attendance &amp; daily work reports.</p>

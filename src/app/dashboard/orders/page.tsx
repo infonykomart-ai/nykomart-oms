@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { matchMarketplaceFees } from "@/lib/orders/marketplace-fees";
 import { OrderListTable } from "./order-list-table";
+import { AutoRefresh } from "@/components/auto-refresh";
 
 const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
 
@@ -173,6 +174,10 @@ export default async function OrdersPage({
 
   return (
     <div>
+      {/* 2026-09-10 — "har 10-20 second me data sync hota rahe": see
+          src/components/auto-refresh.tsx for what this does and why it's
+          safe (pauses while typing, pauses on a hidden tab). */}
+      <AutoRefresh intervalMs={15000} />
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📋 Orders — Edit / Modify / Delete</h1>

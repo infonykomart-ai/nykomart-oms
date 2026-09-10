@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { AutoRefresh } from "@/components/auto-refresh";
 
 // 3-tab shell for the Courier Ops Dashboard (2026-09-03) — Account Setup /
 // Book Shipment / Track Shipments. Deliberately just a tab switcher: all
@@ -36,6 +37,18 @@ const TABS: { key: CourierBookingTab; label: string }[] = [
   { key: "performance", label: "🌍 Courier Performance" },
 ];
 
+// 2026-09-10 — "har 10-20 second me data sync hota rahe": scoped to the
+// read-only viewing tabs the user specifically asked for (Track Shipments
+// / Pending Orders, plus the same-shape Pickup Request/NDR/Report/
+// Performance tabs). Deliberately EXCLUDES "book" (Book Shipment — a long
+// real-shipment-booking form) and "setup" (Account Setup — courier
+// credential entry) so a background refresh never fires while an employee
+// could be mid-way through either of those higher-stakes forms, even
+// though all 8 tabs' content actually stays mounted in the DOM at once
+// (see the `hidden` attributes below) — this only controls whether the
+// TIMER is armed, keyed off which tab is currently visible.
+const AUTO_REFRESH_TABS = new Set<CourierBookingTab>(["pending", "pickup", "track", "ndr", "report", "performance"]);
+
 export function CourierBookingTabs({
   initialTab,
   setup,
@@ -61,6 +74,7 @@ export function CourierBookingTabs({
 
   return (
     <div className="space-y-4">
+      <AutoRefresh intervalMs={15000} enabled={AUTO_REFRESH_TABS.has(tab)} />
       <div className="flex flex-wrap gap-1 border-b border-slate-200">
         {TABS.map((t) => (
           <button

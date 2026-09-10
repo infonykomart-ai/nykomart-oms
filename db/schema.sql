@@ -1096,6 +1096,11 @@ CREATE TABLE order_shipments (
 );
 CREATE INDEX idx_order_shipments_order ON order_shipments(order_id);
 CREATE INDEX idx_order_shipments_awb   ON order_shipments(awb_no);
+-- 2026-09-10 perf fix — see db/2026-09-10-courier-perf-indexes.sql. Partial
+-- index covering the Pickup Request tab's "not yet delivered" candidate
+-- query (getPickupCandidatesForAllCouriers), which used to be a full
+-- table scan.
+CREATE INDEX idx_order_shipments_pending_pickup ON order_shipments(id) WHERE delivered_status IS NULL AND awb_no IS NOT NULL;
 
 CREATE TABLE order_packages (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3974,6 +3979,12 @@ CREATE TABLE courier_shipments (
 CREATE INDEX idx_courier_shipments_order    ON courier_shipments(order_id);
 CREATE INDEX idx_courier_shipments_awb      ON courier_shipments(awb_no);
 CREATE INDEX idx_courier_shipments_courier  ON courier_shipments(courier);
+-- 2026-09-10 perf fix — see db/2026-09-10-courier-perf-indexes.sql. Every
+-- Courier Ops Dashboard tab (Track Shipments, Courier Performance, Daily
+-- Shipment Report) does `ORDER BY created_at DESC LIMIT N`, optionally
+-- filtered by status — neither was covered by an index before this.
+CREATE INDEX idx_courier_shipments_created_at ON courier_shipments(created_at DESC);
+CREATE INDEX idx_courier_shipments_status_created ON courier_shipments(status, created_at DESC);
 
 -- 2026-09-09 — pre-booking weight/dims on orders (bulk-editable from the
 -- Pending Orders tab before a courier shipment ever exists) — see
