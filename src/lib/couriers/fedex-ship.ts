@@ -71,7 +71,11 @@ export type FedexShipInput = {
 export type FedexShipResult = {
   success: boolean;
   trackingNo: string | null;
-  labelUrl: string | null; // FedEx returns a base64-encoded label document; kept as a data: URI so the caller can store/link it the same way as a real URL
+  // Always a self-contained data:application/pdf;base64,... URI (or null)
+  // by the time this leaves createFedexShipment — see resolveLabelAsDataUri
+  // below for why this is fetched server-side rather than handed back as
+  // FedEx's own raw document URL.
+  labelUrl: string | null;
   bookedAmt: number | null;
   bookedCurrency: string | null;
   raw: unknown;
@@ -117,6 +121,60 @@ async function fetchWithRetryOnGatewayError(url: string, options: RequestInit): 
       return { res: attemptRes, text: attemptText };
     }
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+  }
+}
+
+// 2026-09-10 — real reported bug: clicking a booked FedEx label opened a
+// raw, unstyled FedEx XML error page — "LOGIN.REAUTHENTICATE.ERROR / Your
+// session is expired. Please enter your user ID and password to log in
+// again." Root cause: `labelResponseOptions: "URL_ONLY"` below (see that
+// setting's own comment) makes FedEx return a FEDEX-HOSTED DOCUMENT URL,
+// not a public link — every place in this app that shows a "label" link
+// (generate-label-button.tsx, create-shipment-form.tsx, the shipment
+// detail page, shipments-tracking.tsx) just put that URL straight into a
+// plain `<a href>`, which sends the EMPLOYEE'S OWN BROWSER there with no
+// credentials attached at all. FedEx's document host then (reasonably)
+// refuses an unauthenticated request and serves back exactly this raw
+// "please log in" XML — there's no FedEx account for the employee to log
+// into; the app itself holds the OAuth credentials, not the browser.
+//
+// Fix: fetch the label SERVER-SIDE, with the SAME OAuth bearer token this
+// module already uses for the Ship API call itself (FedEx's document
+// retrieval sits behind the same client_credentials app/token — no
+// separate login exists), and convert it to a self-contained
+// data:application/pdf;base64,... URI before this ever reaches the
+// browser — exactly the same shape every other courier's label already
+// takes in this app (UPS/DHL build a data: URI directly from inline
+// base64; this makes FedEx consistent even though FedEx's own API hands
+// back a URL instead of inline bytes). The browser never talks to FedEx's
+// document host directly anymore, so there's nothing left to "log in" to.
+// Falls back to `null` (not the raw URL — a dead link that errors when
+// clicked is worse than the app's own existing "no label captured yet"
+// message) if the authenticated fetch itself fails for any reason; the
+// booking/tracking number are entirely unaffected either way, since the
+// label is fetched only AFTER FedEx has already confirmed the shipment.
+async function resolveLabelAsDataUri(
+  labelDoc: { url?: string; encodedLabel?: string; contentType?: string } | undefined,
+  accessToken: string
+): Promise<string | null> {
+  if (!labelDoc) return null;
+  if (labelDoc.encodedLabel) return `data:application/pdf;base64,${labelDoc.encodedLabel}`;
+  if (!labelDoc.url) return null;
+
+  try {
+    const res = await fetch(labelDoc.url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) {
+      console.error(`FedEx label fetch failed (${res.status}) for ${labelDoc.url}`);
+      return null;
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return `data:application/pdf;base64,${buffer.toString("base64")}`;
+  } catch (err) {
+    console.error("FedEx label fetch threw:", err);
+    return null;
   }
 }
 
@@ -199,9 +257,13 @@ export async function createFedexShipment(
     // 2026-09-08: kept as "URL_ONLY" — confirmed correct against a real
     // FedEx sandbox response the user captured and pasted back (see
     // fedex-ship-real-response-2026-09-08.json in the delivery notes): with
-    // this option FedEx really does return a fetchable label URL. The bug
-    // was never this setting — it was where the response-parsing code below
-    // was looking for that URL. See the parsing comment below.
+    // this option FedEx really does return a fetchable label URL. That
+    // round only confirmed the URL comes back at all (the field-path bug
+    // fixed then); it did not confirm the URL is directly openable by a
+    // browser with no credentials attached — 2026-09-10 found it isn't
+    // (see resolveLabelAsDataUri above, and its call site below) — so this
+    // setting is still correct, the app just now fetches that URL itself
+    // with the right credentials instead of handing it to the browser raw.
     labelResponseOptions: "URL_ONLY",
     requestedShipment,
     accountNumber: { value: input.shipper.accountNumber },
@@ -281,7 +343,7 @@ export async function createFedexShipment(
   // international shipments can carry more than one document type here.
   const packageDocuments = shipment?.pieceResponses?.flatMap((p) => p.packageDocuments ?? []) ?? [];
   const labelDoc = packageDocuments.find((d) => d.contentType === "LABEL") ?? packageDocuments[0];
-  const labelUrl = labelDoc?.url ?? (labelDoc?.encodedLabel ? `data:application/pdf;base64,${labelDoc.encodedLabel}` : null);
+  const labelUrl = await resolveLabelAsDataUri(labelDoc, accessToken);
 
   return {
     success: !!trackingNo,
