@@ -156,6 +156,37 @@ export async function POST(req: Request) {
     return NextResponse.json({ reply: reply || "Sorry, I didn't quite get a response there — try again?" });
   } catch (err) {
     console.error("companion-chat error:", err);
+    // 2026-09-09 — "sahi javab nahi deti ya limit issue aajata hai samjh
+    // nahi aaya": before this fix, EVERY Gemini API failure (a real free-
+    // tier rate-limit hit, an invalid/expired key, a genuine outage) fell
+    // through to the same generic "having trouble" reply, so an employee
+    // hitting the free tier's per-minute/per-day quota (a real Gemini 429
+    // RESOURCE_EXHAUSTED — see https://ai.google.dev/gemini-api/docs/rate-limits,
+    // shared across every employee using this one API key) had no way to
+    // tell that apart from a broken bot giving a wrong answer. The
+    // `@google/genai` SDK throws an `ApiError` carrying the real HTTP
+    // `.status`, so classify the failure and reply with the SPECIFIC
+    // reason in Hinglish instead of one generic message for everything.
+    const status = err && typeof err === "object" && "status" in err ? (err as { status?: unknown }).status : undefined;
+    const errText = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+    const isRateLimit = status === 429 || /RESOURCE_EXHAUSTED|rate.?limit|quota/i.test(errText);
+    const isAuthProblem =
+      status === 401 ||
+      status === 403 ||
+      /API key not valid|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(errText);
+
+    if (isRateLimit) {
+      return NextResponse.json({
+        reply:
+          "Abhi Google AI ki free-tier request-limit khatam ho gayi hai (ek saath bahut saare sawal aa gaye honge) — 1-2 minute ruk kar dobara try karein. Agar yeh baar-baar hota hai, Admin ko batayein: Google AI Studio (aistudio.google.com) mein billing enable karke yeh limit badhayi ja sakti hai.",
+      });
+    }
+    if (isAuthProblem) {
+      return NextResponse.json({
+        reply:
+          "AI chat abhi kaam nahi kar raha — lagta hai GEMINI_API_KEY galat hai ya expire ho gayi hai. Admin ko batayein Vercel ke Environment Variables mein yeh key check/update karein.",
+      });
+    }
     return NextResponse.json({ reply: "Sorry, the AI chat service is having trouble right now — try again in a moment." });
   }
 }
