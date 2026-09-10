@@ -55,7 +55,11 @@ function randomEntry(): { style: CSSProperties; hiddenTransform: string } {
   // right on top of the dock/chat panel corner (bottom-right) or spills
   // past a screen edge.
   const along = 15 + Math.random() * 60;
-  const base: CSSProperties = { position: "fixed", zIndex: 61 };
+  // 2026-09-10 — z-index 46, not the old 61: kept above normal page chrome
+  // (z-40) but below every modal/panel/toast (z-50+) — see globals.css's
+  // matching note on .oms-companion-dock for why (an open modal must
+  // always render above this popup, never the other way round).
+  const base: CSSProperties = { position: "fixed", zIndex: 46 };
 
   switch (edge) {
     case "left":

@@ -82,7 +82,22 @@ export function MessageToastProvider({
     // fixed at bottom-6 right-6 on every dashboard page, and bottom-4 would
     // render these toast cards right on top of it. Toasts now stack ABOVE
     // the bubble instead of colliding with it.
-    <div className="pointer-events-none fixed bottom-24 right-4 z-50 flex flex-col gap-2">
+    //
+    // 2026-09-10 — moved from bottom-right to top-right entirely. The
+    // bottom-right corner is now genuinely crowded: the Messenger bubble +
+    // its own expanded panel, the AI Companion dock + its chat panel, and
+    // these toasts were ALL anchored there, and this toast's real,
+    // opaque, `pointer-events-auto` card (w-72, z-50) geometrically
+    // overlapped BOTH the Companion chat panel (fixed right:16px
+    // bottom:90px, up to 340x460px, whose own Send button sits right at
+    // that bottom edge) and the Messenger's own expanded thread panel
+    // (fixed bottom-24 right-24 z-50) whenever either was open — a new DM
+    // arriving mid-chat could visually sit on top of, and block clicks to,
+    // the very panel the employee was using. Rather than keep re-tuning
+    // offsets in an increasingly packed corner, this notification now
+    // lives in the (empty) top-right corner instead, which nothing else
+    // in this app claims.
+    <div className="pointer-events-none fixed top-4 right-4 z-50 flex flex-col gap-2">
       {toasts.map((t) => (
         <button
           key={t.id}

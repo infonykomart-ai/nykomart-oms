@@ -820,13 +820,33 @@ body {
    - .oms-companion-event-figure gets a solid card background — "ISKO
      TRANSPARRENT KYU RAKHA AHI" / "character ke peeche ka background": it
      used to be the bare SVG with only a drop-shadow, no backing at all.
+
+   2026-09-10 — "OR BHI KAHI BUTTON DUB RAHA HO": z-index rationalized.
+   This whole widget previously used z-index 60 (dock) / 61 (event popup,
+   inline in companion-live-provider.tsx) / 62 (chat panel) — HIGHER than
+   every modal/overlay in this app (all of which use z-50: the courier-
+   booking confirm/edit modals, Global Search, the messenger panel, toast
+   notifications). That meant the companion floated ON TOP of an open
+   modal instead of being correctly hidden behind its dimmed backdrop —
+   for a modal tall/wide enough to reach the bottom-right corner (e.g. the
+   Pending Orders bulk weight/dims modal, which grows with row count), the
+   companion dock could sit directly on top of that modal's own Save/
+   Cancel button, exactly the same "button dub gaya" symptom reported for
+   the Order detail page's "+ Assign to a Party" button (fixed separately,
+   see dashboard-main.tsx's own note). Fix: keep this widget ABOVE normal
+   page chrome (sidebar/dock-nav/help-center/messenger button all use
+   z-40) but BELOW every modal/panel/toast (z-50+) — dock=45, event
+   popup=46 (see companion-live-provider.tsx), chat panel=48 — so an open
+   modal always wins the stacking order and the companion correctly
+   disappears behind it, the same way the messenger's own collapsed button
+   (z-40) already did.
    =========================================================================== */
 
 .oms-companion-dock {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 60;
+  z-index: 45;
   width: 64px;
   height: 64px;
   border-radius: 9999px;
@@ -927,7 +947,7 @@ body {
   position: fixed;
   right: 16px;
   bottom: 90px;
-  z-index: 62;
+  z-index: 48;
   width: min(340px, calc(100vw - 32px));
   height: min(460px, calc(100vh - 140px));
   display: flex;
