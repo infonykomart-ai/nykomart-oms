@@ -53,6 +53,16 @@ export type FedexShipInput = {
     contactName: string;
     companyName?: string | null;
     phone: string;
+    // 2026-09-10: both new, optional — FedEx's real Ship Manager booking
+    // page shows a separate "Ext." field alongside the recipient phone
+    // number, and a Tax ID (VAT/EORI/IOSS) field for destinations that need
+    // one. Wired to FedEx's documented contact.phoneExtension and
+    // contact.tins[].number fields below. UNCONFIRMED against a real FedEx
+    // account, same as the rest of this file (see header comment) — built
+    // from FedEx's public docs only, no sample request/response for these
+    // two fields specifically.
+    phoneExtension?: string | null;
+    taxId?: string | null;
     address1: string;
     address2?: string | null;
     city: string;
@@ -209,6 +219,15 @@ export async function createFedexShipment(
           personName: input.recipient.contactName,
           companyName: input.recipient.companyName ?? "",
           phoneNumber: input.recipient.phone,
+          // 2026-09-10: both omitted entirely when not provided, rather
+          // than sent as empty strings/arrays — FedEx's Ship API is known
+          // to reject some fields for being present-but-empty rather than
+          // just absent (see the DDP/DDU and commodity-weight comments
+          // elsewhere in this file for other examples of that pattern).
+          ...(input.recipient.phoneExtension ? { phoneExtension: input.recipient.phoneExtension } : {}),
+          ...(input.recipient.taxId
+            ? { tins: [{ number: input.recipient.taxId, tinType: "BUSINESS_NATIONAL" }] }
+            : {}),
         },
         address: {
           streetLines: [input.recipient.address1, input.recipient.address2 ?? ""].filter(Boolean),

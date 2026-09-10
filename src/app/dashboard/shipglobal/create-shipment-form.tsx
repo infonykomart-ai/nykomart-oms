@@ -207,7 +207,10 @@ export function CreateShipmentForm() {
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
               <div>
                 <label className={labelClass}>Item Name *</label>
-                <input name="item_name" required defaultValue={order.skuLabel ?? ""} className={inputClass} />
+                {/* 2026-09-10: was defaulting from order.skuLabel (a raw
+                    SKU CODE, not a name/description) — see
+                    ShipglobalLookupOrder.goodsDescription's comment. */}
+                <input name="item_name" required defaultValue={order.goodsDescription ?? order.skuLabel ?? ""} className={inputClass} />
               </div>
               <div>
                 <label className={labelClass}>SKU *</label>

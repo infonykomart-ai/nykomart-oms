@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { generateLabelAction, type GenerateLabelState } from "./label-actions";
+import { openLabelUrl } from "@/lib/couriers/open-label-url";
 
 const initial: GenerateLabelState = { error: null, success: false, labelUrl: null };
 
@@ -12,10 +13,15 @@ export function GenerateLabelButton({ courierShipmentId }: { courierShipmentId: 
   const [state, formAction, pending] = useActionState(generateLabelAction, initial);
 
   if (state.success && state.labelUrl) {
+    // 2026-09-10: routed through openLabelUrl (see its header comment) —
+    // a plain <a href target="_blank"> silently shows raw bytes instead of
+    // the PDF for a data: URI label. This button is Delhivery/Shiprocket
+    // only today (still real http(s) URLs, not affected by that bug), but
+    // using the same helper everywhere keeps this safe if that ever changes.
     return (
-      <a href={state.labelUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-amber-700 underline">
+      <button type="button" onClick={() => openLabelUrl(state.labelUrl!)} className="text-xs font-medium text-amber-700 underline">
         🖨 Label
-      </a>
+      </button>
     );
   }
 

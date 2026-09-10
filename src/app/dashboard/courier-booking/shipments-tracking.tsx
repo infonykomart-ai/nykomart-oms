@@ -2,6 +2,7 @@ import Link from "next/link";
 import { COURIERS, type CourierKey } from "@/lib/couriers/credentials";
 import type { TrackedShipment, TrackingFilters } from "./tracking-data";
 import { GenerateLabelButton } from "./generate-label-button";
+import { LabelLinkButton } from "./label-link-button";
 
 // Cross-order shipment tracking list — see tracking-data.ts's header
 // comment: there was no dedicated cross-order "Shipments"/"Tracking" list
@@ -109,9 +110,7 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                     {s.status !== "created" ? (
                       "—"
                     ) : s.labelUrl ? (
-                      <a href={s.labelUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-amber-700 underline">
-                        🖨 Label
-                      </a>
+                      <LabelLinkButton url={s.labelUrl} label="🖨 Label" className="text-xs font-medium text-amber-700 underline" />
                     ) : s.courier === "delhivery" || s.courier === "shiprocket" ? (
                       <GenerateLabelButton courierShipmentId={s.id} />
                     ) : (

@@ -16,6 +16,7 @@ import {
 import { createManualBooking, type ManualBookingState } from "./manual-booking-actions";
 import { MANUAL_BOOKING_COURIERS, type ManualBookingCourierChoice } from "./manual-booking-config";
 import { lookupPostalCode, countryCodeFor } from "@/lib/postal-lookup";
+import { openLabelUrl } from "@/lib/couriers/open-label-url";
 
 const lookupInitial: CourierBookingLookupState = { error: null, order: null };
 const createInitial: CourierBookingCreateState = {
@@ -75,9 +76,13 @@ function ResultBanner({ state }: { state: CourierBookingCreateState }) {
           {state.labelUrl && (
             <>
               {" "}
-              <a href={state.labelUrl} target="_blank" rel="noopener noreferrer" className="font-semibold underline">
+              {/* 2026-09-10: was a plain <a href target="_blank"> — see
+                  open-label-url.ts's header comment for why that silently
+                  showed raw PDF bytes as text instead of opening the PDF
+                  once FedEx's label became a data: URI. */}
+              <button type="button" onClick={() => openLabelUrl(state.labelUrl!)} className="font-semibold underline">
                 🖨 Download label
-              </a>
+              </button>
               .
             </>
           )}
@@ -165,6 +170,16 @@ function SharedShipmentFields({ order }: { order: CourierBookingLookupOrder }) {
           <div>
             <label className={labelClass}>Phone *</label>
             <input name="recipient_phone" required defaultValue={order.buyerContact ?? ""} className={inputClass} />
+          </div>
+          <div>
+            {/* 2026-09-10: "US buyer ke contact no ke sath ext ka option
+                bhi hota hai" — FedEx's own real booking page has a separate
+                Ext. field alongside the phone number for US numbers.
+                Optional; wired through to FedEx's contact.phoneExtension
+                (see fedex-ship.ts) — other couriers don't read this field
+                today, harmless to leave it filled in for them. */}
+            <label className={labelClass}>Phone Ext (optional)</label>
+            <input name="recipient_phone_ext" className={inputClass} />
           </div>
           <div>
             <label className={labelClass}>Email</label>
@@ -270,7 +285,25 @@ function SharedShipmentFields({ order }: { order: CourierBookingLookupOrder }) {
           </div>
           <div className="md:col-span-2">
             <label className={labelClass}>Goods Description</label>
-            <input name="goods_description" defaultValue={order.skuLabel ?? ""} className={inputClass} />
+            {/* 2026-09-10: was defaulting from order.skuLabel (a raw SKU
+                CODE, e.g. "TS-RED-M" — often blank, never a real
+                description). Now defaults from order.goodsDescription
+                (Item Category name + Size, e.g. "Cotton T-Shirt, Size M")
+                — see CourierBookingLookupOrder's comment on that field. */}
+            <input name="goods_description" defaultValue={order.goodsDescription ?? order.skuLabel ?? ""} className={inputClass} />
+          </div>
+          <div className="md:col-span-2">
+            {/* 2026-09-10: "buyer ki tax id agr aati hai to vo kaha add
+                hoyegi jo uske order ke related hoti hai" — defaults from
+                the order's own VAT/EORI/IOSS number (see buyerTaxId's
+                comment on CourierBookingLookupOrder). Only relevant for
+                specific destinations (mostly UK/EU) — leave blank
+                otherwise. Wired through to FedEx's recipient.tins (see
+                fedex-ship.ts) — UNCONFIRMED against a real FedEx account,
+                same as the rest of this FedEx client; other couriers don't
+                read this field today. */}
+            <label className={labelClass}>Buyer Tax ID (VAT/EORI/IOSS, optional)</label>
+            <input name="recipient_tax_id" defaultValue={order.buyerTaxId ?? ""} className={inputClass} />
           </div>
         </div>
       </div>

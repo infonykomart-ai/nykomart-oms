@@ -6,6 +6,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { getShipmentDetail, type TimelineStage } from "../shipment-detail-data";
 import { CancelShipmentModal } from "../cancel-shipment-modal";
 import { AllDocumentsButton } from "../all-documents-button";
+import { LabelLinkButton } from "../../label-link-button";
 import { getNdrAttemptsForShipment } from "../ndr-data";
 import { NdrPanel } from "../ndr-panel";
 
@@ -48,9 +49,11 @@ export default async function ShipmentDetailPage({ params }: { params: Promise<{
         </div>
         <div className="flex flex-wrap gap-2">
           {detail.labelUrl && (
-            <a href={detail.labelUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-              🖨 Print Label
-            </a>
+            <LabelLinkButton
+              url={detail.labelUrl}
+              label="🖨 Print Label"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            />
           )}
           {detail.order.invoiceId ? (
             <a
