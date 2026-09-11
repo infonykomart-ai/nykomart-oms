@@ -368,6 +368,11 @@ CREATE TABLE employees (
   bank_ifsc                  text,
   bank_name                  text,
 
+  -- 2026-09-11: Payroll Phase 3 — org chart (see
+  -- db/2026-09-11-core-hr-onboarding-orgchart-documents.sql). NULL = shown
+  -- as a top-level node on /dashboard/admin/employees/org-chart.
+  reports_to_employee_id     uuid REFERENCES employees(id),
+
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (company_id, name)              -- matches old verifyCredentials_()'s (company, name) lookup key
 );
@@ -3140,6 +3145,57 @@ CREATE TABLE attendance (
   UNIQUE (employee_id, attendance_date)
 );
 CREATE INDEX idx_attendance_company_date ON attendance(company_id, attendance_date);
+
+-- =============================================================================
+-- SECTION 16-c (2026-09-11, Payroll Phase 3) — Onboarding Checklist +
+-- Employee Documents. See db/2026-09-11-core-hr-onboarding-orgchart-
+-- documents.sql for the full migration. Gated the same as the rest of
+-- /dashboard/admin/employees — requireCapability("employee_admin"), no new
+-- capability added. employees.reports_to_employee_id (org chart) is
+-- declared on the employees table itself, above.
+-- =============================================================================
+CREATE TABLE onboarding_checklist_items (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id  uuid NOT NULL REFERENCES companies(id),
+  title       text NOT NULL,
+  sort_order  int NOT NULL DEFAULT 0,
+  active      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, title)
+);
+COMMENT ON TABLE onboarding_checklist_items IS
+  'Per-company onboarding checklist TEMPLATE — admin-configurable. See employee_onboarding_progress for '
+  'who has actually completed which step.';
+
+CREATE TABLE employee_onboarding_progress (
+  employee_id             uuid NOT NULL REFERENCES employees(id),
+  checklist_item_id       uuid NOT NULL REFERENCES onboarding_checklist_items(id),
+  completed_at            timestamptz,
+  completed_by_employee_id uuid REFERENCES employees(id),
+  notes                   text,
+  PRIMARY KEY (employee_id, checklist_item_id)
+);
+COMMENT ON TABLE employee_onboarding_progress IS
+  'One row per (employee, checklist item) once first touched. No row = not yet done, same "absence '
+  'derives the default" convention attendance itself uses.';
+
+CREATE TABLE employee_documents (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id             uuid NOT NULL REFERENCES employees(id),
+  company_id              uuid NOT NULL REFERENCES companies(id),
+  doc_type                text NOT NULL,
+  file_name               text NOT NULL,
+  storage_path            text NOT NULL,
+  mime_type               text,
+  file_size               bigint,
+  notes                   text,
+  uploaded_by_employee_id uuid REFERENCES employees(id),
+  uploaded_at             timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_documents_employee ON employee_documents(employee_id, uploaded_at DESC);
+COMMENT ON TABLE employee_documents IS
+  'ID proofs, certificates, signed letters, etc. Files live in the PRIVATE "employee-documents" Storage '
+  'bucket — served only through /api/employee-document/[id], never a public/signed URL.';
 
 -- Old sheet: Letter Log — audit trail of every HR letter generated (the
 -- letter document itself is rendered client-side from a template, never

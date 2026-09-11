@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState, useTransition } from "react";
 import { setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
 import { EmployeeDetailsForm, type EmployeeDetails } from "./employee-details-form";
 import { EmployeeStoreAccessForm } from "./employee-store-access-form";
+import { EmployeeDocumentsPanel, type EmployeeDocumentRow } from "./employee-documents-panel";
 
 const initialResetState: SimpleActionState = { error: null, success: false };
 
@@ -13,17 +14,24 @@ export function EmployeeRowActions({
   details,
   stores,
   currentStoreIds,
+  reportsToOptions,
+  documents,
 }: {
   employeeId: string;
   active: boolean;
   details: EmployeeDetails;
   stores: { id: string; name: string; company_id: string }[];
   currentStoreIds: string[];
+  // 2026-09-11 (Payroll Phase 3) — same-company employees this one could
+  // report to (self already excluded by the caller).
+  reportsToOptions: { id: string; name: string }[];
+  documents: EmployeeDocumentRow[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [resetOpen, setResetOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [storeAccessOpen, setStoreAccessOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
 
   return (
     <div>
@@ -60,6 +68,13 @@ export function EmployeeRowActions({
         </button>
         <button
           type="button"
+          onClick={() => setDocumentsOpen((v) => !v)}
+          className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 hover:bg-sky-100"
+        >
+          Documents{documents.length > 0 ? ` (${documents.length})` : ""}
+        </button>
+        <button
+          type="button"
           onClick={() => setResetOpen((v) => !v)}
           className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
         >
@@ -67,7 +82,7 @@ export function EmployeeRowActions({
         </button>
       </div>
       {resetOpen && <ResetPasswordInline employeeId={employeeId} onDone={() => setResetOpen(false)} />}
-      {detailsOpen && <EmployeeDetailsForm employee={details} onDone={() => setDetailsOpen(false)} />}
+      {detailsOpen && <EmployeeDetailsForm employee={details} reportsToOptions={reportsToOptions} onDone={() => setDetailsOpen(false)} />}
       {storeAccessOpen && (
         <EmployeeStoreAccessForm
           employeeId={employeeId}
@@ -75,6 +90,9 @@ export function EmployeeRowActions({
           currentStoreIds={currentStoreIds}
           onDone={() => setStoreAccessOpen(false)}
         />
+      )}
+      {documentsOpen && (
+        <EmployeeDocumentsPanel employeeId={employeeId} documents={documents} onDone={() => setDocumentsOpen(false)} />
       )}
     </div>
   );

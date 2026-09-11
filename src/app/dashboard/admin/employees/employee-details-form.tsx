@@ -14,6 +14,8 @@ export type EmployeeDetails = ProfileFieldDefaults & {
   designation: string | null;
   employee_code: string | null;
   date_of_joining: string | null;
+  // 2026-09-11 (Payroll Phase 3) — org chart.
+  reports_to_employee_id: string | null;
 };
 
 // "Edit Details" panel — backfills the 2026-08-07 Employee Master fields
@@ -21,7 +23,17 @@ export type EmployeeDetails = ProfileFieldDefaults & {
 // contacts) for an employee created before those columns existed, or edits
 // them later. Toggled open from EmployeeRowActions, same inline pattern as
 // the existing password-reset panel.
-export function EmployeeDetailsForm({ employee, onDone }: { employee: EmployeeDetails; onDone: () => void }) {
+export function EmployeeDetailsForm({
+  employee,
+  reportsToOptions,
+  onDone,
+}: {
+  employee: EmployeeDetails;
+  // 2026-09-11 (Payroll Phase 3) — same-company employees this one could
+  // report to; self already excluded by the caller (page.tsx).
+  reportsToOptions: { id: string; name: string }[];
+  onDone: () => void;
+}) {
   const [state, formAction, pending] = useActionState(updateEmployeeDetails, initialState);
 
   useEffect(() => {
@@ -49,6 +61,15 @@ export function EmployeeDetailsForm({ employee, onDone }: { employee: EmployeeDe
         <div>
           <label className={labelClass} htmlFor="date_of_joining">Date of Joining</label>
           <input id="date_of_joining" name="date_of_joining" type="date" defaultValue={employee.date_of_joining ?? ""} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="reports_to_employee_id">Reports To</label>
+          <select id="reports_to_employee_id" name="reports_to_employee_id" defaultValue={employee.reports_to_employee_id ?? ""} className={inputClass}>
+            <option value="">— None (top-level) —</option>
+            {reportsToOptions.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+          </select>
         </div>
       </div>
 

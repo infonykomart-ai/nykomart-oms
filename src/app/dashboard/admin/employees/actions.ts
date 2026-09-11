@@ -246,18 +246,27 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
   const employeeId = str(formData, "employee_id");
   if (!employeeId) return { error: "Employee missing.", success: false };
 
+  // 2026-09-11 (Payroll Phase 3) — org chart. An employee can't report to
+  // themselves (the form's own dropdown already excludes their own row,
+  // but a crafted submission could still try it) — a self-reference would
+  // otherwise render as an infinite loop on the Org Chart tree.
+  const reportsToRaw = strOrNull(formData, "reports_to_employee_id");
+  const reportsToEmployeeId = reportsToRaw === employeeId ? null : reportsToRaw;
+
   const { error } = await supabase
     .from("employees")
     .update({
       designation: strOrNull(formData, "designation"),
       employee_code: strOrNull(formData, "employee_code"),
       date_of_joining: strOrNull(formData, "date_of_joining"),
+      reports_to_employee_id: reportsToEmployeeId as never,
       ...profileFields(formData),
     })
     .eq("id", employeeId);
 
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/admin/employees");
+  revalidatePath("/dashboard/admin/employees/org-chart");
   // 2026-08-22 — "photo upload horahi lekin profile/messaging/header me
   // preview nahi aa raha": this update can change photo_url (or any other
   // profile field) for an employee OTHER than the admin submitting the
@@ -302,5 +311,98 @@ export async function updateEmployeeStoreAccess(_prev: SimpleActionState, formDa
 
   revalidatePath("/dashboard/admin/employees");
   revalidatePath("/dashboard/ad-spend");
+  return { error: null, success: true };
+}
+
+// =============================================================================
+// 2026-09-11 (Payroll Phase 3) — Employee Documents. ID proofs, signed
+// letters, certificates, etc. per employee, stored in the PRIVATE
+// "employee-documents" Storage bucket (see db/2026-09-11-core-hr-
+// onboarding-orgchart-documents.sql) — unlike employee-photos, these can
+// be sensitive, so unlike uploadEmployeePhoto's public bucket + direct
+// public URL, downloads only ever go through the gated proxy route
+// (/api/employee-document/[id]/route.ts), never a public/signed URL handed
+// to the browser.
+// =============================================================================
+
+export type DocumentActionState = { error: string | null; success: boolean; message?: string };
+
+const EMPLOYEE_DOCUMENTS_BUCKET = "employee-documents";
+const MAX_EMPLOYEE_DOCUMENT_BYTES = 15 * 1024 * 1024; // 15MB — a scanned certificate/ID can be a bit bigger than a photo
+
+export async function uploadEmployeeDocument(_prev: DocumentActionState, formData: FormData): Promise<DocumentActionState> {
+  const admin = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const employeeId = str(formData, "employee_id");
+  const docType = str(formData, "doc_type");
+  const notes = strOrNull(formData, "notes");
+  const file = formData.get("file");
+
+  if (!employeeId) return { error: "Employee missing.", success: false };
+  if (!docType) return { error: "Document type is required (e.g. Aadhaar Card, PAN Card, Offer Letter).", success: false };
+  if (!(file instanceof File) || file.size === 0) return { error: "Please choose a file.", success: false };
+  if (file.size > MAX_EMPLOYEE_DOCUMENT_BYTES) return { error: "File is too large — max 15MB.", success: false };
+
+  const { data: emp, error: empError } = await supabase.from("employees").select("id, company_id").eq("id", employeeId).single();
+  if (empError || !emp) return { error: "Employee not found.", success: false };
+  // company_id is always derived from the employee row itself, never
+  // trusted from the client — same guard as every other write in this app.
+  if (!admin.companyIds.includes(emp.company_id)) return { error: "Employee not found.", success: false };
+
+  const safeName = file.name.replace(/[^\w.\- ]/g, "_").slice(0, 150);
+  const path = `${employeeId}/${randomUUID()}-${safeName}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const { error: uploadError } = await supabase.storage.from(EMPLOYEE_DOCUMENTS_BUCKET).upload(path, buffer, {
+    contentType: file.type || "application/octet-stream",
+    upsert: false,
+  });
+  if (uploadError) return { error: `Upload failed: ${uploadError.message}`, success: false };
+
+  const { error } = await supabase.from("employee_documents").insert({
+    employee_id: employeeId,
+    company_id: emp.company_id,
+    doc_type: docType,
+    file_name: file.name,
+    storage_path: path,
+    mime_type: file.type || null,
+    file_size: file.size,
+    notes,
+    uploaded_by_employee_id: admin.id,
+  });
+  if (error) {
+    // The file itself already landed in Storage — clean it up rather than
+    // leaving an orphaned object with no matching row (which would be
+    // invisible everywhere but still counted in bucket storage).
+    await supabase.storage.from(EMPLOYEE_DOCUMENTS_BUCKET).remove([path]);
+    return { error: error.message, success: false };
+  }
+
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null, success: true, message: `"${docType}" uploaded.` };
+}
+
+export async function deleteEmployeeDocument(documentId: string): Promise<DocumentActionState> {
+  const admin = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const { data: doc, error: docError } = await supabase
+    .from("employee_documents")
+    .select("id, company_id, storage_path")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (docError || !doc) return { error: "Document not found.", success: false };
+  if (!admin.companyIds.includes(doc.company_id)) return { error: "Document not found.", success: false };
+
+  const { error } = await supabase.from("employee_documents").delete().eq("id", documentId);
+  if (error) return { error: error.message, success: false };
+
+  // Best-effort — the DB row (the part every other read/permission check
+  // actually relies on) is already gone even if this fails, so a failure
+  // here is a harmless orphaned Storage object, not a data-integrity issue.
+  await supabase.storage.from(EMPLOYEE_DOCUMENTS_BUCKET).remove([doc.storage_path]);
+
+  revalidatePath("/dashboard/admin/employees");
   return { error: null, success: true };
 }

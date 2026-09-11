@@ -2832,6 +2832,151 @@ export type Database = {
           },
         ];
       };
+      employee_documents: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          doc_type: string;
+          file_name: string;
+          storage_path: string;
+          mime_type: string | null;
+          file_size: number | null;
+          notes: string | null;
+          uploaded_by_employee_id: string | null;
+          uploaded_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          doc_type: string;
+          file_name: string;
+          storage_path: string;
+          mime_type?: string | null;
+          file_size?: number | null;
+          notes?: string | null;
+          uploaded_by_employee_id?: string | null;
+          uploaded_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          doc_type?: string;
+          file_name?: string;
+          storage_path?: string;
+          mime_type?: string | null;
+          file_size?: number | null;
+          notes?: string | null;
+          uploaded_by_employee_id?: string | null;
+          uploaded_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_documents_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_documents_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_documents_uploaded_by_employee_id_fkey";
+            columns: ["uploaded_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      employee_onboarding_progress: {
+        Row: {
+          employee_id: string;
+          checklist_item_id: string;
+          completed_at: string | null;
+          completed_by_employee_id: string | null;
+          notes: string | null;
+        };
+        Insert: {
+          employee_id: string;
+          checklist_item_id: string;
+          completed_at?: string | null;
+          completed_by_employee_id?: string | null;
+          notes?: string | null;
+        };
+        Update: {
+          employee_id?: string;
+          checklist_item_id?: string;
+          completed_at?: string | null;
+          completed_by_employee_id?: string | null;
+          notes?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_onboarding_progress_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_onboarding_progress_checklist_item_id_fkey";
+            columns: ["checklist_item_id"];
+            isOneToOne: false;
+            referencedRelation: "onboarding_checklist_items";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_onboarding_progress_completed_by_employee_id_fkey";
+            columns: ["completed_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      onboarding_checklist_items: {
+        Row: {
+          id: string;
+          company_id: string;
+          title: string;
+          sort_order: number;
+          active: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          title: string;
+          sort_order?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          title?: string;
+          sort_order?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "onboarding_checklist_items_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       employees: {
         Row: {
           id: string;
@@ -2869,6 +3014,7 @@ export type Database = {
           bank_account_no: string | null;
           bank_ifsc: string | null;
           bank_name: string | null;
+          reports_to_employee_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -2907,6 +3053,7 @@ export type Database = {
           bank_account_no?: string | null;
           bank_ifsc?: string | null;
           bank_name?: string | null;
+          reports_to_employee_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2960,6 +3107,13 @@ export type Database = {
             columns: ["role_id"];
             isOneToOne: false;
             referencedRelation: "roles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employees_reports_to_employee_id_fkey";
+            columns: ["reports_to_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];

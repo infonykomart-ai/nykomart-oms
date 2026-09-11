@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { EmployeeForm } from "./employee-form";
@@ -12,20 +13,26 @@ export default async function EmployeesAdminPage() {
   // salary page), so read it via the service-role client.
   const finSupabase = createServiceRoleClient();
 
-  const [{ data: employees }, { data: roles }, { data: companies }, { data: stores }, { data: storeAccess }, { data: advances }] = await Promise.all([
-    supabase
-      .from("employees")
-      .select(
-        "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name"
-      )
-      .order("created_at", { ascending: false }),
-    supabase.from("roles").select("id, name").order("name"),
-    supabase.from("companies").select("id, name").eq("active", true).order("name"),
-    // 2026-08-08: store-scoped Ad Spend — see employee-store-access-form.tsx.
-    supabase.from("stores").select("id, name, company_id").order("name"),
-    supabase.from("employee_store_access").select("employee_id, store_id"),
-    finSupabase.from("employee_advances").select("employee_id, outstanding_amount").gt("outstanding_amount", 0),
-  ]);
+  const [{ data: employees }, { data: roles }, { data: companies }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }] =
+    await Promise.all([
+      supabase
+        .from("employees")
+        .select(
+          "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
+        )
+        .order("created_at", { ascending: false }),
+      supabase.from("roles").select("id, name").order("name"),
+      supabase.from("companies").select("id, name").eq("active", true).order("name"),
+      // 2026-08-08: store-scoped Ad Spend — see employee-store-access-form.tsx.
+      supabase.from("stores").select("id, name, company_id").order("name"),
+      supabase.from("employee_store_access").select("employee_id, store_id"),
+      finSupabase.from("employee_advances").select("employee_id, outstanding_amount").gt("outstanding_amount", 0),
+      // 2026-09-11 (Payroll Phase 3) — see employee-documents-panel.tsx.
+      finSupabase
+        .from("employee_documents")
+        .select("id, employee_id, doc_type, file_name, file_size, notes, uploaded_at")
+        .order("uploaded_at", { ascending: false }),
+    ]);
 
   const outstandingAdvanceByEmployee = new Map<string, number>();
   for (const a of advances ?? []) {
@@ -42,14 +49,50 @@ export default async function EmployeesAdminPage() {
     storeIdsByEmployee.set(row.employee_id, list);
   }
 
+  // 2026-09-11 (Payroll Phase 3) — "Reports To" options are scoped to the
+  // SAME company as the employee being edited (an org chart spanning
+  // companies isn't meaningful here), excluding the employee themselves.
+  const employeesByCompany = new Map<string, { id: string; name: string }[]>();
+  for (const e of employees ?? []) {
+    const list = employeesByCompany.get(e.company_id) ?? [];
+    list.push({ id: e.id, name: e.name });
+    employeesByCompany.set(e.company_id, list);
+  }
+  const documentsByEmployee = new Map<string, typeof documentsRaw>();
+  for (const d of documentsRaw ?? []) {
+    const list = documentsByEmployee.get(d.employee_id) ?? [];
+    list.push(d);
+    documentsByEmployee.set(d.employee_id, list);
+  }
+
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Employees</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Create a new login, reset a password, or deactivate an employee — all from here, no need to go into the
-          Supabase dashboard.
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Employees</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Create a new login, reset a password, or deactivate an employee — all from here, no need to go into the
+            Supabase dashboard.
+          </p>
+        </div>
+        {/* 2026-09-11 (Payroll Phase 3) — kept as in-page links rather than
+            top-level sidebar tiles, since both stay gated to the same
+            employee_admin capability this whole page already requires; no
+            new capability/role_capabilities grant needed for either. */}
+        <div className="flex gap-2">
+          <Link
+            href="/dashboard/admin/employees/onboarding"
+            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+          >
+            🧭 Onboarding
+          </Link>
+          <Link
+            href="/dashboard/admin/employees/org-chart"
+            className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100"
+          >
+            🌳 Org Chart
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -106,6 +149,8 @@ export default async function EmployeesAdminPage() {
                         details={e}
                         stores={stores ?? []}
                         currentStoreIds={storeIdsByEmployee.get(e.id) ?? []}
+                        reportsToOptions={(employeesByCompany.get(e.company_id) ?? []).filter((o) => o.id !== e.id)}
+                        documents={documentsByEmployee.get(e.id) ?? []}
                       />
                     </td>
                   </tr>
