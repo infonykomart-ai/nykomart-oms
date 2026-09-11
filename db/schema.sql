@@ -3197,6 +3197,58 @@ COMMENT ON TABLE employee_documents IS
   'ID proofs, certificates, signed letters, etc. Files live in the PRIVATE "employee-documents" Storage '
   'bucket — served only through /api/employee-document/[id], never a public/signed URL.';
 
+-- =============================================================================
+-- SECTION 16-d (2026-09-11, Payroll Phase 4 — final phase) — Full & Final
+-- (FnF) Settlement. See db/2026-09-11-fnf-settlement.sql for the full
+-- migration and src/lib/attendance/settlement.ts for the reference math
+-- (notice shortfall, gratuity estimate). Deliberately NOT fully automated —
+-- every actual rupee is a line item the admin adds, see
+-- employee_settlement_line_items' own comment.
+-- =============================================================================
+CREATE TABLE employee_settlements (
+  id                          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id                 uuid NOT NULL REFERENCES employees(id),
+  company_id                  uuid NOT NULL REFERENCES companies(id),
+  separation_type             text NOT NULL CHECK (separation_type IN ('Resignation', 'Termination')),
+  resignation_date            date NOT NULL,
+  last_working_day            date NOT NULL,
+  reason                      text,
+  notice_period_required_days int NOT NULL DEFAULT 0,
+  notice_period_served_days   int NOT NULL DEFAULT 0,
+  status                      text NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Finalized', 'Paid')),
+  initiated_by_employee_id    uuid REFERENCES employees(id),
+  initiated_at                timestamptz NOT NULL DEFAULT now(),
+  finalized_by_employee_id    uuid REFERENCES employees(id),
+  finalized_at                timestamptz,
+  payment_date                date,
+  paid_by_employee_id         uuid REFERENCES employees(id),
+  remark                      text,
+  created_at                  timestamptz NOT NULL DEFAULT now(),
+  CHECK (last_working_day >= resignation_date)
+);
+CREATE INDEX idx_employee_settlements_employee ON employee_settlements(employee_id, created_at DESC);
+CREATE INDEX idx_employee_settlements_company_status ON employee_settlements(company_id, status);
+CREATE UNIQUE INDEX idx_employee_settlements_one_active ON employee_settlements(employee_id) WHERE status != 'Paid';
+COMMENT ON TABLE employee_settlements IS
+  'One Full & Final settlement per resignation/termination. The actual rupee amounts live entirely in '
+  'employee_settlement_line_items below — this row is the case/status wrapper, never a computed total.';
+
+CREATE TABLE employee_settlement_line_items (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  settlement_id  uuid NOT NULL REFERENCES employee_settlements(id),
+  kind           text NOT NULL CHECK (kind IN ('Addition', 'Deduction')),
+  category       text NOT NULL,
+  description    text,
+  amount         numeric(12,2) NOT NULL CHECK (amount > 0),
+  added_by_employee_id uuid REFERENCES employees(id),
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_settlement_line_items_settlement ON employee_settlement_line_items(settlement_id);
+COMMENT ON TABLE employee_settlement_line_items IS
+  'Every rupee on a settlement is an explicit line item the admin added. Net settlement = SUM(Addition) − '
+  'SUM(Deduction), always computed live, never stored on employee_settlements. Only editable while the '
+  'parent settlement is status=''Draft'' — enforced in the server action, not the DB.';
+
 -- Old sheet: Letter Log — audit trail of every HR letter generated (the
 -- letter document itself is rendered client-side from a template, never
 -- stored here). ref_no auto-assigned same as the other document tables,

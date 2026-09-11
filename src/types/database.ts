@@ -2802,6 +2802,153 @@ export type Database = {
           },
         ];
       };
+      employee_settlement_line_items: {
+        Row: {
+          id: string;
+          settlement_id: string;
+          kind: "Addition" | "Deduction";
+          category: string;
+          description: string | null;
+          amount: number;
+          added_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          settlement_id: string;
+          kind: "Addition" | "Deduction";
+          category: string;
+          description?: string | null;
+          amount: number;
+          added_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          settlement_id?: string;
+          kind?: "Addition" | "Deduction";
+          category?: string;
+          description?: string | null;
+          amount?: number;
+          added_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_settlement_line_items_settlement_id_fkey";
+            columns: ["settlement_id"];
+            isOneToOne: false;
+            referencedRelation: "employee_settlements";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlement_line_items_added_by_employee_id_fkey";
+            columns: ["added_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      employee_settlements: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          separation_type: "Resignation" | "Termination";
+          resignation_date: string;
+          last_working_day: string;
+          reason: string | null;
+          notice_period_required_days: number;
+          notice_period_served_days: number;
+          status: "Draft" | "Finalized" | "Paid";
+          initiated_by_employee_id: string | null;
+          initiated_at: string;
+          finalized_by_employee_id: string | null;
+          finalized_at: string | null;
+          payment_date: string | null;
+          paid_by_employee_id: string | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          separation_type: "Resignation" | "Termination";
+          resignation_date: string;
+          last_working_day: string;
+          reason?: string | null;
+          notice_period_required_days?: number;
+          notice_period_served_days?: number;
+          status?: "Draft" | "Finalized" | "Paid";
+          initiated_by_employee_id?: string | null;
+          initiated_at?: string;
+          finalized_by_employee_id?: string | null;
+          finalized_at?: string | null;
+          payment_date?: string | null;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          separation_type?: "Resignation" | "Termination";
+          resignation_date?: string;
+          last_working_day?: string;
+          reason?: string | null;
+          notice_period_required_days?: number;
+          notice_period_served_days?: number;
+          status?: "Draft" | "Finalized" | "Paid";
+          initiated_by_employee_id?: string | null;
+          initiated_at?: string;
+          finalized_by_employee_id?: string | null;
+          finalized_at?: string | null;
+          payment_date?: string | null;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_settlements_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_initiated_by_employee_id_fkey";
+            columns: ["initiated_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_finalized_by_employee_id_fkey";
+            columns: ["finalized_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_paid_by_employee_id_fkey";
+            columns: ["paid_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       employee_store_access: {
         Row: {
           employee_id: string;

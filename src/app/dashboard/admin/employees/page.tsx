@@ -92,6 +92,14 @@ export default async function EmployeesAdminPage() {
           >
             🌳 Org Chart
           </Link>
+          {/* 2026-09-11 (Payroll Phase 4) — same reasoning: stays under this
+              page's existing employee_admin gate, no new capability. */}
+          <Link
+            href="/dashboard/admin/employees/settlements"
+            className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            🧾 Full &amp; Final Settlement
+          </Link>
         </div>
       </div>
 
