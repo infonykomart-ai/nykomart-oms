@@ -20,6 +20,17 @@ export type ProfileFieldDefaults = {
   family_contact_2_name?: string | null;
   family_contact_2_relation?: string | null;
   family_contact_2_number?: string | null;
+  // 2026-09-11 (Payroll Phase 1) — statutory identity + bank details, see
+  // db/2026-09-11-payroll-ctc-structure-and-statutory-fields.sql. Optional,
+  // shown on a paid employee's payslip when filled in.
+  pan_number?: string | null;
+  uan_number?: string | null;
+  pf_number?: string | null;
+  esi_number?: string | null;
+  bank_account_holder_name?: string | null;
+  bank_account_no?: string | null;
+  bank_ifsc?: string | null;
+  bank_name?: string | null;
 };
 
 /**
@@ -91,6 +102,23 @@ export function ProfileFields({ defaults }: { defaults?: ProfileFieldDefaults })
           <input name="family_contact_2_name" placeholder="Name" defaultValue={defaults?.family_contact_2_name ?? ""} className={inputClass} />
           <input name="family_contact_2_relation" placeholder="Relation (Spouse/Sibling/...)" defaultValue={defaults?.family_contact_2_relation ?? ""} className={inputClass} />
           <input name="family_contact_2_number" placeholder="Contact No." defaultValue={defaults?.family_contact_2_number ?? ""} className={inputClass} />
+        </div>
+      </div>
+
+      {/* 2026-09-11 (Payroll Phase 1) — statutory identity + bank details,
+          needed for a proper payslip (PAN/UAN/bank a/c) and eventually a
+          real bank-transfer file (later round). All optional. */}
+      <div>
+        <span className={labelClass}>Statutory &amp; Bank Details (for payslips)</span>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-4">
+          <input name="pan_number" placeholder="PAN Number" defaultValue={defaults?.pan_number ?? ""} className={inputClass} />
+          <input name="uan_number" placeholder="UAN (PF)" defaultValue={defaults?.uan_number ?? ""} className={inputClass} />
+          <input name="pf_number" placeholder="PF Account No." defaultValue={defaults?.pf_number ?? ""} className={inputClass} />
+          <input name="esi_number" placeholder="ESI Number" defaultValue={defaults?.esi_number ?? ""} className={inputClass} />
+          <input name="bank_account_holder_name" placeholder="Bank A/c Holder Name" defaultValue={defaults?.bank_account_holder_name ?? ""} className={inputClass} />
+          <input name="bank_account_no" placeholder="Bank Account No." defaultValue={defaults?.bank_account_no ?? ""} className={inputClass} />
+          <input name="bank_ifsc" placeholder="IFSC Code" defaultValue={defaults?.bank_ifsc ?? ""} className={inputClass} />
+          <input name="bank_name" placeholder="Bank Name" defaultValue={defaults?.bank_name ?? ""} className={inputClass} />
         </div>
       </div>
     </div>

@@ -2720,6 +2720,17 @@ export type Database = {
           effective_from: string;
           entered_by_employee_id: string | null;
           created_at: string;
+          ctc_annual: number | null;
+          basic_percent_of_ctc: number;
+          hra_percent_of_basic: number;
+          employer_pf_percent: number;
+          employee_pf_percent: number;
+          pf_wage_ceiling: number;
+          esi_applicable: boolean;
+          esi_employee_percent: number;
+          esi_employer_percent: number;
+          professional_tax_amount: number;
+          pt_state: string | null;
         };
         Insert: {
           id?: string;
@@ -2729,6 +2740,17 @@ export type Database = {
           effective_from: string;
           entered_by_employee_id?: string | null;
           created_at?: string;
+          ctc_annual?: number | null;
+          basic_percent_of_ctc?: number;
+          hra_percent_of_basic?: number;
+          employer_pf_percent?: number;
+          employee_pf_percent?: number;
+          pf_wage_ceiling?: number;
+          esi_applicable?: boolean;
+          esi_employee_percent?: number;
+          esi_employer_percent?: number;
+          professional_tax_amount?: number;
+          pt_state?: string | null;
         };
         Update: {
           id?: string;
@@ -2738,6 +2760,17 @@ export type Database = {
           effective_from?: string;
           entered_by_employee_id?: string | null;
           created_at?: string;
+          ctc_annual?: number | null;
+          basic_percent_of_ctc?: number;
+          hra_percent_of_basic?: number;
+          employer_pf_percent?: number;
+          employee_pf_percent?: number;
+          pf_wage_ceiling?: number;
+          esi_applicable?: boolean;
+          esi_employee_percent?: number;
+          esi_employer_percent?: number;
+          professional_tax_amount?: number;
+          pt_state?: string | null;
         };
         Relationships: [
           {
@@ -2815,6 +2848,14 @@ export type Database = {
           custom_accent_color: string | null;
           companion_enabled: boolean;
           companion_name: string | null;
+          pan_number: string | null;
+          uan_number: string | null;
+          pf_number: string | null;
+          esi_number: string | null;
+          bank_account_holder_name: string | null;
+          bank_account_no: string | null;
+          bank_ifsc: string | null;
+          bank_name: string | null;
           created_at: string;
         };
         Insert: {
@@ -2845,6 +2886,14 @@ export type Database = {
           custom_accent_color?: string | null;
           companion_enabled?: boolean;
           companion_name?: string | null;
+          pan_number?: string | null;
+          uan_number?: string | null;
+          pf_number?: string | null;
+          esi_number?: string | null;
+          bank_account_holder_name?: string | null;
+          bank_account_no?: string | null;
+          bank_ifsc?: string | null;
+          bank_name?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2875,6 +2924,14 @@ export type Database = {
           custom_accent_color?: string | null;
           companion_enabled?: boolean;
           companion_name?: string | null;
+          pan_number?: string | null;
+          uan_number?: string | null;
+          pf_number?: string | null;
+          esi_number?: string | null;
+          bank_account_holder_name?: string | null;
+          bank_account_no?: string | null;
+          bank_ifsc?: string | null;
+          bank_name?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -5035,6 +5092,14 @@ export type Database = {
           paid_by_employee_id: string | null;
           remark: string | null;
           created_at: string;
+          basic_amount: number | null;
+          hra_amount: number | null;
+          special_allowance_amount: number | null;
+          employee_pf_amount: number;
+          employer_pf_amount: number;
+          employee_esi_amount: number;
+          employer_esi_amount: number;
+          professional_tax_amount: number;
         };
         Insert: {
           id?: string;
@@ -5050,6 +5115,14 @@ export type Database = {
           paid_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
+          basic_amount?: number | null;
+          hra_amount?: number | null;
+          special_allowance_amount?: number | null;
+          employee_pf_amount?: number;
+          employer_pf_amount?: number;
+          employee_esi_amount?: number;
+          employer_esi_amount?: number;
+          professional_tax_amount?: number;
         };
         Update: {
           id?: string;
@@ -5065,6 +5138,14 @@ export type Database = {
           paid_by_employee_id?: string | null;
           remark?: string | null;
           created_at?: string;
+          basic_amount?: number | null;
+          hra_amount?: number | null;
+          special_allowance_amount?: number | null;
+          employee_pf_amount?: number;
+          employer_pf_amount?: number;
+          employee_esi_amount?: number;
+          employer_esi_amount?: number;
+          professional_tax_amount?: number;
         };
         Relationships: [
           {

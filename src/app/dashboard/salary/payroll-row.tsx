@@ -8,6 +8,12 @@
 // AND optionally recovers part of an outstanding Advance in the same
 // action — "jitni sellery debit hoyegi account se to uska bhi konse
 // section me jayegi finance ke".
+//
+// 2026-09-11 (Payroll Phase 1): also now shows a "Statutory Ded." column
+// (Employee PF + ESI + Professional Tax, live-previewed for a CTC-mode
+// employee — see src/lib/attendance/statutory.ts) and a "Final Net" that
+// subtracts it, and links to a printable Payslip once paid.
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { submitSalaryPayment, type FinanceActionState } from "./actions";
 
@@ -27,6 +33,10 @@ export function PayrollRow({
   deductionAmount,
   netPay,
   hasSalarySet,
+  isCtc,
+  employeePf,
+  employeeEsi,
+  professionalTax,
   alreadyPaid,
   outstandingAdvance,
   recommendedAdvanceDeduction,
@@ -44,7 +54,11 @@ export function PayrollRow({
   deductionAmount: number | null;
   netPay: number | null;
   hasSalarySet: boolean;
-  alreadyPaid: { net_paid_amount: number; payment_date: string; advance_deduction_amount: number } | null;
+  isCtc: boolean;
+  employeePf: number;
+  employeeEsi: number;
+  professionalTax: number;
+  alreadyPaid: { net_paid_amount: number; payment_date: string; advance_deduction_amount: number; statutory_deduction_amount: number } | null;
   outstandingAdvance: number;
   // 2026-08-12 (round 9): "10000 advance, 10 mahine me recover karna hai
   // to har mahine 1000 kate jaye" — the oldest outstanding advance's own
@@ -63,12 +77,16 @@ export function PayrollRow({
   // touches the field.
   const [advanceInput, setAdvanceInput] = useState(recommendedAdvanceDeduction ?? 0);
   const previewAdvanceDeduction = Math.min(Math.max(advanceInput, 0), outstandingAdvance);
-  const previewNetPay = netPay != null ? Math.max(0, netPay - previewAdvanceDeduction) : null;
+  const statutoryDeduction = employeePf + employeeEsi + professionalTax;
+  const previewNetPay = netPay != null ? Math.max(0, netPay - previewAdvanceDeduction - statutoryDeduction) : null;
 
   return (
     <>
       <tr className="border-t border-slate-100">
-        <td className="py-1.5 pr-3 font-medium text-slate-800">{employeeName}</td>
+        <td className="py-1.5 pr-3 font-medium text-slate-800">
+          {employeeName}
+          {isCtc && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold text-amber-700">CTC</span>}
+        </td>
         {hasSalarySet ? (
           <>
             <td className="px-2">{monthlySalary?.toFixed(2)}</td>
@@ -78,7 +96,8 @@ export function PayrollRow({
             <td className="px-2 text-red-700">{absent}</td>
             <td className="px-2">{deductedDays}</td>
             <td className="px-2 text-red-700">{deductionAmount?.toFixed(2)}</td>
-            <td className="px-2 font-semibold text-green-700">{netPay?.toFixed(2)}</td>
+            <td className="px-2 text-red-700">{statutoryDeduction > 0 ? statutoryDeduction.toFixed(2) : "—"}</td>
+            <td className="px-2 font-semibold text-green-700">{previewNetPay?.toFixed(2)}</td>
             <td className="px-2">
               {alreadyPaid ? (
                 <div className="text-green-700">
@@ -87,6 +106,9 @@ export function PayrollRow({
                   {alreadyPaid.advance_deduction_amount > 0 && (
                     <div className="text-purple-600">Advance recovered ₹{alreadyPaid.advance_deduction_amount}</div>
                   )}
+                  <Link href={`/dashboard/salary/payslip/${employeeId}/${monthParam}`} className="mt-0.5 inline-block font-medium text-blue-600 underline">
+                    🧾 View Payslip
+                  </Link>
                 </div>
               ) : (
                 <button
@@ -100,12 +122,12 @@ export function PayrollRow({
             </td>
           </>
         ) : (
-          <td colSpan={9} className="px-2 text-slate-400">No salary set yet for this employee.</td>
+          <td colSpan={10} className="px-2 text-slate-400">No salary set yet for this employee.</td>
         )}
       </tr>
       {expanded && !alreadyPaid && (
         <tr className="border-t border-slate-100 bg-blue-50/40">
-          <td colSpan={10} className="px-3 py-3">
+          <td colSpan={11} className="px-3 py-3">
             <form action={formAction} className="flex flex-wrap items-end gap-3">
               <input type="hidden" name="employee_id" value={employeeId} />
               <input type="hidden" name="pay_month" value={monthParam} />
@@ -136,6 +158,11 @@ export function PayrollRow({
                     onChange={(e) => setAdvanceInput(Number(e.target.value) || 0)}
                     className={fieldClass}
                   />
+                </div>
+              )}
+              {statutoryDeduction > 0 && (
+                <div className="text-xs text-amber-700">
+                  Statutory Ded. (PF/ESI/PT): <span className="font-semibold">₹{statutoryDeduction.toFixed(2)}</span> — applied automatically
                 </div>
               )}
               <div className="min-w-[10rem] flex-1">

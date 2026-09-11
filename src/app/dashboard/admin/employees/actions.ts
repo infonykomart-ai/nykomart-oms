@@ -48,6 +48,18 @@ function profileFields(formData: FormData) {
     family_contact_2_name: strOrNull(formData, "family_contact_2_name"),
     family_contact_2_relation: strOrNull(formData, "family_contact_2_relation"),
     family_contact_2_number: strOrNull(formData, "family_contact_2_number"),
+    // 2026-09-11 (Payroll Phase 1) — statutory identity + bank details for
+    // disbursement/payslips (see db/2026-09-11-payroll-ctc-structure-and-
+    // statutory-fields.sql). Same shared/backfill pattern as the rest of
+    // this function — optional, fill in per employee whenever it's known.
+    pan_number: strOrNull(formData, "pan_number"),
+    uan_number: strOrNull(formData, "uan_number"),
+    pf_number: strOrNull(formData, "pf_number"),
+    esi_number: strOrNull(formData, "esi_number"),
+    bank_account_holder_name: strOrNull(formData, "bank_account_holder_name"),
+    bank_account_no: strOrNull(formData, "bank_account_no"),
+    bank_ifsc: strOrNull(formData, "bank_ifsc"),
+    bank_name: strOrNull(formData, "bank_name"),
   };
 }
 

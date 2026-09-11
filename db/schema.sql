@@ -355,6 +355,19 @@ CREATE TABLE employees (
   theme_id                text,
   custom_accent_color     text,
 
+  -- 2026-09-11: Payroll Phase 1 — statutory identity + bank details for
+  -- disbursement/payslips (see db/2026-09-11-payroll-ctc-structure-and-
+  -- statutory-fields.sql). All nullable, filled in per employee from Edit
+  -- Details as needed — none of this existed before.
+  pan_number                 text,
+  uan_number                 text,   -- EPFO Universal Account Number — distinct from the employer-assigned PF account number
+  pf_number                  text,
+  esi_number                 text,
+  bank_account_holder_name   text,
+  bank_account_no            text,
+  bank_ifsc                  text,
+  bank_name                  text,
+
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (company_id, name)              -- matches old verifyCredentials_()'s (company, name) lookup key
 );
@@ -3195,7 +3208,32 @@ CREATE TABLE employee_salary (
   allowed_leaves_per_month  numeric(4,1) NOT NULL DEFAULT 1,
   effective_from            date NOT NULL,
   entered_by_employee_id    uuid REFERENCES employees(id),
-  created_at                timestamptz NOT NULL DEFAULT now()
+  created_at                timestamptz NOT NULL DEFAULT now(),
+
+  -- 2026-09-11: Payroll Phase 1 — OPTIONAL CTC structure, alongside the
+  -- flat monthly_salary above (see db/2026-09-11-payroll-ctc-structure-and-
+  -- statutory-fields.sql + src/lib/attendance/statutory.ts). ctc_annual
+  -- NULL = flat-salary mode, original 2026-08-11 behavior, completely
+  -- unchanged. ctc_annual set = CTC mode — the Salary form auto-computes
+  -- Basic/HRA/Special Allowance and saves the resulting Gross Monthly INTO
+  -- monthly_salary above, so the existing attendance-deduction pipeline
+  -- keeps working unchanged; these extra columns are what let
+  -- submitSalaryPayment() also work out Employee/Employer PF, ESI, and
+  -- Professional Tax at payment time. Rates default to current PUBLISHED
+  -- figures, editable per employee — NOT verified against this company's
+  -- real PF/ESI registration, confirm with a CA before relying on this for
+  -- a real filing.
+  ctc_annual              numeric(14,2),
+  basic_percent_of_ctc    numeric(5,2)  NOT NULL DEFAULT 50,
+  hra_percent_of_basic    numeric(5,2)  NOT NULL DEFAULT 50,
+  employer_pf_percent     numeric(5,2)  NOT NULL DEFAULT 12,
+  employee_pf_percent     numeric(5,2)  NOT NULL DEFAULT 12,
+  pf_wage_ceiling         numeric(12,2) NOT NULL DEFAULT 15000,
+  esi_applicable          boolean       NOT NULL DEFAULT false,
+  esi_employee_percent    numeric(5,2)  NOT NULL DEFAULT 0.75,
+  esi_employer_percent    numeric(5,2)  NOT NULL DEFAULT 3.25,
+  professional_tax_amount numeric(10,2) NOT NULL DEFAULT 0,
+  pt_state                text
 );
 CREATE INDEX idx_employee_salary_employee ON employee_salary(employee_id, effective_from DESC);
 
@@ -3269,10 +3307,27 @@ CREATE TABLE salary_payments (
   -- row) so a single salary payment's own breakdown is self-contained.
   advance_deduction_amount     numeric(14,2) NOT NULL DEFAULT 0,
   advance_id                   uuid REFERENCES employee_advances(id),
+
+  -- 2026-09-11: Payroll Phase 1 — statutory amounts SNAPSHOTTED at the
+  -- moment of payment (see db/2026-09-11-payroll-ctc-structure-and-
+  -- statutory-fields.sql), same "the payment record is the immutable
+  -- source of truth" philosophy as gross_salary/attendance_deduction_
+  -- amount above. basic/hra/special_allowance are null for a flat-salary
+  -- (non-CTC) payment — the payslip then shows one plain "Gross Salary"
+  -- line instead of a component breakdown.
+  basic_amount                 numeric(14,2),
+  hra_amount                   numeric(14,2),
+  special_allowance_amount     numeric(14,2),
+  employee_pf_amount           numeric(14,2) NOT NULL DEFAULT 0,
+  employer_pf_amount           numeric(14,2) NOT NULL DEFAULT 0,   -- employer cost, informational only — never subtracted from net_paid_amount
+  employee_esi_amount          numeric(14,2) NOT NULL DEFAULT 0,
+  employer_esi_amount          numeric(14,2) NOT NULL DEFAULT 0,   -- employer cost, informational only — never subtracted from net_paid_amount
+  professional_tax_amount      numeric(14,2) NOT NULL DEFAULT 0,
+
   -- GREATEST(0, ...) floor: a defensive guarantee this never goes
   -- negative, even though nothing upstream should ever produce a
   -- deduction total larger than gross_salary in practice.
-  net_paid_amount               numeric(14,2) GENERATED ALWAYS AS (GREATEST(0, gross_salary - attendance_deduction_amount - advance_deduction_amount)) STORED,
+  net_paid_amount               numeric(14,2) GENERATED ALWAYS AS (GREATEST(0, gross_salary - attendance_deduction_amount - advance_deduction_amount - employee_pf_amount - employee_esi_amount - professional_tax_amount)) STORED,
   payment_date                  date NOT NULL,
   paid_by_employee_id           uuid REFERENCES employees(id),
   remark                        text,

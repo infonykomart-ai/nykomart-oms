@@ -2,6 +2,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, computeDeduction } from "@/lib/attendance/payroll";
+import { computeCtcBreakdown } from "@/lib/attendance/statutory";
 import { SalaryForm } from "./salary-form";
 import { PayrollRow } from "./payroll-row";
 import { AdvanceSection, type AdvanceRow } from "./advance-section";
@@ -59,7 +60,12 @@ export default async function SalaryPage({
     { data: ledgerRowsRaw },
   ] = await Promise.all([
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
-    supabase.from("employee_salary").select("employee_id, monthly_salary, allowed_leaves_per_month, effective_from").order("effective_from", { ascending: false }),
+    supabase
+      .from("employee_salary")
+      .select(
+        "employee_id, monthly_salary, allowed_leaves_per_month, effective_from, ctc_annual, basic_percent_of_ctc, hra_percent_of_basic, employer_pf_percent, employee_pf_percent, pf_wage_ceiling, esi_applicable, esi_employee_percent, esi_employer_percent, professional_tax_amount"
+      )
+      .order("effective_from", { ascending: false }),
     supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
     supabase.from("holidays").select("holiday_date").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd),
     supabase.from("company_profiles").select("bank_name, account_no").eq("company_id", selectedCompanyId).maybeSingle(),
@@ -73,7 +79,11 @@ export default async function SalaryPage({
       .select("id, employee_id, amount, date_given, reason, recovered_amount, outstanding_amount, recovery_months, monthly_installment")
       .eq("company_id", selectedCompanyId)
       .order("date_given", { ascending: false }),
-    finSupabase.from("salary_payments").select("employee_id, net_paid_amount, payment_date, advance_deduction_amount").eq("company_id", selectedCompanyId).eq("pay_month", monthStart),
+    finSupabase
+      .from("salary_payments")
+      .select("employee_id, net_paid_amount, payment_date, advance_deduction_amount, employee_pf_amount, employee_esi_amount, professional_tax_amount")
+      .eq("company_id", selectedCompanyId)
+      .eq("pay_month", monthStart),
     finSupabase
       .from("bill_pass_register")
       .select("id, invoice_type, invoice_no, invoice_date, party_id, employee_id, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, due_date, source, remark")
@@ -86,7 +96,7 @@ export default async function SalaryPage({
   // selected month — same "which value was in effect back then" lookup
   // computeDeduction's caller needs to do, described in the migration's
   // own comment on employee_salary.
-  const salaryAsOf = new Map<string, { monthly_salary: number; allowed_leaves_per_month: number }>();
+  const salaryAsOf = new Map<string, NonNullable<typeof salaryRows>[number]>();
   for (const row of salaryRows ?? []) {
     if (row.effective_from > monthEnd) continue;
     if (!salaryAsOf.has(row.employee_id)) salaryAsOf.set(row.employee_id, row); // rows are already newest-first
@@ -113,14 +123,33 @@ export default async function SalaryPage({
       joinDate: e.date_of_joining,
     });
     const summary = summarizeCategories(days);
-    if (!salary) return { employee: e, salary: null, summary, deduction: null };
+    if (!salary) return { employee: e, salary: null, summary, deduction: null, statutory: null };
     const deduction = computeDeduction({
       monthlySalary: Number(salary.monthly_salary),
       allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
       daysInThisMonth: daysThisMonth,
       counts: summary,
     });
-    return { employee: e, salary, summary, deduction };
+    // 2026-09-11 (Payroll Phase 1): a CTC-mode salary row (ctc_annual set)
+    // also carries a live PF/ESI/PT preview — same calculation
+    // submitSalaryPayment() re-derives server-side when "Pay Salary" is
+    // actually clicked, so this preview can never drift from what gets
+    // recorded.
+    const statutory = salary.ctc_annual
+      ? computeCtcBreakdown({
+          ctcAnnual: Number(salary.ctc_annual),
+          basicPercentOfCtc: Number(salary.basic_percent_of_ctc),
+          hraPercentOfBasic: Number(salary.hra_percent_of_basic),
+          employerPfPercent: Number(salary.employer_pf_percent),
+          employeePfPercent: Number(salary.employee_pf_percent),
+          pfWageCeiling: Number(salary.pf_wage_ceiling),
+          esiApplicable: salary.esi_applicable,
+          esiEmployeePercent: Number(salary.esi_employee_percent),
+          esiEmployerPercent: Number(salary.esi_employer_percent),
+          professionalTaxAmount: Number(salary.professional_tax_amount),
+        })
+      : null;
+    return { employee: e, salary, summary, deduction, statutory };
   });
 
   const employeeName = new Map((employeesForNames ?? []).map((e) => [e.id, e.name]));
@@ -129,7 +158,12 @@ export default async function SalaryPage({
   const paidByEmployee = new Map(
     (salaryPaymentsThisMonth ?? []).map((p) => [
       p.employee_id,
-      { net_paid_amount: Number(p.net_paid_amount), payment_date: p.payment_date, advance_deduction_amount: Number(p.advance_deduction_amount) },
+      {
+        net_paid_amount: Number(p.net_paid_amount),
+        payment_date: p.payment_date,
+        advance_deduction_amount: Number(p.advance_deduction_amount),
+        statutory_deduction_amount: Number(p.employee_pf_amount) + Number(p.employee_esi_amount) + Number(p.professional_tax_amount),
+      },
     ])
   );
 
@@ -261,13 +295,14 @@ export default async function SalaryPage({
                 <th className="px-2">Leave</th>
                 <th className="px-2">Absent</th>
                 <th className="px-2">Deducted Days</th>
-                <th className="px-2">Deduction</th>
-                <th className="px-2">Net Pay</th>
+                <th className="px-2">Attendance Ded.</th>
+                <th className="px-2">Statutory Ded. (PF/ESI/PT)</th>
+                <th className="px-2">Final Net</th>
                 <th className="px-2">Payment</th>
               </tr>
             </thead>
             <tbody>
-              {payroll.map(({ employee: e, salary, summary, deduction }) => (
+              {payroll.map(({ employee: e, salary, summary, deduction, statutory }) => (
                 <PayrollRow
                   key={e.id}
                   employeeId={e.id}
@@ -283,13 +318,17 @@ export default async function SalaryPage({
                   deductionAmount={deduction?.deductionAmount ?? null}
                   netPay={deduction?.netPay ?? null}
                   hasSalarySet={!!(salary && deduction)}
+                  isCtc={!!statutory}
+                  employeePf={statutory?.employeePf ?? 0}
+                  employeeEsi={statutory?.esiEmployee ?? 0}
+                  professionalTax={statutory?.professionalTax ?? 0}
                   alreadyPaid={paidByEmployee.get(e.id) ?? null}
                   outstandingAdvance={oldestOutstandingByEmployee.get(e.id) ?? 0}
                   recommendedAdvanceDeduction={recommendedDeductionByEmployee.get(e.id) ?? null}
                 />
               ))}
               {payroll.length === 0 && (
-                <tr><td colSpan={10} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+                <tr><td colSpan={11} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
               )}
             </tbody>
           </table>
@@ -299,7 +338,10 @@ export default async function SalaryPage({
           Holidays and Week Offs never cost anything. This is a common Indian-payroll convention, not a verified copy of
           this company&apos;s written policy — tell me if the real rule is different and I&apos;ll change the formula.
           &quot;Pay Salary&quot; recomputes everything fresh from Attendance at the moment you click it — never from
-          whatever this table happens to be showing.
+          whatever this table happens to be showing. For an employee on a CTC Structure, Statutory Ded. (Employee
+          PF + ESI + Professional Tax) is also subtracted to get Final Net — those rates are current published
+          defaults, not verified against this company&apos;s actual PF/ESI registration; confirm with your CA
+          before relying on this for a real filing.
         </p>
       </div>
 

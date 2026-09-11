@@ -16,7 +16,7 @@ export default async function EmployeesAdminPage() {
     supabase
       .from("employees")
       .select(
-        "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number"
+        "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name"
       )
       .order("created_at", { ascending: false }),
     supabase.from("roles").select("id, name").order("name"),
