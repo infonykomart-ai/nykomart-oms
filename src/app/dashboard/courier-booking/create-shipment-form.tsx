@@ -277,11 +277,34 @@ function SharedShipmentFields({ order }: { order: CourierBookingLookupOrder }) {
           </div>
           <div>
             <label className={labelClass}>Currency Code</label>
-            <input name="currency_code" defaultValue="USD" className={inputClass} />
+            <input name="currency_code" defaultValue={order.declaredValueCurrency ?? "USD"} className={inputClass} />
           </div>
           <div>
             <label className={labelClass}>Declared/Customs Value *</label>
-            <input name="customs_value" type="number" step="0.01" required defaultValue={order.orderValueInr ?? ""} className={inputClass} />
+            {/* 2026-09-11: was defaulting from order.orderValueInr — the
+                order's FULL value, in INR, into a field whose currency
+                defaults to USD (wrong amount AND wrong currency). The
+                CSB-V invoice this app auto-generates right after booking
+                declares only ~60% of the order's own-currency value (see
+                value-breakdown.ts) — this now defaults to that EXACT same
+                calculated figure so what's booked with the courier always
+                matches what the invoice will actually declare. Falls back
+                to the old orderValueInr behavior only if that formula
+                couldn't be computed (e.g. store not set up yet) — still a
+                plain editable number either way. */}
+            <input
+              name="customs_value"
+              type="number"
+              step="0.01"
+              required
+              defaultValue={order.declaredValueDefault ?? order.orderValueInr ?? ""}
+              className={inputClass}
+            />
+            {order.declaredValueDefault != null && (
+              <p className="mt-1 text-[11px] text-slate-400">
+                CSB-V invoice formula (~60% of order value) — matches what the auto-generated invoice will declare. Edit if needed.
+              </p>
+            )}
           </div>
           <div className="md:col-span-2">
             <label className={labelClass}>Goods Description</label>

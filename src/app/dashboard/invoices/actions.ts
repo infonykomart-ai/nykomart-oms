@@ -90,7 +90,71 @@ type GenerateInvoiceParams = {
   brokerName: string | null;
   brokerTel: string | null;
   brokerContact: string | null;
+  // 2026-09-11 — set only by courier-booking/actions.ts's
+  // resolveFedexLabelReferences (FedEx only, today): when the Invoice No/
+  // Master Invoice No/Department Reference No were already reserved BEFORE
+  // booking (so they could be printed on the courier's own label), this
+  // carries those exact same numbers through so the sales_invoices row
+  // created here matches the label byte-for-byte instead of a second,
+  // independently-reserved set. Left null/omitted for every other caller
+  // (the manual Generate Invoice screen, bulk CSV upload, every other
+  // courier's auto-invoice hook), which reserves fresh numbers here exactly
+  // as before this round — see reserveCsbVReferenceNumbers below.
+  reservedReferenceNumbers?: { invoiceNo: string; masterInvoiceNo: string; departmentReferenceNo: string | null } | null;
 };
+
+/**
+ * Reserves the real Invoice No / Master Invoice No / Department Reference
+ * No a CSB-V invoice for this company+store+date would get — pulled out of
+ * generateInvoiceCore (2026-09-11) so courier-booking/actions.ts can call
+ * this SAME reservation BEFORE a FedEx booking (to print the real numbers
+ * on the label itself), then hand the result back to generateInvoiceCore
+ * via its reservedReferenceNumbers param so both places end up with the
+ * IDENTICAL numbers. See department-reference.ts for why Department
+ * Reference No needs no reservation at all (fully deterministic) while
+ * Invoice No/Master Invoice No do (sequential, via reserve_next_number).
+ */
+export async function reserveCsbVReferenceNumbers(
+  supabase: ServiceClient,
+  args: { companyId: string; storeId: string; invoiceDate: string; csbType: "CSB-V" | "CSB-IV"; shipmentTerm: string; courierCompany: string }
+): Promise<{ error: string | null; result: { invoiceNo: string; masterInvoiceNo: string; departmentReferenceNo: string | null } | null }> {
+  const [{ data: store }, { data: company }] = await Promise.all([
+    supabase.from("stores").select("invoice_ref_prefix").eq("id", args.storeId).single(),
+    supabase.from("companies").select("master_invoice_prefix").eq("id", args.companyId).single(),
+  ]);
+  if (!store?.invoice_ref_prefix) {
+    return { error: "This store's invoice prefix is not set — ask an Admin to set it (Company & Items).", result: null };
+  }
+  if (!company?.master_invoice_prefix) {
+    return { error: "This company's master invoice prefix is not set — ask an Admin to set it.", result: null };
+  }
+
+  const fy = fyLabel(args.invoiceDate);
+  const { data: num, error: numError } = await supabase.rpc("reserve_next_number", {
+    p_company_id: args.companyId,
+    p_scope: `INVOICE_${store.invoice_ref_prefix}`,
+    p_use_fy: true,
+    p_as_of_date: args.invoiceDate,
+  });
+  if (numError || num == null) return { error: "Failed to reserve invoice number — please try again.", result: null };
+
+  const { data: mnum, error: mnumError } = await supabase.rpc("reserve_next_number", {
+    p_company_id: args.companyId,
+    p_scope: "MASTER_INVOICE",
+    p_use_fy: true,
+    p_as_of_date: args.invoiceDate,
+  });
+  if (mnumError || mnum == null) return { error: "Failed to reserve master invoice number — please try again.", result: null };
+
+  return {
+    error: null,
+    result: {
+      invoiceNo: formatInvoiceNo(store.invoice_ref_prefix, fy, num),
+      masterInvoiceNo: formatInvoiceNo(company.master_invoice_prefix, fy, mnum),
+      departmentReferenceNo: isFedEx(args.courierCompany) ? computeDepartmentReferenceNo(args.csbType, args.shipmentTerm, args.invoiceDate) : null,
+    },
+  };
+}
 
 /**
  * The actual invoice-generation logic — pulled out of generateInvoice() so
@@ -290,29 +354,38 @@ export async function generateInvoiceCore(
   // jayega, ddu karenge to consignee vala" — see duty-payable.ts.
   const dutyPayableBy = dutyPayableByForShipmentTerm(shipmentTerm);
 
-  const fy = fyLabel(invoiceDate);
+  let invoiceNo: string;
+  let masterInvoiceNo: string;
+  let departmentReferenceNo: string | null;
+  if (params.reservedReferenceNumbers) {
+    // 2026-09-11: courier-booking/actions.ts pre-reserved these BEFORE
+    // calling the courier's API (see reserveCsbVReferenceNumbers above) so
+    // the exact same numbers printed on a FedEx label land in this row too.
+    ({ invoiceNo, masterInvoiceNo, departmentReferenceNo } = params.reservedReferenceNumbers);
+  } else {
+    const fy = fyLabel(invoiceDate);
+    const { data: num, error: numError } = await supabase.rpc("reserve_next_number", {
+      p_company_id: companyId,
+      p_scope: `INVOICE_${store.invoice_ref_prefix}`,
+      p_use_fy: true,
+      p_as_of_date: invoiceDate,
+    });
+    if (numError || num == null) return { error: "Failed to reserve invoice number — please try again.", invoice: null };
 
-  const { data: num, error: numError } = await supabase.rpc("reserve_next_number", {
-    p_company_id: companyId,
-    p_scope: `INVOICE_${store.invoice_ref_prefix}`,
-    p_use_fy: true,
-    p_as_of_date: invoiceDate,
-  });
-  if (numError || num == null) return { error: "Failed to reserve invoice number — please try again.", invoice: null };
+    const { data: mnum, error: mnumError } = await supabase.rpc("reserve_next_number", {
+      p_company_id: companyId,
+      p_scope: "MASTER_INVOICE",
+      p_use_fy: true,
+      p_as_of_date: invoiceDate,
+    });
+    if (mnumError || mnum == null) return { error: "Failed to reserve master invoice number — please try again.", invoice: null };
 
-  const { data: mnum, error: mnumError } = await supabase.rpc("reserve_next_number", {
-    p_company_id: companyId,
-    p_scope: "MASTER_INVOICE",
-    p_use_fy: true,
-    p_as_of_date: invoiceDate,
-  });
-  if (mnumError || mnum == null) return { error: "Failed to reserve master invoice number — please try again.", invoice: null };
-
-  const invoiceNo = formatInvoiceNo(store.invoice_ref_prefix, fy, num);
-  const masterInvoiceNo = formatInvoiceNo(company.master_invoice_prefix, fy, mnum);
-  const departmentReferenceNo = isFedEx(courierCompany)
-    ? computeDepartmentReferenceNo(csbType as "CSB-V" | "CSB-IV", shipmentTerm, invoiceDate)
-    : null;
+    invoiceNo = formatInvoiceNo(store.invoice_ref_prefix, fy, num);
+    masterInvoiceNo = formatInvoiceNo(company.master_invoice_prefix, fy, mnum);
+    departmentReferenceNo = isFedEx(courierCompany)
+      ? computeDepartmentReferenceNo(csbType as "CSB-V" | "CSB-IV", shipmentTerm, invoiceDate)
+      : null;
+  }
 
   const { data: invoice, error: insertError } = await supabase
     .from("sales_invoices")

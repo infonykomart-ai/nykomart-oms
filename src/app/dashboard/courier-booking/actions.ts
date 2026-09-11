@@ -26,7 +26,7 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
-import { generateInvoiceCore } from "@/app/dashboard/invoices/actions";
+import { generateInvoiceCore, reserveCsbVReferenceNumbers } from "@/app/dashboard/invoices/actions";
 import { createFedexShipment, type FedexDdpDdu } from "@/lib/couriers/fedex-ship";
 import { createUpsShipment, type UpsDdpDdu } from "@/lib/couriers/ups-ship";
 import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-shipping";
@@ -38,6 +38,7 @@ import { notifyCompanion } from "@/lib/companion/notify";
 import { countryCodeFor } from "@/lib/postal-lookup";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { parseFullAddress, looksLikeFullAddress } from "@/lib/parse-full-address";
+import { computeValueBreakdown } from "@/lib/invoices/value-breakdown";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 type Courier = "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
@@ -58,6 +59,23 @@ function numOrNull(formData: FormData, key: string): number | null {
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// 2026-09-11 — "1/2 2/2 ya ek se jyada ka invoice booking karne par nahi
+// banta" bug: every order id this ONE physical booking covers (the
+// primary order the form was submitted for, plus every sibling from a
+// Combine & Book batch — see pending-orders.tsx's "combined_order_ids"
+// hidden field). Shared by resolveFedexLabelReferences and
+// maybeAutoGenerateCsbVInvoiceForBooking below so the auto-generated
+// CSB-V invoice — and, for FedEx, the reserved Invoice/Department
+// reference numbers printed on the label — always cover the WHOLE
+// shipment, not just the primary order (which is what silently skipped
+// invoice generation entirely for combined bookings before this round).
+function resolveCombinedOrderIds(formData: FormData, primaryOrderId: string): string[] {
+  const raw = str(formData, "combined_order_ids");
+  if (!raw) return [primaryOrderId];
+  const siblingIds = Array.from(new Set(raw.split(",").map((s) => s.trim()).filter((s) => s && s !== primaryOrderId)));
+  return [primaryOrderId, ...siblingIds];
 }
 
 // 2026-09-08: root-caused a real FedEx 400 ("Recipient state and postal
@@ -183,6 +201,21 @@ export type CourierBookingLookupOrder = {
   heightCm: number | null;
   shippingWeightKg: number | null;
   orderValueInr: number | null;
+  // 2026-09-11 — "booking me jo value aa rahi hai vo order se aa rahi hai
+  // jabki invoice ka apna alag formula hai" bug report: the Declared/
+  // Customs Value field on the booking form was defaulting straight from
+  // orderValueInr (the order's FULL value, in INR) into a field whose
+  // Currency Code defaults to USD — wrong currency AND wrong amount,
+  // since the CSB-V invoice this app auto-generates right after booking
+  // declares only ~60% of the order's own-currency value (see
+  // value-breakdown.ts's formula). declaredValueDefault/declaredValueCurrency
+  // below are computed with that EXACT SAME formula so what gets booked
+  // with the courier always matches what the invoice will actually
+  // declare. null when the store/order data needed to compute it is
+  // missing — the form then falls back to the old orderValueInr behavior
+  // (see create-shipment-form.tsx) rather than showing a blank/wrong field.
+  declaredValueDefault: number | null;
+  declaredValueCurrency: string | null;
   alreadyBooked: Partial<Record<Courier, boolean>>;
   // EGS-integration round (2026-09-04) — set only when this lookup came
   // from Pending Orders' "Combine & Book" (see pending-orders.tsx): the
@@ -232,7 +265,9 @@ export async function lookupOrderForCourierBooking(
       // 2026-09-10: added size_label + item_categories(name) — see
       // goodsDescription below on CourierBookingLookupOrder for why. Also
       // added vat_number/eori_number/ioss_number/tax_id — see buyerTaxId.
-      "id, ref_no, buyer_name_address, contact_no, email_id, sku_label, size_label, qty, order_value_inr, buyer_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, destination_country, weight_kg, length_cm, width_cm, height_cm, item_categories(name), vat_number, eori_number, ioss_number, tax_id"
+      // 2026-09-11: added store_id/order_value_original/order_currency —
+      // see declaredValueDefault below.
+      "id, ref_no, store_id, buyer_name_address, contact_no, email_id, sku_label, size_label, qty, order_value_inr, order_value_original, order_currency, buyer_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, destination_country, weight_kg, length_cm, width_cm, height_cm, item_categories(name), vat_number, eori_number, ioss_number, tax_id"
     )
     .eq("ref_no", refNo)
     .in("company_id", employee.companyIds);
@@ -242,7 +277,7 @@ export async function lookupOrderForCourierBooking(
   if (orders.length > 1) return { error: "Ambiguous — more than one order matched this Ref No.", order: null };
   const order = orders[0];
 
-  const [{ data: dispatch }, { data: existing }, { data: siblings }] = await Promise.all([
+  const [{ data: dispatch }, { data: existing }, { data: siblings }, { data: store }] = await Promise.all([
     supabase
       .from("dispatch_invoices")
       .select("buyer_name, buyer_mail, buyer_contact, buyer_country, hsn_no, length_cm, width_cm, height_cm, shipping_weight_kg")
@@ -250,8 +285,17 @@ export async function lookupOrderForCourierBooking(
       .maybeSingle(),
     supabase.from("courier_shipments").select("courier, status").eq("order_id", order.id),
     combinedOrderIds.length > 0
-      ? supabase.from("orders").select("id, ref_no, order_value_inr").in("id", combinedOrderIds).in("company_id", employee.companyIds)
-      : Promise.resolve({ data: [] as { id: string; ref_no: string; order_value_inr: number | null }[] }),
+      ? supabase
+          .from("orders")
+          .select("id, ref_no, order_value_inr, order_value_original, order_currency")
+          .in("id", combinedOrderIds)
+          .in("company_id", employee.companyIds)
+      : Promise.resolve({
+          data: [] as { id: string; ref_no: string; order_value_inr: number | null; order_value_original: number | null; order_currency: string | null }[],
+        }),
+    // 2026-09-11 — needed for declaredValueDefault below (computeValueBreakdown
+    // takes the store's own marketplace % via its name — see value-breakdown.ts).
+    supabase.from("stores").select("name").eq("id", order.store_id).maybeSingle(),
   ]);
 
   const alreadyBooked: Partial<Record<Courier, boolean>> = {};
@@ -265,6 +309,22 @@ export async function lookupOrderForCourierBooking(
   // the primary order's line.
   const siblingRows = (siblings ?? []).filter((s) => s.id !== order.id);
   const combinedValue = siblingRows.reduce((sum, s) => sum + (s.order_value_inr ?? 0), order.order_value_inr ?? 0);
+
+  // 2026-09-11 — the SAME formula generateInvoiceCore uses for a CSB-V
+  // invoice (see value-breakdown.ts): sum order_value_original (the
+  // order's OWN currency) across the whole batch, then apply the
+  // marketplace %. Requires every order in the batch to share one
+  // currency, same validation generateInvoiceCore itself enforces — if
+  // they don't (rare), this is left null and the form falls back to the
+  // old orderValueInr behavior rather than showing a number that doesn't
+  // actually mean anything.
+  const currenciesMatch = siblingRows.every((s) => s.order_currency === order.order_currency);
+  const declaredValueCurrency = currenciesMatch ? order.order_currency : null;
+  let declaredValueDefault: number | null = null;
+  if (currenciesMatch && store?.name) {
+    const combinedValueOriginal = siblingRows.reduce((sum, s) => sum + Number(s.order_value_original || 0), Number(order.order_value_original || 0));
+    declaredValueDefault = computeValueBreakdown(combinedValueOriginal, store.name).invoiceValueUsd;
+  }
 
   // 2026-09-10 — self-healing fallback for exactly the bug report that
   // prompted this: an order entered by pasting the buyer's FULL address
@@ -365,6 +425,8 @@ export async function lookupOrderForCourierBooking(
       heightCm: dispatch?.height_cm ?? order.height_cm ?? null,
       shippingWeightKg: dispatch?.shipping_weight_kg ?? order.weight_kg ?? null,
       orderValueInr: siblingRows.length > 0 ? combinedValue : order.order_value_inr,
+      declaredValueDefault,
+      declaredValueCurrency,
       alreadyBooked,
       combinedOrderIds: siblingRows.map((s) => s.id),
       combinedRefNos: siblingRows.map((s) => s.ref_no),
@@ -569,21 +631,36 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
   supabase: ServiceClient,
   employee: AuthedEmployee,
   args: {
-    formData: FormData;
-    orderId: string;
+    // 2026-09-11: was a single orderId with an early-return whenever this
+    // booking was a Combine & Book batch (formData's combined_order_ids
+    // set) — "1/2 2/2 ya ek se jyada ka invoice booking karne par nahi
+    // banta" bug report: a combined shipment NEVER got a CSB-V invoice at
+    // all. Now takes every order id this ONE physical shipment covers (see
+    // resolveCombinedOrderIds) and always generates ONE invoice spanning
+    // all of them — matching how the manual Invoice Generation screen
+    // already batches multiple orders into one invoice.
+    orderIds: string[];
     courierLabel: string;
     awbNo: string;
     weightKg: number;
     dimsCm: { length: number; width: number; height: number };
     ddpDdu: "DDP" | "DDU" | null;
+    // 2026-09-11: set only by resolveFedexLabelReferences (FedEx only,
+    // today) — when the caller already reserved the real Invoice No /
+    // Master Invoice No / Department Reference No BEFORE booking (so they
+    // could be printed on the courier's own label), pass those exact same
+    // numbers through here so the sales_invoices row this creates carries
+    // the IDENTICAL numbers, never a second independently-reserved set.
+    // Left undefined for every other courier, which reserves its own fresh
+    // numbers inside generateInvoiceCore exactly as before this round.
+    reservedReferenceNumbers?: { invoiceNo: string; masterInvoiceNo: string; departmentReferenceNo: string | null } | null;
   }
 ): Promise<void> {
   if (!args.ddpDdu) return; // domestic (Delhivery/Shiprocket) — not an export shipment, no CSB invoice applies.
-  if (str(args.formData, "combined_order_ids")) return; // Combine batch — see header comment, skipped entirely.
 
   try {
     const result = await generateInvoiceCore(employee, supabase, {
-      orderIds: [args.orderId],
+      orderIds: args.orderIds,
       shipmentTerm: args.ddpDdu, // "DDP" | "DDU" — matches dutyPayableByForShipmentTerm()'s .includes() check exactly.
       csbType: "CSB-V",
       courierCompany: args.courierLabel,
@@ -607,7 +684,10 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
       vesselFlightNo: null,
       portOfDischarge: null,
       marksAndNos: null,
-      noOfPackages: 1,
+      // 2026-09-11: was hardcoded 1 — wrong for a combined shipment, which
+      // is N physical packages under one AWB ("1/2, 2/2 ..." the way FedEx
+      // itself labels them — confirmed against a real FedEx test label).
+      noOfPackages: args.orderIds.length,
       buyerEmail: null,
       buyerPhone: null,
       otherThanConsignee: null,
@@ -622,16 +702,48 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
       brokerName: null,
       brokerTel: null,
       brokerContact: null,
+      reservedReferenceNumbers: args.reservedReferenceNumbers ?? null,
     });
     if (result.error) {
-      console.error(`[auto-invoice] booking for order ${args.orderId} succeeded, but CSB-V auto-invoice generation failed: ${result.error}`);
+      console.error(`[auto-invoice] booking for order(s) ${args.orderIds.join(", ")} succeeded, but CSB-V auto-invoice generation failed: ${result.error}`);
     }
   } catch (err) {
     // Belt-and-braces — generateInvoiceCore returns errors rather than
     // throwing, but this must never let ANY failure shape here roll back or
     // block an already-successful booking.
-    console.error(`[auto-invoice] booking for order ${args.orderId} succeeded, but CSB-V auto-invoice generation threw:`, err);
+    console.error(`[auto-invoice] booking for order(s) ${args.orderIds.join(", ")} succeeded, but CSB-V auto-invoice generation threw:`, err);
   }
+}
+
+// 2026-09-11 — FedEx-only (see fedex-ship.ts's header comment on the real
+// test label this was built from): reserves the REAL Invoice No / Master
+// Invoice No / Department Reference No BEFORE calling FedEx's Ship API,
+// so they can be printed on the label itself (FedEx's PO:/INV:/DEPT:
+// reference lines) instead of only existing after the fact, when the
+// CSB-V invoice normally auto-generates. Graceful on any failure (e.g. the
+// store's invoice prefix was never set in Admin) — returns null rather
+// than blocking the booking; the label just prints without INV:/DEPT: in
+// that case; exactly as it did before this round.
+async function resolveFedexLabelReferences(
+  supabase: ServiceClient,
+  args: { orderIds: string[]; ddpDdu: FedexDdpDdu | null; invoiceDate: string }
+): Promise<{ invoiceNo: string; masterInvoiceNo: string; departmentReferenceNo: string | null } | null> {
+  if (!args.ddpDdu || args.orderIds.length === 0) return null;
+  const { data: primaryOrder } = await supabase.from("orders").select("company_id, store_id").eq("id", args.orderIds[0]).maybeSingle();
+  if (!primaryOrder) return null;
+  const reserved = await reserveCsbVReferenceNumbers(supabase, {
+    companyId: primaryOrder.company_id,
+    storeId: primaryOrder.store_id,
+    invoiceDate: args.invoiceDate,
+    csbType: "CSB-V",
+    shipmentTerm: args.ddpDdu,
+    courierCompany: "FedEx",
+  });
+  if (reserved.error || !reserved.result) {
+    console.error(`[fedex-label-references] could not reserve invoice/department reference numbers: ${reserved.error}`);
+    return null;
+  }
+  return reserved.result;
 }
 
 // -----------------------------------------------------------------------
@@ -775,11 +887,20 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
   const dims = { length: num(formData, "package_length_cm"), width: num(formData, "package_width_cm"), height: num(formData, "package_height_cm") };
   const currencyCode = str(formData, "currency_code") || "USD";
   const zoneLabel = strOrNull(formData, "zone_label");
+  const ddpDdu = (strOrNull(formData, "ddp_ddu") as FedexDdpDdu | null) ?? null;
+  const poNo = str(formData, "ref_no");
+  const combinedOrderIds = resolveCombinedOrderIds(formData, orderId);
+  const invoiceDate = new Date().toISOString().slice(0, 10);
+  // 2026-09-11 — reserve the REAL Invoice No/Dept Ref No BEFORE calling
+  // FedEx, so they can be printed on the label itself (see
+  // resolveFedexLabelReferences's header comment). null when domestic, or
+  // when reservation failed for any reason (booking still proceeds).
+  const fedexReferences = await resolveFedexLabelReferences(supabase, { orderIds: combinedOrderIds, ddpDdu, invoiceDate });
 
   const input = {
     serviceType: str(formData, "service_code") || "INTERNATIONAL_PRIORITY",
     packagingType: "YOUR_PACKAGING",
-    ddpDdu: (strOrNull(formData, "ddp_ddu") as FedexDdpDdu | null) ?? null,
+    ddpDdu,
     shipper: {
       accountNumber,
       contactName: shipper.contact_name,
@@ -812,7 +933,16 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     currencyCode,
     customsValue: numOrNull(formData, "customs_value"),
     commodityDescription: strOrNull(formData, "goods_description"),
-    referenceNo: str(formData, "ref_no"),
+    // 2026-09-11 — was a single referenceNo (-> FedEx's REF: line only).
+    // Built from a real FedEx test label the user uploaded, showing 3 more
+    // blank printed lines (PO:/INV:/DEPT:) — see fedex-ship.ts's header
+    // comment for the full mapping.
+    references: {
+      customerRef: poNo,
+      poNumber: poNo || null,
+      invoiceNumber: fedexReferences?.invoiceNo ?? null,
+      departmentNumber: fedexReferences?.departmentReferenceNo ?? null,
+    },
   };
 
   try {
@@ -864,13 +994,13 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     });
 
     await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
-      formData,
-      orderId,
+      orderIds: combinedOrderIds,
       courierLabel: "FedEx",
       awbNo: result.trackingNo,
       weightKg,
       dimsCm: dims,
       ddpDdu: input.ddpDdu,
+      reservedReferenceNumbers: fedexReferences,
     });
 
     await notifyCompanion(supabase, {
@@ -1025,8 +1155,7 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
     });
 
     await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
-      formData,
-      orderId,
+      orderIds: resolveCombinedOrderIds(formData, orderId),
       courierLabel: "UPS",
       awbNo: result.trackingNo,
       weightKg,
@@ -1195,8 +1324,7 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
     });
 
     await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
-      formData,
-      orderId,
+      orderIds: resolveCombinedOrderIds(formData, orderId),
       courierLabel: "Aramex",
       awbNo: result.trackingNo,
       weightKg,
@@ -1326,8 +1454,7 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
     // skips whenever ddpDdu is null, so this call is included for consistency with
     // every other courier but will always no-op here. See that function's header comment.
     await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
-      formData,
-      orderId,
+      orderIds: resolveCombinedOrderIds(formData, orderId),
       courierLabel: "Delhivery",
       awbNo: result.trackingNo,
       weightKg,
@@ -1478,8 +1605,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
     // simply has no DDP/DDU-style incoterm field at all, domestic or
     // international, unlike DHL/FedEx/UPS below.
     await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
-      formData,
-      orderId,
+      orderIds: resolveCombinedOrderIds(formData, orderId),
       courierLabel: "Shiprocket",
       awbNo: result.trackingNo,
       weightKg,
@@ -1650,8 +1776,7 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
     });
 
     await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
-      formData,
-      orderId,
+      orderIds: resolveCombinedOrderIds(formData, orderId),
       courierLabel: "DHL",
       awbNo: result.trackingNo,
       weightKg,

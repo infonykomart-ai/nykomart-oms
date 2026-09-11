@@ -75,7 +75,26 @@ export type FedexShipInput = {
   currencyCode: string;
   customsValue?: number | null; // required by FedEx when countryCode differs from shipper's (international) — declared customs value
   commodityDescription?: string | null;
-  referenceNo: string; // FedEx's customerReferences — this app's own order ref_no, for FedEx-side lookup/display only
+  // 2026-09-11 — built from a REAL FedEx test label the user uploaded
+  // (SHIP DATE 10SEP26, a Combine & Book "1/2" test shipment). That label
+  // showed FOUR separate printed reference lines: REF: (already working,
+  // = customerRef below) and three that were BLANK — PO:, INV:, DEPT:.
+  // FedEx's documented customerReferences array takes one entry per type;
+  // this maps customerRef -> CUSTOMER_REFERENCE (REF:, unchanged),
+  // poNumber -> P_O_NUMBER (PO:), invoiceNumber -> INVOICE_NUMBER (INV:),
+  // departmentNumber -> DEPARTMENT_NUMBER (DEPT:) — confirmed against that
+  // real label's actual print layout, not guessed from public docs alone
+  // like most of this file's other FedEx wiring. Each of poNumber/
+  // invoiceNumber/departmentNumber is entirely optional and simply omitted
+  // from the request when null (see createFedexShipment below) — same
+  // "never send a field FedEx might reject as present-but-empty" pattern
+  // already used elsewhere in this file (DDP/DDU, commodity weight).
+  references: {
+    customerRef: string; // this app's own order Ref No — prints as FedEx's "REF:"
+    poNumber?: string | null; // prints as "PO:" — courier-booking/actions.ts reuses the same order Ref No (no separate PO field exists in this app)
+    invoiceNumber?: string | null; // prints as "INV:" — this shipment's CSB-V sales_invoices.invoice_no, pre-reserved before booking (see resolveFedexLabelReferences in courier-booking/actions.ts) so it exists in time to be sent here
+    departmentNumber?: string | null; // prints as "DEPT:" — the FedEx-specific department reference this app already computes deterministically (see src/lib/invoices/department-reference.ts), same value the auto-generated invoice itself carries
+  };
 };
 
 export type FedexShipResult = {
@@ -202,6 +221,17 @@ export async function createFedexShipment(
 
   const isInternational = input.shipper.countryCode !== input.recipient.countryCode;
 
+  // 2026-09-11 — see FedexShipInput.references' header comment for the
+  // full mapping (confirmed against a real FedEx test label). Built once
+  // here so it's easy to see every reference line this shipment sends at a
+  // glance; each optional entry is included only when a real value exists.
+  const customerReferences: Array<{ customerReferenceType: string; value: string }> = [
+    { customerReferenceType: "CUSTOMER_REFERENCE", value: input.references.customerRef },
+  ];
+  if (input.references.poNumber) customerReferences.push({ customerReferenceType: "P_O_NUMBER", value: input.references.poNumber });
+  if (input.references.invoiceNumber) customerReferences.push({ customerReferenceType: "INVOICE_NUMBER", value: input.references.invoiceNumber });
+  if (input.references.departmentNumber) customerReferences.push({ customerReferenceType: "DEPARTMENT_NUMBER", value: input.references.departmentNumber });
+
   const requestedShipment: Record<string, unknown> = {
     shipper: {
       contact: { personName: input.shipper.contactName, companyName: input.shipper.companyName, phoneNumber: input.shipper.phone },
@@ -248,7 +278,7 @@ export async function createFedexShipment(
       {
         weight: { units: "KG", value: input.packageWeightKg },
         dimensions: { length: input.packageDimsCm.length, width: input.packageDimsCm.width, height: input.packageDimsCm.height, units: "CM" },
-        customerReferences: [{ customerReferenceType: "CUSTOMER_REFERENCE", value: input.referenceNo }],
+        customerReferences,
       },
     ],
   };
