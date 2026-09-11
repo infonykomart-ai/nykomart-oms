@@ -9,7 +9,9 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
-export function LeaveRequestForm({ today }: { today: string }) {
+export type LeaveTypeOption = { id: string; name: string; code: string | null; paid: boolean };
+
+export function LeaveRequestForm({ today, leaveTypes = [] }: { today: string; leaveTypes?: LeaveTypeOption[] }) {
   const [state, formAction, pending] = useActionState(submitLeaveRequest, initialState);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -22,6 +24,22 @@ export function LeaveRequestForm({ today }: { today: string }) {
       <p className="text-sm font-semibold text-slate-700">🏖️ Apply for Leave</p>
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
       {state.success && state.message && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">{state.message}</p>}
+
+      {leaveTypes.length > 0 && (
+        <div>
+          <label className={labelClass}>Leave Type</label>
+          <select name="leave_type_id" defaultValue="" className={inputClass}>
+            <option value="">— General / Unspecified —</option>
+            {leaveTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+                {t.code ? ` (${t.code})` : ""}
+                {!t.paid ? " — Unpaid" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div>

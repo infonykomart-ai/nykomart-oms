@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { daysInMonth, todayIST } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, computeDeduction } from "@/lib/attendance/payroll";
+import { categorizeMonth, summarizeCategories, summarizeLeaveDetail, computeDeduction } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
 
 export type SimpleActionState = { error: string | null; success: boolean };
@@ -212,14 +212,21 @@ export async function submitSalaryPayment(_prev: FinanceActionState, formData: F
       .lte("effective_from", monthEnd)
       .order("effective_from", { ascending: false })
       .limit(1),
-    supabase.from("attendance").select("attendance_date, status").eq("employee_id", employeeId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
+    supabase
+      .from("attendance")
+      .select("attendance_date, status, leave_type_id, leave_unpaid")
+      .eq("employee_id", employeeId)
+      .gte("attendance_date", monthStart)
+      .lte("attendance_date", monthEnd),
     supabase.from("holidays").select("holiday_date").or(`company_id.eq.${emp.company_id},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd),
   ]);
 
   const salary = salaryRows?.[0];
   if (!salary) return { error: "No salary set for this employee yet — set it above first.", success: false };
 
-  const attendanceByDate = new Map((attendanceRows ?? []).map((r) => [r.attendance_date, { status: r.status }]));
+  const attendanceByDate = new Map(
+    (attendanceRows ?? []).map((r) => [r.attendance_date, { status: r.status, leave_type_id: r.leave_type_id, leave_unpaid: r.leave_unpaid }])
+  );
   const holidayDates = new Set((holidays ?? []).map((h) => h.holiday_date));
   const days = categorizeMonth({
     year,
@@ -237,11 +244,19 @@ export async function submitSalaryPayment(_prev: FinanceActionState, formData: F
     joinDate: emp.date_of_joining,
   });
   const summary = summarizeCategories(days);
+  // 2026-09-11 (Payroll Phase 2): same untyped/typed-paid/typed-unpaid
+  // split as the payroll preview (salary/page.tsx) — this is the
+  // AUTHORITATIVE recompute that actually gets snapshotted onto the
+  // payment row, so it must agree with what leave/actions.ts decided at
+  // approval time, never re-derive it differently.
+  const leaveDetail = summarizeLeaveDetail(days);
   const deduction = computeDeduction({
     monthlySalary: Number(salary.monthly_salary),
     allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
     daysInThisMonth: daysInMonth(year, month),
     counts: summary,
+    untypedLeaveDays: leaveDetail.untypedLeaveDays,
+    unpaidTypedLeaveDays: leaveDetail.unpaidTypedLeaveDays,
   });
 
   // 2026-09-11 (Payroll Phase 1): when the salary row in effect for this

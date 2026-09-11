@@ -1,7 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, computeDeduction } from "@/lib/attendance/payroll";
+import { categorizeMonth, summarizeCategories, summarizeLeaveDetail, computeDeduction } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
 import { SalaryForm } from "./salary-form";
 import { PayrollRow } from "./payroll-row";
@@ -66,7 +66,12 @@ export default async function SalaryPage({
         "employee_id, monthly_salary, allowed_leaves_per_month, effective_from, ctc_annual, basic_percent_of_ctc, hra_percent_of_basic, employer_pf_percent, employee_pf_percent, pf_wage_ceiling, esi_applicable, esi_employee_percent, esi_employer_percent, professional_tax_amount"
       )
       .order("effective_from", { ascending: false }),
-    supabase.from("attendance").select("employee_id, attendance_date, status").eq("company_id", selectedCompanyId).gte("attendance_date", monthStart).lte("attendance_date", monthEnd),
+    supabase
+      .from("attendance")
+      .select("employee_id, attendance_date, status, leave_type_id, leave_unpaid")
+      .eq("company_id", selectedCompanyId)
+      .gte("attendance_date", monthStart)
+      .lte("attendance_date", monthEnd),
     supabase.from("holidays").select("holiday_date").or(`company_id.eq.${selectedCompanyId},company_id.is.null`).gte("holiday_date", monthStart).lte("holiday_date", monthEnd),
     supabase.from("company_profiles").select("bank_name, account_no").eq("company_id", selectedCompanyId).maybeSingle(),
     supabase.from("parties").select("id, name").order("name"),
@@ -104,10 +109,10 @@ export default async function SalaryPage({
 
   const holidayDates = new Set((holidays ?? []).map((h) => h.holiday_date));
   const weeklyOffDays = (selectedCompany?.weekly_off_days as number[] | undefined) ?? [0];
-  const rowsByEmployee = new Map<string, Map<string, { status: string | null }>>();
+  const rowsByEmployee = new Map<string, Map<string, { status: string | null; leave_type_id?: string | null; leave_unpaid?: boolean | null }>>();
   for (const r of attendanceRows ?? []) {
     if (!rowsByEmployee.has(r.employee_id)) rowsByEmployee.set(r.employee_id, new Map());
-    rowsByEmployee.get(r.employee_id)!.set(r.attendance_date, { status: r.status });
+    rowsByEmployee.get(r.employee_id)!.set(r.attendance_date, { status: r.status, leave_type_id: r.leave_type_id, leave_unpaid: r.leave_unpaid });
   }
   const daysThisMonth = daysInMonth(year, month);
 
@@ -123,12 +128,19 @@ export default async function SalaryPage({
       joinDate: e.date_of_joining,
     });
     const summary = summarizeCategories(days);
+    // 2026-09-11 (Payroll Phase 2): split Leave days into untyped (flat
+    // allowance, unchanged behavior) vs typed-paid (free, already covered
+    // by that leave type's own balance) vs typed-unpaid (always deducted —
+    // decided once at approval time, see leave/actions.ts).
+    const leaveDetail = summarizeLeaveDetail(days);
     if (!salary) return { employee: e, salary: null, summary, deduction: null, statutory: null };
     const deduction = computeDeduction({
       monthlySalary: Number(salary.monthly_salary),
       allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
       daysInThisMonth: daysThisMonth,
       counts: summary,
+      untypedLeaveDays: leaveDetail.untypedLeaveDays,
+      unpaidTypedLeaveDays: leaveDetail.unpaidTypedLeaveDays,
     });
     // 2026-09-11 (Payroll Phase 1): a CTC-mode salary row (ctc_annual set)
     // also carries a live PF/ESI/PT preview — same calculation
@@ -341,7 +353,10 @@ export default async function SalaryPage({
           whatever this table happens to be showing. For an employee on a CTC Structure, Statutory Ded. (Employee
           PF + ESI + Professional Tax) is also subtracted to get Final Net — those rates are current published
           defaults, not verified against this company&apos;s actual PF/ESI registration; confirm with your CA
-          before relying on this for a real filing.
+          before relying on this for a real filing. If a Leave request was approved against a real Leave Type
+          (see /dashboard/leave/admin), each day of it was already decided paid or unpaid against that type&apos;s
+          own balance at approval time — only unpaid typed days show up here as a deduction; paid typed days never
+          touch the flat monthly leave allowance above.
         </p>
       </div>
 

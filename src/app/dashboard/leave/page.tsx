@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
+import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveRequestForm } from "./leave-request-form";
 
 // 2026-08-12 (round 8): "LEAVE REQUESST BHEJ DU APPLIATION KE SATH TO VO MD
@@ -14,8 +15,11 @@ export default async function LeavePage() {
   const employee = await requireCapability("leave_management");
   const supabase = createServiceRoleClient();
   const today = todayIST();
+  const leaveYear = Number(today.slice(0, 4));
+  const yearStart = `${leaveYear}-01-01`;
+  const yearEnd = `${leaveYear}-12-31`;
 
-  const [{ data: myRequests }, { data: myCoverage }] = await Promise.all([
+  const [{ data: myRequests }, { data: myCoverage }, { data: leaveTypesRaw }, { data: myProfile }] = await Promise.all([
     supabase
       .from("leave_requests")
       .select("id, from_date, to_date, reason, status, requested_at, decided_at, decision_remark")
@@ -30,7 +34,67 @@ export default async function LeavePage() {
       .eq("covering_employee_id", employee.id)
       .lte("from_date", today)
       .gte("to_date", today),
+    // 2026-09-11 (Payroll Phase 2): real leave types, if this company has
+    // set any up — an empty list here means no leave-type dropdown shows
+    // on the form above (leave-request-form.tsx) and no balance panel
+    // below, so a company that never configures leave types sees no change
+    // at all from this round.
+    supabase
+      .from("leave_types")
+      .select("id, name, code, paid, annual_accrual_days, accrual_frequency")
+      .eq("company_id", employee.currentCompanyId)
+      .eq("active", true)
+      .order("name"),
+    supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
   ]);
+
+  const leaveTypes = leaveTypesRaw ?? [];
+  let myBalances: { id: string; name: string; code: string | null; paid: boolean; balance: number }[] = [];
+  if (leaveTypes.length > 0) {
+    const typeIds = leaveTypes.map((t) => t.id);
+    const [{ data: adjustmentsRaw }, { data: usedRowsRaw }] = await Promise.all([
+      supabase
+        .from("leave_balance_adjustments")
+        .select("leave_type_id, adjustment_days")
+        .eq("employee_id", employee.id)
+        .eq("leave_year", leaveYear)
+        .in("leave_type_id", typeIds),
+      supabase
+        .from("attendance")
+        .select("leave_type_id")
+        .eq("employee_id", employee.id)
+        .eq("status", "Leave")
+        .eq("leave_unpaid", false)
+        .in("leave_type_id", typeIds)
+        .gte("attendance_date", yearStart)
+        .lte("attendance_date", yearEnd),
+    ]);
+    const adjustmentByType = new Map<string, number>();
+    for (const a of adjustmentsRaw ?? []) {
+      adjustmentByType.set(a.leave_type_id, (adjustmentByType.get(a.leave_type_id) ?? 0) + Number(a.adjustment_days));
+    }
+    const usedByType = new Map<string, number>();
+    for (const r of usedRowsRaw ?? []) {
+      if (!r.leave_type_id) continue;
+      usedByType.set(r.leave_type_id, (usedByType.get(r.leave_type_id) ?? 0) + 1);
+    }
+    myBalances = leaveTypes.map((t) => ({
+      id: t.id,
+      name: t.name,
+      code: t.code,
+      paid: t.paid,
+      balance: t.paid
+        ? computeLeaveBalance({
+            leaveType: { annual_accrual_days: Number(t.annual_accrual_days), accrual_frequency: t.accrual_frequency as "Monthly" | "Upfront" },
+            leaveYear,
+            asOfDateStr: today,
+            joinDate: myProfile?.date_of_joining ?? null,
+            adjustmentDaysTotal: adjustmentByType.get(t.id) ?? 0,
+            usedDays: usedByType.get(t.id) ?? 0,
+          })
+        : 0,
+    }));
+  }
 
   const requestIds = (myRequests ?? []).map((r) => r.id);
   const coverageStoreIds = (myCoverage ?? []).map((c) => c.store_id);
@@ -74,7 +138,32 @@ export default async function LeavePage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1 space-y-6">
-          <LeaveRequestForm today={today} />
+          <LeaveRequestForm today={today} leaveTypes={leaveTypes.map((t) => ({ id: t.id, name: t.name, code: t.code, paid: t.paid }))} />
+
+          {myBalances.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <p className="mb-2 text-sm font-semibold text-slate-700">📊 My Leave Balance — {leaveYear}</p>
+              <ul className="space-y-1.5 text-sm">
+                {myBalances.map((b) => (
+                  <li key={b.id} className="flex items-center justify-between">
+                    <span className="text-slate-600">
+                      {b.name}
+                      {b.code ? ` (${b.code})` : ""}
+                    </span>
+                    {b.paid ? (
+                      <span className={`font-semibold ${b.balance > 0 ? "text-green-700" : "text-red-600"}`}>{b.balance} days</span>
+                    ) : (
+                      <span className="text-xs text-slate-400">Unpaid — no balance</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[11px] text-slate-400">
+                Current published accrual convention (not a verified copy of this company&apos;s actual leave policy) —
+                see the note on the Leave Approvals page.
+              </p>
+            </div>
+          )}
 
           {allStoreIds.length > 0 && (
             <div className="rounded-xl border border-teal-200 bg-teal-50 p-4">

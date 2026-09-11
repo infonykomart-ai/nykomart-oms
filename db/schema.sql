@@ -3134,6 +3134,9 @@ CREATE TABLE attendance (
   remark                                             text,
   entered_by_employee_id                               uuid REFERENCES employees(id),
   entered_on                                             timestamptz NOT NULL DEFAULT now(),
+  -- 2026-09-11 (Payroll Phase 2) — see db/2026-09-11-leave-types-and-balances.sql.
+  leave_type_id                                          uuid REFERENCES leave_types(id),
+  leave_unpaid                                           boolean NOT NULL DEFAULT false,
   UNIQUE (employee_id, attendance_date)
 );
 CREATE INDEX idx_attendance_company_date ON attendance(company_id, attendance_date);
@@ -3572,6 +3575,9 @@ CREATE TABLE leave_requests (
   decided_at              timestamptz,
   decision_remark         text,
   created_at              timestamptz NOT NULL DEFAULT now(),
+  -- 2026-09-11 (Payroll Phase 2) — see db/2026-09-11-leave-types-and-balances.sql.
+  -- NULL = untyped request, original behavior unchanged (flat monthly allowance).
+  leave_type_id           uuid REFERENCES leave_types(id),
   CHECK (to_date >= from_date)
 );
 CREATE INDEX idx_leave_requests_employee ON leave_requests(employee_id, from_date DESC);
@@ -3607,6 +3613,48 @@ CREATE INDEX idx_leave_coverage_leave_request ON leave_coverage_assignments(leav
 CREATE INDEX idx_leave_coverage_covering_employee ON leave_coverage_assignments(covering_employee_id, from_date, to_date);
 COMMENT ON TABLE leave_coverage_assignments IS
   'Not unique per leave_request — MD/Admin can split coverage across multiple people/stores for one leave.';
+
+-- =============================================================================
+-- SECTION 16a-2 (2026-09-11, Payroll Phase 2) — Leave Types + Real Balances
+-- See db/2026-09-11-leave-types-and-balances.sql for the full migration and
+-- src/lib/attendance/leave-balance.ts for the accrual/balance math. Purely
+-- additive on top of the leave_requests workflow above — an untyped
+-- request (leave_type_id IS NULL, both here and on leave_requests) behaves
+-- EXACTLY as before this round.
+-- =============================================================================
+CREATE TABLE leave_types (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id            uuid NOT NULL REFERENCES companies(id),
+  name                  text NOT NULL,
+  code                  text,
+  paid                  boolean NOT NULL DEFAULT true,
+  annual_accrual_days   numeric(5,1) NOT NULL DEFAULT 0,
+  accrual_frequency     text NOT NULL DEFAULT 'Monthly' CHECK (accrual_frequency IN ('Monthly', 'Upfront')),
+  carry_forward_cap     numeric(5,1),
+  active                boolean NOT NULL DEFAULT true,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, name)
+);
+COMMENT ON TABLE leave_types IS
+  'Real leave categories, admin-configurable per company from /dashboard/leave/admin. A company with zero rows '
+  'here keeps the original single-pool leave behavior (employee_salary.allowed_leaves_per_month) unchanged.';
+
+CREATE TABLE leave_balance_adjustments (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id             uuid NOT NULL REFERENCES employees(id),
+  leave_type_id           uuid NOT NULL REFERENCES leave_types(id),
+  leave_year              int NOT NULL,
+  adjustment_days         numeric(5,1) NOT NULL,
+  reason                  text,
+  entered_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_leave_balance_adjustments_employee ON leave_balance_adjustments(employee_id, leave_type_id, leave_year);
+COMMENT ON TABLE leave_balance_adjustments IS
+  'Ledger of manual balance corrections (opening/carry-forward balances, one-off grants, mistakes fixed). The '
+  'live balance for (employee, leave_type, leave_year) is: SUM(adjustment_days here) + accrued-to-date (computed '
+  'live from leave_types.annual_accrual_days/accrual_frequency, see src/lib/attendance/leave-balance.ts) minus '
+  'approved Leave days of that type this year (counted from attendance, not stored anywhere separately).';
 
 
 -- =============================================================================

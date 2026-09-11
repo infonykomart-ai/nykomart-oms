@@ -29,6 +29,7 @@ export function LeaveApprovalRow({
   status,
   requestedAt,
   decisionRemark,
+  leaveTypeName,
   employees,
   stores,
   coverage,
@@ -41,6 +42,9 @@ export function LeaveApprovalRow({
   status: string;
   requestedAt: string;
   decisionRemark: string | null;
+  // 2026-09-11 (Payroll Phase 2): null = untyped request, governed by the
+  // original flat allowed_leaves_per_month pool exactly as before.
+  leaveTypeName?: string | null;
   employees: { id: string; name: string }[];
   stores: { id: string; name: string }[];
   coverage: CoverageRow[];
@@ -55,7 +59,12 @@ export function LeaveApprovalRow({
     <div className="rounded-lg border border-slate-200 p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-slate-800">{employeeName}</p>
+          <p className="text-sm font-semibold text-slate-800">
+            {employeeName}
+            {leaveTypeName && (
+              <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{leaveTypeName}</span>
+            )}
+          </p>
           <p className="text-xs text-slate-500">
             {fromDate} → {toDate} · applied {requestedAt.slice(0, 10)}
           </p>
