@@ -372,6 +372,18 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
   const [dhlState, dhlAction, dhlPending] = useActionState(createDhlBooking, createInitial);
   const [manualState, manualAction, manualPending] = useActionState(createManualBooking, manualBookingInitial);
   const [courier, setCourier] = useState<CourierKey>("fedex");
+  // 2026-09-12 — "SERVICE EK HI AARI HAI... DROPDOWN SE AANI CHAHIYE": was a
+  // free-text input (see the removed comment on the old field) defaulting
+  // to INTERNATIONAL_PRIORITY only, so FedEx's other services (Economy
+  // being the one specifically asked for) were never visible/selectable
+  // unless someone already knew FedEx's exact enum string to type. These 4
+  // values are confirmed FedEx serviceType codes (seen in FedEx's own Rate
+  // API example response the user provided, and/or public API docs) — kept
+  // narrower than the full FedEx service list on purpose (dozens of
+  // regional/freight variants exist) with an "Other" escape hatch that
+  // reveals the old free-text input, so a service not in this short list
+  // is still reachable without a code change.
+  const [fedexServiceOption, setFedexServiceOption] = useState<string>("INTERNATIONAL_PRIORITY");
   const [showManual, setShowManual] = useState(false);
   const [manualCourier, setManualCourier] = useState<ManualBookingCourierChoice>("other");
   const lookupFormRef = useRef<HTMLFormElement>(null);
@@ -456,13 +468,45 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                 </div>
                 <div>
                   <label className={labelClass}>Service Type</label>
-                  <input name="service_code" placeholder="INTERNATIONAL_PRIORITY" defaultValue="INTERNATIONAL_PRIORITY" className={inputClass} />
+                  <select
+                    value={fedexServiceOption}
+                    onChange={(e) => setFedexServiceOption(e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="INTERNATIONAL_PRIORITY">International Priority</option>
+                    <option value="INTERNATIONAL_ECONOMY">International Economy</option>
+                    <option value="INTERNATIONAL_FIRST">International First</option>
+                    <option value="FEDEX_GROUND">International Ground</option>
+                    <option value="__custom">Other (type manually)</option>
+                  </select>
+                  {fedexServiceOption === "__custom" ? (
+                    <input name="service_code" required placeholder="e.g. FEDEX_INTERNATIONAL_PRIORITY_EXPRESS" className={`${inputClass} mt-2`} />
+                  ) : (
+                    <input type="hidden" name="service_code" value={fedexServiceOption} />
+                  )}
                 </div>
                 <div>
                   <label className={labelClass}>Duty Payer</label>
                   <select name="ddp_ddu" defaultValue="DDU" className={inputClass}>
                     <option value="DDU">DDU (buyer pays duty)</option>
                     <option value="DDP">DDP (we pay duty)</option>
+                  </select>
+                </div>
+                <div>
+                  {/* 2026-09-12 — from the real FedEx Ship Manager website flow the
+                      user shared: a required "Shipment Purpose" step before Customs
+                      documentation. This app never had an equivalent field. Only
+                      the field itself is added this round — the fuller multi-step
+                      Customs documentation / Electronic Trade Documents flow shown
+                      alongside it was deliberately deferred to a separate round. */}
+                  <label className={labelClass}>Shipment Purpose</label>
+                  <select name="shipment_purpose" defaultValue="SOLD" className={inputClass}>
+                    <option value="SOLD">Commercial</option>
+                    <option value="GIFT">Gift</option>
+                    <option value="SAMPLE">Sample</option>
+                    <option value="REPAIR_AND_RETURN">Repair &amp; Return</option>
+                    <option value="PERSONAL_EFFECTS">Personal Effects</option>
+                    <option value="NOT_SOLD">Personal Use</option>
                   </select>
                 </div>
               </div>

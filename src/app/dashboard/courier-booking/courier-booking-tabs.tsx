@@ -71,6 +71,31 @@ export function CourierBookingTabs({
   performance: ReactNode;
 }) {
   const [tab, setTab] = useState<CourierBookingTab>(initialTab);
+  // 2026-09-12 — real reported bug: clicking "Book" on a Pending Orders row
+  // calls goBook() (pending-orders.tsx), which does router.push to
+  // `?tab=book&book_ref_no=...` — page.tsx (Server Component) correctly
+  // re-reads the new `tab` search param and passes a fresh `initialTab`
+  // prop down here on every one of those navigations, but `useState`'s
+  // initial value only applies once, on this component's FIRST mount.
+  // Since CourierBookingTabs itself never remounts across a client-side
+  // navigation (same component identity — only its props change), `tab`
+  // stayed stuck on whichever tab was active before, and the user had to
+  // manually click "Book Shipment" every time instead of landing there
+  // directly.
+  //
+  // Fixed with React's own documented "adjusting state when a prop
+  // changes" pattern (compare-during-render, not a useEffect — an effect
+  // here would fire one render late and trip the set-state-in-effect lint
+  // rule) instead of a useEffect: track the last-seen initialTab and, if
+  // it changed since the previous render, resync `tab` to it right away,
+  // in the same render pass. Manual tab-clicking below only calls setTab
+  // and never touches initialTab, so this never interferes with normal
+  // clicking.
+  const [lastInitialTab, setLastInitialTab] = useState(initialTab);
+  if (initialTab !== lastInitialTab) {
+    setLastInitialTab(initialTab);
+    setTab(initialTab);
+  }
 
   return (
     <div className="space-y-4">

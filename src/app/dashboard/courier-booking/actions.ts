@@ -27,7 +27,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
 import { generateInvoiceCore, reserveCsbVReferenceNumbers } from "@/app/dashboard/invoices/actions";
-import { createFedexShipment, type FedexDdpDdu } from "@/lib/couriers/fedex-ship";
+import { createFedexShipment, type FedexDdpDdu, type FedexShipInput } from "@/lib/couriers/fedex-ship";
 import { createUpsShipment, type UpsDdpDdu } from "@/lib/couriers/ups-ship";
 import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-shipping";
 import { createDelhiveryShipment } from "@/lib/couriers/delhivery-ship";
@@ -528,6 +528,18 @@ async function logAttempt(
   return data?.id ?? null;
 }
 
+// 2026-09-12 — "VOLUMETRIC WEIGHT KO NIKALNE KE LIYE... L×W×H/5000". This
+// was never actually computed anywhere — order_packages.volumetric_weight
+// was left null on every booking (see writeOrderShipmentFromBooking below),
+// which is why the Shipment Detail page's "Volumetric Weight" field always
+// showed "—". 5000 is the standard international air-freight cm/kg
+// volumetric divisor (matches the formula the user specified exactly).
+// Rounded to 2 decimals like every other weight/amount figure in this app.
+function computeVolumetricWeightKg(dimsCm: { length: number; width: number; height: number }): number | null {
+  if (!(dimsCm.length > 0) || !(dimsCm.width > 0) || !(dimsCm.height > 0)) return null;
+  return Math.round(((dimsCm.length * dimsCm.width * dimsCm.height) / 5000) * 100) / 100;
+}
+
 // Writes order_shipments (+ order_packages, weight/dims) for a successful
 // booking and resyncs the order-level summary — identical shape to
 // Shipglobal's own createShipglobalShipment (see that file's comment on
@@ -578,6 +590,7 @@ async function writeOrderShipmentFromBooking(
       width_cm: args.dimsCm.width,
       height_cm: args.dimsCm.height,
       weight_kg: args.weightKg,
+      volumetric_weight: computeVolumetricWeightKg(args.dimsCm),
     },
     { onConflict: "order_shipment_id,package_no" }
   );
@@ -952,6 +965,9 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     currencyCode,
     customsValue: numOrNull(formData, "customs_value"),
     commodityDescription: strOrNull(formData, "goods_description"),
+    // 2026-09-12 — see fedex-ship.ts's FedexShipInput.shipmentPurpose
+    // header comment (mapping not yet confirmed against a real account).
+    shipmentPurpose: (strOrNull(formData, "shipment_purpose") as FedexShipInput["shipmentPurpose"]) ?? null,
     // 2026-09-11 — was a single referenceNo (-> FedEx's REF: line only).
     // Built from a real FedEx test label the user uploaded, showing 3 more
     // blank printed lines (PO:/INV:/DEPT:) — see fedex-ship.ts's header

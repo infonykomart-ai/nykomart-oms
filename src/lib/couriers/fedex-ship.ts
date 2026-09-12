@@ -75,6 +75,20 @@ export type FedexShipInput = {
   currencyCode: string;
   customsValue?: number | null; // required by FedEx when countryCode differs from shipper's (international) — declared customs value
   commodityDescription?: string | null;
+  // 2026-09-12 — "Shipment Purpose" dropdown the user showed from FedEx's
+  // own Ship Manager website (a required step there, right before Customs
+  // documentation) — this app's form never had an equivalent field or sent
+  // one to FedEx at all. Wired to FedEx's documented
+  // customsClearanceDetail.commercialInvoice.shipmentPurpose enum. UNLIKE
+  // the customerReferences mapping above (confirmed against 2 real
+  // labels), this specific enum mapping is NOT yet confirmed against a
+  // real FedEx account/booking — built from FedEx's public Web
+  // Services/REST documentation only, same "plausible, not verified"
+  // status as most of the rest of this file (see the header comment).
+  // Only sent when international (inside the customsClearanceDetail block
+  // below) and only when non-null — omitted otherwise, same
+  // never-send-empty pattern used throughout this file.
+  shipmentPurpose?: "SOLD" | "NOT_SOLD" | "GIFT" | "SAMPLE" | "PERSONAL_EFFECTS" | "REPAIR_AND_RETURN" | null;
   // 2026-09-11 — built from a REAL FedEx test label the user uploaded
   // (SHIP DATE 10SEP26, a Combine & Book "1/2" test shipment). That label
   // showed FOUR separate printed reference lines: REF:, PO:, INV:, DEPT:.
@@ -301,6 +315,9 @@ export async function createFedexShipment(
   if (isInternational) {
     requestedShipment.customsClearanceDetail = {
       dutiesPayment: { paymentType: fedexDutiesPaymentType(input.ddpDdu ?? "DDU") },
+      // 2026-09-12 — see FedexShipInput.shipmentPurpose's header comment
+      // (unconfirmed mapping — public docs only, not yet a real account).
+      ...(input.shipmentPurpose ? { commercialInvoice: { shipmentPurpose: input.shipmentPurpose } } : {}),
       commodities: [
         {
           description: input.commodityDescription || "General merchandise",
