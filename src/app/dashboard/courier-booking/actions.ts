@@ -1197,6 +1197,13 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
             shipmentDate: result.shipmentDate,
             originCountryCode: input.shipper.countryCode,
             destinationCountryCode: recipientCountry.code,
+            // 2026-09-12 (correction #4) — "strongly recommended" by FedEx
+            // to avoid customs delays; best-effort from whatever
+            // createFedexShipment could extract off the real Create
+            // Shipment response (see fedex-ship.ts). Omitted from the
+            // actual upload request when null (see fedex-documents.ts).
+            originLocationCode: result.originLocationCode,
+            destinationLocationCode: result.destinationLocationCode,
             pdfBuffer,
             fileName: `invoice-${result.trackingNo}.pdf`,
           },

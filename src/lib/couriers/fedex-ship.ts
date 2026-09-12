@@ -198,6 +198,19 @@ export type FedexShipResult = {
   // follow-up call to uploadFedexPostShipmentInvoice, whose shipmentDate
   // has to match what the Ship API call itself used.
   shipmentDate: string | null;
+  // 2026-09-12 — best-effort location codes for the UPLOAD_OWN post-shipment
+  // document upload call (fedex-documents.ts). FedEx's own Trade Documents
+  // Upload API docs (pasted by the user, from their FedEx dev team) say
+  // these are "present in Create Shipment response" and "highly recommend
+  // they are passed on the upload transaction" to avoid customs delays, but
+  // don't name the exact JSON path — extracted here from
+  // completedShipmentDetail.operationalDetail.originLocationNumber /
+  // .destinationLocationNumber (FedEx's documented internal facility-code
+  // fields, the closest documented match to "location code" in a real Ship
+  // API response). Null when absent — fedex-documents.ts omits them from
+  // the upload rather than sending a guessed value.
+  originLocationCode: string | null;
+  destinationLocationCode: string | null;
   raw: unknown;
 };
 
@@ -483,10 +496,25 @@ export async function createFedexShipment(
     // document type, which doesn't apply when the document is one this app
     // is uploading itself (see fedex-documents.ts, called AFTER this
     // function returns, once a real tracking number exists).
+    //
+    // 2026-09-12 (correction #4 — confirmed by the user's FedEx developer
+    // team, via an updated copy of FedEx's own Trade Documents Upload API
+    // docs): the Post-Shipment Document Upload (PSDU) workflow's Create
+    // Shipment step must ALSO set shipmentSpecialServices.etdDetail.
+    // attributes to ["POST_SHIPMENT_UPLOAD_REQUESTED"] — quoting the docs
+    // directly: "Provide shipmentSpecialServices.specialServiceTypes as
+    // ELECTRONIC_TRADE_DOCUMENTS. Provide shipmentSpecialServices.etdDetail/
+    // attributes as POST_SHIPMENT_UPLOAD_REQUESTED." Previously this branch
+    // sent an empty {} here (flagged honestly as unconfirmed) — replaced
+    // now that it's confirmed. This is the field most likely to have been
+    // the reason a real label might have come back without the uploaded
+    // invoice attached, if that had been reported.
     if (input.electronicInvoiceType) {
       requestedShipment.shipmentSpecialServices = {
         specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS"],
-        ...(input.electronicInvoiceType === "UPLOAD_OWN" ? {} : { etdDetail: { requestedDocumentTypes: [input.electronicInvoiceType] } }),
+        ...(input.electronicInvoiceType === "UPLOAD_OWN"
+          ? { etdDetail: { attributes: ["POST_SHIPMENT_UPLOAD_REQUESTED"] } }
+          : { etdDetail: { requestedDocumentTypes: [input.electronicInvoiceType] } }),
       };
     }
   }
@@ -550,6 +578,12 @@ export async function createFedexShipment(
         completedShipmentDetail?: {
           masterTrackingId?: { trackingNumber?: string };
           shipmentRating?: { shipmentRateDetails?: Array<{ totalNetCharge?: number; currency?: string }> };
+          // 2026-09-12 — best-effort source for originLocationCode/
+          // destinationLocationCode (see FedexShipResult's header comment).
+          // Both fields are optional/unconfirmed in shape, so every read
+          // below is `?.`-guarded and falls back to null rather than
+          // throwing if a real response doesn't have them.
+          operationalDetail?: { originLocationNumber?: string; destinationLocationNumber?: string };
         };
       }>;
     };
@@ -583,6 +617,8 @@ export async function createFedexShipment(
   const packageDocuments = shipment?.pieceResponses?.flatMap((p) => p.packageDocuments ?? []) ?? [];
   const labelDoc = packageDocuments.find((d) => d.contentType === "LABEL") ?? packageDocuments[0];
   const labelUrl = await resolveLabelAsDataUri(labelDoc);
+  const originLocationCode = detail?.operationalDetail?.originLocationNumber ?? null;
+  const destinationLocationCode = detail?.operationalDetail?.destinationLocationNumber ?? null;
 
   return {
     success: !!trackingNo,
@@ -591,6 +627,8 @@ export async function createFedexShipment(
     bookedAmt: rateDetail?.totalNetCharge ?? null,
     bookedCurrency: rateDetail?.currency ?? null,
     shipmentDate: shipDatestamp,
+    originLocationCode,
+    destinationLocationCode,
     raw: parsed,
   };
 }

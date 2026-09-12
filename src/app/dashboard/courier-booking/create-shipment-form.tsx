@@ -473,10 +473,16 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                     onChange={(e) => setFedexServiceOption(e.target.value)}
                     className={inputClass}
                   >
-                    <option value="INTERNATIONAL_PRIORITY">International Priority</option>
-                    <option value="INTERNATIONAL_ECONOMY">International Economy</option>
-                    <option value="INTERNATIONAL_FIRST">International First</option>
-                    <option value="FEDEX_GROUND">International Ground</option>
+                    {/* 2026-09-12 — "FedEx " prepended to the visible label only, per
+                        the user's explicit request, after their FedEx dev team
+                        review — the value= attributes below are the actual FedEx
+                        serviceType enum strings sent to the Ship API and are
+                        deliberately left untouched (confirmed correct earlier this
+                        session against a real FedEx Rate API response). */}
+                    <option value="INTERNATIONAL_PRIORITY">FedEx International Priority</option>
+                    <option value="INTERNATIONAL_ECONOMY">FedEx International Economy</option>
+                    <option value="INTERNATIONAL_FIRST">FedEx International First</option>
+                    <option value="FEDEX_GROUND">FedEx International Ground</option>
                     <option value="__custom">Other (type manually)</option>
                   </select>
                   {fedexServiceOption === "__custom" ? (

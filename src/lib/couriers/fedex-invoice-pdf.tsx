@@ -46,8 +46,17 @@ const styles = StyleSheet.create({
   title: { fontSize: 13, fontWeight: 700 },
   badge: { fontSize: 8, borderWidth: 1, borderColor: "#111827", paddingVertical: 2, paddingHorizontal: 6 },
   section: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: "#D1D5DB" },
-  row: { flexDirection: "row" },
-  col: { flex: 1 },
+  // 2026-09-12 (A4-fit review) — `flex: 1` alone let a long, unbroken
+  // address line (no natural break point early enough) overflow past its
+  // own column and print directly on top of the next column's text instead
+  // of wrapping — reproduced with a realistic long shipper address +
+  // company name. `flexBasis: 0` makes Yoga size each column purely from
+  // the row's available width rather than the text's own intrinsic width
+  // (the actual cause — `flex: 1` without an explicit basis can let a wide
+  // child's content width win), and `gap` guarantees breathing room between
+  // columns even once wrapping is correct.
+  row: { flexDirection: "row", gap: 14 },
+  col: { flexGrow: 1, flexShrink: 1, flexBasis: 0 },
   label: { fontSize: 8, fontWeight: 700, marginBottom: 2, color: "#374151" },
   value: { fontSize: 9, marginBottom: 1 },
   table: { borderWidth: 1, borderColor: "#9CA3AF", marginBottom: 8 },
