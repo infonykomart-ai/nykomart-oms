@@ -45,6 +45,10 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10, borderBottomWidth: 2, borderBottomColor: "#111827", paddingBottom: 8 },
   title: { fontSize: 13, fontWeight: 700 },
   badge: { fontSize: 8, borderWidth: 1, borderColor: "#111827", paddingVertical: 2, paddingHorizontal: 6 },
+  // 2026-09-12 — pre-booking preview mode (see FedexInvoicePdfInput.draft's
+  // comment below): a visibly different badge so a preview can never be
+  // mistaken for the real, final, already-uploaded invoice.
+  badgeDraft: { fontSize: 8, fontWeight: 700, borderWidth: 1, borderColor: "#B45309", color: "#B45309", paddingVertical: 2, paddingHorizontal: 6 },
   section: { marginBottom: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: "#D1D5DB" },
   // 2026-09-12 (A4-fit review) — `flex: 1` alone let a long, unbroken
   // address line (no natural break point early enough) overflow past its
@@ -90,6 +94,21 @@ export type FedexInvoicePdfInput = {
   invoiceDate: string; // YYYY-MM-DD
   shipmentPurpose?: string | null; // SOLD / GIFT / SAMPLE / ...
   incoterm: "DDP" | "DDU";
+  // 2026-09-12 — added for the new "preview before booking" flow
+  // (courier-booking/actions.ts's previewFedexInvoicePdf): a real AWB only
+  // exists AFTER FedEx accepts the booking, so a pre-booking preview always
+  // renders this as null ("To be assigned at booking" prints instead) —
+  // the POST-booking call (which regenerates this same PDF using the real
+  // trackingNo/shipmentDate once booking succeeds, see createFedexBooking)
+  // passes the real value.
+  trackingNumber?: string | null;
+  // 2026-09-12 — true only for the pre-booking preview render. Swaps the
+  // badge to an unmistakable "DRAFT" so a preview PDF (invoice/master
+  // invoice numbers may still be placeholders — see previewFedexInvoicePdf's
+  // header comment for why real reference numbers aren't reserved just for
+  // a preview) can never be confused with the final, real invoice that
+  // actually gets uploaded to FedEx after booking.
+  draft?: boolean;
   shipper: FedexInvoicePdfParty & { iec?: string | null; gstin?: string | null; adCode?: string | null };
   recipient: FedexInvoicePdfParty;
   item: {
@@ -131,7 +150,7 @@ export function FedexCommercialInvoiceDocument({ input }: { input: FedexInvoiceP
       <Page size="A4" style={styles.page}>
         <View style={styles.titleRow}>
           <Text style={styles.title}>COMMERCIAL INVOICE</Text>
-          <Text style={styles.badge}>E-COM</Text>
+          <Text style={input.draft ? styles.badgeDraft : styles.badge}>{input.draft ? "DRAFT — FOR REVIEW" : "E-COM"}</Text>
         </View>
 
         <View style={styles.section}>
@@ -150,6 +169,10 @@ export function FedexCommercialInvoiceDocument({ input }: { input: FedexInvoiceP
             <View style={styles.col}>
               <Text style={styles.label}>Terms of Delivery</Text>
               <Text style={styles.value}>{input.incoterm === "DDP" ? "DDP — Duties Paid by Shipper" : "DDU/DAP — Duties Paid by Recipient"}</Text>
+            </View>
+            <View style={styles.col}>
+              <Text style={styles.label}>AWB / Tracking No.</Text>
+              <Text style={styles.value}>{input.trackingNumber || "To be assigned at booking"}</Text>
             </View>
           </View>
         </View>

@@ -9,6 +9,7 @@ import {
   createDelhiveryBooking,
   createShiprocketBooking,
   createDhlBooking,
+  previewFedexInvoicePdf,
   type CourierBookingLookupState,
   type CourierBookingCreateState,
   type CourierBookingLookupOrder,
@@ -27,6 +28,7 @@ const createInitial: CourierBookingCreateState = {
   bookedCurrency: null,
   bookedAmountSource: null,
   labelUrl: null,
+  invoiceUrl: null,
 };
 const manualBookingInitial: ManualBookingState = { error: null, success: false, shipmentId: null, awbNo: null };
 const inputClass =
@@ -82,6 +84,19 @@ function ResultBanner({ state }: { state: CourierBookingCreateState }) {
                   once FedEx's label became a data: URI. */}
               <button type="button" onClick={() => openLabelUrl(state.labelUrl!)} className="font-semibold underline">
                 🖨 Download label
+              </button>
+              .
+            </>
+          )}
+          {state.invoiceUrl && (
+            <>
+              {" "}
+              {/* 2026-09-12 — the exact invoice PDF that was uploaded to FedEx
+                  for "Upload own invoice" bookings, now with the real AWB
+                  printed on it — same data:/blob: opening trick as the label
+                  above, for the same reason (openLabelUrl's header comment). */}
+              <button type="button" onClick={() => openLabelUrl(state.invoiceUrl!)} className="font-semibold underline">
+                🧾 Download invoice
               </button>
               .
             </>
@@ -389,6 +404,56 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
   const lookupFormRef = useRef<HTMLFormElement>(null);
   const autoSubmitted = useRef(false);
 
+  // 2026-09-12 — "invoice preview before booking" (explicit user request):
+  // controlled so the Preview button can be shown/hidden based on which
+  // Commercial Invoice Method is currently selected — a preview only makes
+  // sense for "Upload own invoice" (the only option where THIS app
+  // generates the invoice PDF at all).
+  const [electronicInvoiceType, setElectronicInvoiceType] = useState<string>("UPLOAD_OWN");
+  const fedexFormRef = useRef<HTMLFormElement>(null);
+  const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false);
+  const [invoicePreviewLoading, setInvoicePreviewLoading] = useState(false);
+  const [invoicePreviewError, setInvoicePreviewError] = useState<string | null>(null);
+  const [invoicePreviewBlobUrl, setInvoicePreviewBlobUrl] = useState<string | null>(null);
+
+  async function handlePreviewFedexInvoice() {
+    if (!fedexFormRef.current) return;
+    setInvoicePreviewLoading(true);
+    setInvoicePreviewError(null);
+    try {
+      const fd = new FormData(fedexFormRef.current);
+      const result = await previewFedexInvoicePdf(fd);
+      if (result.error || !result.dataUri) {
+        setInvoicePreviewError(result.error ?? "Could not generate the invoice preview.");
+        return;
+      }
+      // 2026-09-12 — same data: → blob: conversion as open-label-url.ts
+      // (see its header comment): Chrome doesn't reliably render a large
+      // data: URI handed straight to an <iframe src>, but a blob: URL
+      // (converted client-side via fetch(), no real network request for a
+      // data: URI) opens in Chrome's built-in PDF viewer exactly like any
+      // normal file.
+      const blob = await (await fetch(result.dataUri)).blob();
+      setInvoicePreviewBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(blob);
+      });
+      setInvoicePreviewOpen(true);
+    } catch (err) {
+      setInvoicePreviewError(err instanceof Error ? err.message : "Could not generate the invoice preview.");
+    } finally {
+      setInvoicePreviewLoading(false);
+    }
+  }
+
+  function closeInvoicePreview() {
+    setInvoicePreviewOpen(false);
+    setInvoicePreviewBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }
+
   const order = lookupState.order;
   const combinedIdsField = order?.combinedOrderIds.join(",") ?? "";
 
@@ -451,7 +516,7 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
           </div>
 
           {courier === "fedex" && (
-            <form action={fedexAction} className="space-y-4">
+            <form ref={fedexFormRef} action={fedexAction} className="space-y-4">
               <input type="hidden" name="order_id" value={order.id} />
               <input type="hidden" name="ref_no" value={order.refNo} />
               <input type="hidden" name="combined_order_ids" value={combinedIdsField} />
@@ -540,7 +605,12 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                     options kept available (with a warning) for once the account is
                     enabled. */}
                 <label className={labelClass}>Commercial Invoice Method</label>
-                <select name="electronic_invoice_type" defaultValue="UPLOAD_OWN" className={inputClass}>
+                <select
+                  name="electronic_invoice_type"
+                  value={electronicInvoiceType}
+                  onChange={(e) => setElectronicInvoiceType(e.target.value)}
+                  className={inputClass}
+                >
                   <option value="UPLOAD_OWN">I will upload my own invoice (this app generates + uploads a PDF)</option>
                   <option value="">None — paper invoice travels with shipment (always works)</option>
                   <option value="COMMERCIAL_INVOICE">FedEx creates Commercial Invoice electronically — needs FedEx to enable this first</option>
@@ -552,6 +622,28 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                   service to enable Electronic Trade Documents before using those; &quot;Upload own invoice&quot; and &quot;None&quot;
                   both work without that.
                 </p>
+                {/* 2026-09-12 — "invoice preview before booking": review the exact
+                    invoice PDF (with the fields currently filled in below) before
+                    committing to the real FedEx booking. Only shown for "Upload own
+                    invoice" — the only option where this app builds the PDF at all. */}
+                {electronicInvoiceType === "UPLOAD_OWN" && (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={handlePreviewFedexInvoice}
+                      disabled={invoicePreviewLoading}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {invoicePreviewLoading ? "Generating preview..." : "👁 Preview Invoice"}
+                    </button>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Fields below (Recipient, Goods Description, Declared Value, Weight/Dimensions) fill this preview — check it&apos;s
+                      correct before clicking &quot;Create FedEx Shipment&quot;. The AWB/Invoice No. shown here are placeholders — the
+                      real ones are assigned only once the shipment actually books.
+                    </p>
+                    {invoicePreviewError && <p className="mt-1 rounded-lg bg-red-50 px-2 py-1 text-[11px] text-red-800">{invoicePreviewError}</p>}
+                  </div>
+                )}
               </div>
               <SharedShipmentFields order={order} />
               <button
@@ -893,6 +985,39 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                 </button>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 2026-09-12 — "invoice preview before booking" modal. Same-page
+          popup (not a new tab) per the explicit design choice — closing it
+          never submits anything; the real FedEx booking only happens when
+          "Create FedEx Shipment" below is clicked, same as before this
+          feature existed. */}
+      {invoicePreviewOpen && invoicePreviewBlobUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          onClick={closeInvoicePreview}
+        >
+          <div
+            className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
+              <span className="text-sm font-semibold text-slate-700">Invoice Preview (draft — not yet booked)</span>
+              <button
+                type="button"
+                onClick={closeInvoicePreview}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+            <iframe src={invoicePreviewBlobUrl} title="FedEx invoice preview" className="min-h-0 flex-1" />
+            <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
+              Sahi lag raha hai to ye window band kar ke &quot;Create FedEx Shipment&quot; dabaiye. Kuch galat hai to niche fields edit
+              karke &quot;Preview Invoice&quot; dobara dabaiye.
+            </div>
           </div>
         </div>
       )}

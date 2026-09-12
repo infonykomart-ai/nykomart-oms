@@ -890,6 +890,14 @@ export type CourierBookingCreateState = {
   // file's header comment). ResultBanner in create-shipment-form.tsx shows
   // a download link only when this is non-null.
   labelUrl: string | null;
+  // 2026-09-12 — populated ONLY for FedEx's "I will upload my own invoice"
+  // option, once booking succeeds: a data:application/pdf;base64,... URI of
+  // the exact invoice PDF that was uploaded to FedEx (now with the real
+  // AWB/tracking number printed on it — see fedex-invoice-pdf.tsx's
+  // trackingNumber field). Every other courier/option leaves this null.
+  // ResultBanner shows a "Download invoice" link only when this is
+  // non-null, same pattern as labelUrl above.
+  invoiceUrl: string | null;
 };
 
 const CREATE_INITIAL: CourierBookingCreateState = {
@@ -900,6 +908,7 @@ const CREATE_INITIAL: CourierBookingCreateState = {
   bookedCurrency: null,
   bookedAmountSource: null,
   labelUrl: null,
+  invoiceUrl: null,
 };
 
 async function resolveShipperProfile(supabase: ServiceClient, companyId: string) {
@@ -940,6 +949,95 @@ async function resolveCompanyCustomsProfile(
     gstin: data?.gstin?.trim() || null,
     adCode: rawAdCode ? rawAdCode.split("/")[0]?.trim() || null : null,
   };
+}
+
+// 2026-09-12 — "preview the invoice before booking" (explicit user request:
+// let them mark it correct and confirm before the real FedEx booking +
+// label happen). Called directly from create-shipment-form.tsx (a plain
+// async function call with a FormData snapshot of the fedex <form>, NOT a
+// useActionState-wired submit — this must NOT book anything, just render
+// the same PDF createFedexBooking's "Upload own invoice" branch would
+// produce, using whatever the employee has typed into the form so far.
+//
+// Deliberately does NOT call resolveFedexLabelReferences (the Invoice No./
+// Master Invoice No. reservation createFedexBooking calls below) — that
+// function actually RESERVES real, company-wise-sequential serial numbers
+// (see reserveCsbVReferenceNumbers) in the database. Doing that just for a
+// preview the employee might cancel or re-edit would burn a real invoice
+// number for nothing. Instead this shows the same fallback the real flow
+// already uses when that reservation isn't available (poNo, i.e. the
+// order's own ref_no) and marks the whole PDF "DRAFT" (see
+// fedex-invoice-pdf.tsx's draft field) so nobody mistakes a preview's
+// placeholder invoice number for the real one that ends up on the actual
+// uploaded invoice.
+export async function previewFedexInvoicePdf(formData: FormData): Promise<{ error: string | null; dataUri: string | null }> {
+  const employee = await requireCapability("courier_booking_shipment");
+  const supabase = createServiceRoleClient();
+
+  const shipper = await resolveShipperProfile(supabase, employee.currentCompanyId);
+  if (!shipper) return { error: "No shipper profile set up for this company yet — fill in the shipper profile section above first.", dataUri: null };
+
+  const recipientCountry = resolveRecipientCountryCode(formData);
+  if ("error" in recipientCountry) return { error: recipientCountry.error, dataUri: null };
+
+  const weightKg = num(formData, "package_weight_kg");
+  const dims = { length: num(formData, "package_length_cm"), width: num(formData, "package_width_cm"), height: num(formData, "package_height_cm") };
+  const currencyCode = str(formData, "currency_code") || "USD";
+  const ddpDdu = (strOrNull(formData, "ddp_ddu") as FedexDdpDdu | null) ?? null;
+  const poNo = str(formData, "ref_no");
+  const customsValue = numOrNull(formData, "customs_value");
+  const customsProfile = await resolveCompanyCustomsProfile(supabase, employee.currentCompanyId);
+
+  try {
+    const pdfBuffer = await renderFedexInvoicePdf({
+      invoiceNo: poNo || "DRAFT",
+      masterInvoiceNo: null,
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      shipmentPurpose: (strOrNull(formData, "shipment_purpose") as FedexShipInput["shipmentPurpose"]) ?? null,
+      incoterm: ddpDdu ?? "DDU",
+      trackingNumber: null,
+      draft: true,
+      shipper: {
+        companyName: shipper.company_name,
+        contactName: shipper.contact_name,
+        address1: shipper.address1,
+        address2: shipper.address2,
+        city: shipper.city,
+        state: shipper.state,
+        postalCode: shipper.postcode,
+        countryCode: shipper.country_code,
+        phone: shipper.phone,
+        iec: customsProfile.iec,
+        gstin: customsProfile.gstin,
+        adCode: customsProfile.adCode,
+      },
+      recipient: {
+        companyName: strOrNull(formData, "recipient_company"),
+        contactName: str(formData, "recipient_name"),
+        address1: str(formData, "recipient_address1"),
+        address2: strOrNull(formData, "recipient_address2"),
+        city: str(formData, "recipient_city"),
+        state: strOrNull(formData, "recipient_state") ? stateCodeFor(str(formData, "recipient_state"), recipientCountry.code) : null,
+        postalCode: str(formData, "recipient_postcode"),
+        countryCode: recipientCountry.code,
+        phone: str(formData, "recipient_phone"),
+      },
+      item: {
+        description: strOrNull(formData, "goods_description") || "General merchandise",
+        hsCode: null,
+        harmonizedTariffNumber: strOrNull(formData, "harmonized_tariff_number"),
+        qty: 1,
+        unitValue: customsValue ?? 0,
+        totalValue: customsValue ?? 0,
+        currency: currencyCode,
+      },
+      weightKg,
+      dimsCm: dims,
+    });
+    return { error: null, dataUri: `data:application/pdf;base64,${pdfBuffer.toString("base64")}` };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not generate the invoice preview.", dataUri: null };
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -1131,6 +1229,14 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       reservedReferenceNumbers: fedexReferences,
     });
 
+    // 2026-09-12 — the finalized invoice PDF's data: URI (real AWB printed
+    // on it), handed back to the UI alongside labelUrl so the employee can
+    // review/download the exact document that was uploaded to FedEx — see
+    // CourierBookingCreateState.invoiceUrl's header comment. Stays null for
+    // every option except "Upload own invoice" (below), and stays null even
+    // there if PDF generation itself throws (see the catch block below).
+    let invoiceDataUri: string | null = null;
+
     // 2026-09-12 — "I will upload my own invoice" ETD option. Deliberately
     // AFTER the shipment already succeeded (post-shipment upload flow — see
     // fedex-documents.ts's header comment for why) and wrapped in its own
@@ -1189,7 +1295,12 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
           },
           weightKg,
           dimsCm: dims,
+          // 2026-09-12 — final invoice (not a preview): real AWB, no DRAFT
+          // badge. See FedexInvoicePdfInput's header comments.
+          trackingNumber: result.trackingNo,
+          draft: false,
         });
+        invoiceDataUri = `data:application/pdf;base64,${pdfBuffer.toString("base64")}`;
 
         const uploadResult = await uploadFedexPostShipmentInvoice(
           {
@@ -1260,7 +1371,7 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null, invoiceUrl: invoiceDataUri };
   } catch (err) {
     const message = withEtdNotEnabledHint(withAddressErrorHint(err instanceof Error ? err.message : String(err), formData));
     await logAttempt(supabase, { courier: "fedex", orderId, serviceCode: input.serviceType, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -1420,7 +1531,7 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null, invoiceUrl: null };
   } catch (err) {
     const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "ups", orderId, serviceCode: input.serviceCode, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -1589,7 +1700,7 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null, invoiceUrl: null };
   } catch (err) {
     const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "aramex", orderId, serviceCode: input.productType, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -1719,7 +1830,7 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null, invoiceUrl: null };
   } catch (err) {
     const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "delhivery", orderId, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -1870,7 +1981,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null, invoiceUrl: null };
   } catch (err) {
     const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "shiprocket", orderId, status: "failed", errorMessage: message, createdBy: employee.id });
@@ -2041,7 +2152,7 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
 
     revalidatePath("/dashboard/courier-booking");
     revalidatePath("/dashboard/orders");
-    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
+    return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null, invoiceUrl: null };
   } catch (err) {
     const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
     await logAttempt(supabase, { courier: "dhl", orderId, serviceCode: input.productCode, ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
