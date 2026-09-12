@@ -89,37 +89,42 @@ export type FedexShipInput = {
   // below) and only when non-null — omitted otherwise, same
   // never-send-empty pattern used throughout this file.
   shipmentPurpose?: "SOLD" | "NOT_SOLD" | "GIFT" | "SAMPLE" | "PERSONAL_EFFECTS" | "REPAIR_AND_RETURN" | null;
-  // 2026-09-12 — Electronic Trade Documents (ETD). Follow-up to the
-  // Shipment Purpose field above, from the same real FedEx Ship Manager
-  // website flow the user showed: after Shipment Purpose comes "Customs
-  // documentation" with a "How would you like to complete your commercial
-  // invoice?" choice, the middle option being "I want FedEx to help me
-  // create a commercial invoice" — FedEx builds the commercial invoice
-  // itself from the commodity/customs data already in this request and
-  // transmits it to customs electronically, instead of requiring a
-  // printed paper invoice to travel with the shipment (this is what cuts
-  // the label+paperwork from 4 pages to 2, per the user's own framing).
+  // 2026-09-12 — Electronic Trade Documents (ETD). From the real FedEx
+  // Ship Manager website flow the user showed: after Shipment Purpose
+  // comes "Customs documentation" with a "How would you like to complete
+  // your commercial invoice?" choice, with 3 real options — "I will
+  // upload my own invoice" / "I want FedEx to help me create a commercial
+  // invoice" / "I want FedEx to help me create a proforma invoice".
   //
-  // Deliberately scoped to ONLY that one option this round (the user
-  // explicitly chose "Shipment Purpose field first, ETD as a separate
-  // round" earlier, then asked to start the ETD round) — NOT the "I will
-  // upload my own invoice" option, which would need a second FedEx API
-  // call (Upload Documents) and a FedEx-formatted invoice PDF generated
-  // BEFORE booking; that's a bigger, separate piece of work.
+  // First round (same day) built ONLY the middle option (FedEx builds +
+  // electronically transmits the commercial invoice from the
+  // customs/commodity data already in this request — no paper invoice
+  // needed, which is what cuts the label+paperwork from 4 pages to 2).
+  // This follow-up round adds the third option (proforma) too — same
+  // mechanism, different FedEx document type, no new infrastructure
+  // needed. The FIRST option ("I will upload my own invoice") is
+  // deliberately still NOT built: it needs a second, separate FedEx API
+  // call (Upload Documents) plus generating an actual FedEx-formatted
+  // invoice PDF file BEFORE booking — this app has no PDF-file-generation
+  // capability today (its existing invoice "view" is an HTML page users
+  // print from their own browser, not a server-generated PDF), so that
+  // option is real, separate, bigger work — flagged back to the user
+  // rather than guessed at.
   //
   // FedEx's documented mechanism for "let FedEx create it electronically"
   // is requestedShipment.shipmentSpecialServices.specialServiceTypes
   // including "ELECTRONIC_TRADE_DOCUMENTS", plus
-  // shipmentSpecialServices.etdDetail.requestedDocumentTypes:
-  // ["COMMERCIAL_INVOICE"] — built from FedEx's public Web Services/REST
+  // shipmentSpecialServices.etdDetail.requestedDocumentTypes naming which
+  // document FedEx should build — "COMMERCIAL_INVOICE" or
+  // "PROFORMA_INVOICE" — built from FedEx's public Web Services/REST
   // documentation only, NOT yet confirmed against a real account/booking
-  // (same status as shipmentPurpose above). Defaults to true (opt-OUT,
-  // not opt-in) matching the real FedEx page's own checkbox, which is
-  // pre-checked and labelled "(recommended)" — but is a plain boolean the
-  // booking form can uncheck per-shipment as a safety valve if a real
-  // booking ever rejects it, with zero code change needed to fall back to
-  // the pre-ETD behavor.
-  requestElectronicInvoice?: boolean;
+  // (same status as shipmentPurpose above). null means neither (the old,
+  // pre-ETD paper-invoice behavior) — the booking form defaults to
+  // "COMMERCIAL_INVOICE" (matching the real FedEx page's own default,
+  // pre-checked "recommended" option) but this is a plain dropdown that
+  // can be switched to null per-shipment as a safety valve if a real
+  // booking ever rejects it, with zero code change needed to fall back.
+  electronicInvoiceType?: "COMMERCIAL_INVOICE" | "PROFORMA_INVOICE" | null;
   // The customs classification / Harmonized Tariff Number for the goods
   // (e.g. "5705.00.20.30" — see CourierBookingLookupOrder.harmonizedTariffNumber
   // in courier-booking/actions.ts for where this comes from: the order's
@@ -389,17 +394,30 @@ export async function createFedexShipment(
     };
 
     // 2026-09-12 — Electronic Trade Documents. See
-    // FedexShipInput.requestElectronicInvoice's header comment for the
-    // full reasoning and the exact scope decided with the user (FedEx
-    // auto-generates + electronically transmits the commercial invoice
-    // from the customsClearanceDetail data above — this app never
-    // uploads its own invoice PDF to FedEx). Only added for international
-    // shipments (ETD is meaningless without customs clearance) and only
-    // when the booking form's checkbox for it is on.
-    if (input.requestElectronicInvoice) {
+    // FedexShipInput.electronicInvoiceType's header comment for the full
+    // reasoning and the exact scope decided with the user (FedEx
+    // auto-generates + electronically transmits either the commercial
+    // invoice or the proforma invoice from the customsClearanceDetail
+    // data above — this app never uploads its own invoice PDF to FedEx).
+    // Only added for international shipments (ETD is meaningless without
+    // customs clearance) and only when the booking form's dropdown for it
+    // isn't set to "none".
+    //
+    // 2026-09-12 (same-day correction) — CONFIRMED against a real FedEx
+    // account: the user's first live test with only "ELECTRONIC_TRADE_
+    // DOCUMENTS" in specialServiceTypes got a real 400 back from FedEx:
+    // "COMMERCIAL_OR_PRO_FORMA_INVOICE is required to process your
+    // electronic trade document request." So FedEx needs BOTH special
+    // service types together — "ELECTRONIC_TRADE_DOCUMENTS" (send
+    // documents electronically at all) AND "COMMERCIAL_OR_PRO_FORMA_
+    // INVOICE" (which document family this is) — etdDetail.
+    // requestedDocumentTypes then narrows it to the specific one
+    // (COMMERCIAL_INVOICE or PROFORMA_INVOICE). This one piece is now
+    // confirmed by a real error message, not just public docs.
+    if (input.electronicInvoiceType) {
       requestedShipment.shipmentSpecialServices = {
-        specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS"],
-        etdDetail: { requestedDocumentTypes: ["COMMERCIAL_INVOICE"] },
+        specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS", "COMMERCIAL_OR_PRO_FORMA_INVOICE"],
+        etdDetail: { requestedDocumentTypes: [input.electronicInvoiceType] },
       };
     }
   }

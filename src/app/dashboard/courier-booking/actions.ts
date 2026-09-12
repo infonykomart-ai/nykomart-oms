@@ -992,11 +992,10 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     // header comment (mapping not yet confirmed against a real account).
     shipmentPurpose: (strOrNull(formData, "shipment_purpose") as FedexShipInput["shipmentPurpose"]) ?? null,
     // 2026-09-12 — Electronic Trade Documents. See fedex-ship.ts's
-    // FedexShipInput.requestElectronicInvoice header comment for scope.
-    // Checkbox default is checked (see create-shipment-form.tsx) — an
-    // unchecked box simply doesn't appear in FormData at all (standard
-    // HTML checkbox behavior), so its absence IS the "off" signal here.
-    requestElectronicInvoice: str(formData, "etd_electronic_invoice") === "on",
+    // FedexShipInput.electronicInvoiceType header comment for scope
+    // (commercial/proforma both build+transmit via FedEx electronically;
+    // "none" falls back to the old paper-invoice behavior).
+    electronicInvoiceType: (strOrNull(formData, "electronic_invoice_type") as FedexShipInput["electronicInvoiceType"]) ?? null,
     harmonizedTariffNumber: strOrNull(formData, "harmonized_tariff_number"),
     // 2026-09-11 — was a single referenceNo (-> FedEx's REF: line only).
     // Built from a real FedEx test label the user uploaded, showing 3 more

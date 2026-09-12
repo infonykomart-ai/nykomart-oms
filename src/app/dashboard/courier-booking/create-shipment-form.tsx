@@ -508,32 +508,37 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                 </div>
                 <div>
                   {/* 2026-09-12 — for FedEx's Electronic Trade Documents (see the
-                      checkbox below) — see CourierBookingLookupOrder.harmonizedTariffNumber
+                      dropdown below) — see CourierBookingLookupOrder.harmonizedTariffNumber
                       for where the default comes from (the order's Item Category). */}
                   <label className={labelClass}>Harmonized Tariff No. (for e-Invoice)</label>
                   <input name="harmonized_tariff_number" defaultValue={order.harmonizedTariffNumber ?? ""} placeholder="e.g. 5705.00.20.30" className={inputClass} />
                 </div>
               </div>
               <div className="rounded-lg bg-slate-50 px-3 py-2">
-                {/* 2026-09-12 — "Commercial invoice electronically FedEx ko chala
-                    jaye, label 4 se 2 page ho jaye" — see fedex-ship.ts's
-                    FedexShipInput.requestElectronicInvoice header comment for the
-                    exact scope (FedEx builds + transmits the commercial invoice
-                    from the customs data already on this form; this app does not
-                    upload its own invoice PDF — that's a separate, bigger piece
-                    of work, deliberately not built this round). Defaults CHECKED,
-                    matching FedEx's own page (labelled "recommended" there) — left
-                    as a plain checkbox rather than force-enabled so it can be
-                    turned off per-shipment as a safety valve if a real booking
-                    ever rejects it, with no code change needed to fall back to
-                    the old (paper-invoice) behavior. */}
-                <label className="flex items-start gap-2 text-xs text-slate-700">
-                  <input type="checkbox" name="etd_electronic_invoice" defaultChecked className="mt-0.5" />
-                  <span>
-                    Send commercial invoice to FedEx electronically <span className="text-slate-400">(recommended — fewer label pages; uses the Shipment Purpose, Goods
-                    Description, Declared Value and Harmonized Tariff No. above)</span>
-                  </span>
-                </label>
+                {/* 2026-09-12 — from the real FedEx page's "How would you like to
+                    complete your commercial invoice?" dropdown — see fedex-ship.ts's
+                    FedexShipInput.electronicInvoiceType header comment for the exact
+                    scope. Only 2 of FedEx's real 3 options are built: FedEx building
+                    either the commercial or the proforma invoice electronically
+                    (both use the customs data already on this form, no extra file
+                    needed). "I will upload my own invoice" is NOT built — it needs a
+                    separate FedEx document-upload API call plus a real PDF file
+                    generated before booking, which this app has no capability for
+                    today — deliberately flagged back to the user rather than
+                    guessed at, instead of appearing here as a silently-broken
+                    option. Defaults to Commercial (recommended), matching FedEx's
+                    own page's default — "None" falls back to the old paper-invoice
+                    behavior as a safety valve if a real booking ever rejects ETD. */}
+                <label className={labelClass}>Commercial Invoice Method</label>
+                <select name="electronic_invoice_type" defaultValue="COMMERCIAL_INVOICE" className={inputClass}>
+                  <option value="COMMERCIAL_INVOICE">FedEx creates Commercial Invoice electronically (recommended)</option>
+                  <option value="PROFORMA_INVOICE">FedEx creates Proforma Invoice electronically</option>
+                  <option value="">None — paper invoice travels with shipment (old behavior)</option>
+                </select>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Uses the Shipment Purpose, Goods Description, Declared Value and Harmonized Tariff No. above. &quot;I will upload my
+                  own invoice&quot; (FedEx&apos;s 3rd option) isn&apos;t available yet — ask if you need it.
+                </p>
               </div>
               <SharedShipmentFields order={order} />
               <button
