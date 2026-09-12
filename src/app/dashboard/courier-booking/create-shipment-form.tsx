@@ -495,10 +495,7 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                 <div>
                   {/* 2026-09-12 — from the real FedEx Ship Manager website flow the
                       user shared: a required "Shipment Purpose" step before Customs
-                      documentation. This app never had an equivalent field. Only
-                      the field itself is added this round — the fuller multi-step
-                      Customs documentation / Electronic Trade Documents flow shown
-                      alongside it was deliberately deferred to a separate round. */}
+                      documentation. This app never had an equivalent field. */}
                   <label className={labelClass}>Shipment Purpose</label>
                   <select name="shipment_purpose" defaultValue="SOLD" className={inputClass}>
                     <option value="SOLD">Commercial</option>
@@ -509,6 +506,34 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                     <option value="NOT_SOLD">Personal Use</option>
                   </select>
                 </div>
+                <div>
+                  {/* 2026-09-12 — for FedEx's Electronic Trade Documents (see the
+                      checkbox below) — see CourierBookingLookupOrder.harmonizedTariffNumber
+                      for where the default comes from (the order's Item Category). */}
+                  <label className={labelClass}>Harmonized Tariff No. (for e-Invoice)</label>
+                  <input name="harmonized_tariff_number" defaultValue={order.harmonizedTariffNumber ?? ""} placeholder="e.g. 5705.00.20.30" className={inputClass} />
+                </div>
+              </div>
+              <div className="rounded-lg bg-slate-50 px-3 py-2">
+                {/* 2026-09-12 — "Commercial invoice electronically FedEx ko chala
+                    jaye, label 4 se 2 page ho jaye" — see fedex-ship.ts's
+                    FedexShipInput.requestElectronicInvoice header comment for the
+                    exact scope (FedEx builds + transmits the commercial invoice
+                    from the customs data already on this form; this app does not
+                    upload its own invoice PDF — that's a separate, bigger piece
+                    of work, deliberately not built this round). Defaults CHECKED,
+                    matching FedEx's own page (labelled "recommended" there) — left
+                    as a plain checkbox rather than force-enabled so it can be
+                    turned off per-shipment as a safety valve if a real booking
+                    ever rejects it, with no code change needed to fall back to
+                    the old (paper-invoice) behavior. */}
+                <label className="flex items-start gap-2 text-xs text-slate-700">
+                  <input type="checkbox" name="etd_electronic_invoice" defaultChecked className="mt-0.5" />
+                  <span>
+                    Send commercial invoice to FedEx electronically <span className="text-slate-400">(recommended — fewer label pages; uses the Shipment Purpose, Goods
+                    Description, Declared Value and Harmonized Tariff No. above)</span>
+                  </span>
+                </label>
               </div>
               <SharedShipmentFields order={order} />
               <button

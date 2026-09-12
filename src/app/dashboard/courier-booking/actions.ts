@@ -179,7 +179,22 @@ export type CourierBookingLookupOrder = {
   // buyer_name_address) at order-entry time and can be wrong/blank — prefer
   // this field as the booking form's Country default.
   buyerDestinationCountry: string | null;
+  // 2026-09-12 — was ONLY dispatch_invoices.hsn_no (post-dispatch, same
+  // "always null pre-dispatch" gap as buyerName/buyerMail/buyerContact
+  // above — booking normally happens BEFORE dispatch). Now also falls
+  // back to item_categories.hsn_code (the order's own Item Category, same
+  // relation goodsDescription below already joins) so a first-time
+  // booking gets a real default instead of always blank.
   hsnNo: string | null;
+  // 2026-09-12 — NEW: item_categories.harmonized_tariff_number (the
+  // customs classification code, e.g. "5705.00.20.30" — distinct from the
+  // domestic hsnNo above, e.g. "57050039"; the real CSB-V invoice PDF
+  // prints both as separate columns). Used for FedEx's Electronic Trade
+  // Documents feature (see fedex-ship.ts's shipmentSpecialServices/
+  // harmonizedCode comments) — FedEx's commodity-level harmonizedCode
+  // field needs this, not hsnNo. Null when the order's Item Category has
+  // no code set in Admin.
+  harmonizedTariffNumber: string | null;
   skuLabel: string | null;
   // 2026-09-10 — "goods description order me already hai to booking page
   // par kyu nahi aa rahi": the Create Shipment form's "Goods Description"
@@ -267,7 +282,10 @@ export async function lookupOrderForCourierBooking(
       // added vat_number/eori_number/ioss_number/tax_id — see buyerTaxId.
       // 2026-09-11: added store_id/order_value_original/order_currency —
       // see declaredValueDefault below.
-      "id, ref_no, store_id, buyer_name_address, contact_no, email_id, sku_label, size_label, qty, order_value_inr, order_value_original, order_currency, buyer_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, destination_country, weight_kg, length_cm, width_cm, height_cm, item_categories(name), vat_number, eori_number, ioss_number, tax_id"
+      // 2026-09-12: item_categories(name) -> item_categories(name, hsn_code,
+      // harmonized_tariff_number) — see hsnNo/harmonizedTariffNumber on
+      // CourierBookingLookupOrder for why.
+      "id, ref_no, store_id, buyer_name_address, contact_no, email_id, sku_label, size_label, qty, order_value_inr, order_value_original, order_currency, buyer_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, destination_country, weight_kg, length_cm, width_cm, height_cm, item_categories(name, hsn_code, harmonized_tariff_number), vat_number, eori_number, ioss_number, tax_id"
     )
     .eq("ref_no", refNo)
     .in("company_id", employee.companyIds);
@@ -354,8 +372,12 @@ export async function lookupOrderForCourierBooking(
   // for item_categories(name) (see documents/actions.ts's
   // lookupOrderForPurchaseBill) — object for most PostgREST versions,
   // array on some, so both are handled.
-  const category = order.item_categories as unknown as { name: string } | { name: string }[] | null;
-  const categoryName = Array.isArray(category) ? category[0]?.name ?? null : category?.name ?? null;
+  const category = order.item_categories as unknown as
+    | { name: string; hsn_code: string | null; harmonized_tariff_number: string | null }
+    | { name: string; hsn_code: string | null; harmonized_tariff_number: string | null }[]
+    | null;
+  const categoryRow = Array.isArray(category) ? category[0] ?? null : category;
+  const categoryName = categoryRow?.name ?? null;
   const goodsDescription = categoryName
     ? order.size_label
       ? `${categoryName}, Size ${order.size_label}`
@@ -406,7 +428,8 @@ export async function lookupOrderForCourierBooking(
       buyerState: parsedFallback && parsedFallback.state ? parsedFallback.state : order.buyer_state,
       buyerPostalCode: parsedFallback && parsedFallback.postalCode ? parsedFallback.postalCode : order.buyer_postal_code,
       buyerDestinationCountry: order.destination_country ?? (parsedFallback && parsedFallback.country ? parsedFallback.country : null),
-      hsnNo: dispatch?.hsn_no ?? null,
+      hsnNo: dispatch?.hsn_no ?? categoryRow?.hsn_code ?? null,
+      harmonizedTariffNumber: categoryRow?.harmonized_tariff_number ?? null,
       skuLabel: order.sku_label,
       goodsDescription,
       qty: order.qty,
@@ -968,6 +991,13 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     // 2026-09-12 — see fedex-ship.ts's FedexShipInput.shipmentPurpose
     // header comment (mapping not yet confirmed against a real account).
     shipmentPurpose: (strOrNull(formData, "shipment_purpose") as FedexShipInput["shipmentPurpose"]) ?? null,
+    // 2026-09-12 — Electronic Trade Documents. See fedex-ship.ts's
+    // FedexShipInput.requestElectronicInvoice header comment for scope.
+    // Checkbox default is checked (see create-shipment-form.tsx) — an
+    // unchecked box simply doesn't appear in FormData at all (standard
+    // HTML checkbox behavior), so its absence IS the "off" signal here.
+    requestElectronicInvoice: str(formData, "etd_electronic_invoice") === "on",
+    harmonizedTariffNumber: strOrNull(formData, "harmonized_tariff_number"),
     // 2026-09-11 — was a single referenceNo (-> FedEx's REF: line only).
     // Built from a real FedEx test label the user uploaded, showing 3 more
     // blank printed lines (PO:/INV:/DEPT:) — see fedex-ship.ts's header

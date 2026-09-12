@@ -89,6 +89,50 @@ export type FedexShipInput = {
   // below) and only when non-null — omitted otherwise, same
   // never-send-empty pattern used throughout this file.
   shipmentPurpose?: "SOLD" | "NOT_SOLD" | "GIFT" | "SAMPLE" | "PERSONAL_EFFECTS" | "REPAIR_AND_RETURN" | null;
+  // 2026-09-12 — Electronic Trade Documents (ETD). Follow-up to the
+  // Shipment Purpose field above, from the same real FedEx Ship Manager
+  // website flow the user showed: after Shipment Purpose comes "Customs
+  // documentation" with a "How would you like to complete your commercial
+  // invoice?" choice, the middle option being "I want FedEx to help me
+  // create a commercial invoice" — FedEx builds the commercial invoice
+  // itself from the commodity/customs data already in this request and
+  // transmits it to customs electronically, instead of requiring a
+  // printed paper invoice to travel with the shipment (this is what cuts
+  // the label+paperwork from 4 pages to 2, per the user's own framing).
+  //
+  // Deliberately scoped to ONLY that one option this round (the user
+  // explicitly chose "Shipment Purpose field first, ETD as a separate
+  // round" earlier, then asked to start the ETD round) — NOT the "I will
+  // upload my own invoice" option, which would need a second FedEx API
+  // call (Upload Documents) and a FedEx-formatted invoice PDF generated
+  // BEFORE booking; that's a bigger, separate piece of work.
+  //
+  // FedEx's documented mechanism for "let FedEx create it electronically"
+  // is requestedShipment.shipmentSpecialServices.specialServiceTypes
+  // including "ELECTRONIC_TRADE_DOCUMENTS", plus
+  // shipmentSpecialServices.etdDetail.requestedDocumentTypes:
+  // ["COMMERCIAL_INVOICE"] — built from FedEx's public Web Services/REST
+  // documentation only, NOT yet confirmed against a real account/booking
+  // (same status as shipmentPurpose above). Defaults to true (opt-OUT,
+  // not opt-in) matching the real FedEx page's own checkbox, which is
+  // pre-checked and labelled "(recommended)" — but is a plain boolean the
+  // booking form can uncheck per-shipment as a safety valve if a real
+  // booking ever rejects it, with zero code change needed to fall back to
+  // the pre-ETD behavor.
+  requestElectronicInvoice?: boolean;
+  // The customs classification / Harmonized Tariff Number for the goods
+  // (e.g. "5705.00.20.30" — see CourierBookingLookupOrder.harmonizedTariffNumber
+  // in courier-booking/actions.ts for where this comes from: the order's
+  // Item Category, same one goodsDescription/commodityDescription above
+  // already uses). FedEx's own Rate API documentation shows a real
+  // customerMessage warning ("the harmonized code... is missing or
+  // invalid; estimated duties and taxes were not returned") for a
+  // commodity with none set — suggesting a missing code degrades the
+  // result rather than hard-failing the request, so this is sent
+  // best-effort (omitted when null) rather than made a required field
+  // that could block a booking for an Item Category with no code on file
+  // in Admin yet.
+  harmonizedTariffNumber?: string | null;
   // 2026-09-11 — built from a REAL FedEx test label the user uploaded
   // (SHIP DATE 10SEP26, a Combine & Book "1/2" test shipment). That label
   // showed FOUR separate printed reference lines: REF:, PO:, INV:, DEPT:.
@@ -335,9 +379,29 @@ export async function createFedexShipment(
           weight: { units: "KG", value: input.packageWeightKg },
           unitPrice: { amount: input.customsValue ?? 0, currency: input.currencyCode },
           customsValue: { amount: input.customsValue ?? 0, currency: input.currencyCode },
+          // 2026-09-12 — see FedexShipInput.harmonizedTariffNumber's header
+          // comment. Omitted entirely when not on file, rather than sent
+          // as an empty string — same never-send-empty pattern as every
+          // other optional field in this file.
+          ...(input.harmonizedTariffNumber ? { harmonizedCode: input.harmonizedTariffNumber } : {}),
         },
       ],
     };
+
+    // 2026-09-12 — Electronic Trade Documents. See
+    // FedexShipInput.requestElectronicInvoice's header comment for the
+    // full reasoning and the exact scope decided with the user (FedEx
+    // auto-generates + electronically transmits the commercial invoice
+    // from the customsClearanceDetail data above — this app never
+    // uploads its own invoice PDF to FedEx). Only added for international
+    // shipments (ETD is meaningless without customs clearance) and only
+    // when the booking form's checkbox for it is on.
+    if (input.requestElectronicInvoice) {
+      requestedShipment.shipmentSpecialServices = {
+        specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS"],
+        etdDetail: { requestedDocumentTypes: ["COMMERCIAL_INVOICE"] },
+      };
+    }
   }
 
   const body = {
