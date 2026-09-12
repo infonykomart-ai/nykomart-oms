@@ -310,6 +310,25 @@ export async function createFedexShipment(
   if (input.references.invoiceNumber) customerReferences.push({ customerReferenceType: "INVOICE_NUMBER", value: input.references.invoiceNumber });
   if (input.references.departmentNumber) customerReferences.push({ customerReferenceType: "DEPARTMENT_NUMBER", value: input.references.departmentNumber });
 
+  // 2026-09-12 (second same-day correction) — a second real live booking,
+  // now WITH "COMMERCIAL_OR_PRO_FORMA_INVOICE" added at the shipment level
+  // (the fix for the FIRST real error, see the etdDetail comment below),
+  // got a new real 400: "Package level Special Service cannot be entered
+  // at the shipment level." The only special service type added between
+  // that first fix and this new error is COMMERCIAL_OR_PRO_FORMA_INVOICE
+  // itself — "ELECTRONIC_TRADE_DOCUMENTS" alone was already proven fine at
+  // shipment level by the FIRST test (that error was about a missing
+  // sibling value, never about the level it was entered at). So FedEx is
+  // classifying COMMERCIAL_OR_PRO_FORMA_INVOICE as a PACKAGE-level special
+  // service, not a shipment-level one — it has to go under each package's
+  // own packageSpecialServices, not requestedShipment.shipmentSpecialServices.
+  // Computed once here (same "isInternational + electronicInvoiceType"
+  // gate as the shipment-level ETD block further down) so it's available
+  // when requestedPackageLineItems is built, before that gate's own code
+  // runs later in this function.
+  const packageSpecialServiceTypes: string[] =
+    isInternational && input.electronicInvoiceType ? ["COMMERCIAL_OR_PRO_FORMA_INVOICE"] : [];
+
   const requestedShipment: Record<string, unknown> = {
     shipper: {
       contact: { personName: input.shipper.contactName, companyName: input.shipper.companyName, phoneNumber: input.shipper.phone },
@@ -357,6 +376,10 @@ export async function createFedexShipment(
         weight: { units: "KG", value: input.packageWeightKg },
         dimensions: { length: input.packageDimsCm.length, width: input.packageDimsCm.width, height: input.packageDimsCm.height, units: "CM" },
         customerReferences,
+        // See packageSpecialServiceTypes' header comment above — this is
+        // where COMMERCIAL_OR_PRO_FORMA_INVOICE now lives (package level),
+        // moved out of shipmentSpecialServices after a real FedEx 400.
+        ...(packageSpecialServiceTypes.length ? { packageSpecialServices: { specialServiceTypes: packageSpecialServiceTypes } } : {}),
       },
     ],
   };
@@ -403,20 +426,30 @@ export async function createFedexShipment(
     // customs clearance) and only when the booking form's dropdown for it
     // isn't set to "none".
     //
-    // 2026-09-12 (same-day correction) — CONFIRMED against a real FedEx
+    // 2026-09-12 (same-day correction #1) — CONFIRMED against a real FedEx
     // account: the user's first live test with only "ELECTRONIC_TRADE_
     // DOCUMENTS" in specialServiceTypes got a real 400 back from FedEx:
     // "COMMERCIAL_OR_PRO_FORMA_INVOICE is required to process your
-    // electronic trade document request." So FedEx needs BOTH special
-    // service types together — "ELECTRONIC_TRADE_DOCUMENTS" (send
-    // documents electronically at all) AND "COMMERCIAL_OR_PRO_FORMA_
-    // INVOICE" (which document family this is) — etdDetail.
-    // requestedDocumentTypes then narrows it to the specific one
-    // (COMMERCIAL_INVOICE or PROFORMA_INVOICE). This one piece is now
-    // confirmed by a real error message, not just public docs.
+    // electronic trade document request." So FedEx needs the
+    // COMMERCIAL_OR_PRO_FORMA_INVOICE special service present somewhere in
+    // the request too (which document family this is), alongside
+    // "ELECTRONIC_TRADE_DOCUMENTS" (send documents electronically at all)
+    // — etdDetail.requestedDocumentTypes then narrows it to the specific
+    // one (COMMERCIAL_INVOICE or PROFORMA_INVOICE).
+    //
+    // 2026-09-12 (same-day correction #2) — a second real live test, now
+    // WITH COMMERCIAL_OR_PRO_FORMA_INVOICE added here at shipment level,
+    // got a DIFFERENT real 400: "Package level Special Service cannot be
+    // entered at the shipment level." That means FedEx classifies
+    // COMMERCIAL_OR_PRO_FORMA_INVOICE as a PACKAGE-level special service —
+    // it has been moved to requestedPackageLineItems[].packageSpecialServices
+    // (see packageSpecialServiceTypes above, computed earlier in this
+    // function). Only "ELECTRONIC_TRADE_DOCUMENTS" stays here at the
+    // shipment level — proven fine at this level by the FIRST test (that
+    // error was about a missing sibling value, never about its level).
     if (input.electronicInvoiceType) {
       requestedShipment.shipmentSpecialServices = {
-        specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS", "COMMERCIAL_OR_PRO_FORMA_INVOICE"],
+        specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS"],
         etdDetail: { requestedDocumentTypes: [input.electronicInvoiceType] },
       };
     }
