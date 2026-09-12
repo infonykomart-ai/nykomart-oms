@@ -854,6 +854,23 @@ async function resolveShipperProfile(supabase: ServiceClient, companyId: string)
   return data;
 }
 
+// 2026-09-11 — corrects an earlier assumption. A real FedEx test label
+// (PO-A707, uploaded by the user) plus the matching CSB-V invoice PDF
+// showed company_profiles.ad_code is stored as "<code>/<IFSC>" (real
+// value: "0304993/PUNB0614300" — verified via a read-only DB check). The
+// user explicitly asked for "sirf code" (only the code) on the label, so
+// this splits on "/" and keeps just the first segment. Returns null (and
+// the caller omits the field entirely) when the company has no AD code
+// set or it's blank after trimming — same "never send present-but-empty"
+// pattern used for the other optional FedEx reference fields.
+async function resolveFedexAdCode(supabase: ServiceClient, companyId: string): Promise<string | null> {
+  const { data } = await supabase.from("company_profiles").select("ad_code").eq("company_id", companyId).maybeSingle();
+  const raw = data?.ad_code?.trim();
+  if (!raw) return null;
+  const codeOnly = raw.split("/")[0]?.trim();
+  return codeOnly || null;
+}
+
 // -----------------------------------------------------------------------
 // FedEx
 // -----------------------------------------------------------------------
@@ -891,11 +908,13 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
   const poNo = str(formData, "ref_no");
   const combinedOrderIds = resolveCombinedOrderIds(formData, orderId);
   const invoiceDate = new Date().toISOString().slice(0, 10);
-  // 2026-09-11 — reserve the REAL Invoice No/Dept Ref No BEFORE calling
-  // FedEx, so they can be printed on the label itself (see
+  // 2026-09-11 — reserve the REAL Invoice No/Master Invoice No/Dept Ref No
+  // BEFORE calling FedEx, so they can be printed on the label itself (see
   // resolveFedexLabelReferences's header comment). null when domestic, or
   // when reservation failed for any reason (booking still proceeds).
   const fedexReferences = await resolveFedexLabelReferences(supabase, { orderIds: combinedOrderIds, ddpDdu, invoiceDate });
+  // 2026-09-11 — company-wise Bank AD Code (see resolveFedexAdCode above).
+  const adCode = await resolveFedexAdCode(supabase, employee.currentCompanyId);
 
   const input = {
     serviceType: str(formData, "service_code") || "INTERNATIONAL_PRIORITY",
@@ -937,9 +956,26 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     // Built from a real FedEx test label the user uploaded, showing 3 more
     // blank printed lines (PO:/INV:/DEPT:) — see fedex-ship.ts's header
     // comment for the full mapping.
+    //
+    // 2026-09-11 (correction, same day) — a SECOND real test label
+    // (PO-A707) plus its matching CSB-V invoice PDF showed the first pass
+    // had REF:/PO: wrong: both were sent as the order's own ref_no
+    // (poNo). The user corrected this directly, pointing at the real
+    // invoice's own "Master Invoice No.: NYM-26-27-009" and
+    // "Bank AD Code: 0304993" lines — REF: should carry the Master
+    // Invoice No (company-wise serial number, same one the auto-generated
+    // CSB-V invoice carries — reserved up front by
+    // resolveFedexLabelReferences so it's available before FedEx is
+    // called), and PO: should carry the Bank AD Code (company_profiles.ad_code,
+    // code portion only — see resolveFedexAdCode above). The order's own
+    // ref_no (poNo) is kept only as a fallback for customerRef so REF:
+    // is never blank if the Master Invoice No reservation failed (e.g. a
+    // domestic shipment, or the store's invoice prefix isn't set up) —
+    // it no longer has a dedicated slot on the label now that both its
+    // previous homes are reassigned.
     references: {
-      customerRef: poNo,
-      poNumber: poNo || null,
+      customerRef: fedexReferences?.masterInvoiceNo ?? poNo,
+      poNumber: adCode,
       invoiceNumber: fedexReferences?.invoiceNo ?? null,
       departmentNumber: fedexReferences?.departmentReferenceNo ?? null,
     },

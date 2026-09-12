@@ -77,11 +77,10 @@ export type FedexShipInput = {
   commodityDescription?: string | null;
   // 2026-09-11 — built from a REAL FedEx test label the user uploaded
   // (SHIP DATE 10SEP26, a Combine & Book "1/2" test shipment). That label
-  // showed FOUR separate printed reference lines: REF: (already working,
-  // = customerRef below) and three that were BLANK — PO:, INV:, DEPT:.
+  // showed FOUR separate printed reference lines: REF:, PO:, INV:, DEPT:.
   // FedEx's documented customerReferences array takes one entry per type;
-  // this maps customerRef -> CUSTOMER_REFERENCE (REF:, unchanged),
-  // poNumber -> P_O_NUMBER (PO:), invoiceNumber -> INVOICE_NUMBER (INV:),
+  // this maps customerRef -> CUSTOMER_REFERENCE (REF:), poNumber ->
+  // P_O_NUMBER (PO:), invoiceNumber -> INVOICE_NUMBER (INV:),
   // departmentNumber -> DEPARTMENT_NUMBER (DEPT:) — confirmed against that
   // real label's actual print layout, not guessed from public docs alone
   // like most of this file's other FedEx wiring. Each of poNumber/
@@ -89,9 +88,25 @@ export type FedexShipInput = {
   // from the request when null (see createFedexShipment below) — same
   // "never send a field FedEx might reject as present-but-empty" pattern
   // already used elsewhere in this file (DDP/DDU, commodity weight).
+  //
+  // 2026-09-11 (correction, same day) — a SECOND real test label
+  // (PO-A707) plus its matching CSB-V invoice PDF corrected what actually
+  // belongs in the first two of these. The FedEx customerReferenceType
+  // each field maps to (CUSTOMER_REFERENCE/P_O_NUMBER — i.e. which line
+  // it prints on) is unchanged; only the VALUE courier-booking/actions.ts
+  // sends for each one changed:
+  //   - customerRef (REF:) now carries the Master Invoice No
+  //     (sales_invoices.master_invoice_no — a company-wise serial number,
+  //     the same one the auto-generated CSB-V invoice itself carries),
+  //     not the order's own Ref No as first implemented.
+  //   - poNumber (PO:) now carries the company's Bank AD Code
+  //     (company_profiles.ad_code, numeric code portion only — the DB
+  //     value is stored as "<code>/<IFSC>", e.g. "0304993/PUNB0614300",
+  //     and the user asked for just "0304993"), not the order's own Ref
+  //     No as first implemented.
   references: {
-    customerRef: string; // this app's own order Ref No — prints as FedEx's "REF:"
-    poNumber?: string | null; // prints as "PO:" — courier-booking/actions.ts reuses the same order Ref No (no separate PO field exists in this app)
+    customerRef: string; // prints as FedEx's "REF:" — this shipment's Master Invoice No (company-wise serial, falls back to the order's own Ref No only if the Master Invoice reservation wasn't available, e.g. a domestic shipment)
+    poNumber?: string | null; // prints as "PO:" — the shipping company's Bank AD Code (code portion only, company-wise)
     invoiceNumber?: string | null; // prints as "INV:" — this shipment's CSB-V sales_invoices.invoice_no, pre-reserved before booking (see resolveFedexLabelReferences in courier-booking/actions.ts) so it exists in time to be sent here
     departmentNumber?: string | null; // prints as "DEPT:" — the FedEx-specific department reference this app already computes deterministically (see src/lib/invoices/department-reference.ts), same value the auto-generated invoice itself carries
   };
