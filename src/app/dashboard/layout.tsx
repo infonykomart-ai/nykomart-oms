@@ -64,6 +64,24 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // enough to run on every dashboard page load, unlike a full reorder-
   // alert-style computation would be.
   const bprClient = createServiceRoleClient();
+  // 2026-09-12 (round 6 of the company-switcher investigation — see
+  // company-switcher.tsx's fix-4b note for the full trail) — every one of
+  // these 9 queries now has its own `.catch()` with a safe fallback value
+  // matching what's destructured below. Previously a single transient
+  // failure here (a Supabase network blip, an RPC timeout — anything that
+  // makes the underlying fetch REJECT rather than resolve with
+  // `{data: null, error}`, which is how Supabase normally reports a query
+  // error) took down this ENTIRE layout render with an uncaught rejection.
+  // Live-reproduced: that surfaced to the browser as a bare HTTP 500 +
+  // React's own "#441 error in Server Components render" — and since this
+  // exact render is the one switchCompanyAction's revalidatePath triggers,
+  // it happened DURING a company switch, wiping the whole app shell to a
+  // blank browser error page instead of failing one badge/count quietly.
+  // None of these 9 things (help articles, unread counts, the companion
+  // widget's image, etc.) are worth crashing the dashboard over — each one
+  // failing on its own and falling back to "0 / empty / off" is the
+  // correct behaviour, exactly like the capability-gated branches below
+  // already do by returning a plain `{count: 0}` instead of a query.
   const [
     helpArticles,
     { count: unreadMessageCount },
@@ -76,24 +94,51 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     { data: companionCharacterImage },
   ] =
     await Promise.all([
-      getHelpArticles(),
+      getHelpArticles().catch((err) => {
+        console.error("[dashboard/layout] getHelpArticles failed", err);
+        return [];
+      }),
       createServiceRoleClient()
         .from("direct_messages")
         .select("id", { count: "exact", head: true })
         .eq("recipient_employee_id", employee.id)
-        .is("read_at", null),
+        .is("read_at", null)
+        .then(
+          (r) => r,
+          (err) => {
+            console.error("[dashboard/layout] unread direct_messages count failed", err);
+            return { count: 0 };
+          }
+        ),
       // 2026-08-18 — id/name/photo_url for every active employee, so the
       // new message "bubble" toast (fired from a layout-level, app-wide
       // subscription — see message-toast-provider.tsx) can show the
       // sender's name/photo without a per-toast lookup. Small table
       // (headcount-sized), cheap alongside the other layout queries above.
-      bprClient.from("employees").select("id, name, photo_url").eq("active", true),
+      bprClient
+        .from("employees")
+        .select("id, name, photo_url")
+        .eq("active", true)
+        .then(
+          (r) => r,
+          (err) => {
+            console.error("[dashboard/layout] messagingEmployees failed", err);
+            return { data: [] };
+          }
+        ),
       employee.capabilities.includes("approve_level1")
         ? bprClient
             .from("bill_pass_register")
             .select("id", { count: "exact", head: true })
             .eq("company_id", employee.currentCompanyId)
             .eq("approval_status", "Pending")
+            .then(
+              (r) => r,
+              (err) => {
+                console.error("[dashboard/layout] pendingL1Count failed", err);
+                return { count: 0 };
+              }
+            )
         : { count: 0 },
       employee.capabilities.includes("approve_level2")
         ? bprClient
@@ -101,6 +146,13 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             .select("id", { count: "exact", head: true })
             .eq("company_id", employee.currentCompanyId)
             .eq("approval_status", "Approved L1")
+            .then(
+              (r) => r,
+              (err) => {
+                console.error("[dashboard/layout] pendingL2Count failed", err);
+                return { count: 0 };
+              }
+            )
         : { count: 0 },
       employee.capabilities.includes("bill_payment")
         ? bprClient
@@ -109,6 +161,13 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             .eq("company_id", employee.currentCompanyId)
             .gt("balance_due", 0)
             .lt("due_date", new Date().toISOString().slice(0, 10))
+            .then(
+              (r) => r,
+              (err) => {
+                console.error("[dashboard/layout] overdueBillsCount failed", err);
+                return { count: 0 };
+              }
+            )
         : { count: 0 },
       // 2026-08-22 — this employee's saved theme + custom accent (see
       // db/2026-08-22-employee-theme-prefs.sql). Fetched here, alongside
@@ -132,14 +191,27 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         .from("employees")
         .select("theme_id, custom_accent_color, companion_enabled, companion_name")
         .eq("id", employee.id)
-        .single(),
+        .single()
+        .then(
+          (r) => r,
+          (err) => {
+            console.error("[dashboard/layout] myThemePrefs failed", err);
+            return { data: null };
+          }
+        ),
       // 2026-09-02 — unread count for the new Messenger popup's group
       // badge (messenger-popup.tsx). Same RPC the popup itself re-calls on
       // resync (get_unread_group_message_count, db/2026-09-02-group-
       // messaging.sql) — seeding it here means the badge's very first
       // paint is already correct, same reasoning as unreadMessageCount
       // above for the 1:1 badge.
-      bprClient.rpc("get_unread_group_message_count", { p_employee_id: employee.id }),
+      bprClient.rpc("get_unread_group_message_count", { p_employee_id: employee.id }).then(
+        (r) => r,
+        (err) => {
+          console.error("[dashboard/layout] unreadGroupMessageCount RPC failed", err);
+          return { data: 0 };
+        }
+      ),
       // 2026-09-05, round 2 — the real AI-generated character image, if an
       // Admin/MD has ever generated one from /dashboard/admin/companion-
       // access (db/2026-09-05-ai-companion-refinements.sql). A single
@@ -147,7 +219,18 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       // fine to run unconditionally alongside every other layout query even
       // for employees without the companion on, same reasoning as the
       // approval-count queries above being harmless no-ops when unused.
-      bprClient.from("companion_character_image").select("image_url, generated_at").eq("id", "default").maybeSingle(),
+      bprClient
+        .from("companion_character_image")
+        .select("image_url, generated_at")
+        .eq("id", "default")
+        .maybeSingle()
+        .then(
+          (r) => r,
+          (err) => {
+            console.error("[dashboard/layout] companionCharacterImage failed", err);
+            return { data: null };
+          }
+        ),
     ]);
 
   const notificationItems = [

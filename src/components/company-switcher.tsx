@@ -53,6 +53,59 @@ const initialSwitchCompanyState: SwitchCompanyState = { success: false, error: n
  *    thing kept in state is `optimisticPick` — the just-clicked value,
  *    used solely to label the single "Switching…" placeholder option while
  *    `pending` is true, and never read once it's false.
+ *
+ * 4. (2026-09-12 — round 6, owner reported "ye abhi bhi CASA ARRA par atak
+ *    jata hai" months after round 5 shipped. Live-reproduced against the
+ *    owner's real production session, with a `window.fetch` interceptor to
+ *    capture the actual server responses — round 5's `key`-remount trick
+ *    IS live and did NOT fix it.) Two distinct, independently-confirmed
+ *    problems, both upstream of anything this component can fix by
+ *    rewriting its own render logic again:
+ *
+ *    a) Reproduced live: after a successful switch (header correctly
+ *       showing the NEW company, `currentCompanyId` prop correctly the new
+ *       id — confirmed via a captured 200 response), this exact <select>
+ *       node still rendered showing "CASA ARRA" — not the old company, not
+ *       the new one, but always the FIRST option in the (alphabetically
+ *       ordered) list. That is the browser's own documented fallback
+ *       behaviour for a <select> whose `value` doesn't match any of its
+ *       current <option>s at the moment the browser evaluates it — i.e.
+ *       exactly the DOM-ordering race round 5's comment above already
+ *       diagnosed, just surviving the key-remount instead of being fixed
+ *       by it. Five rounds of ever-more-careful client-side state/DOM
+ *       tricks on this same native <select> have now each found a new way
+ *       to hit this same browser-level race — that's a sign the control
+ *       itself (a value-bound native <select>, patched live by React on
+ *       every switch) is the wrong tool here, not that the trick was
+ *       almost right.
+ *
+ *    b) Also reproduced live, separately: the same POST this action
+ *       responds on (switchCompanyAction's request, which also carries the
+ *       revalidated /dashboard layout back in the same round trip)
+ *       intermittently comes back as a bare HTTP 500 — captured console
+ *       error was React's own #441, "An error occurred in the Server
+ *       Components render" (production builds omit the message; see
+ *       react.dev/errors/441). Because that 500 happens INSIDE the
+ *       layout's own re-render (triggered by this action's
+ *       revalidatePath), it doesn't fail gracefully into `state.error`
+ *       like a normal denied-access response — the browser has no HTML to
+ *       render at all and falls back to its own blank "This page couldn't
+ *       load" interstitial, wiping the whole app shell (not just this
+ *       dropdown). Whatever transient error is thrown in one of
+ *       dashboard/layout.tsx's ~9 parallel Supabase queries during that
+ *       re-render (see that file's own fix, same round, for the defensive
+ *       change) is the trigger — not anything in this file.
+ *
+ *    The fix for (a): stop trusting client-side reconciliation for this
+ *    control at all. On a confirmed-successful switch this component now
+ *    forces a real full-page reload (`window.location.reload()`) instead
+ *    of letting Next.js patch the existing React tree — a freshly parsed
+ *    HTML document has the correct `selected` attribute burned into the
+ *    <option> tag server-side before any client JS runs, so there is no
+ *    DOM-ordering window left for the browser's value-vs-options race to
+ *    land in. This trades one extra full navigation per switch (a rare,
+ *    deliberate action — not a hot path) for eliminating the entire class
+ *    of bug five rounds of client-state rewrites couldn't close.
  */
 export function CompanySwitcher({
   companies,
@@ -85,6 +138,19 @@ export function CompanySwitcher({
     const timer = window.setTimeout(() => setSlow(true), 3000);
     return () => window.clearTimeout(timer);
   }, [pending]);
+
+  // 2026-09-12 (round 6, fix 4a above) — on a confirmed success, throw away
+  // this whole client-rendered tree and let the browser parse a fresh
+  // document instead of trusting React/Next to patch the existing one.
+  // `state` is a new object every time the action settles, so this only
+  // ever fires once per real success (never on the initial render, never
+  // on a denied/error response) — a plain effect-on-value-change, same
+  // pattern as the `slow` timer above, not a set-state-in-render.
+  useEffect(() => {
+    if (state.success) {
+      window.location.reload();
+    }
+  }, [state.success]);
 
   if (companies.length <= 1) return null;
 
