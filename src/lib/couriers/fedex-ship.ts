@@ -102,14 +102,7 @@ export type FedexShipInput = {
   // needed, which is what cuts the label+paperwork from 4 pages to 2).
   // This follow-up round adds the third option (proforma) too — same
   // mechanism, different FedEx document type, no new infrastructure
-  // needed. The FIRST option ("I will upload my own invoice") is
-  // deliberately still NOT built: it needs a second, separate FedEx API
-  // call (Upload Documents) plus generating an actual FedEx-formatted
-  // invoice PDF file BEFORE booking — this app has no PDF-file-generation
-  // capability today (its existing invoice "view" is an HTML page users
-  // print from their own browser, not a server-generated PDF), so that
-  // option is real, separate, bigger work — flagged back to the user
-  // rather than guessed at.
+  // needed.
   //
   // FedEx's documented mechanism for "let FedEx create it electronically"
   // is requestedShipment.shipmentSpecialServices.specialServiceTypes
@@ -124,7 +117,21 @@ export type FedexShipInput = {
   // pre-checked "recommended" option) but this is a plain dropdown that
   // can be switched to null per-shipment as a safety valve if a real
   // booking ever rejects it, with zero code change needed to fall back.
-  electronicInvoiceType?: "COMMERCIAL_INVOICE" | "PROFORMA_INVOICE" | null;
+  //
+  // 2026-09-12 (follow-up) — "UPLOAD_OWN" added: the FIRST option ("I will
+  // upload my own invoice"), unblocked once the user sent FedEx's Trade
+  // Documents Upload API docs. See fedex-invoice-pdf.tsx (builds the PDF)
+  // and fedex-documents.ts (uploads it, POST-shipment flow — AFTER this
+  // function returns a real tracking number, see courier-booking/
+  // actions.ts's createFedexBooking for the call sequencing) for the rest
+  // of this feature; this file's own part of it is just NOT sending
+  // etdDetail.requestedDocumentTypes or the COMMERCIAL_OR_PRO_FORMA_INVOICE
+  // package special service for this option (both of those are specifically
+  // for asking FedEx to BUILD the document — see the 2026-09-12 correction
+  // comments below — which doesn't apply when uploading one's own), while
+  // still sending ELECTRONIC_TRADE_DOCUMENTS so FedEx expects an
+  // electronic document instead of defaulting to a paper invoice.
+  electronicInvoiceType?: "COMMERCIAL_INVOICE" | "PROFORMA_INVOICE" | "UPLOAD_OWN" | null;
   // The customs classification / Harmonized Tariff Number for the goods
   // (e.g. "5705.00.20.30" — see CourierBookingLookupOrder.harmonizedTariffNumber
   // in courier-booking/actions.ts for where this comes from: the order's
@@ -185,6 +192,12 @@ export type FedexShipResult = {
   labelUrl: string | null;
   bookedAmt: number | null;
   bookedCurrency: string | null;
+  // 2026-09-12 — the exact shipDatestamp string this request sent FedEx
+  // (see shipDatestamp above) — courier-booking/actions.ts needs this
+  // EXACT value (not a freshly-computed "today") for the UPLOAD_OWN flow's
+  // follow-up call to uploadFedexPostShipmentInvoice, whose shipmentDate
+  // has to match what the Ship API call itself used.
+  shipmentDate: string | null;
   raw: unknown;
 };
 
@@ -326,8 +339,23 @@ export async function createFedexShipment(
   // gate as the shipment-level ETD block further down) so it's available
   // when requestedPackageLineItems is built, before that gate's own code
   // runs later in this function.
+  // 2026-09-12 (follow-up) — UPLOAD_OWN excluded from this: that special
+  // service is specifically about asking FedEx to BUILD the commercial/
+  // proforma invoice (see the real error text quoted below), which is the
+  // opposite of what "I will upload my own invoice" means — nothing needs
+  // to change here in that case beyond ELECTRONIC_TRADE_DOCUMENTS itself
+  // (still set further down, shipment level, unconditionally for any
+  // non-null electronicInvoiceType).
   const packageSpecialServiceTypes: string[] =
-    isInternational && input.electronicInvoiceType ? ["COMMERCIAL_OR_PRO_FORMA_INVOICE"] : [];
+    isInternational && input.electronicInvoiceType && input.electronicInvoiceType !== "UPLOAD_OWN" ? ["COMMERCIAL_OR_PRO_FORMA_INVOICE"] : [];
+
+  // 2026-09-12 — captured once so the SAME date string that's actually
+  // sent to FedEx as shipDatestamp is also what gets handed to
+  // uploadFedexPostShipmentInvoice's shipmentDate for the UPLOAD_OWN flow
+  // (courier-booking/actions.ts) — FedEx's own docs say the Upload API
+  // needs the real shipment date the Ship API used, not just "today" run
+  // twice at slightly different moments.
+  const shipDatestamp = new Date().toISOString().slice(0, 10);
 
   const requestedShipment: Record<string, unknown> = {
     shipper: {
@@ -365,7 +393,7 @@ export async function createFedexShipment(
         },
       },
     ],
-    shipDatestamp: new Date().toISOString().slice(0, 10),
+    shipDatestamp,
     serviceType: input.serviceType,
     packagingType: input.packagingType,
     pickupType: "USE_SCHEDULED_PICKUP",
@@ -447,10 +475,18 @@ export async function createFedexShipment(
     // function). Only "ELECTRONIC_TRADE_DOCUMENTS" stays here at the
     // shipment level — proven fine at this level by the FIRST test (that
     // error was about a missing sibling value, never about its level).
+    //
+    // 2026-09-12 (follow-up) — UPLOAD_OWN sends ELECTRONIC_TRADE_DOCUMENTS
+    // like the other two options (still saying "expect an electronic
+    // document, not a paper one"), but deliberately omits etdDetail.
+    // requestedDocumentTypes — that field asks FedEx to BUILD a specific
+    // document type, which doesn't apply when the document is one this app
+    // is uploading itself (see fedex-documents.ts, called AFTER this
+    // function returns, once a real tracking number exists).
     if (input.electronicInvoiceType) {
       requestedShipment.shipmentSpecialServices = {
         specialServiceTypes: ["ELECTRONIC_TRADE_DOCUMENTS"],
-        etdDetail: { requestedDocumentTypes: [input.electronicInvoiceType] },
+        ...(input.electronicInvoiceType === "UPLOAD_OWN" ? {} : { etdDetail: { requestedDocumentTypes: [input.electronicInvoiceType] } }),
       };
     }
   }
@@ -554,6 +590,7 @@ export async function createFedexShipment(
     labelUrl,
     bookedAmt: rateDetail?.totalNetCharge ?? null,
     bookedCurrency: rateDetail?.currency ?? null,
+    shipmentDate: shipDatestamp,
     raw: parsed,
   };
 }

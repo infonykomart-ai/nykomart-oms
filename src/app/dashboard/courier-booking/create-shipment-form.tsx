@@ -518,26 +518,33 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                 {/* 2026-09-12 — from the real FedEx page's "How would you like to
                     complete your commercial invoice?" dropdown — see fedex-ship.ts's
                     FedexShipInput.electronicInvoiceType header comment for the exact
-                    scope. Only 2 of FedEx's real 3 options are built: FedEx building
-                    either the commercial or the proforma invoice electronically
-                    (both use the customs data already on this form, no extra file
-                    needed). "I will upload my own invoice" is NOT built — it needs a
-                    separate FedEx document-upload API call plus a real PDF file
-                    generated before booking, which this app has no capability for
-                    today — deliberately flagged back to the user rather than
-                    guessed at, instead of appearing here as a silently-broken
-                    option. Defaults to Commercial (recommended), matching FedEx's
-                    own page's default — "None" falls back to the old paper-invoice
-                    behavior as a safety valve if a real booking ever rejects ETD. */}
+                    scope. All 3 of FedEx's real options are now wired up: FedEx
+                    building either the commercial or the proforma invoice
+                    electronically, or this app generating and uploading its own
+                    invoice PDF (fedex-invoice-pdf.tsx + fedex-documents.ts).
+                    2026-09-12 (same-day correction #3) — a real live test came back
+                    "Requested SpecialServiceType COMMERCIAL_OR_PRO_FORMA_INVOICE is
+                    not enabled for your account" — i.e. the "let FedEx build it"
+                    options need FedEx customer service to switch something on for
+                    this account before they'll work at all; "Upload own invoice"
+                    doesn't use that special service (see fedex-ship.ts) so it isn't
+                    affected by this. Default moved to "Upload own invoice" — the
+                    one actually confirmed not to hit this specific error — with
+                    "None" as the always-safe fallback and the two FedEx-builds-it
+                    options kept available (with a warning) for once the account is
+                    enabled. */}
                 <label className={labelClass}>Commercial Invoice Method</label>
-                <select name="electronic_invoice_type" defaultValue="COMMERCIAL_INVOICE" className={inputClass}>
-                  <option value="COMMERCIAL_INVOICE">FedEx creates Commercial Invoice electronically (recommended)</option>
-                  <option value="PROFORMA_INVOICE">FedEx creates Proforma Invoice electronically</option>
-                  <option value="">None — paper invoice travels with shipment (old behavior)</option>
+                <select name="electronic_invoice_type" defaultValue="UPLOAD_OWN" className={inputClass}>
+                  <option value="UPLOAD_OWN">I will upload my own invoice (this app generates + uploads a PDF)</option>
+                  <option value="">None — paper invoice travels with shipment (always works)</option>
+                  <option value="COMMERCIAL_INVOICE">FedEx creates Commercial Invoice electronically — needs FedEx to enable this first</option>
+                  <option value="PROFORMA_INVOICE">FedEx creates Proforma Invoice electronically — needs FedEx to enable this first</option>
                 </select>
                 <p className="mt-1 text-[11px] text-slate-400">
-                  Uses the Shipment Purpose, Goods Description, Declared Value and Harmonized Tariff No. above. &quot;I will upload my
-                  own invoice&quot; (FedEx&apos;s 3rd option) isn&apos;t available yet — ask if you need it.
+                  Uses the Shipment Purpose, Goods Description, Declared Value and Harmonized Tariff No. above. The last two options got
+                  a real FedEx error today (&quot;SpecialServiceType ... is not enabled for your account&quot;) — call FedEx customer
+                  service to enable Electronic Trade Documents before using those; &quot;Upload own invoice&quot; and &quot;None&quot;
+                  both work without that.
                 </p>
               </div>
               <SharedShipmentFields order={order} />

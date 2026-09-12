@@ -28,6 +28,8 @@ import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summ
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
 import { generateInvoiceCore, reserveCsbVReferenceNumbers } from "@/app/dashboard/invoices/actions";
 import { createFedexShipment, type FedexDdpDdu, type FedexShipInput } from "@/lib/couriers/fedex-ship";
+import { renderFedexInvoicePdf } from "@/lib/couriers/fedex-invoice-pdf";
+import { uploadFedexPostShipmentInvoice } from "@/lib/couriers/fedex-documents";
 import { createUpsShipment, type UpsDdpDdu } from "@/lib/couriers/ups-ship";
 import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-shipping";
 import { createDelhiveryShipment } from "@/lib/couriers/delhivery-ship";
@@ -35,7 +37,7 @@ import { createShiprocketShipment } from "@/lib/couriers/shiprocket-ship";
 import { createDhlShipment, type DhlDdpDdu } from "@/lib/couriers/dhl-ship";
 import { resolveCourierCredentials } from "@/lib/couriers/credentials";
 import { notifyCompanion } from "@/lib/companion/notify";
-import { countryCodeFor } from "@/lib/postal-lookup";
+import { countryCodeFor, stateCodeFor } from "@/lib/postal-lookup";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { parseFullAddress, looksLikeFullAddress } from "@/lib/parse-full-address";
 import { computeValueBreakdown } from "@/lib/invoices/value-breakdown";
@@ -127,6 +129,21 @@ function withAddressErrorHint(message: string, formData: FormData): string {
     return `${message} — City/State/Postcode me se koi field khali thi. Order ke "Structured Address" section me jaakar "✂ Split Address" button try karein (agar poora address Address Line 1 me paste ho gaya tha), ya yahan seedha bhar dein aur dobara try karein.`;
   }
   return `${message} — City, State aur Postcode dubara check karein (in teeno ka aapas me match hona zaroori hai).`;
+}
+
+// 2026-09-12 — a real live-test error: "Requested SpecialServiceType
+// COMMERCIAL_OR_PRO_FORMA_INVOICE is not enabled for your account. Please
+// contact FedEx customer service for more information." Unlike the two
+// earlier same-day ETD corrections (a wrong field/level in this app's own
+// request), this one means the FedEx ACCOUNT itself isn't provisioned for
+// "let FedEx build the invoice electronically" — no code change here can
+// fix that. Surfaces a clear, actionable Hinglish hint pointing at the
+// working alternatives (Upload own invoice / None) instead of leaving a
+// raw "contact FedEx customer service" message that doesn't say what to do
+// RIGHT NOW for this booking.
+function withEtdNotEnabledHint(message: string): string {
+  if (!/special ?service ?type.{0,60}not enabled/i.test(message)) return message;
+  return `${message} — Aapke FedEx account par "Electronic Trade Documents" ka ye hissa abhi enabled nahi hai (FedEx customer service se enable karvana hoga). Tab tak "Commercial Invoice Method" dropdown me "I will upload my own invoice" ya "None" chunein — dono abhi kaam karte hain, sirf "FedEx creates ... electronically" wale 2 options ke liye ye enable karvana padega.`;
 }
 
 // -----------------------------------------------------------------------
@@ -907,6 +924,24 @@ async function resolveFedexAdCode(supabase: ServiceClient, companyId: string): P
   return codeOnly || null;
 }
 
+// 2026-09-12 — for the "I will upload my own invoice" ETD option's PDF
+// (fedex-invoice-pdf.tsx): the header block on a real commercial invoice
+// carries the exporter's IEC/GSTIN alongside the Bank AD Code above — same
+// company_profiles row, so this is one extra query rather than reusing
+// resolveFedexAdCode's narrower one (which only ever selected ad_code).
+async function resolveCompanyCustomsProfile(
+  supabase: ServiceClient,
+  companyId: string
+): Promise<{ iec: string | null; gstin: string | null; adCode: string | null }> {
+  const { data } = await supabase.from("company_profiles").select("iec, gstin, ad_code").eq("company_id", companyId).maybeSingle();
+  const rawAdCode = data?.ad_code?.trim();
+  return {
+    iec: data?.iec?.trim() || null,
+    gstin: data?.gstin?.trim() || null,
+    adCode: rawAdCode ? rawAdCode.split("/")[0]?.trim() || null : null,
+  };
+}
+
 // -----------------------------------------------------------------------
 // FedEx
 // -----------------------------------------------------------------------
@@ -951,6 +986,11 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
   const fedexReferences = await resolveFedexLabelReferences(supabase, { orderIds: combinedOrderIds, ddpDdu, invoiceDate });
   // 2026-09-11 — company-wise Bank AD Code (see resolveFedexAdCode above).
   const adCode = await resolveFedexAdCode(supabase, employee.currentCompanyId);
+  // 2026-09-12 — only needed for the "I will upload my own invoice" ETD
+  // option's PDF header (fedex-invoice-pdf.tsx) — a separate small query
+  // rather than widening resolveFedexAdCode's existing shape, so the
+  // already-working label-reference code path above is untouched.
+  const customsProfile = await resolveCompanyCustomsProfile(supabase, employee.currentCompanyId);
 
   const input = {
     serviceType: str(formData, "service_code") || "INTERNATIONAL_PRIORITY",
@@ -979,7 +1019,14 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       address1: str(formData, "recipient_address1"),
       address2: strOrNull(formData, "recipient_address2"),
       city: str(formData, "recipient_city"),
-      state: strOrNull(formData, "recipient_state"),
+      // 2026-09-12 — same real-bug shape as recipientCountry.code above
+      // ("Recipient state and postal code mismatch"): orders.buyer_state is
+      // free text (e.g. "California"), but FedEx needs the strict 2-letter/
+      // short code for US/India/Canada/Mexico specifically (see
+      // stateCodeFor's header comment in postal-lookup.ts — built from
+      // FedEx's own official state/province reference tables). Every other
+      // country's state is passed through unchanged, same as before.
+      state: strOrNull(formData, "recipient_state") ? stateCodeFor(str(formData, "recipient_state"), recipientCountry.code) : null,
       postalCode: str(formData, "recipient_postcode"),
       countryCode: recipientCountry.code,
     },
@@ -1084,6 +1131,102 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       reservedReferenceNumbers: fedexReferences,
     });
 
+    // 2026-09-12 — "I will upload my own invoice" ETD option. Deliberately
+    // AFTER the shipment already succeeded (post-shipment upload flow — see
+    // fedex-documents.ts's header comment for why) and wrapped in its own
+    // try/catch: the shipment/AWB is real and booked either way, so a
+    // failure HERE must never look like the booking itself failed. On
+    // failure this only logs an error-log entry for someone to notice —
+    // the employee still gets a normal success response with a tracking
+    // number, exactly as if this feature didn't exist, and can re-upload
+    // the invoice on FedEx's own site as a fallback (or a future round of
+    // this app could add a retry button).
+    if (input.electronicInvoiceType === "UPLOAD_OWN" && result.trackingNo && result.shipmentDate) {
+      try {
+        const pdfBuffer = await renderFedexInvoicePdf({
+          invoiceNo: fedexReferences?.invoiceNo ?? poNo,
+          masterInvoiceNo: fedexReferences?.masterInvoiceNo ?? null,
+          invoiceDate,
+          shipmentPurpose: input.shipmentPurpose,
+          incoterm: input.ddpDdu ?? "DDU",
+          shipper: {
+            companyName: input.shipper.companyName,
+            contactName: input.shipper.contactName,
+            address1: input.shipper.address1,
+            address2: input.shipper.address2,
+            city: input.shipper.city,
+            state: input.shipper.state,
+            postalCode: input.shipper.postalCode,
+            countryCode: input.shipper.countryCode,
+            phone: input.shipper.phone,
+            iec: customsProfile.iec,
+            gstin: customsProfile.gstin,
+            adCode: customsProfile.adCode,
+          },
+          recipient: {
+            companyName: input.recipient.companyName,
+            contactName: input.recipient.contactName,
+            address1: input.recipient.address1,
+            address2: input.recipient.address2,
+            city: input.recipient.city,
+            state: input.recipient.state,
+            postalCode: input.recipient.postalCode,
+            countryCode: input.recipient.countryCode,
+            phone: input.recipient.phone,
+          },
+          item: {
+            description: input.commodityDescription || "General merchandise",
+            hsCode: null,
+            harmonizedTariffNumber: input.harmonizedTariffNumber,
+            // Matches the single commodity line FedEx's Ship API request
+            // itself already declares (quantity: 1 — see fedex-ship.ts's
+            // customsClearanceDetail.commodities) so this invoice never
+            // disagrees with what FedEx was already told.
+            qty: 1,
+            unitValue: input.customsValue ?? 0,
+            totalValue: input.customsValue ?? 0,
+            currency: input.currencyCode,
+          },
+          weightKg,
+          dimsCm: dims,
+        });
+
+        const uploadResult = await uploadFedexPostShipmentInvoice(
+          {
+            trackingNumber: result.trackingNo,
+            shipmentDate: result.shipmentDate,
+            originCountryCode: input.shipper.countryCode,
+            destinationCountryCode: recipientCountry.code,
+            pdfBuffer,
+            fileName: `invoice-${result.trackingNo}.pdf`,
+          },
+          credentials
+        );
+
+        if (!uploadResult.ok) {
+          await logEntryError(supabase, {
+            companyId: employee.currentCompanyId,
+            source: "courier_api",
+            reason: `FedEx booked (AWB ${result.trackingNo}) but the self-uploaded invoice failed to attach: ${uploadResult.error}`,
+            referenceType: "order",
+            referenceId: orderId,
+            raisedByEmployeeId: employee.id,
+            raisedByName: employee.name,
+          });
+        }
+      } catch (uploadErr) {
+        await logEntryError(supabase, {
+          companyId: employee.currentCompanyId,
+          source: "courier_api",
+          reason: `FedEx booked (AWB ${result.trackingNo}) but the self-uploaded invoice threw an error: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+          referenceType: "order",
+          referenceId: orderId,
+          raisedByEmployeeId: employee.id,
+          raisedByName: employee.name,
+        });
+      }
+    }
+
     await notifyCompanion(supabase, {
       employeeId: employee.id,
       eventType: "shipment_booked",
@@ -1112,7 +1255,7 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
     revalidatePath("/dashboard/orders");
     return { error: null, success: true, trackingNo: result.trackingNo, bookedAmt, bookedCurrency, bookedAmountSource: bookedSource, labelUrl: result.labelUrl ?? null };
   } catch (err) {
-    const message = withAddressErrorHint(err instanceof Error ? err.message : String(err), formData);
+    const message = withEtdNotEnabledHint(withAddressErrorHint(err instanceof Error ? err.message : String(err), formData));
     await logAttempt(supabase, { courier: "fedex", orderId, serviceCode: input.serviceType, ddpDdu: input.ddpDdu, status: "failed", errorMessage: message, createdBy: employee.id });
     await logEntryError(supabase, { companyId: employee.currentCompanyId, source: "courier_api", reason: `FedEx booking failed: ${message}`, referenceType: "order", referenceId: orderId, raisedByEmployeeId: employee.id, raisedByName: employee.name });
     return { ...CREATE_INITIAL, error: message };
