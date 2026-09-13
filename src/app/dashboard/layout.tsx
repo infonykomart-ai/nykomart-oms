@@ -19,6 +19,10 @@ import { ThemeProvider } from "@/components/theme/theme-provider";
 import { ThemedShell } from "@/components/theme/themed-shell";
 import { PageTransition } from "@/components/page-transition";
 import { CompanionLiveProvider } from "@/components/companion/companion-live-provider";
+// 2026-09-13 (#1) — module tabs: multiple modules open at once, one strip
+// under the header. See module-tabs.tsx for the design; zero changes to
+// any individual page (tabs auto-open from the URL).
+import { ModuleTabsProvider, ModuleTabBar } from "@/components/module-tabs";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   let employee;
@@ -267,6 +271,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <ThemeProvider initialThemeId={myThemePrefs?.theme_id ?? null} initialCustomAccent={myThemePrefs?.custom_accent_color ?? null}>
             <ThemedShell>
               <NavStyleProvider>
+                <ModuleTabsProvider>
                 <DashboardSidebar capabilities={employee.capabilities} />
                 <div className="flex flex-1 flex-col overflow-hidden">
                   <DashboardHeader
@@ -281,6 +286,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                     unreadMessageCount={unreadMessageCount ?? 0}
                     notificationItems={notificationItems}
                   />
+                  {/* 2026-09-13 (#1) — module tab strip: every module you
+                      visit stays open as a tab, so several can be worked
+                      at once. Inside ModuleTabsProvider (above) so the
+                      bar and the sidebar share one tab state. */}
+                  <ModuleTabBar />
                   <DashboardMain>
                     <TodaysCelebrationsBanner celebrations={celebrations} />
                     <PageTransition>{children}</PageTransition>
@@ -292,6 +302,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                     positioning takes it out of this flex row regardless of
                     where it sits in the tree. */}
                 <DashboardDock capabilities={employee.capabilities} />
+                </ModuleTabsProvider>
               </NavStyleProvider>
             </ThemedShell>
           </ThemeProvider>

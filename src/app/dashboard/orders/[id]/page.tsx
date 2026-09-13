@@ -60,7 +60,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // Purchase Bill vendor when one exists, so that query was folded into this
   // one call instead of kept as a second, less-accurate source of the same
   // fact.
-  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments] =
+  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }] =
     await Promise.all([
       supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
       supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
@@ -94,6 +94,18 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       // (unrelated) "Purchasing From" select.
       supabase.from("parties").select("id, name").order("name"),
       listVendorAssignments(id),
+      // 2026-09-13 (#5+#6) — the order's CURRENT shipping/invoice summary
+      // values, pre-filling the manual shipping-details form. This is the
+      // same summary row resyncDispatchSummary recomputes after every
+      // shipment write (awb/courier/weight/dims mirrored from
+      // order_shipments/order_packages), plus its independently-managed
+      // invoice_no/invoice_date — so the form always shows the truth from
+      // the same single source every other page reads.
+      supabase
+        .from("dispatch_invoices")
+        .select("invoice_no, invoice_date, courier_name, awb_no, shipping_weight_kg, length_cm, width_cm, height_cm")
+        .eq("order_id", id)
+        .maybeSingle(),
     ]);
 
   const statusSummary = statusByOrder[order.id];
@@ -117,6 +129,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       creditNotes={(creditNotes ?? []).map((c) => ({ ...c, refund_amount: Number(c.refund_amount) }))}
       vendorAssignmentParties={parties ?? []}
       vendorAssignmentCycles={vendorAssignments}
+      shippingDefaults={
+        dispatchSummary
+          ? {
+              awb_no: dispatchSummary.awb_no,
+              courier_name: dispatchSummary.courier_name,
+              invoice_no: dispatchSummary.invoice_no,
+              invoice_date: dispatchSummary.invoice_date,
+              weight_kg: dispatchSummary.shipping_weight_kg != null ? Number(dispatchSummary.shipping_weight_kg) : null,
+              length_cm: dispatchSummary.length_cm != null ? Number(dispatchSummary.length_cm) : null,
+              width_cm: dispatchSummary.width_cm != null ? Number(dispatchSummary.width_cm) : null,
+              height_cm: dispatchSummary.height_cm != null ? Number(dispatchSummary.height_cm) : null,
+            }
+          : { awb_no: null, courier_name: null, invoice_no: null, invoice_date: null, weight_kg: null, length_cm: null, width_cm: null, height_cm: null }
+      }
     />
   );
 }

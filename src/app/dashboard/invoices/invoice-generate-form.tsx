@@ -20,6 +20,11 @@ export function InvoiceGenerateForm({
   const [state, formAction, pending] = useActionState(generateInvoice, initialState);
   const [csbType, setCsbType] = useState("");
   const isCsbIv = csbType === "CSB-IV";
+  // 2026-09-13 (#7) — manual invoice numbering toggle: off by default
+  // (automatic numbering exactly as before); ticking it reveals the two
+  // required number fields, same opt-in pattern as the CSB-IV manual-value
+  // block below.
+  const [manualNumbering, setManualNumbering] = useState(false);
 
   if (state.success) {
     return (
@@ -36,6 +41,40 @@ export function InvoiceGenerateForm({
         <input key={id} type="hidden" name="order_ids" value={id} />
       ))}
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
+
+      {/* 2026-09-13 (#7) — manual invoice numbering, for backdated/mid-year
+          entries before the automatic FY sequence properly starts on 1st
+          April. Same pattern as PO No. manual entry on the Order page: an
+          opt-in override, never silently applied. Blank/unticked = the
+          automatic formula, completely unchanged. */}
+      <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+        <input
+          type="checkbox"
+          checked={manualNumbering}
+          onChange={(e) => setManualNumbering(e.target.checked)}
+        />
+        Enter invoice numbers manually (for backdated / mid-year entries — automatic numbering continues separately)
+      </label>
+      {manualNumbering && (
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 md:grid-cols-3">
+          <div>
+            <label className={labelClass} htmlFor="manual_invoice_no">Invoice No. *</label>
+            <input id="manual_invoice_no" name="manual_invoice_no" required={manualNumbering} placeholder="e.g. AOJ-25-26-012" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="manual_master_invoice_no">Master Invoice No. *</label>
+            <input id="manual_master_invoice_no" name="manual_master_invoice_no" required={manualNumbering} placeholder="e.g. NYM-25-26-045" className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="manual_department_reference_no">Department Ref No. (optional — auto for FedEx)</label>
+            <input id="manual_department_reference_no" name="manual_department_reference_no" className={inputClass} />
+          </div>
+          <p className="col-span-2 text-[11px] text-amber-800 md:col-span-3">
+            Both numbers are required. They must be unique — reusing an existing number is rejected. Leave this unticked for the
+            automatic sequence; the two sequences stay independent, so backdated entries never disturb future automatic numbers.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <div>

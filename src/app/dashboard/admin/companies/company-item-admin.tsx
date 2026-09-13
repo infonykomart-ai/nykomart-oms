@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { createCompany, createItemCategory, createSize, setCompanyActive, type SimpleFormState } from "./actions";
+import { createCompany, createItemCategory, createSize, createStore, renameStore, setCompanyActive, setStoreActive, type SimpleFormState } from "./actions";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -29,23 +29,31 @@ export type CompanyRow = {
 };
 export type ItemCategoryRow = { id: string; name: string; hsn_code: string | null; harmonized_tariff_number: string | null };
 export type SizeRow = { id: string; label: string };
+// 2026-09-13 — Store management (#3): the Stores tab's row shape, fed from
+// the page's new stores query. company_name is resolved server-side so the
+// table can show "which company a store belongs to" without a client-side
+// join.
+export type StoreRow = { id: string; company_id: string; company_name: string; name: string; active: boolean; invoice_ref_prefix: string | null };
 
 export function CompanyItemAdmin({
   companies,
   itemCategories,
   sizes,
+  stores,
 }: {
   companies: CompanyRow[];
   itemCategories: ItemCategoryRow[];
   sizes: SizeRow[];
+  stores: StoreRow[];
 }) {
-  const [tab, setTab] = useState<"companies" | "categories" | "sizes">("companies");
+  const [tab, setTab] = useState<"companies" | "stores" | "categories" | "sizes">("companies");
 
   return (
     <div className="space-y-4">
       <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1">
         {[
           { key: "companies" as const, label: `🏢 Companies (${companies.length})` },
+          { key: "stores" as const, label: `🏬 Stores (${stores.length})` },
           { key: "categories" as const, label: `🗂️ Item Categories (${itemCategories.length})` },
           { key: "sizes" as const, label: `📏 Sizes (${sizes.length})` },
         ].map((t) => (
@@ -63,6 +71,7 @@ export function CompanyItemAdmin({
       </div>
 
       {tab === "companies" && <CompaniesPanel companies={companies} />}
+      {tab === "stores" && <StoresPanel companies={companies} stores={stores} />}
       {tab === "categories" && <ItemCategoriesPanel itemCategories={itemCategories} />}
       {tab === "sizes" && <SizesPanel sizes={sizes} />}
     </div>
@@ -182,6 +191,155 @@ function CompanyRowView({ company }: { company: CompanyRow }) {
           {active ? "Active" : "Inactive"}
         </button>
         {error && <span className="ml-2 text-xs text-red-600">{error}</span>}
+      </td>
+    </tr>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stores tab (2026-09-13, #3): add a store under a chosen company, rename,
+// activate/deactivate. Deactivate is the "delete" — see actions.ts's
+// createStore header comment for why a hard DELETE would break order
+// history (orders.store_id FK etc.). Company column makes "kis company me
+// add ho raha" explicit both on the form and in the table.
+// ---------------------------------------------------------------------------
+function StoresPanel({ companies, stores }: { companies: CompanyRow[]; stores: StoreRow[] }) {
+  const [state, formAction, pending] = useActionState(createStore, initialState);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (state.success) formRef.current?.reset();
+  }, [state.success]);
+
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <form ref={formRef} action={formAction} className="space-y-3 rounded-xl border border-slate-200 bg-white p-5 lg:col-span-1">
+        <h2 className="text-sm font-semibold text-slate-800">Add Store</h2>
+        {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
+        {state.success && <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">✓ Store added.</p>}
+        <div>
+          <label className={labelClass} htmlFor="store_name">Store Name *</label>
+          <input id="store_name" name="name" required placeholder="e.g. Amazon Nyko Mart" className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="store_company">Belongs to Company *</label>
+          <select id="store_company" name="company_id" required defaultValue="" className={inputClass}>
+            <option value="" disabled>Select company</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-400">Pick carefully — a store permanently belongs to the company it&apos;s created under (this is what shows in Ad Spend &amp; order entry).</p>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="store_prefix">Invoice Ref Prefix (optional)</label>
+          <input id="store_prefix" name="invoice_ref_prefix" placeholder="e.g. AOJ" className={inputClass} />
+          <p className="mt-1 text-xs text-slate-400">Leave blank if this store doesn&apos;t generate CSB-V invoices.</p>
+        </div>
+        <button
+          type="submit"
+          disabled={pending}
+          className="w-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-60"
+        >
+          {pending ? "Saving..." : "Add Store"}
+        </button>
+      </form>
+
+      <div className="rounded-xl border border-slate-200 bg-white lg:col-span-2">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500">Store Name</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500">Company</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500">Invoice Prefix</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {stores.map((s) => (
+                <StoreRowView key={s.id} store={s} />
+              ))}
+              {stores.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-4 text-center text-slate-400">No stores yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StoreRowView({ store }: { store: StoreRow }) {
+  const [isPending, startTransition] = useTransition();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(store.name);
+  const [active, setActive] = useState(store.active);
+  const [error, setError] = useState<string | null>(null);
+
+  function saveRename() {
+    setError(null);
+    startTransition(async () => {
+      const r = await renameStore(store.id, name);
+      if (r.error) setError(r.error);
+      else setEditing(false);
+    });
+  }
+
+  function toggle() {
+    const next = !active;
+    setError(null);
+    startTransition(async () => {
+      const r = await setStoreActive(store.id, next);
+      if (r.error) setError(r.error);
+      else setActive(next);
+    });
+  }
+
+  return (
+    <tr className={active ? "" : "opacity-60"}>
+      <td className="px-4 py-2 font-medium text-slate-800">
+        {editing ? (
+          <span className="flex items-center gap-1.5">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-48 rounded-lg border border-amber-400 bg-white px-2 py-1 text-sm outline-none focus:border-amber-500"
+              autoFocus
+            />
+            <button type="button" onClick={saveRename} disabled={isPending} className="rounded bg-amber-500 px-2 py-1 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+              Save
+            </button>
+            <button type="button" onClick={() => { setEditing(false); setName(store.name); }} className="text-xs text-slate-500 underline">
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <span className="flex items-center gap-2">
+            {store.name}
+            <button type="button" onClick={() => setEditing(true)} title="Rename store" className="text-xs text-amber-600 hover:underline">
+              ✏️
+            </button>
+          </span>
+        )}
+        {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      </td>
+      <td className="whitespace-nowrap px-4 py-2 text-slate-600">{store.company_name}</td>
+      <td className="whitespace-nowrap px-4 py-2 text-slate-600">{store.invoice_ref_prefix ?? "—"}</td>
+      <td className="whitespace-nowrap px-4 py-2">
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={toggle}
+          title={active ? "Deactivate (hides from Ad Spend &amp; order entry; history kept)" : "Re-activate"}
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+            active ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+          }`}
+        >
+          {active ? "Active" : "Deactivated"}
+        </button>
       </td>
     </tr>
   );

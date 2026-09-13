@@ -61,6 +61,88 @@ export async function setCompanyActive(id: string, active: boolean): Promise<{ e
   return { error: null };
 }
 
+// -----------------------------------------------------------------------
+// Store management (2026-09-13 — "ek ye section or add karna hai ki agar
+// kisi store ko delete karna, rename karna, naya store add karna ho kis
+// company me add ho raha") — stores were previously seed-data only: the 17
+// marketplace/website stores (Amazon Arts of Jaipur, Etsy The Rugara, ...
+// per the Ad Spend entry screen) could never be added to, renamed, or
+// removed from the app, even though stores.company_id already existed and
+// every store-scoped feature (Ad Spend entry scoping, employee_store_access,
+// order entry's store select, invoice prefixes) reads this one table.
+//
+// DELETE is a soft-deactivate, NOT a SQL DELETE — stores is referenced by
+// orders.store_id (NOT NULL FK), store_ad_spend, employee_store_access,
+// leave_coverage_assignments, sales_invoices.store_id, refunds, etc., so a
+// hard delete would fail on FK constraints (or, worse, cascade-delete real
+// orders). `active = false` is what the Ad Spend entry screen already
+// understands (its own toggle uses setCompanyActive on companies, and
+// stores.active exists for exactly this). Rename keeps history intact —
+// every order that pointed at the store keeps pointing at the same row.
+// -----------------------------------------------------------------------
+
+export async function createStore(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
+  await requireCapability("company_item_admin");
+  const supabase = createServiceRoleClient();
+
+  const name = str(formData, "name");
+  const companyId = str(formData, "company_id");
+  if (!name || !companyId) return { error: "Store name and company are both required.", success: false };
+
+  const { error } = await supabase.from("stores").insert({
+    name,
+    company_id: companyId,
+    invoice_ref_prefix: strOrNull(formData, "invoice_ref_prefix"),
+  });
+
+  if (error) {
+    if (error.message.toLowerCase().includes("duplicate key")) {
+      return { error: "A store with this name already exists (names are unique per company).", success: false };
+    }
+    return { error: error.message, success: false };
+  }
+
+  revalidatePath("/dashboard/admin/companies");
+  // Ad Spend entry + employee store-access screens read stores too.
+  revalidatePath("/dashboard/ad-spend");
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null, success: true };
+}
+
+export async function renameStore(storeId: string, newName: string): Promise<{ error: string | null }> {
+  await requireCapability("company_item_admin");
+  const supabase = createServiceRoleClient();
+
+  const name = newName.trim();
+  if (!name) return { error: "Store name cannot be empty." };
+
+  const { error } = await supabase.from("stores").update({ name }).eq("id", storeId);
+  if (error) {
+    if (error.message.toLowerCase().includes("duplicate key")) {
+      return { error: "A store with this name already exists in that company." };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/dashboard/admin/companies");
+  revalidatePath("/dashboard/ad-spend");
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null };
+}
+
+export async function setStoreActive(storeId: string, active: boolean): Promise<{ error: string | null }> {
+  await requireCapability("company_item_admin");
+  const supabase = createServiceRoleClient();
+
+  const { error } = await supabase.from("stores").update({ active }).eq("id", storeId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/dashboard/admin/companies");
+  revalidatePath("/dashboard/ad-spend");
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null };
+}
+
 export async function createItemCategory(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
   await requireCapability("company_item_admin");
   const supabase = createServiceRoleClient();

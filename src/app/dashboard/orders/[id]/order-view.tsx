@@ -5,6 +5,7 @@ import type { VendorAssignmentCycle } from "../vendor-assignment-actions";
 import { VendorAssignmentSection } from "./vendor-assignment-section";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
 import { FlagErrorButton } from "./flag-error-button";
+import { ShippingDetailsForm } from "./shipping-details-form";
 
 // Read-only order detail/print view — mirrors invoice-view.tsx's structure
 // (header block -> info grids -> item table -> value breakdown -> footer)
@@ -287,6 +288,7 @@ export function OrderView({
   creditNotes = [],
   vendorAssignmentParties = [],
   vendorAssignmentCycles = [],
+  shippingDefaults = null,
 }: {
   order: Order;
   companyName: string;
@@ -309,6 +311,21 @@ export function OrderView({
   // ../vendor-assignment-actions.ts.
   vendorAssignmentParties?: { id: string; name: string }[];
   vendorAssignmentCycles?: VendorAssignmentCycle[];
+  // 2026-09-13 (#5+#6) — pre-filled values for the manual shipping-details
+  // form (AWB/courier/invoice no+date/weight/dims), resolved server-side
+  // from dispatch_invoices' summary (which resyncDispatchSummary keeps
+  // true against order_shipments/order_packages). Optional so every other
+  // consumer of this view (orders/print) stays unchanged.
+  shippingDefaults?: {
+    awb_no: string | null;
+    courier_name: string | null;
+    invoice_no: string | null;
+    invoice_date: string | null;
+    weight_kg: number | null;
+    length_cm: number | null;
+    width_cm: number | null;
+    height_cm: number | null;
+  } | null;
 }) {
   return (
     <div>
@@ -397,6 +414,14 @@ export function OrderView({
             </div>
           </dl>
         </div>
+      )}
+
+      {/* 2026-09-13 (#5+#6) — manual AWB / courier / invoice no+date /
+          weight / dims entry, with auto-Dispatch when AWB + invoice no. are
+          both present (the user's own rule). Sits directly under the
+          status grid so the result is immediately visible there. */}
+      {shippingDefaults && (
+        <ShippingDetailsForm orderId={order.id} orderStatus={order.status} defaults={shippingDefaults} />
       )}
 
       {/* 2026-09-08 — Vendor Assignment History: a separate section (per

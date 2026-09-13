@@ -101,6 +101,23 @@ type GenerateInvoiceParams = {
   // courier's auto-invoice hook), which reserves fresh numbers here exactly
   // as before this round — see reserveCsbVReferenceNumbers below.
   reservedReferenceNumbers?: { invoiceNo: string; masterInvoiceNo: string; departmentReferenceNo: string | null } | null;
+  // 2026-09-13 (#7) — "jo invoice fourmula hai apna automaticly ka lekin
+  // usme ek option ye bhi chahiuye ki agar manual invoice add karna chahe
+  // to kese karenge. kyu ki ye jo function hai 1 april se properly chalega.
+  // lekin jab abhi bich me se kar rahe hai to manual option hona chahiye
+  // jese order page me aata hai po no manual add karne ka": type the
+  // invoice numbers by hand for backdated/mid-year entries instead of
+  // consuming the next FY-sequential reserve_next_number() values. Both
+  // must be provided together (master_invoice_no is NOT NULL on
+  // sales_invoices); the UNIQUE (company_id, invoice_no) constraint is the
+  // duplicate guard — a collision surfaces as a clear "already exists"
+  // error rather than a raw constraint message. Department Reference No
+  // still auto-derives for FedEx (fully deterministic formula, see
+  // department-reference.ts), but the typed manual invoice no. wins if the
+  // employee overrode that too.
+  manualInvoiceNo?: string | null;
+  manualMasterInvoiceNo?: string | null;
+  manualDepartmentReferenceNo?: string | null;
 };
 
 /**
@@ -357,7 +374,25 @@ export async function generateInvoiceCore(
   let invoiceNo: string;
   let masterInvoiceNo: string;
   let departmentReferenceNo: string | null;
-  if (params.reservedReferenceNumbers) {
+  if (params.manualInvoiceNo || params.manualMasterInvoiceNo) {
+    // 2026-09-13 (#7) — manual numbering path. Both numbers required (see
+    // the GenerateInvoiceParams doc comment); no reserve_next_number call
+    // at all, so the automatic sequence is NOT consumed by this invoice —
+    // the next automatically-generated invoice continues from wherever the
+    // FY sequence actually is, exactly what a mid-year manual entry needs.
+    const manualNo = (params.manualInvoiceNo ?? "").trim();
+    const manualMaster = (params.manualMasterInvoiceNo ?? "").trim();
+    if (!manualNo || !manualMaster) {
+      return { error: "Manual invoice number requires BOTH the Invoice No. and the Master Invoice No. — fill both, or leave both blank for automatic numbering.", invoice: null };
+    }
+    invoiceNo = manualNo;
+    masterInvoiceNo = manualMaster;
+    departmentReferenceNo = params.manualDepartmentReferenceNo?.trim()
+      ? params.manualDepartmentReferenceNo.trim()
+      : isFedEx(courierCompany)
+        ? computeDepartmentReferenceNo(csbType as "CSB-V" | "CSB-IV", shipmentTerm, invoiceDate)
+        : null;
+  } else if (params.reservedReferenceNumbers) {
     // 2026-09-11: courier-booking/actions.ts pre-reserved these BEFORE
     // calling the courier's API (see reserveCsbVReferenceNumbers above) so
     // the exact same numbers printed on a FedEx label land in this row too.
@@ -443,6 +478,12 @@ export async function generateInvoiceCore(
     .single();
 
   if (insertError || !invoice) {
+    // 2026-09-13 (#7) — the manual-numbering path relies on the table's
+    // UNIQUE (company_id, invoice_no) constraint as its duplicate guard;
+    // translate that raw message into something the form can show as-is.
+    if (insertError?.message.toLowerCase().includes("duplicate key")) {
+      return { error: `An invoice with the number "${invoiceNo}" already exists for this company — manual invoice numbers must be unique.`, invoice: null };
+    }
     return { error: `Failed to save invoice: ${insertError?.message ?? "unknown error"}`, invoice: null };
   }
 
@@ -532,6 +573,11 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     brokerName: strOrNull(formData, "broker_name"),
     brokerTel: strOrNull(formData, "broker_tel"),
     brokerContact: strOrNull(formData, "broker_contact"),
+    // 2026-09-13 (#7) — manual numbering option (see
+    // GenerateInvoiceParams.manualInvoiceNo). Blank = automatic, unchanged.
+    manualInvoiceNo: strOrNull(formData, "manual_invoice_no"),
+    manualMasterInvoiceNo: strOrNull(formData, "manual_master_invoice_no"),
+    manualDepartmentReferenceNo: strOrNull(formData, "manual_department_reference_no"),
   });
 
   if (result.error || !result.invoice) return { error: result.error, success: null };

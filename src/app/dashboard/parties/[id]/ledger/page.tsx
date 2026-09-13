@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea } from "@/components/print-view";
 import { groupBills } from "@/lib/bill-grouping";
 import { LedgerExportBar } from "./ledger-export-bar";
+import { LedgerBillAdminActions, LedgerPaymentAdminActions } from "./admin-row-actions";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
 // MERE HISAB SE". Investigated first (see db/2026-08-17-freight-duty-bills-
@@ -18,6 +19,34 @@ import { LedgerExportBar } from "./ledger-export-bar";
 // party_id stayed NULL for those even when sent to Finance). This page is
 // simply that table filtered to one party, oldest-first, with a running
 // balance and each entry's payment history from bill_pass_register_payments.
+//
+// 2026-09-13 revamp (user's 8-item request, items #8 + #4):
+//  - Separate INVOICE NO. column (vendor_invoice_no preferred, system
+//    invoice_no fallback) instead of burying the number inside Particulars.
+//  - Particulars now says WHAT the row is in plain words — "Courier Bill
+//    (Freight)", "Duty & Tax Bill", "Purchase Bill", "Payment against
+//    <invoice> via UPI · UTR-123" — pulled from `source`, so a Courier bill
+//    is never mistaken for a Duty bill.
+//  - Payment Mode + UTR/Ref No. get their own columns on payment rows
+//    (bill_pass_register_payments.payment_mode / reference_no already held
+//    both — they were only ever concatenated into Particulars).
+//  - Row colors: a bill FULLY paid (balance_due <= 0) renders GREEN — both
+//    the bill row and every payment row paid against it ("jis bill ke
+//    against payment hua hai to bill ki dono entry green ho jaye");
+//    balance-due bills render AMBER; bills past their due date (invoice
+//    recv date + 7) render RED — "jo bill jyada late ho rahe hai vo red".
+//  - "Merge same invoice across companies" (#4): one purchase of 20 orders
+//    split 10/5/5 across Nyko Mart/Rugara/CASA ARRA posts three
+//    bill_pass_register rows (same party, same vendor invoice no., three
+//    companies) and previously showed as three disconnected entries. The
+//    new `allCompanies=1` toggle drops the company filter, groups those
+//    same-party+same-invoice rows into ONE Credit line summing the three
+//    bills, and their payments join under it — invoice & party name stay
+//    shared, "baki jo payment hai vo jud ke aajaye". Same merge logic is
+//    what courier/duty bills need too ("ese hi courier bill, duty taxs me
+//    hona chahiye"), so the group key is (party, vendor_invoice_no,
+//    source-bucket) regardless of source, not purchase-only like
+//    groupBills()'s same-company path.
 export default async function PartyLedgerPage({
   params,
   searchParams,
@@ -40,15 +69,41 @@ export default async function PartyLedgerPage({
   }
 }
 
+// 2026-09-13 — the #4/#8 source-bucket labels. `source` is the
+// discriminator Bill Payment/Purchase Bill already key on (and edit gates on,
+// see bill-payment/actions.ts's source IS NULL rule) — reusing it here means
+// Particulars is derived from the same field the rest of the app trusts,
+// never guessed from the amount.
+const SOURCE_LABEL: Record<string, string> = {
+  purchase_bill: "Purchase Bill",
+  freight_bill: "Courier Bill (Freight)",
+  duty_tax_bill: "Duty & Tax Bill",
+};
+
+function sourceLabelFor(e: { source: string | null; invoice_type: string | null }): string {
+  return SOURCE_LABEL[e.source ?? ""] ?? e.invoice_type ?? "Bill";
+}
+
 async function PartyLedgerInner(
   { id }: { id: string },
   sp: { [key: string]: string | string[] | undefined }
 ) {
   const employee = await requireCapability("bill_payment");
+  const isAdmin = employee.capabilities.includes("employee_admin");
   const supabase = createServiceRoleClient();
 
   const { data: party } = await supabase.from("parties").select("id, name, party_type").eq("id", id).maybeSingle();
   if (!party) notFound();
+
+  const spVal = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
+  // #4 — cross-company merge toggle. Deliberately opt-in (default OFF =
+  // today's per-company view): parties is deliberately NOT company-scoped
+  // (one party can have bills against more than one company), so the
+  // default view still filters to employee.currentCompanyId exactly as the
+  // 2026-08-17 fix below mandates; the toggle just widens it to every
+  // company this login can access, grouped per invoice.
+  const allCompanies = spVal("allCompanies") === "1";
+  const scopedCompanyIds = allCompanies ? employee.companyIds : [employee.currentCompanyId];
 
   const { data: entriesRaw } = await supabase
     .from("bill_pass_register")
@@ -56,7 +111,7 @@ async function PartyLedgerInner(
       "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
     )
     .eq("party_id", id)
-    .eq("company_id", employee.currentCompanyId)
+    .in("company_id", scopedCompanyIds)
     .order("invoice_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 
@@ -64,18 +119,20 @@ async function PartyLedgerInner(
   // ME KYU AARI HAI": `parties` is deliberately NOT company-scoped (one
   // party can have bills against more than one company, e.g. a courier or
   // "Prachi Rugs" appearing in both the Nyko Mart and Rug Ara historical
-  // imports) — so this page must filter bill_pass_register down to
+  // imports) — so the DEFAULT view must filter bill_pass_register down to
   // `employee.currentCompanyId` (the company picked in the top-nav
   // switcher), NOT `employee.companyIds` (every company this login can
   // access). The old `.in(..., companyIds)` leaked another company's bills
   // for the same party into whichever company happened to be selected —
   // matches the pattern every other per-company page in this app already
-  // uses (orders/new, shipglobal, attendance, etc.).
+  // uses (orders/new, shipglobal, attendance, etc.). The `allCompanies=1`
+  // toggle above is the explicit exception, clearly labeled in the UI.
   const { data: companies } = await supabase.from("companies").select("id, name");
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const currentCompanyName = companyName.get(employee.currentCompanyId) ?? "—";
 
-  const billIds = (entriesRaw ?? []).map((e) => e.id);
+  const entries = entriesRaw ?? [];
+  const billIds = entries.map((e) => e.id);
   const { data: paymentsRaw } = billIds.length
     ? await supabase
         .from("bill_pass_register_payments")
@@ -91,12 +148,6 @@ async function PartyLedgerInner(
     paymentsByBill.set(p.bill_pass_register_id, list);
   }
 
-  const sourceLabel: Record<string, string> = {
-    purchase_bill: "Purchase Bill",
-    freight_bill: "Courier Bill",
-    duty_tax_bill: "Duty & Tax Bill",
-  };
-
   // 2026-08-18 — "ek entry debit ki dikh rahi hai phir credit ki dikh rahi
   // hai, ese ladger format apne system me": redesigned from "one row per
   // invoice, with its payments nested inside" to a real chronological
@@ -110,16 +161,11 @@ async function PartyLedgerInner(
   // standard (Tally-style) bookkeeping. Standard convention posts a bill
   // (liability increases — we now owe them) to the CREDIT side of the
   // party's account, and a payment (liability decreases) to the DEBIT
-  // side. The original 2026-08-18 build had these swapped (Bill=Debit,
-  // Payment=Credit) — functionally consistent internally, but backwards
-  // from the standard Dr/Cr convention the user actually expects. Fixed
-  // here: Bill → Credit line, Credit Note → Debit line (it reduces what we
-  // owe, same direction as a payment), Payment → Debit line. The
-  // underlying "amount payable" math is unchanged (still bill amount minus
-  // credit notes minus payments) — only which column each line's amount
-  // lands in, and therefore Total Debit/Total Credit, is swapped. See
-  // `balance` below: now `credit - debit` (was `debit - credit`) so
-  // `closingBalance > 0` still means "we owe the party this much".
+  // side. Bill → Credit line, Credit Note → Debit line, Payment → Debit
+  // line. `balance = credit - debit` so `closingBalance > 0` still means
+  // "we owe the party this much". The 2026-09-13 color/merge work below
+  // keeps this math byte-for-byte unchanged — it only changes which
+  // columns exist and how rows are shaded.
   type Txn = {
     date: string;
     particulars: string;
@@ -127,67 +173,167 @@ async function PartyLedgerInner(
     debit: number;
     credit: number;
     sortKey: string; // date + a same-day tiebreaker so a bill sorts before its own same-day payment
+    // #8 — row identity for coloring + the admin actions. billIds covers
+    // merged groups (a merged line carries all 3 company rows' ids).
+    billIds: string[];
+    // #8 — the invoice column's value for this row ("" for payments,
+    // which repeat their bill's invoice via the group's shade, not text).
+    invoiceNo: string;
+    paymentMode: string | null;
+    referenceNo: string | null;
+    // Set on payment rows only — the bill_pass_register_payments.id this
+    // line posts from, so the Admin edit form targets the exact row
+    // instead of re-matching by (amount, mode, ref).
+    paymentId: string | null;
+    // The worst status across every bill this row represents — drives the
+    // green/amber/red shading. Payments inherit their bill's status so
+    // "dono entry green ho jaye" literally holds.
+    status: "paid" | "pending" | "overdue" | null;
   };
 
-  // 2026-08-27 — "party ladger me bhi ese hi dikh raha hai" (same N-rows-
-  // per-invoice bug as Approvals/Bill Payment): a multi-item/multi-order
-  // Purchase Bill's several bill_pass_register rows are grouped (see
-  // src/lib/bill-grouping.ts) into ONE "Credit" ledger line per invoice
-  // (summed total_amt) and ONE combined "Debit" line for any credit-note/
-  // adjustment amount, BEFORE building txns — every member row's own
-  // payments still post individually (a payment is its own real-world
-  // event, not something to merge), just all labeled against the shared
-  // invoice ref.
+  // #4/#8 — group key. Purchase-only same-company grouping stays exactly
+  // as groupBills() defined it (that helper is shared with Approvals/Bill
+  // Payment and I'm not changing its behavior under them); this page's
+  // OWN pass re-groups the result by (party, vendor invoice no., source
+  // bucket) across the already-fetched rows, which for allCompanies=1
+  // merges the 3-company split of one invoice, and for courier/duty bills
+  // merges their same-invoice duplicates too ("ese hi courier bill, duty
+  // taxs me hona chahiye"). Rows with no vendor invoice no. stay
+  // singletons (same never-merge-unknowns rule groupBills uses).
+  type MergedBillGroup = {
+    key: string;
+    bills: typeof entries;
+    isCrossCompanyMerge: boolean;
+  };
+  const mergedGroups: MergedBillGroup[] = [];
+  {
+    const baseGroups = groupBills(
+      entries.filter((e): e is typeof e & { party_id: string } => !!e.party_id)
+    );
+    const byKey = new Map<string, MergedBillGroup>();
+    const order: string[] = [];
+    for (const bg of baseGroups) {
+      const first = bg.bills[0];
+      // Merge on the VENDOR's invoice number — that's the one real-world
+      // document, whatever split it into several of our rows. System
+      // invoice_no (our own reserve_next_number output) differs per
+      // company by design and must never be a merge key.
+      const vendorInv = (first.vendor_invoice_no ?? "").trim();
+      const bucket = sourceLabelFor(first);
+      const key = vendorInv ? `m:${bucket}|${vendorInv}` : `s:${bg.key}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.bills.push(...bg.bills);
+      } else {
+        const g: MergedBillGroup = { key, bills: [...bg.bills], isCrossCompanyMerge: false };
+        byKey.set(key, g);
+        order.push(key);
+        mergedGroups.push(g);
+      }
+    }
+    for (const g of mergedGroups) {
+      g.isCrossCompanyMerge = new Set(g.bills.map((b) => b.company_id)).size > 1;
+    }
+    // Keep chronological order by the group's earliest bill date, stable
+    // with the fetch order otherwise (sortKey ties broken by row order).
+    mergedGroups.sort((a, b) => {
+      const da = a.bills[0].invoice_date ?? a.bills[0].invoice_recv_date ?? a.bills[0].created_at.slice(0, 10);
+      const db = b.bills[0].invoice_date ?? b.bills[0].invoice_recv_date ?? b.bills[0].created_at.slice(0, 10);
+      if (da !== db) return da < db ? -1 : 1;
+      return order.indexOf(a.key) - order.indexOf(b.key);
+    });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
   const txns: Txn[] = [];
-  const partyIdEntries = (entriesRaw ?? []).filter((e): e is typeof e & { party_id: string } => !!e.party_id);
-  for (const eg of groupBills(partyIdEntries)) {
+  for (const eg of mergedGroups) {
     const first = eg.bills[0];
-    const ref = first.vendor_invoice_no ?? first.invoice_no ?? "—";
-    const label = sourceLabel[first.source ?? ""] ?? first.invoice_type ?? "Bill";
+    const vendorInv = (first.vendor_invoice_no ?? "").trim();
+    const ref = vendorInv || first.invoice_no || "—";
+    const label = sourceLabelFor(first);
     const billDate = first.invoice_date ?? first.invoice_recv_date ?? first.created_at.slice(0, 10);
+
     const totalAmt = eg.bills.reduce((sum, b) => sum + Number(b.total_amt), 0);
     const creditNoteAmt = eg.bills.reduce((sum, b) => sum + Number(b.credit_note_amt), 0);
     const adjAmt = eg.bills.reduce((sum, b) => sum + Number(b.adj_amt ?? 0), 0);
-    const itemsSuffix = eg.isGroup ? ` (${eg.bills.length} items)` : "";
+    // #8 — group status = worst member status. balance_due is a GENERATED
+    // column (total_amt - credit_note_amt - adj_amt - total_paid), so <= 0
+    // here IS "fully paid off" by the ledger's own math. due_date is
+    // generated as invoice_recv_date + 7.
+    const groupBillIds = eg.bills.map((b) => b.id);
+    let status: Txn["status"];
+    if (eg.bills.every((b) => Number(b.balance_due) <= 0.005)) status = "paid";
+    else if (eg.bills.some((b) => b.due_date && b.due_date < today)) status = "overdue";
+    else status = "pending";
+    const groupSuffix =
+      (eg.isCrossCompanyMerge ? ` — merged ${eg.bills.length} entries` : eg.bills.length > 1 ? ` (${eg.bills.length} items)` : "") +
+      (eg.isCrossCompanyMerge ? ` (${Array.from(new Set(eg.bills.map((b) => companyName.get(b.company_id) ?? ""))).filter(Boolean).join(", ")})` : "");
+
     if (totalAmt !== 0) {
       txns.push({
         date: billDate,
-        particulars: `${label} ${ref}${itemsSuffix}`,
+        particulars: `${label}${groupSuffix}`,
         type: "Credit",
         debit: 0,
         credit: totalAmt,
-        sortKey: `${billDate}_0`,
+        sortKey: `${billDate}_0_${eg.key}`,
+        billIds: groupBillIds,
+        invoiceNo: ref,
+        paymentMode: null,
+        referenceNo: null,
+        paymentId: null,
+        status,
       });
     }
     if (creditNoteAmt > 0) {
       txns.push({
         date: billDate,
-        particulars: `Credit Note against ${ref}`,
+        particulars: `Credit Note against ${ref}${groupSuffix}`,
         type: "Debit",
         debit: creditNoteAmt,
         credit: 0,
-        sortKey: `${billDate}_1`,
+        sortKey: `${billDate}_1_${eg.key}`,
+        billIds: groupBillIds,
+        invoiceNo: ref,
+        paymentMode: null,
+        referenceNo: null,
+        paymentId: null,
+        status,
       });
     }
     if (adjAmt > 0) {
       txns.push({
         date: billDate,
-        particulars: `Debit/Credit Note adjustment against ${ref}`,
+        particulars: `Debit/Credit Note adjustment against ${ref}${groupSuffix}`,
         type: "Debit",
         debit: adjAmt,
         credit: 0,
-        sortKey: `${billDate}_1`,
+        sortKey: `${billDate}_1_${eg.key}`,
+        billIds: groupBillIds,
+        invoiceNo: ref,
+        paymentMode: null,
+        referenceNo: null,
+        paymentId: null,
+        status,
       });
     }
     for (const b of eg.bills) {
       for (const p of paymentsByBill.get(b.id) ?? []) {
         txns.push({
           date: p.payment_date,
-          particulars: `Payment against ${ref}${p.payment_mode ? ` (${p.payment_mode})` : ""}${p.reference_no ? ` · ${p.reference_no}` : ""}`,
+          // #8 — Particulars now names the mode explicitly ("via UPI"),
+          // with mode+UTR ALSO in their own columns below.
+          particulars: `Payment against ${ref}${p.payment_mode ? ` via ${p.payment_mode}` : ""}`,
           type: "Debit",
           debit: p.amount,
           credit: 0,
-          sortKey: `${p.payment_date}_2`,
+          sortKey: `${p.payment_date}_2_${eg.key}`,
+          billIds: [b.id],
+          invoiceNo: ref,
+          paymentMode: p.payment_mode,
+          referenceNo: p.reference_no,
+          paymentId: p.id,
+          status,
         });
       }
     }
@@ -223,9 +369,9 @@ async function PartyLedgerInner(
   // in the app having one. This is the single shared page every party's
   // ledger renders through (`/dashboard/parties/[id]/ledger`), so both
   // fixes apply to every party automatically, not just this one.
-  const fromDate = typeof sp.from === "string" ? sp.from : "";
-  const toDate = typeof sp.to === "string" ? sp.to : "";
-  const txnType = typeof sp.type === "string" ? sp.type : "";
+  const fromDate = spVal("from");
+  const toDate = spVal("to");
+  const txnType = spVal("type");
 
   const displayedLines = ledgerLines.filter((t) => {
     if (fromDate && t.date < fromDate) return false;
@@ -250,10 +396,27 @@ async function PartyLedgerInner(
   const exportRows = displayedLines.map((t) => ({
     date: t.date,
     particulars: t.particulars,
+    invoice_no: t.invoiceNo,
+    payment_mode: t.paymentMode ?? "",
+    reference_no: t.referenceNo ?? "",
     debit: t.debit,
     credit: t.credit,
     balance: t.balance,
   }));
+
+  // #8 — row shading. Plain classes (not CSS vars) on purpose: the ledger
+  // must keep its meaning in PRINT and in every one of the 7 dashboard
+  // themes, and green/amber/red for paid/pending/overdue is a fixed
+  // accounting convention, not a theme accent.
+  const rowShade: Record<NonNullable<Txn["status"]>, string> = {
+    paid: "bg-emerald-50",
+    pending: "bg-amber-50/70",
+    overdue: "bg-red-50",
+  };
+
+  // Bills/payments keyed by id for the per-row admin forms (Admin only).
+  const billById = new Map(entries.map((e) => [e.id, e]));
+  const paymentsByBillRemark = new Map<string, string | null>((paymentsRaw ?? []).map((p) => [p.id, p.remark] as const));
 
   return (
     <div>
@@ -279,13 +442,26 @@ async function PartyLedgerInner(
             <option value="credit">Credit only (credit notes + payments)</option>
           </select>
         </div>
+        {/* #4 — merge toggle. Preserves the date/type filters above since
+            they're the same form; the toggle is its own checkbox. */}
+        <label className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-slate-600" title="Show this party's bills from ALL your companies, merged into one entry per vendor invoice no. (purchase, courier and duty bills alike)">
+          <input type="checkbox" name="allCompanies" value="1" defaultChecked={allCompanies} />
+          Merge same invoice across companies
+        </label>
         <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
-          Filter
+          Apply
         </button>
         {filtersActive && (
           <a href={`/dashboard/parties/${id}/ledger`} className="text-xs text-slate-400 underline">Clear</a>
         )}
       </form>
+
+      {!allCompanies && (
+        <p className="mb-2 text-[11px] text-slate-500 print:hidden">
+          Showing <strong>{currentCompanyName}</strong> only. One purchase split across Nyko Mart / Rugara / CASA ARRA shows as separate entries
+          per company — tick <em>Merge same invoice across companies</em> above to see them combined.
+        </p>
+      )}
 
       <PrintArea id="party-ledger-area">
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
@@ -293,7 +469,7 @@ async function PartyLedgerInner(
             <div>
               <h1 className="text-lg font-bold text-slate-900">Party Ledger</h1>
               <p className="text-slate-500">{party.name}{party.party_type ? ` · ${party.party_type}` : ""}</p>
-              <p className="text-[10px] uppercase tracking-wide text-slate-400">{currentCompanyName}</p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-400">{allCompanies ? "All companies (merged)" : currentCompanyName}</p>
             </div>
             <div className="text-right text-slate-600">
               <p>Total Debit ₹{totalDebit.toFixed(2)}</p>
@@ -330,11 +506,26 @@ async function PartyLedgerInner(
             </p>
           )}
 
+          {/* #8 legend — matches the exact row classes used below. */}
+          <p className="mb-2 flex flex-wrap items-center gap-3 text-[10px] text-slate-500 print:hidden">
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-200" /> Paid in full</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-200" /> Pending (within due date)</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-300" /> Overdue (past due date)</span>
+            <span>· a bill and its payments share the same shade; due date = bill received date + 7 days.</span>
+          </p>
+
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                 <th className="py-1 pr-2">Date</th>
+                {/* #8 — Invoice No. is its own column now; the cell below
+                    keeps the yellow/orange search-highlight treatment the
+                    screenshot showed, since the user found rows by tapping
+                    Ctrl+F into this exact text. */}
+                <th className="py-1 pr-2">Invoice No.</th>
                 <th className="py-1 pr-2">Particulars</th>
+                <th className="py-1 pr-2">Mode</th>
+                <th className="py-1 pr-2">UTR / Ref No.</th>
                 <th className="py-1 pr-2 text-right">Debit</th>
                 <th className="py-1 pr-2 text-right">Credit</th>
                 <th className="py-1 pr-2 text-right">Balance</th>
@@ -342,9 +533,45 @@ async function PartyLedgerInner(
             </thead>
             <tbody>
               {displayedLines.map((t, i) => (
-                <tr key={i} className="border-b border-slate-100 align-top text-slate-700">
-                  <td className="py-1 pr-2">{t.date}</td>
-                  <td className="py-1 pr-2 font-medium text-slate-900">{t.particulars}</td>
+                <tr key={i} className={`group border-b border-slate-100 align-top text-slate-700 ${t.status ? rowShade[t.status] : ""}`}>
+                  <td className="whitespace-nowrap py-1 pr-2">{t.date}</td>
+                  <td className="py-1 pr-2 font-medium text-slate-900">{t.invoiceNo || ""}</td>
+                  <td className="py-1 pr-2 font-medium text-slate-900">
+                    {t.particulars}
+                    {/* #8 admin actions — hover-revealed, Admin-only,
+                        print-hidden. Rendered inside the Particulars cell
+                        so the extra form never disturbs the columns. */}
+                    {isAdmin && t.type === "Credit" && (
+                      <LedgerBillAdminActions
+                        billId={t.billIds[0]}
+                        partyId={id}
+                        defaults={{
+                          invoice_no: billById.get(t.billIds[0])?.invoice_no ?? null,
+                          vendor_invoice_no: billById.get(t.billIds[0])?.vendor_invoice_no ?? null,
+                          invoice_date: billById.get(t.billIds[0])?.invoice_date ?? null,
+                          invoice_recv_date: billById.get(t.billIds[0])?.invoice_recv_date ?? null,
+                          total_amt: Number(billById.get(t.billIds[0])?.total_amt ?? 0),
+                          credit_note_amt: Number(billById.get(t.billIds[0])?.credit_note_amt ?? 0),
+                          remark: billById.get(t.billIds[0])?.remark ?? null,
+                        }}
+                      />
+                    )}
+                    {isAdmin && t.paymentId && (
+                      <LedgerPaymentAdminActions
+                        paymentId={t.paymentId}
+                        partyId={id}
+                        defaults={{
+                          amount: t.debit,
+                          payment_date: t.date,
+                          payment_mode: t.paymentMode,
+                          reference_no: t.referenceNo,
+                          remark: paymentsByBillRemark.get(t.paymentId) ?? null,
+                        }}
+                      />
+                    )}
+                  </td>
+                  <td className="py-1 pr-2">{t.paymentMode ?? ""}</td>
+                  <td className="py-1 pr-2 font-mono text-[11px]">{t.referenceNo ?? ""}</td>
                   <td className="py-1 pr-2 text-right">{t.debit > 0 ? t.debit.toFixed(2) : ""}</td>
                   <td className="py-1 pr-2 text-right">{t.credit > 0 ? t.credit.toFixed(2) : ""}</td>
                   <td className="py-1 pr-2 text-right font-medium">{t.balance.toFixed(2)}</td>
@@ -352,7 +579,7 @@ async function PartyLedgerInner(
               ))}
               {displayedLines.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-3 text-center text-slate-400">
+                  <td colSpan={8} className="py-3 text-center text-slate-400">
                     {ledgerLines.length === 0 ? "No bills against this party yet." : "No entries match the selected filter."}
                   </td>
                 </tr>
