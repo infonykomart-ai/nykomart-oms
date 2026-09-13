@@ -318,10 +318,15 @@ function GroupRow({
               🖨 JV
             </Link>
           )}
+          {/* 2026-09-13 (visibility fix) — was a bare teal text-link that
+              blended into the row's far-right actions cell and users could
+              not find it ("ye kaha par hai mujhe to dikh nahi raha"). Now
+              a filled chip — same visual weight as everything else in the
+              actions column, impossible to miss. */}
           <button
             type="button"
             onClick={() => setCnOpen((v) => !v)}
-            className="text-xs font-semibold text-teal-600 hover:underline"
+            className={cnOpen ? "rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-300" : "rounded-md bg-teal-600 px-2 py-1 text-xs font-semibold text-white shadow-sm hover:bg-teal-700"}
             title="Apply one or more credit notes against this bill (Purchase / Courier / Duty — any bill type)"
           >
             {cnOpen ? "Cancel" : `🧾 Credit Notes${group.bills.some((b) => b.credit_notes.length > 0) ? ` (${group.bills.reduce((s, b) => s + b.credit_notes.length, 0)})` : ""}`}

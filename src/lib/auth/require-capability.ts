@@ -205,3 +205,23 @@ export async function requireCapability(capability: string): Promise<AuthedEmplo
   }
   return employee;
 }
+
+/**
+ * 2026-09-13 — same guard, but passes when the employee has ANY of the
+ * listed capabilities. Exists for cross-module pages/actions: the Credit
+ * Note Register + its actions live under Bill Payment's entry point but
+ * were gated on doc_entry (Documents' capability) — a bill_payment-only
+ * role clicking the register link got a ForbiddenError screen instead of
+ * the page ("bill payment vala link to open hi nahi ho raha"). Reading a
+ * credit-note register and applying a note against a bill is squarely
+ * within bill-payment work, so either capability now grants it. Not a
+ * loosening of any single-module gate — it widens access only across
+ * these two explicitly-related modules.
+ */
+export async function requireAnyCapability(...capabilities: string[]): Promise<AuthedEmployee> {
+  const employee = await getAuthedEmployee();
+  if (!capabilities.some((c) => employee.capabilities.includes(c))) {
+    throw new ForbiddenError(capabilities.join(" or "));
+  }
+  return employee;
+}

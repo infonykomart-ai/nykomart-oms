@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PrintArea } from "@/components/print-view";
 import { updateInvoiceFields, deleteInvoice } from "../actions";
+import { UploadToFedexButton } from "./upload-to-fedex-button";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 import { itemCostForOrder } from "@/lib/invoices/value-breakdown";
 import {
@@ -489,6 +490,12 @@ export function InvoiceView({
             Print / Save as PDF
           </button>
         </div>
+
+        {/* 2026-09-13 — "vaha par mujhe system vala invoice hi chahiye":
+            re-sends the CURRENT saved invoice (all edits + company logo)
+            to FedEx against the same AWB, so customs always has exactly
+            what this system shows. */}
+        <UploadToFedexButton invoiceId={invoice.id} />
 
         <div>
           <button

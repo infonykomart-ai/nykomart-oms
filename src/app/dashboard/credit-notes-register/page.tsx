@@ -1,4 +1,4 @@
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireAnyCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { listCreditNoteRegister, findUnregisteredManualCreditNotes } from "@/app/dashboard/bill-payment/credit-note-actions";
 import { CreditNoteRegisterActions } from "./register-actions-bar";
@@ -27,7 +27,12 @@ export default async function CreditNotesRegisterPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const employee = await requireCapability("doc_entry");
+  // 2026-09-13 (visibility fix follow-up) — was doc_entry-only, which
+  // locked out bill_payment-only roles clicking the register link FROM
+  // Bill Payment ("link to open hi nahi ho raha" — they got a
+  // ForbiddenError screen instead). Either module's capability now grants
+  // the register; writes (applyBillCreditNote) enforce the same dual gate.
+  const employee = await requireAnyCapability("bill_payment", "doc_entry");
   const supabase = createServiceRoleClient();
   const sp = await searchParams;
 

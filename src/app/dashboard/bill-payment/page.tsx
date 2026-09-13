@@ -95,6 +95,39 @@ export default async function BillPaymentPage({
     notesByBillId.set(n.billPassRegisterId, list);
   }
 
+  // 2026-09-13 — Credit Notes data for the per-bill panel + register link.
+  // One batched query per side (never per-row): every adjustment targeting
+  // any bill on this page, and every credit note in the visible companies
+  // (for the "link existing" dropdown), plus which companies hold notes so
+  // the header link can point at a meaningful register.
+  // MUST run before `rows` is built — rows' .map closure reads
+  // adjByBillId/cnNoById, and a closure over a later `const` executes
+  // immediately, which was a live TDZ crash ("Cannot access 'D' before
+  // initialization", digest 122932879): the whole Bill Payment page threw
+  // whenever any unpaid bill existed.
+  const pageBillIds = (bills ?? []).map((b) => b.id);
+  const [{ data: appliedAdj }, { data: pageCreditNotes }] = await Promise.all([
+    pageBillIds.length
+      ? supabase
+          .from("bill_pass_register_adjustments")
+          .select("id, bill_pass_register_id, amount, remark, credit_note_id")
+          .in("bill_pass_register_id", pageBillIds)
+      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null }[] }),
+    supabase
+      .from("credit_notes")
+      .select("id, cn_no, company_id, credit_note_date, refund_amount, party_id")
+      .in("company_id", effectiveCompanyIds)
+      .order("credit_note_date", { ascending: false })
+      .limit(300),
+  ]);
+  const adjByBillId = new Map<string, { id: string; amount: number; remark: string | null; credit_note_id: string | null }[]>();
+  for (const a of appliedAdj ?? []) {
+    const list = adjByBillId.get(a.bill_pass_register_id) ?? [];
+    list.push({ id: a.id, amount: Number(a.amount), remark: a.remark, credit_note_id: a.credit_note_id });
+    adjByBillId.set(a.bill_pass_register_id, list);
+  }
+  const cnNoById = new Map((pageCreditNotes ?? []).map((n) => [n.id, n.cn_no]));
+
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
     company_id: b.company_id,
@@ -133,34 +166,6 @@ export default async function BillPaymentPage({
   }));
 
   const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);
-
-  // 2026-09-13 — Credit Notes data for the per-bill panel + register link.
-  // One batched query per side (never per-row): every adjustment targeting
-  // any bill on this page, and every credit note in the visible companies
-  // (for the "link existing" dropdown), plus which companies hold notes so
-  // the header link can point at a meaningful register.
-  const pageBillIds = rows.map((r) => r.id);
-  const [{ data: appliedAdj }, { data: pageCreditNotes }] = await Promise.all([
-    pageBillIds.length
-      ? supabase
-          .from("bill_pass_register_adjustments")
-          .select("id, bill_pass_register_id, amount, remark, credit_note_id")
-          .in("bill_pass_register_id", pageBillIds)
-      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null }[] }),
-    supabase
-      .from("credit_notes")
-      .select("id, cn_no, company_id, credit_note_date, refund_amount, party_id")
-      .in("company_id", effectiveCompanyIds)
-      .order("credit_note_date", { ascending: false })
-      .limit(300),
-  ]);
-  const adjByBillId = new Map<string, { id: string; amount: number; remark: string | null; credit_note_id: string | null }[]>();
-  for (const a of appliedAdj ?? []) {
-    const list = adjByBillId.get(a.bill_pass_register_id) ?? [];
-    list.push({ id: a.id, amount: Number(a.amount), remark: a.remark, credit_note_id: a.credit_note_id });
-    adjByBillId.set(a.bill_pass_register_id, list);
-  }
-  const cnNoById = new Map((pageCreditNotes ?? []).map((n) => [n.id, n.cn_no]));
 
   return (
     <div>

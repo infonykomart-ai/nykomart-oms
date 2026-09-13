@@ -60,7 +60,14 @@
 // these, and nobody without document-entry rights can silently reduce a
 // bill's payable. Company scoping on every write via employee.companyIds,
 // same posture as everywhere else in this app.
-import { requireCapability } from "@/lib/auth/require-capability";
+// 2026-09-13 — every guard in this file is requireAnyCapability(
+// "bill_payment", "doc_entry") rather than doc_entry alone: these actions
+// are reached from Bill Payment (gated bill_payment), and a
+// bill_payment-only role got ForbiddenError screens on exactly the
+// surfaces this file powers ("link to open hi nahi ho raha"). Credit
+// notes against bills are bill-payment work, so either capability grants
+// it — same posture as the register page itself.
+import { requireAnyCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
@@ -82,7 +89,7 @@ async function loadBillScoped(supabase: ReturnType<typeof createServiceRoleClien
  * trigger re-sums adj_amt (balance_due recomputes itself, being GENERATED).
  */
 export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData: FormData): Promise<ApplyCreditNoteState> {
-  const employee = await requireCapability("doc_entry");
+  const employee = await requireAnyCapability("bill_payment", "doc_entry");
   const supabase = createServiceRoleClient();
 
   const mode = String(formData.get("mode") ?? "new");
@@ -222,7 +229,7 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
 
 /** Undo one applied credit-note adjustment (trigger re-sums adj_amt). */
 export async function removeBillCreditNote(adjustmentId: string): Promise<ApplyCreditNoteState> {
-  const employee = await requireCapability("doc_entry");
+  const employee = await requireAnyCapability("bill_payment", "doc_entry");
   const supabase = createServiceRoleClient();
 
   if (!adjustmentId) return { error: "Missing adjustment.", success: false };
@@ -272,7 +279,7 @@ export type RegisterPartyGroup = {
  * without a party (old buyer-refund CNs) group under "(No party)".
  */
 export async function listCreditNoteRegister(companyIds: string[]): Promise<RegisterPartyGroup[]> {
-  const employee = await requireCapability("doc_entry");
+  const employee = await requireAnyCapability("bill_payment", "doc_entry");
   const supabase = createServiceRoleClient();
 
   const scoped = (companyIds ?? []).filter((c) => employee.companyIds.includes(c));
@@ -326,7 +333,7 @@ export type UnregisteredBill = {
  * kiye" backlog, one "Register" click each to fix.
  */
 export async function findUnregisteredManualCreditNotes(companyIds: string[]): Promise<UnregisteredBill[]> {
-  const employee = await requireCapability("doc_entry");
+  const employee = await requireAnyCapability("bill_payment", "doc_entry");
   const supabase = createServiceRoleClient();
 
   const scoped = (companyIds ?? []).filter((c) => employee.companyIds.includes(c));
