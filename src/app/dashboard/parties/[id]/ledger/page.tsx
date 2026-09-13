@@ -404,14 +404,16 @@ async function PartyLedgerInner(
     balance: t.balance,
   }));
 
-  // #8 — row shading. Plain classes (not CSS vars) on purpose: the ledger
-  // must keep its meaning in PRINT and in every one of the 7 dashboard
-  // themes, and green/amber/red for paid/pending/overdue is a fixed
-  // accounting convention, not a theme accent.
+  // #8 — row shading. The shade classes are defined in globals.css (search
+  // "oms-row-paid") — 2026-09-13: "green collom red collor dark me dikhe":
+  // plain Tailwind pastels were tuned for the white card and nearly
+  // invisible on the night/nova themes, so the classes now carry
+  // theme-scoped dark tints there (plus a print block pinning the original
+  // light look). The card gets .oms-ledger-card for the same reason.
   const rowShade: Record<NonNullable<Txn["status"]>, string> = {
-    paid: "bg-emerald-50",
-    pending: "bg-amber-50/70",
-    overdue: "bg-red-50",
+    paid: "oms-row-paid",
+    pending: "oms-row-pending",
+    overdue: "oms-row-overdue",
   };
 
   // Bills/payments keyed by id for the per-row admin forms (Admin only).
@@ -464,7 +466,7 @@ async function PartyLedgerInner(
       )}
 
       <PrintArea id="party-ledger-area">
-        <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
+        <div className="oms-ledger-card rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h1 className="text-lg font-bold text-slate-900">Party Ledger</h1>

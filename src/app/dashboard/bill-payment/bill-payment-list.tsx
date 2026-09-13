@@ -35,6 +35,7 @@ import {
 import { groupPartyOptions, type PartyOption } from "../documents/party-options";
 import { RelatedNotesBadge } from "../documents/related-notes-badge";
 import type { RelatedNote } from "../documents/actions";
+import { CreditNotePanel, type AppliedCn } from "./credit-note-panel";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -63,9 +64,23 @@ export type PayableBillRow = {
   balance_due: number;
   remark: string | null;
   related_notes: RelatedNote[];
+  // 2026-09-13 — applied credit-note adjustments (bill_pass_register_
+  // adjustments joined to their credit_notes.cn_no) for the per-bill
+  // Credit Notes panel below.
+  credit_notes: AppliedCn[];
 };
 
-export function BillPaymentList({ bills, parties }: { bills: PayableBillRow[]; parties: PartyOption[] }) {
+export function BillPaymentList({
+  bills,
+  parties,
+  existingCreditNotes = [],
+}: {
+  bills: PayableBillRow[];
+  parties: PartyOption[];
+  // 2026-09-13 — this company(ies)' recent credit notes, for the panel's
+  // "link an existing credit note" dropdown.
+  existingCreditNotes?: { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number }[];
+}) {
   const groups = useMemo(() => groupBills(bills), [bills]);
   const [selected, setSelected] = useState<Set<string>>(new Set()); // group keys
   const [partyFilter, setPartyFilter] = useState("");
@@ -166,7 +181,14 @@ export function BillPaymentList({ bills, parties }: { bills: PayableBillRow[]; p
                 </tr>
               )}
               {groups.map((g) => (
-                <GroupRow key={g.key} group={g} parties={parties} checked={selected.has(g.key)} onToggle={() => toggle(g.key)} />
+                <GroupRow
+                  key={g.key}
+                  group={g}
+                  parties={parties}
+                  existingCreditNotes={existingCreditNotes}
+                  checked={selected.has(g.key)}
+                  onToggle={() => toggle(g.key)}
+                />
               ))}
             </tbody>
           </table>
@@ -188,16 +210,19 @@ export function BillPaymentList({ bills, parties }: { bills: PayableBillRow[]; p
 function GroupRow({
   group,
   parties,
+  existingCreditNotes,
   checked,
   onToggle,
 }: {
   group: BillGroup<PayableBillRow>;
   parties: PartyOption[];
+  existingCreditNotes: { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number }[];
   checked: boolean;
   onToggle: () => void;
 }) {
   const [payOpen, setPayOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [cnOpen, setCnOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [editState, editFormAction, editPending] = useActionState(updateBillPassRegisterEntry, initialEditState);
 
@@ -293,6 +318,14 @@ function GroupRow({
               🖨 JV
             </Link>
           )}
+          <button
+            type="button"
+            onClick={() => setCnOpen((v) => !v)}
+            className="text-xs font-semibold text-teal-600 hover:underline"
+            title="Apply one or more credit notes against this bill (Purchase / Courier / Duty — any bill type)"
+          >
+            {cnOpen ? "Cancel" : `🧾 Credit Notes${group.bills.some((b) => b.credit_notes.length > 0) ? ` (${group.bills.reduce((s, b) => s + b.credit_notes.length, 0)})` : ""}`}
+          </button>
           <button type="button" onClick={() => setPayOpen((v) => !v)} className="text-xs font-semibold text-amber-600 hover:underline">
             {payOpen ? "Cancel" : "Record Payment"}
           </button>
@@ -394,6 +427,21 @@ function GroupRow({
               </button>
             </form>
           </td>
+        </tr>
+      )}
+      {cnOpen && (
+        <tr>
+          {/* One panel per underlying bill (a grouped invoice's items can
+              each carry their own credit notes, mirroring how payments are
+              recorded per item) — for the common single-bill row this is
+              just one panel. */}
+          <CreditNotePanel
+            billId={first.id}
+            billLabel={first.invoice_no || first.vendor_invoice_no || first.id.slice(0, 8)}
+            manualCreditNoteAmt={first.credit_note_amt}
+            applied={first.credit_notes}
+            existingNotes={existingCreditNotes}
+          />
         </tr>
       )}
       {payOpen && (

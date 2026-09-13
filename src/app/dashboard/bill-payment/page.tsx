@@ -1,5 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import Link from "next/link";
 import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 import { listRelatedNotesForBills } from "../documents/actions";
 
@@ -120,9 +121,46 @@ export default async function BillPaymentPage({
     balance_due: Number(b.balance_due),
     remark: b.remark,
     related_notes: notesByBillId.get(b.id) ?? [],
+    // 2026-09-13 — Credit Notes panel data (see the page-level comment on
+    // adjByBillId above; the CN number is filled from the batched map).
+    credit_notes: (adjByBillId.get(b.id) ?? []).map((a) => ({
+      adjustment_id: a.id,
+      credit_note_id: a.credit_note_id,
+      cn_no: a.credit_note_id ? cnNoById.get(a.credit_note_id) ?? null : null,
+      amount: a.amount,
+      remark: a.remark,
+    })),
   }));
 
   const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);
+
+  // 2026-09-13 — Credit Notes data for the per-bill panel + register link.
+  // One batched query per side (never per-row): every adjustment targeting
+  // any bill on this page, and every credit note in the visible companies
+  // (for the "link existing" dropdown), plus which companies hold notes so
+  // the header link can point at a meaningful register.
+  const pageBillIds = rows.map((r) => r.id);
+  const [{ data: appliedAdj }, { data: pageCreditNotes }] = await Promise.all([
+    pageBillIds.length
+      ? supabase
+          .from("bill_pass_register_adjustments")
+          .select("id, bill_pass_register_id, amount, remark, credit_note_id")
+          .in("bill_pass_register_id", pageBillIds)
+      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null }[] }),
+    supabase
+      .from("credit_notes")
+      .select("id, cn_no, company_id, credit_note_date, refund_amount, party_id")
+      .in("company_id", effectiveCompanyIds)
+      .order("credit_note_date", { ascending: false })
+      .limit(300),
+  ]);
+  const adjByBillId = new Map<string, { id: string; amount: number; remark: string | null; credit_note_id: string | null }[]>();
+  for (const a of appliedAdj ?? []) {
+    const list = adjByBillId.get(a.bill_pass_register_id) ?? [];
+    list.push({ id: a.id, amount: Number(a.amount), remark: a.remark, credit_note_id: a.credit_note_id });
+    adjByBillId.set(a.bill_pass_register_id, list);
+  }
+  const cnNoById = new Map((pageCreditNotes ?? []).map((n) => [n.id, n.cn_no]));
 
   return (
     <div>
@@ -132,6 +170,14 @@ export default async function BillPaymentPage({
           {status === "paid" ? "Paid" : status === "overdue" ? "Overdue" : status === "pending" ? "Not-yet-due" : "Unpaid/partially-paid"}{" "}
           Bill Pass Register entries — record a payment against any of them below. Total outstanding:{" "}
           <span className="font-semibold text-slate-800">₹{totalOutstanding.toFixed(2)}</span>
+        </p>
+        {/* 2026-09-13 — "apne ko pata chal jayega ki kis party se apne ko
+            kitne amount ka credit mil gaya tha": the per-party Credit Note
+            Register lives on its own page; this is the standing doorway. */}
+        <p className="mt-1 text-sm">
+          <Link href="/dashboard/credit-notes-register" className="font-medium text-teal-700 underline hover:text-teal-800">
+            🧾 Credit Note Register — credit received per party
+          </Link>
         </p>
       </div>
 
@@ -160,7 +206,7 @@ export default async function BillPaymentPage({
         <a href="/dashboard/bill-payment" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
-      <BillPaymentList bills={rows} parties={parties ?? []} />
+      <BillPaymentList bills={rows} parties={parties ?? []} existingCreditNotes={(pageCreditNotes ?? []).map((n) => ({ id: n.id, cn_no: n.cn_no, credit_note_date: n.credit_note_date, refund_amount: Number(n.refund_amount ?? 0) }))} />
     </div>
   );
 }

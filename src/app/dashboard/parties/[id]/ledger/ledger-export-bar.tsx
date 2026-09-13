@@ -20,7 +20,16 @@ import type { ExportColumn } from "@/lib/export/export-table";
 // src/app/dashboard/reports/orders-report-table.tsx.
 export type LedgerExportRow = {
   date: string;
+  // 2026-09-13 — "sath me csv,excel, email, whatsaap pdf par jo ladger ka
+  // abhi formate hai vahi export ho jaha tak hai pahle vala fourmula ho
+  // raha hai": the export columns below now mirror the on-screen table
+  // exactly (Invoice No. / Mode / UTR-Ref No. included, same column
+  // order), so every export format shows the same revamped ledger the
+  // screen shows instead of the old 5-column layout.
+  invoice_no: string;
   particulars: string;
+  payment_mode: string;
+  reference_no: string;
   debit: number;
   credit: number;
   balance: number;
@@ -28,7 +37,10 @@ export type LedgerExportRow = {
 
 const COLUMNS: ExportColumn<LedgerExportRow>[] = [
   { key: "date", label: "Date", value: (r) => r.date },
+  { key: "invoice_no", label: "Invoice No.", value: (r) => r.invoice_no },
   { key: "particulars", label: "Particulars", value: (r) => r.particulars },
+  { key: "payment_mode", label: "Mode", value: (r) => r.payment_mode },
+  { key: "reference_no", label: "UTR / Ref No.", value: (r) => r.reference_no },
   { key: "debit", label: "Debit", value: (r) => (r.debit > 0 ? r.debit : "") },
   { key: "credit", label: "Credit", value: (r) => (r.credit > 0 ? r.credit : "") },
   { key: "balance", label: "Balance", value: (r) => r.balance },

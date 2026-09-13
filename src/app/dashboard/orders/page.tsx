@@ -192,6 +192,15 @@ export default async function OrdersPage({
           >
             🚚 Bulk Tracking Update (CSV)
           </Link>
+          {/* 2026-09-13 — "Vendor Assignment me ek sath agar 100-200 po par
+              ek sath party assign karna ho to kese kerenge": bulk CSV path
+              beside the existing bulk tracking/upload buttons. */}
+          <Link
+            href="/dashboard/orders/bulk-vendor-assignment"
+            className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100"
+          >
+            👷 Bulk Assign Party (CSV)
+          </Link>
           <Link
             href="/dashboard/orders/bulk-upload"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"

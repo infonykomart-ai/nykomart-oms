@@ -29,6 +29,10 @@ import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallb
 import { generateInvoiceCore, reserveCsbVReferenceNumbers } from "@/app/dashboard/invoices/actions";
 import { createFedexShipment, type FedexDdpDdu, type FedexShipInput } from "@/lib/couriers/fedex-ship";
 import { renderFedexInvoicePdf } from "@/lib/couriers/fedex-invoice-pdf";
+// 2026-09-13 — the UPLOAD_OWN ETD upload now renders THE REAL CSB-V invoice
+// (see csb-v-invoice-pdf.tsx's header) instead of fedex-invoice-pdf.tsx's
+// simple lookalike.
+import { renderCsbVInvoicePdf, type CsbVPdfInvoice, type CsbVPdfItem, type CsbVPdfMeta } from "@/lib/couriers/csb-v-invoice-pdf";
 import { uploadFedexPostShipmentInvoice } from "@/lib/couriers/fedex-documents";
 import { createUpsShipment, type UpsDdpDdu } from "@/lib/couriers/ups-ship";
 import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-shipping";
@@ -707,9 +711,24 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
     // Left undefined for every other courier, which reserves its own fresh
     // numbers inside generateInvoiceCore exactly as before this round.
     reservedReferenceNumbers?: { invoiceNo: string; masterInvoiceNo: string; departmentReferenceNo: string | null } | null;
+    // 2026-09-13 — the real booking context (shipper/recipient/values), used
+    // ONLY by the FedEx ETD upload path (createFedexBooking) so the freshly
+    // generated CSB-V invoice can be rendered to PDF and attached to the AWB
+    // electronically (UPLOAD_OWN) — "ye invoice jo ban raha hai vo upload
+    // hona chahiye fedex system par, vo jo pahle ban raha vo nahi". Other
+    // couriers omit it entirely; uploadCsbVInvoiceToFedex is only called
+    // from the FedEx flow.
+    etdUpload?: {
+      credentials: Awaited<ReturnType<typeof resolveCourierCredentials>>;
+      originCountryCode: string;
+      destinationCountryCode: string;
+      originLocationCode: string | null;
+      destinationLocationCode: string | null;
+      shipmentDate: string;
+    } | null;
   }
-): Promise<void> {
-  if (!args.ddpDdu) return; // domestic (Delhivery/Shiprocket) — not an export shipment, no CSB invoice applies.
+): Promise<string | null> {
+  if (!args.ddpDdu) return null; // domestic (Delhivery/Shiprocket) — not an export shipment, no CSB invoice applies.
 
   try {
     const result = await generateInvoiceCore(employee, supabase, {
@@ -759,13 +778,173 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
     });
     if (result.error) {
       console.error(`[auto-invoice] booking for order(s) ${args.orderIds.join(", ")} succeeded, but CSB-V auto-invoice generation failed: ${result.error}`);
+      return null;
     }
+    const invoiceId = result.invoice?.id ?? null;
+    // 2026-09-13 — with the ETD payload present, attach the invoice we JUST
+    // created to the real AWB via FedEx's post-shipment upload (UPLOAD_OWN,
+    // now the default electronicInvoiceType). This is THE fix for "ye
+    // invoice jo ban raha hai vo upload hona chahiye fedex system par, vo jo
+    // pahle ban raha vo nahi": what reaches FedEx is this app's real CSB-V
+    // customs invoice (the exact document printed from /dashboard/invoices),
+    // not the old simplified fedex-invoice-pdf lookalike. Failures here only
+    // log — the booking and the invoice both already exist.
+    if (args.etdUpload && invoiceId && args.awbNo) {
+      try {
+        const dataUri = await uploadCsbVInvoiceToFedex(supabase, {
+          invoiceId,
+          trackingNumber: args.awbNo,
+          companyId: employee.currentCompanyId,
+          orderId: args.orderIds[0] ?? null,
+          raisedByEmployeeId: employee.id,
+          raisedByName: employee.name,
+          credentials: args.etdUpload.credentials,
+          originCountryCode: args.etdUpload.originCountryCode,
+          destinationCountryCode: args.etdUpload.destinationCountryCode,
+          originLocationCode: args.etdUpload.originLocationCode,
+          destinationLocationCode: args.etdUpload.destinationLocationCode,
+          shipmentDate: args.etdUpload.shipmentDate,
+        });
+        // Returned straight through: the FedEx caller surfaces it as the
+        // booking response's invoiceUrl so the UI can review/download the
+        // exact document that went to FedEx.
+        return dataUri;
+      } catch (uploadErr) {
+        await logEntryError(supabase, {
+          companyId: employee.currentCompanyId,
+          source: "courier_api",
+          reason: `FedEx booked (AWB ${args.awbNo}) but the CSB-V invoice upload threw an error: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+          referenceType: "order",
+          referenceId: args.orderIds[0] ?? null,
+          raisedByEmployeeId: employee.id,
+          raisedByName: employee.name,
+        });
+      }
+    }
+    return invoiceId;
   } catch (err) {
     // Belt-and-braces — generateInvoiceCore returns errors rather than
     // throwing, but this must never let ANY failure shape here roll back or
     // block an already-successful booking.
     console.error(`[auto-invoice] booking for order(s) ${args.orderIds.join(", ")} succeeded, but CSB-V auto-invoice generation threw:`, err);
+    return null;
   }
+}
+
+// 2026-09-13 — fetches the CSB-V invoice row + its order/company/store
+// context (the exact same rows /dashboard/invoices/[id]/page.tsx renders
+// on screen), renders them through csb-v-invoice-pdf.tsx (the PDF twin of
+// invoice-view.tsx's print layout) and uploads that PDF to FedEx against
+// the AWB. Exported for the preview action? No — internal to booking flows;
+// exported only so the FedEx create action's types resolve cleanly.
+async function uploadCsbVInvoiceToFedex(
+  supabase: ServiceClient,
+  args: {
+    invoiceId: string;
+    trackingNumber: string;
+    companyId: string;
+    orderId: string | null;
+    raisedByEmployeeId: string;
+    raisedByName: string;
+    credentials: Awaited<ReturnType<typeof resolveCourierCredentials>>;
+    originCountryCode: string;
+    destinationCountryCode: string;
+    originLocationCode: string | null;
+    destinationLocationCode: string | null;
+    shipmentDate: string;
+  }
+): Promise<string | null> {
+  // Returns the uploaded PDF's data: URI (null when the upload failed) so
+  // the booking response can hand the exact document back to the UI.
+  // Same fetches the invoice page performs (see its page.tsx) so the PDF
+  // matches the on-screen document line for line.
+  const [{ data: inv }, { data: invOrders }, { data: invCats }] = await Promise.all([
+    supabase.from("sales_invoices").select("*").eq("id", args.invoiceId).single(),
+    supabase
+      .from("orders")
+      .select("id, ref_no, ref_no_base, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour")
+      .eq("invoice_id", args.invoiceId),
+    supabase.from("item_categories").select("id, name, hsn_code, harmonized_tariff_number"),
+  ]);
+  if (!inv) {
+    await logEntryError(supabase, {
+      companyId: args.companyId,
+      source: "courier_api",
+      reason: `FedEx booked (AWB ${args.trackingNumber}) but the CSB-V invoice row could not be loaded for the ETD upload — upload it manually on FedEx's site.`,
+      referenceType: "order",
+      referenceId: args.orderId,
+      raisedByEmployeeId: args.raisedByEmployeeId,
+      raisedByName: args.raisedByName,
+    });
+    return null;
+  }
+  const [{ data: invCompany }, { data: invProfile }, { data: invStore }] = await Promise.all([
+    supabase.from("companies").select("name").eq("id", inv.company_id).single(),
+    supabase
+      .from("company_profiles")
+      .select("address, phone, whatsapp, email, iec, gstin, ad_code, bank_name, account_no, ifsc_code")
+      .eq("company_id", inv.company_id)
+      .maybeSingle(),
+    supabase.from("stores").select("name").eq("id", inv.store_id).single(),
+  ]);
+  const catMap = new Map((invCats ?? []).map((c) => [c.id, c]));
+  const pdfItems: CsbVPdfItem[] = (invOrders ?? []).map((o) => ({
+    ref_no: o.ref_no,
+    ref_no_base: o.ref_no_base,
+    sku_label: o.sku_label,
+    size_label: o.size_label,
+    qty: o.qty,
+    colour: o.colour,
+    category_name: catMap.get(o.item_category_id)?.name ?? "",
+    hsn_code: catMap.get(o.item_category_id)?.hsn_code ?? "",
+    harmonized_tariff_number: catMap.get(o.item_category_id)?.harmonized_tariff_number ?? "",
+    order_value_original: o.order_value_original,
+    order_currency: o.order_currency,
+  }));
+  const pdfMeta: CsbVPdfMeta = {
+    companyName: invCompany?.name ?? "",
+    companyAddress: invProfile?.address ?? null,
+    companyPhone: invProfile?.phone ?? null,
+    companyWhatsapp: invProfile?.whatsapp ?? null,
+    companyEmail: invProfile?.email ?? null,
+    gstin: invProfile?.gstin ?? null,
+    iec: invProfile?.iec ?? null,
+    adCode: invProfile?.ad_code ?? null,
+    bankName: invProfile?.bank_name ?? null,
+    accountNo: invProfile?.account_no ?? null,
+    ifscCode: invProfile?.ifsc_code ?? null,
+    storeName: invStore?.name ?? "",
+  };
+  const pdfBuffer = await renderCsbVInvoicePdf(inv as unknown as CsbVPdfInvoice, pdfItems, pdfMeta);
+  const uploadResult = await uploadFedexPostShipmentInvoice(
+    {
+      trackingNumber: args.trackingNumber,
+      shipmentDate: args.shipmentDate,
+      originCountryCode: args.originCountryCode,
+      destinationCountryCode: args.destinationCountryCode,
+      // 2026-09-12 (correction #4) — "strongly recommended" by FedEx to
+      // avoid customs delays; best-effort from whatever createFedexShipment
+      // could extract off the real Create Shipment response (see
+      // fedex-ship.ts). Omitted from the upload request when null.
+      originLocationCode: args.originLocationCode,
+      destinationLocationCode: args.destinationLocationCode,
+      pdfBuffer,
+      fileName: `csb-v-invoice-${args.trackingNumber}.pdf`,
+    },
+    args.credentials
+  );
+  if (!uploadResult.ok) {
+    await logEntryError(supabase, {
+      companyId: args.companyId,
+      source: "courier_api",
+      reason: `FedEx booked (AWB ${args.trackingNumber}) but the CSB-V invoice failed to attach: ${uploadResult.error}`,
+      referenceType: "order",
+      referenceId: args.orderId,
+      raisedByEmployeeId: args.raisedByEmployeeId,
+      raisedByName: args.raisedByName,
+    });
+  }
+  return `data:application/pdf;base64,${pdfBuffer.toString("base64")}`;
 }
 
 // 2026-09-11 — FedEx-only (see fedex-ship.ts's header comment on the real
@@ -1084,11 +1263,10 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
   const fedexReferences = await resolveFedexLabelReferences(supabase, { orderIds: combinedOrderIds, ddpDdu, invoiceDate });
   // 2026-09-11 — company-wise Bank AD Code (see resolveFedexAdCode above).
   const adCode = await resolveFedexAdCode(supabase, employee.currentCompanyId);
-  // 2026-09-12 — only needed for the "I will upload my own invoice" ETD
-  // option's PDF header (fedex-invoice-pdf.tsx) — a separate small query
-  // rather than widening resolveFedexAdCode's existing shape, so the
-  // already-working label-reference code path above is untouched.
-  const customsProfile = await resolveCompanyCustomsProfile(supabase, employee.currentCompanyId);
+  // 2026-09-13 — this action no longer queries resolveCompanyCustomsProfile:
+  // the UPLOAD_OWN ETD upload renders the real CSB-V invoice, which pulls
+  // its own company profile inside uploadCsbVInvoiceToFedex, instead of the
+  // old fedex-invoice-pdf header the query here used to feed.
 
   const input = {
     serviceType: str(formData, "service_code") || "INTERNATIONAL_PRIORITY",
@@ -1219,7 +1397,37 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       createdBy: employee.id,
     });
 
-    await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
+    // 2026-09-13 — the uploaded invoice PDF's data: URI, handed back to the
+    // UI alongside labelUrl so the employee can review/download the exact
+    // document that went to FedEx — see
+    // CourierBookingCreateState.invoiceUrl's header comment.
+    let invoiceDataUri: string | null = null;
+
+    // 2026-09-13 — "ye invoice jo ban raha hai vo upload hona chahiye fedex
+    // system par, vo jo pahle ban raha vo nahi": with UPLOAD_OWN selected,
+    // the ETD payload is passed down so the upload happens INSIDE
+    // maybeAutoGenerateCsbVInvoiceForBooking — straight after it creates the
+    // real CSB-V invoice (generateInvoiceCore) — and what gets attached to
+    // the AWB is the app's own final CSB-V customs invoice (the exact
+    // document printed from /dashboard/invoices), not the old simplified
+    // fedex-invoice-pdf lookalike. The helper returns the uploaded PDF's
+    // data: URI (null unless the upload succeeded). Still a post-shipment
+    // upload (see fedex-documents.ts) and still failure-isolated: a failure
+    // never fails the already-successful booking. FedEx-built
+    // commercial/proforma ETD options pass null and never trigger this
+    // app-side upload.
+    const etdUpload =
+      input.electronicInvoiceType === "UPLOAD_OWN" && result.shipmentDate
+        ? {
+            credentials,
+            originCountryCode: input.shipper.countryCode,
+            destinationCountryCode: recipientCountry.code,
+            originLocationCode: result.originLocationCode,
+            destinationLocationCode: result.destinationLocationCode,
+            shipmentDate: result.shipmentDate,
+          }
+        : null;
+    const autoInvoiceResult = await maybeAutoGenerateCsbVInvoiceForBooking(supabase, employee, {
       orderIds: combinedOrderIds,
       courierLabel: "FedEx",
       awbNo: result.trackingNo,
@@ -1227,123 +1435,12 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
       dimsCm: dims,
       ddpDdu: input.ddpDdu,
       reservedReferenceNumbers: fedexReferences,
+      etdUpload,
     });
-
-    // 2026-09-12 — the finalized invoice PDF's data: URI (real AWB printed
-    // on it), handed back to the UI alongside labelUrl so the employee can
-    // review/download the exact document that was uploaded to FedEx — see
-    // CourierBookingCreateState.invoiceUrl's header comment. Stays null for
-    // every option except "Upload own invoice" (below), and stays null even
-    // there if PDF generation itself throws (see the catch block below).
-    let invoiceDataUri: string | null = null;
-
-    // 2026-09-12 — "I will upload my own invoice" ETD option. Deliberately
-    // AFTER the shipment already succeeded (post-shipment upload flow — see
-    // fedex-documents.ts's header comment for why) and wrapped in its own
-    // try/catch: the shipment/AWB is real and booked either way, so a
-    // failure HERE must never look like the booking itself failed. On
-    // failure this only logs an error-log entry for someone to notice —
-    // the employee still gets a normal success response with a tracking
-    // number, exactly as if this feature didn't exist, and can re-upload
-    // the invoice on FedEx's own site as a fallback (or a future round of
-    // this app could add a retry button).
-    if (input.electronicInvoiceType === "UPLOAD_OWN" && result.trackingNo && result.shipmentDate) {
-      try {
-        const pdfBuffer = await renderFedexInvoicePdf({
-          invoiceNo: fedexReferences?.invoiceNo ?? poNo,
-          masterInvoiceNo: fedexReferences?.masterInvoiceNo ?? null,
-          invoiceDate,
-          shipmentPurpose: input.shipmentPurpose,
-          incoterm: input.ddpDdu ?? "DDU",
-          shipper: {
-            companyName: input.shipper.companyName,
-            contactName: input.shipper.contactName,
-            address1: input.shipper.address1,
-            address2: input.shipper.address2,
-            city: input.shipper.city,
-            state: input.shipper.state,
-            postalCode: input.shipper.postalCode,
-            countryCode: input.shipper.countryCode,
-            phone: input.shipper.phone,
-            iec: customsProfile.iec,
-            gstin: customsProfile.gstin,
-            adCode: customsProfile.adCode,
-          },
-          recipient: {
-            companyName: input.recipient.companyName,
-            contactName: input.recipient.contactName,
-            address1: input.recipient.address1,
-            address2: input.recipient.address2,
-            city: input.recipient.city,
-            state: input.recipient.state,
-            postalCode: input.recipient.postalCode,
-            countryCode: input.recipient.countryCode,
-            phone: input.recipient.phone,
-          },
-          item: {
-            description: input.commodityDescription || "General merchandise",
-            hsCode: null,
-            harmonizedTariffNumber: input.harmonizedTariffNumber,
-            // Matches the single commodity line FedEx's Ship API request
-            // itself already declares (quantity: 1 — see fedex-ship.ts's
-            // customsClearanceDetail.commodities) so this invoice never
-            // disagrees with what FedEx was already told.
-            qty: 1,
-            unitValue: input.customsValue ?? 0,
-            totalValue: input.customsValue ?? 0,
-            currency: input.currencyCode,
-          },
-          weightKg,
-          dimsCm: dims,
-          // 2026-09-12 — final invoice (not a preview): real AWB, no DRAFT
-          // badge. See FedexInvoicePdfInput's header comments.
-          trackingNumber: result.trackingNo,
-          draft: false,
-        });
-        invoiceDataUri = `data:application/pdf;base64,${pdfBuffer.toString("base64")}`;
-
-        const uploadResult = await uploadFedexPostShipmentInvoice(
-          {
-            trackingNumber: result.trackingNo,
-            shipmentDate: result.shipmentDate,
-            originCountryCode: input.shipper.countryCode,
-            destinationCountryCode: recipientCountry.code,
-            // 2026-09-12 (correction #4) — "strongly recommended" by FedEx
-            // to avoid customs delays; best-effort from whatever
-            // createFedexShipment could extract off the real Create
-            // Shipment response (see fedex-ship.ts). Omitted from the
-            // actual upload request when null (see fedex-documents.ts).
-            originLocationCode: result.originLocationCode,
-            destinationLocationCode: result.destinationLocationCode,
-            pdfBuffer,
-            fileName: `invoice-${result.trackingNo}.pdf`,
-          },
-          credentials
-        );
-
-        if (!uploadResult.ok) {
-          await logEntryError(supabase, {
-            companyId: employee.currentCompanyId,
-            source: "courier_api",
-            reason: `FedEx booked (AWB ${result.trackingNo}) but the self-uploaded invoice failed to attach: ${uploadResult.error}`,
-            referenceType: "order",
-            referenceId: orderId,
-            raisedByEmployeeId: employee.id,
-            raisedByName: employee.name,
-          });
-        }
-      } catch (uploadErr) {
-        await logEntryError(supabase, {
-          companyId: employee.currentCompanyId,
-          source: "courier_api",
-          reason: `FedEx booked (AWB ${result.trackingNo}) but the self-uploaded invoice threw an error: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
-          referenceType: "order",
-          referenceId: orderId,
-          raisedByEmployeeId: employee.id,
-          raisedByName: employee.name,
-        });
-      }
-    }
+    // Only meaningful when the ETD upload path ran (the helper's return is
+    // then the PDF data: URI; otherwise it returns the invoice id, which
+    // the UI's invoiceUrl must never receive).
+    invoiceDataUri = etdUpload ? autoInvoiceResult : null;
 
     await notifyCompanion(supabase, {
       employeeId: employee.id,

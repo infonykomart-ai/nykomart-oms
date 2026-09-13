@@ -978,3 +978,68 @@ body {
     animation: none !important;
   }
 }
+
+/*
+ * 2026-09-13 — Party Ledger status-row shading (paid / pending / overdue),
+ * used by src/app/dashboard/parties/[id]/ledger/page.tsx via the
+ * .oms-row-* / .oms-ledger-card classes. "green collom red collor dark me
+ * dikhe": the original plain Tailwind pastels (bg-emerald-50 etc.) were
+ * tuned for the white card and nearly invisible against the night/nova
+ * themes' dark surfaces. These rules keep the EXACT same light-theme look
+ * as before, then re-tint only inside the two dark themes, and pin the
+ * original light colors back for PRINT (a PDF/printed ledger with dark
+ * row fills would waste toner and can smear).
+ *
+ * Deliberately plain CSS at the end of this file (not Tailwind utilities)
+ * so a single edit point controls all three states across every theme.
+ */
+.oms-ledger-card {
+  background: var(--oms-surface);
+}
+
+.oms-row-paid {
+  background-color: #ecfdf5; /* emerald-50 — unchanged in light themes */
+}
+.oms-row-pending {
+  background-color: rgba(254, 243, 199, 0.7); /* amber-100/70 — unchanged */
+}
+.oms-row-overdue {
+  background-color: #fef2f2; /* red-50 — unchanged */
+}
+
+[data-theme="night"] .oms-ledger-card,
+[data-theme="nova"] .oms-ledger-card {
+  background: var(--oms-surface);
+  border-color: var(--oms-surface-border);
+  color: var(--oms-text);
+}
+
+[data-theme="night"] .oms-row-paid,
+[data-theme="nova"] .oms-row-paid {
+  background-color: rgba(16, 185, 129, 0.16); /* emerald glow on dark */
+}
+[data-theme="night"] .oms-row-pending,
+[data-theme="nova"] .oms-row-pending {
+  background-color: rgba(245, 158, 11, 0.14); /* amber glow on dark */
+}
+[data-theme="night"] .oms-row-overdue,
+[data-theme="nova"] .oms-row-overdue {
+  background-color: rgba(239, 68, 68, 0.18); /* red glow on dark */
+}
+
+/* Paid/overdue rows read better with slightly stronger text on dark. */
+[data-theme="night"] .oms-row-overdue td,
+[data-theme="nova"] .oms-row-overdue td {
+  color: #fecaca; /* red-200 */
+}
+[data-theme="night"] .oms-row-paid td,
+[data-theme="nova"] .oms-row-paid td {
+  color: #a7f3d0; /* emerald-200 */
+}
+
+@media print {
+  .oms-row-paid { background-color: #ecfdf5 !important; }
+  .oms-row-pending { background-color: rgba(254, 243, 199, 0.7) !important; }
+  .oms-row-overdue { background-color: #fef2f2 !important; }
+  .oms-ledger-card { background: #ffffff !important; }
+}
