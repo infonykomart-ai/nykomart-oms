@@ -33,6 +33,8 @@ import { renderFedexInvoicePdf } from "@/lib/couriers/fedex-invoice-pdf";
 // (see csb-v-invoice-pdf.tsx's header) instead of fedex-invoice-pdf.tsx's
 // simple lookalike.
 import { renderCsbVInvoicePdf, type CsbVPdfInvoice, type CsbVPdfItem, type CsbVPdfMeta } from "@/lib/couriers/csb-v-invoice-pdf";
+import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
+import sharp from "sharp";
 import { uploadFedexPostShipmentInvoice } from "@/lib/couriers/fedex-documents";
 import { createUpsShipment, type UpsDdpDdu } from "@/lib/couriers/ups-ship";
 import { createAramexShipment, type AramexDdpDdu } from "@/lib/couriers/aramex-shipping";
@@ -887,6 +889,65 @@ async function uploadCsbVInvoiceToFedex(
       .maybeSingle(),
     supabase.from("stores").select("name").eq("id", inv.store_id).single(),
   ]);
+  // 2026-09-13 — "company ke logo ke sath isi formate me": the on-screen
+  // invoice prints companies.logo_url next to the company name, so the PDF
+  // FedEx receives carries the same logo. Remote image fetch here (server
+  // context, no browser) routed through the existing SSRF guard
+  // (safeExternalFetch — same helper the order-photo proxy uses), then
+  // NORMALIZED through sharp to a small PNG data: URI — same convention as
+  // order-whatsapp-image/route.ts. Whatever the browser can render, sharp
+  // (libvips) can rasterize — PNG/JPEG/WebP/AVIF/GIF and even SVG (the
+  // screen invoice's <img> renders SVGs too, and the just-proven pipeline
+  // converts one fine) — and react-pdf only reliably embeds PNG/JPEG, so
+  // re-encoding here is what makes "screen pe logo dikhta hai par PDF me
+  // nahi" impossible. data: URIs (some companies paste the logo itself as
+  // one) skip the network entirely and go straight through the same sharp
+  // step. Size capped (5 MB fetch, 144px render) so a huge original can't
+  // blow up the PDF or the serverless memory. Any failure (dead URL,
+  // redirect-only host, undecodable bytes) just skips the logo — cosmetic,
+  // never fails the upload.
+  let logoDataUri: string | null = null;
+  const { data: logoCompany } = await supabase.from("companies").select("logo_url").eq("id", inv.company_id).single();
+  const logoUrl = logoCompany?.logo_url?.trim() || null;
+  if (logoUrl) {
+    try {
+      let raw: Buffer | null = null;
+      if (logoUrl.startsWith("data:image/")) {
+        // Pasted as an inline data: URL — decode straight to bytes (same
+        // 5 MB cap), no network involved.
+        const b64 = logoUrl.slice(logoUrl.indexOf(",") + 1);
+        raw = Buffer.from(b64, "base64");
+      } else {
+        // Follow up to 3 redirects manually — every hop is re-validated by
+        // safeExternalFetch (private-address check runs per hop), so the
+        // SSRF guard's guarantee is unchanged. Redirecting logo hosts are
+        // common (CDNs) and the screen <img> follows them invisibly, which
+        // is exactly the "dikh raha hai screen par, PDF me nahi" trap.
+        let currentUrl = logoUrl;
+        for (let hop = 0; hop < 3; hop++) {
+          const fetched = await safeExternalFetch(currentUrl);
+          if (fetched.ok) {
+            raw = Buffer.from(await fetched.response.arrayBuffer());
+            break;
+          }
+          if (fetched.location) {
+            currentUrl = new URL(fetched.location, currentUrl).toString();
+            continue;
+          }
+          break;
+        }
+      }
+      if (raw && raw.length > 0 && raw.length <= 5 * 1024 * 1024) {
+        const png = await sharp(raw)
+          .resize(144, 144, { fit: "inside", withoutEnlargement: true })
+          .png()
+          .toBuffer();
+        logoDataUri = `data:image/png;base64,${png.toString("base64")}`;
+      }
+    } catch {
+      // Logo is cosmetic — never let it fail the upload.
+    }
+  }
   const catMap = new Map((invCats ?? []).map((c) => [c.id, c]));
   const pdfItems: CsbVPdfItem[] = (invOrders ?? []).map((o) => ({
     ref_no: o.ref_no,
@@ -902,6 +963,7 @@ async function uploadCsbVInvoiceToFedex(
     order_currency: o.order_currency,
   }));
   const pdfMeta: CsbVPdfMeta = {
+    logoDataUri,
     companyName: invCompany?.name ?? "",
     companyAddress: invProfile?.address ?? null,
     companyPhone: invProfile?.phone ?? null,

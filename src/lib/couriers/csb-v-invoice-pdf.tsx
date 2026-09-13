@@ -21,7 +21,7 @@
 // printed CSB-V as PDF primitives (same convention as fedex-invoice-pdf.tsx
 // next door). Pure JS — no native deps — safe on Vercel serverless.
 
-import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, pdf } from "@react-pdf/renderer";
 import { itemCostForOrder } from "@/lib/invoices/value-breakdown";
 import { isEuDestination, merchantProductId, nonStandardisedManufacturerProductId, standardisedManufacturerProductId } from "@/lib/invoices/pid";
 
@@ -111,6 +111,15 @@ export type CsbVPdfItem = {
 };
 
 export type CsbVPdfMeta = {
+  // 2026-09-13 — "company ke logo ke sath isi formate me": the on-screen
+  // invoice (invoice-view.tsx) prints companies.logo_url as a ~48px image
+  // left of the company name; this PDF is that same document, so it carries
+  // the same logo. Passed as a base64 data: URI (react-pdf can't reliably
+  // fetch remote URLs inside a serverless render, and PNG/JPEG-only — the
+  // caller in courier-booking/actions.ts pre-downloads + validates it, and
+  // passes null for anything else so a broken/unfetchable logo can never
+  // fail the FedEx upload).
+  logoDataUri: string | null;
   companyName: string;
   companyAddress: string | null;
   companyPhone: string | null;
@@ -170,7 +179,13 @@ export function CsbVCustomsInvoiceDocument({
 
         <View style={styles.companyRow}>
           <View style={styles.col}>
-            <Text style={styles.companyName}>{meta.companyName}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              {/* react-pdf's <Image> has no alt prop — the jsx-a11y rule
+                  below targets the DOM <img>, not this component. */}
+              {/* eslint-disable-next-line jsx-a11y/alt-text */}
+              {meta.logoDataUri && <Image src={meta.logoDataUri} style={{ width: 36, height: 36, objectFit: "contain" }} />}
+              <Text style={styles.companyName}>{meta.companyName}</Text>
+            </View>
             {meta.companyAddress && <Text style={styles.small}>{meta.companyAddress}</Text>}
             {(meta.companyPhone || meta.companyWhatsapp) && (
               <Text style={styles.small}>{[meta.companyPhone && `Phone: ${meta.companyPhone}`, meta.companyWhatsapp && `WhatsApp: ${meta.companyWhatsapp}`].filter(Boolean).join(" | ")}</Text>

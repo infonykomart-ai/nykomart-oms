@@ -45,7 +45,17 @@ function isPrivateOrReservedIp(ip: string): boolean {
   return true; // not a parseable IP at all — treat as unsafe rather than guessing
 }
 
-export type SafeFetchResult = { ok: true; response: Response } | { ok: false; error: string; status: number };
+export type SafeFetchResult =
+  | { ok: true; response: Response }
+  // 2026-09-13 — `location` added: a redirect result previously forced
+  // callers to give up, but the CSB-V FedEx-invoice logo fetch needs to
+  // FOLLOW legitimate redirects (the browser <img> on the invoice screen
+  // follows them automatically, so a redirecting logo host shows on screen
+  // but would silently vanish from the PDF). Callers that opt in can read
+  // the Location header target and call this function again on it — every
+  // hop still goes through the same private-address validation, so the
+  // SSRF guarantee is unchanged.
+  | { ok: false; error: string; status: number; location?: string };
 
 /**
  * Validates a client-supplied URL is http(s) and doesn't resolve to a
@@ -84,7 +94,7 @@ export async function safeExternalFetch(rawUrl: string): Promise<SafeFetchResult
     return { ok: false, error: "Could not fetch photo", status: 502 };
   }
   if (upstream.type === "opaqueredirect" || (upstream.status >= 300 && upstream.status < 400)) {
-    return { ok: false, error: "That host redirected — not allowed", status: 502 };
+    return { ok: false, error: "That host redirected — not allowed", status: 502, location: upstream.headers.get("location") ?? undefined };
   }
   if (!upstream.ok || !upstream.body) {
     return { ok: false, error: "Could not fetch photo", status: 502 };
