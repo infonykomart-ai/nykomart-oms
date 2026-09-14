@@ -23,8 +23,15 @@ CREATE INDEX IF NOT EXISTS idx_credit_notes_awb_no ON credit_notes(awb_no) WHERE
 -- (source IS NOT NULL — e.g. purchase_bill mirror rows per PO, or a
 -- courier/freight import keyed by source_id). Manually typed rows
 -- (source IS NULL) must never contain the same (party, vendor invoice no,
--- invoice type) twice — that's always a double entry. Partial index keeps
--- every auto-mirrored/salary path untouched.
+-- invoice type, invoice date) twice — that's always a double entry.
+--
+-- 2026-09-13 (fix) — invoice_date IS part of the key: small vendors
+-- restart their invoice numbering every month ("82" in January and "82"
+-- in February are two DIFFERENT real documents from the same party), so
+-- the first attempt without the date was too strict — real production
+-- data rightly failed the index (party 4c3405b2, vendor invoice "82",
+-- Purchase). Same party + same number + same DATE = the true double-entry
+-- signal. Partial index keeps every auto-mirrored/salary path untouched.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bill_pass_manual_no_duplicates
-  ON bill_pass_register (party_id, lower(btrim(vendor_invoice_no)), invoice_type)
+  ON bill_pass_register (party_id, lower(btrim(vendor_invoice_no)), invoice_type, coalesce(invoice_date, date '1900-01-01'))
   WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
