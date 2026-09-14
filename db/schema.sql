@@ -2094,19 +2094,25 @@ CREATE INDEX idx_bpr_adjustments_credit_note ON bill_pass_register_adjustments(c
 
 -- 2026-09-13 — "KISI INVIOCE KI DO BAAR ENTRY NAHI AAYEGI DUPLICATE
 -- RESTICATION JARURI HAI" — hard DB-level guard: a MANUALLY-ENTERED bill
--- (source IS NULL) can never repeat the same (party, vendor invoice no.,
--- invoice type, invoice date) — that is always a double entry.
--- invoice_date IS part of the key: small vendors restart their numbering
--- monthly (same number "82" in two different months = two REAL documents
--- from the same party), so the dateless first attempt wrongly failed on
--- real production data (party 4c3405b2, vendor invoice "82", Purchase).
--- coalesce handles legacy rows with no date. App-mirrored rows
--- (source IS NOT NULL: purchase_bill per-PO mirrors, freight/duty imports)
--- are exempt via the partial WHERE, since one real vendor document
--- legitimately lands as several mirrored rows (see
--- db/2026-09-13-credit-note-awb-and-duplicate-guard.sql).
+-- (source IS NULL) can never repeat the same (company, party, vendor
+-- invoice no., invoice type, invoice date) — that is always a double
+-- entry. company_id and invoice_date are BOTH part of the key:
+--   * invoice_date — small vendors restart numbering monthly ("82" in
+--     two different months = two REAL documents from the same party);
+--   * company_id — one vendor invoice is routinely posted to SEVERAL
+--     companies (20 orders split 10/5/5 across Nyko Mart/Rugara/CASA
+--     ARRA = one bill per company, same party + invoice no. — exactly
+--     what the ledger cross-company merge combines).
+-- Both dateless and company-less attempts failed on live data (party
+-- 4c3405b2, vendor invoice "82", Purchase, 2026-03-10). coalesce
+-- handles legacy undated rows. App-mirrored rows (source IS NOT NULL:
+-- purchase_bill per-PO mirrors, freight/duty imports) are exempt via
+-- the partial WHERE, since one real vendor document legitimately lands
+-- as several mirrored rows (see db/2026-09-13-credit-note-awb-and-
+-- duplicate-guard.sql).
 CREATE UNIQUE INDEX uq_bill_pass_manual_no_duplicates
-  ON bill_pass_register (party_id, lower(btrim(vendor_invoice_no)), invoice_type, coalesce(invoice_date, date '1900-01-01'))
+  ON bill_pass_register (company_id, party_id, lower(btrim(vendor_invoice_no)), invoice_type, coalesce(invoice_date, date '1900-01-01'))
+  WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
   WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
   WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
 CREATE OR REPLACE FUNCTION trg_bpr_adjustments_sync() RETURNS trigger LANGUAGE plpgsql AS $$
