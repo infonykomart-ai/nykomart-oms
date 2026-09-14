@@ -110,9 +110,9 @@ export default async function BillPaymentPage({
     pageBillIds.length
       ? supabase
           .from("bill_pass_register_adjustments")
-          .select("id, bill_pass_register_id, amount, remark, credit_note_id")
+          .select("id, bill_pass_register_id, amount, remark, credit_note_id, credit_notes(vendor_cn_no, gst_rate_pct)")
           .in("bill_pass_register_id", pageBillIds)
-      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null }[] }),
+      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null; credit_notes: { vendor_cn_no: string | null; gst_rate_pct: number | null }[] | null }[] }),
     supabase
       .from("credit_notes")
       .select("id, cn_no, company_id, credit_note_date, refund_amount, party_id")
@@ -120,10 +120,18 @@ export default async function BillPaymentPage({
       .order("credit_note_date", { ascending: false })
       .limit(300),
   ]);
-  const adjByBillId = new Map<string, { id: string; amount: number; remark: string | null; credit_note_id: string | null }[]>();
+  const adjByBillId = new Map<string, { id: string; amount: number; remark: string | null; credit_note_id: string | null; vendor_cn_no: string | null; gst_rate_pct: number | null }[]>();
   for (const a of appliedAdj ?? []) {
     const list = adjByBillId.get(a.bill_pass_register_id) ?? [];
-    list.push({ id: a.id, amount: Number(a.amount), remark: a.remark, credit_note_id: a.credit_note_id });
+    const noteMeta = Array.isArray(a.credit_notes) ? a.credit_notes[0] : null;
+    list.push({
+      id: a.id,
+      amount: Number(a.amount),
+      remark: a.remark,
+      credit_note_id: a.credit_note_id,
+      vendor_cn_no: noteMeta?.vendor_cn_no ?? null,
+      gst_rate_pct: noteMeta?.gst_rate_pct ?? null,
+    });
     adjByBillId.set(a.bill_pass_register_id, list);
   }
   const cnNoById = new Map((pageCreditNotes ?? []).map((n) => [n.id, n.cn_no]));
@@ -160,6 +168,8 @@ export default async function BillPaymentPage({
       adjustment_id: a.id,
       credit_note_id: a.credit_note_id,
       cn_no: a.credit_note_id ? cnNoById.get(a.credit_note_id) ?? null : null,
+      vendor_cn_no: a.vendor_cn_no,
+      gst_rate_pct: a.gst_rate_pct,
       amount: a.amount,
       remark: a.remark,
     })),

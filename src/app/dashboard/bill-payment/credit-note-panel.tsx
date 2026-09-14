@@ -33,6 +33,8 @@ export type AppliedCn = {
   adjustment_id: string;
   credit_note_id: string | null;
   cn_no: string | null;
+  vendor_cn_no: string | null;
+  gst_rate_pct: number | null;
   amount: number;
   remark: string | null;
 };
@@ -99,6 +101,24 @@ export function CreditNotePanel({
               <label className={labelClass}>Credit Note Date *</label>
               <input name="credit_note_date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} className={inputClass} />
             </div>
+            {/* 2026-09-13 — "credit note no ka option nahi hai usme gst
+                kitni hai": the party's own CN number + GST rate, both
+                optional. GST choices match purchase bills' rate enum; blank
+                = no GST on this note (common for courier/duty credits). */}
+            <div>
+              <label className={labelClass}>Party ka CN No. (optional)</label>
+              <input name="vendor_cn_no" placeholder="vendor ka apna number" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>GST % (blank = no GST)</label>
+              <select name="gst_rate_pct" defaultValue="" className={inputClass}>
+                <option value="">— No GST —</option>
+                <option value="2.5">2.5%</option>
+                <option value="3">3%</option>
+                <option value="4">4%</option>
+                <option value="9">9%</option>
+              </select>
+            </div>
             <div className="sm:col-span-2">
               <label className={labelClass}>Remark</label>
               <input name="remark" placeholder="e.g. shortage / rate diff / damage" className={inputClass} />
@@ -152,7 +172,11 @@ export function CreditNotePanel({
             <tbody>
               {applied.map((a) => (
                 <tr key={a.adjustment_id} className="border-b border-slate-100 last:border-0">
-                  <td className="py-1 pr-3 font-medium text-slate-700">{a.cn_no ?? "—"}</td>
+                  <td className="py-1 pr-3 font-medium text-slate-700">
+                    {a.cn_no ?? "—"}
+                    {a.vendor_cn_no ? <span className="ml-1 text-[10px] text-slate-400">(party: {a.vendor_cn_no})</span> : null}
+                    {a.gst_rate_pct != null ? <span className="ml-1 text-[10px] text-slate-400">GST {a.gst_rate_pct}%</span> : null}
+                  </td>
                   <td className="py-1 pr-3 text-right text-slate-700">₹{a.amount.toFixed(2)}</td>
                   <td className="py-1 pr-3 text-slate-500">{a.remark ?? ""}</td>
                   <td className="py-1 text-right">

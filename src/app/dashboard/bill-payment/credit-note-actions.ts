@@ -102,6 +102,15 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
   if (mode === "new") {
     const amount = Number(formData.get("amount") ?? 0);
     const cnDate = String(formData.get("credit_note_date") ?? "").trim();
+    // 2026-09-13 — "credit note no ka option nahi hai usme gst kitni hai":
+    // a real party-issued CN carries the PARTY's own number + a GST rate.
+    // vendor_cn_no is free text (every vendor numbers their own way);
+    // gst_rate_pct is nullable — blank means no GST applies. Both stored
+    // on the document so the register shows exactly what the party sent.
+    const vendorCnNo = String(formData.get("vendor_cn_no") ?? "").trim() || null;
+    const gstRaw = String(formData.get("gst_rate_pct") ?? "").trim();
+    const gstRatePct = gstRaw ? Number(gstRaw) : null;
+    if (gstRatePct != null && ![2.5, 3, 4, 9].includes(gstRatePct)) return { error: "GST rate must be one of 2.5, 3, 4 or 9 (or leave blank for no GST).", success: false };
     if (!(amount > 0)) return { error: "Credit note amount must be a positive number.", success: false };
     if (!cnDate) return { error: "Credit note date is required.", success: false };
 
@@ -113,6 +122,8 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
       .insert({
         company_id: bill.company_id,
         credit_note_date: cnDate,
+        vendor_cn_no: vendorCnNo,
+        gst_rate_pct: gstRatePct,
         invoice_no: bill.vendor_invoice_no ?? bill.invoice_no ?? null,
         refund_amount: amount,
         party_id: bill.party_id,
@@ -256,6 +267,8 @@ export async function removeBillCreditNote(adjustmentId: string): Promise<ApplyC
 export type RegisterCnRow = {
   id: string;
   cn_no: string | null;
+  vendor_cn_no: string | null;
+  gst_rate_pct: number | null;
   credit_note_date: string;
   invoice_no: string | null;
   refund_amount: number;
@@ -288,7 +301,7 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
   const [{ data: notes }, { data: parties }] = await Promise.all([
     supabase
       .from("credit_notes")
-      .select("id, cn_no, company_id, credit_note_date, invoice_no, refund_amount, remark, credit_note_status, party_id")
+      .select("id, cn_no, vendor_cn_no, gst_rate_pct, company_id, credit_note_date, invoice_no, refund_amount, remark, credit_note_status, party_id")
       .in("company_id", scoped)
       .order("credit_note_date", { ascending: false }),
     supabase.from("parties").select("id, name"),
@@ -303,6 +316,8 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
     g.notes.push({
       id: n.id,
       cn_no: n.cn_no,
+      vendor_cn_no: n.vendor_cn_no,
+      gst_rate_pct: n.gst_rate_pct,
       credit_note_date: n.credit_note_date,
       invoice_no: n.invoice_no,
       refund_amount: Number(n.refund_amount ?? 0),

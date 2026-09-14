@@ -1471,6 +1471,8 @@ CREATE TABLE credit_notes (
   company_id                uuid NOT NULL REFERENCES companies(id),
   store_id                    uuid REFERENCES stores(id),        -- old "PORTAL"
   cn_no                         text UNIQUE,     -- auto-assigned, format NM/CN/26-27/0001
+  vendor_cn_no                    text,          -- 2026-09-13: the issuing party's own CN number as printed on their document (db/2026-09-13-credit-note-vendor-no-and-gst.sql)
+  gst_rate_pct                    numeric(4,2) CHECK (gst_rate_pct IN (2.5, 3, 4, 9)),  -- 2026-09-13: GST rate on this CN; NULL = no GST (same enum as purchase_bills.gst_rate_pct)
   credit_note_date                date NOT NULL,
   order_id                          uuid REFERENCES orders(id),   -- old "ORDER ID" (marketplace order no. or PO — see SCHEMA_NOTES #7)
   item_id                             text,       -- marketplace line-item id, when applicable

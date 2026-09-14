@@ -105,6 +105,8 @@ export default async function CreditNotesRegisterPage({
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">CN No.</th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-500">Party&apos;s CN No.</th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-500">GST</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Against Invoice</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Status</th>
@@ -116,6 +118,8 @@ export default async function CreditNotesRegisterPage({
                   {g.notes.map((n) => (
                     <tr key={n.id}>
                       <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{n.cn_no ?? "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.vendor_cn_no ?? "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.gst_rate_pct != null ? `${n.gst_rate_pct}%` : "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.credit_note_date}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.invoice_no ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-500">{n.status ?? "—"}</td>
