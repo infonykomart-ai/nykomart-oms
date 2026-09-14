@@ -32,6 +32,7 @@ import {
   type BulkPaymentState,
   type EditBillState,
 } from "./actions";
+import { mergeDuplicateBills, type MergeBillsState } from "./merge-actions";
 import { groupPartyOptions, type PartyOption } from "../documents/party-options";
 import { RelatedNotesBadge } from "../documents/related-notes-badge";
 import type { RelatedNote } from "../documents/actions";
@@ -42,6 +43,7 @@ const inputClass =
 const labelClass = "mb-0.5 block text-[11px] text-slate-400";
 const initialBulkState: BulkPaymentState = { error: null, success: null };
 const initialEditState: EditBillState = { error: null, success: false };
+const initialMergeState: MergeBillsState = { error: null, success: null };
 
 export type PayableBillRow = {
   id: string;
@@ -120,6 +122,38 @@ export function BillPaymentList({
 
   const selectedGroups = groups.filter((g) => selected.has(g.key));
   const selectedBills = selectedGroups.flatMap((g) => g.bills);
+
+  // 2026-09-14 — "AGAR ESE KOI INVOICE AAYE TO USKO MERGE KARNE KA OPTION
+  // BANANA HAI": among the SELECTED groups, detect the same invoice
+  // (party + vendor invoice no. + type) appearing under DIFFERENT
+  // companies — exactly the Nyko Mart/Rugara/CASA ARRA split. When ≥2
+  // companies hold one identical invoice, a merge bar offers to pick a
+  // KEEPER company and fold the other rows into it (payments + CN/DN
+  // adjustments move to the keeper; losers are zeroed and tagged, never
+  // deleted). Guarded against grouped invoices (one company's own
+  // multi-item group) — those already display as one row and must not
+  // fold into a different company's row.
+  const mergeCandidates = useMemo(() => {
+    const byInvoice = new Map<string, PayableBillRow[]>();
+    for (const g of selectedGroups) {
+      if (g.isGroup) continue; // multi-item purchase-bill groups never merge cross-company
+      const first = g.bills[0];
+      if (!first.party_id || !first.vendor_invoice_no) continue;
+      const key = `${first.party_id}|${first.vendor_invoice_no.toLowerCase().trim()}|${first.invoice_type ?? ""}`;
+      const list = byInvoice.get(key) ?? [];
+      list.push(first);
+      byInvoice.set(key, list);
+    }
+    for (const list of byInvoice.values()) {
+      const companies = new Set(list.map((b) => b.company_id));
+      if (list.length >= 2 && companies.size >= 2) return list;
+    }
+    return null;
+  }, [selectedGroups]);
+
+  const [mergeCompany, setMergeCompany] = useState("");
+  const keeperRow = mergeCandidates?.find((b) => b.company_id === mergeCompany) ?? mergeCandidates?.[0];
+  const mergeLoserIds = (mergeCandidates ?? []).filter((b) => b.id !== keeperRow?.id).map((b) => b.id);
 
   return (
     <div>
@@ -201,6 +235,17 @@ export function BillPaymentList({
           </table>
         </div>
       </div>
+
+      {mergeCandidates && keeperRow && (
+        <MergeBar
+          candidates={mergeCandidates}
+          keeper={keeperRow}
+          loserIds={mergeLoserIds}
+          mergeCompany={mergeCompany}
+          setMergeCompany={setMergeCompany}
+          onDone={() => setSelected(new Set())}
+        />
+      )}
 
       {selectedBills.length > 0 && (
         <PerBillAmountForm
@@ -596,6 +641,95 @@ function PerBillAmountForm({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------
+// 2026-09-14 — the cross-company invoice merge bar ("AGAR ESE KOI INVOICE
+// AAYE TO USKO MERGE KARNE KA OPTION BANANA HAI"). Appears whenever the
+// current checkbox selection contains the SAME invoice (same party +
+// vendor invoice no. + type) under 2+ DIFFERENT companies. Pick which
+// company keeps the invoice; every other row folds into it — payments
+// (recorded on any company's row) and Credit/Debit-Note adjustments all
+// move onto the keeper so the combined paid/balance shows in ONE place,
+// while the folded rows stay in the table as zeroed, tagged audit rows
+// (never deleted). See merge-actions.ts for the server half.
+// -----------------------------------------------------------------------
+function MergeBar({
+  candidates,
+  keeper,
+  loserIds,
+  mergeCompany,
+  setMergeCompany,
+  onDone,
+}: {
+  candidates: PayableBillRow[];
+  keeper: PayableBillRow;
+  loserIds: string[];
+  mergeCompany: string;
+  setMergeCompany: (v: string) => void;
+  onDone: () => void;
+}) {
+  const [state, formAction, pending] = useActionState(mergeDuplicateBills, initialMergeState);
+
+  useEffect(() => {
+    if (state.success) {
+      const t = setTimeout(onDone, 2500);
+      return () => clearTimeout(t);
+    }
+  }, [state.success, onDone]);
+
+  const combinedPaid = candidates.reduce((s, b) => s + b.total_paid, 0);
+  const combinedBalance = candidates.reduce((s, b) => s + b.balance_due, 0);
+  const keeperName = (mergeCompany ? candidates.find((b) => b.company_id === mergeCompany) : keeper)?.company_name ?? keeper.company_name;
+
+  return (
+    <div className="sticky bottom-3 mt-3 rounded-xl border border-teal-300 bg-teal-50 p-3 shadow-lg">
+      {state.success ? (
+        <p className="text-sm font-semibold text-teal-800">
+          ✅ Merged {state.success.mergedCount} entr{state.success.mergedCount === 1 ? "y" : "ies"} into {state.success.keeperInvoiceNo} ({state.success.keeperCompany}) — {state.success.movedPayments} payment{state.success.movedPayments === 1 ? "" : "s"} and {state.success.movedAdjustments} note adjustment{state.success.movedAdjustments === 1 ? "" : "s"} moved. Refreshing…
+        </p>
+      ) : (
+        <form action={formAction} className="space-y-2">
+          <input type="hidden" name="bill_ids_json" value={JSON.stringify([keeper.id, ...loserIds])} />
+          <p className="text-sm font-semibold text-teal-900">
+            🔗 Same invoice in {new Set(candidates.map((b) => b.company_name)).size} companies — merge into one?
+          </p>
+          <p className="text-xs text-teal-700">
+            {candidates.map((b) => `${b.company_name}: ${b.invoice_no || b.vendor_invoice_no} (₹${b.balance_due.toFixed(2)} due)`).join(" · ")} —
+            combined paid ₹{combinedPaid.toFixed(2)}, balance ₹{combinedBalance.toFixed(2)}.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="mb-0.5 block text-[11px] text-teal-700" htmlFor="merge-keeper">Keep in company</label>
+              <select
+                id="merge-keeper"
+                value={mergeCompany || keeper.company_id}
+                onChange={(e) => setMergeCompany(e.target.value)}
+                className="rounded-lg border border-teal-300 bg-white px-2 py-1 text-sm text-slate-900"
+              >
+                {candidates.map((b) => (
+                  <option key={b.id} value={b.company_id}>
+                    {b.company_name} — {b.invoice_no || b.vendor_invoice_no}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="submit"
+              disabled={pending || loserIds.length === 0}
+              className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-40"
+            >
+              {pending ? "Merging…" : `🔗 Merge ${loserIds.length + 1} entries into ${keeperName}`}
+            </button>
+            <p className="text-[11px] text-teal-600">
+              Payments + CN/DN adjustments fold into the keeper; other rows stay as zeroed audit entries (never deleted).
+            </p>
+          </div>
+          {state.error && <p className="text-sm font-medium text-red-600">{state.error}</p>}
+        </form>
+      )}
     </div>
   );
 }

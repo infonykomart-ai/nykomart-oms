@@ -258,6 +258,7 @@ export type Database = {
           employee_id: string | null;
           source: string | null;
           source_id: string | null;
+          merged_into_bill_id: string | null;
           approval_status: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
           approved_l1_by: string | null;
           approved_l1_at: string | null;
@@ -296,6 +297,7 @@ export type Database = {
           employee_id?: string | null;
           source?: string | null;
           source_id?: string | null;
+          merged_into_bill_id?: string | null;
           approval_status?: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
           approved_l1_by?: string | null;
           approved_l1_at?: string | null;
@@ -334,6 +336,7 @@ export type Database = {
           employee_id?: string | null;
           source?: string | null;
           source_id?: string | null;
+          merged_into_bill_id?: string | null;
           approval_status?: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
           approved_l1_by?: string | null;
           approved_l1_at?: string | null;

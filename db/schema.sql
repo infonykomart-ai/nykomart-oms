@@ -2113,6 +2113,18 @@ CREATE INDEX idx_bpr_adjustments_credit_note ON bill_pass_register_adjustments(c
 CREATE UNIQUE INDEX uq_bill_pass_manual_no_duplicates
   ON bill_pass_register (company_id, party_id, lower(btrim(vendor_invoice_no)), invoice_type, coalesce(invoice_date, date '1900-01-01'))
   WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
+
+-- 2026-09-14 — cross-company invoice MERGE (db/2026-09-14-bill-merge.sql):
+-- the same vendor invoice (same party + no. + type) legitimately lives as
+-- separate rows under DIFFERENT companies; merging picks one KEEPER row,
+-- re-points every loser's payments onto it (total_paid recomputes from the
+-- payments ledger as everywhere else), zeros the losers' outstanding
+-- financials and tags them — never deletes, so the audit trail and the
+-- keeper's URL survive. NULL = not merged (the normal case).
+ALTER TABLE bill_pass_register
+  ADD COLUMN IF NOT EXISTS merged_into_bill_id uuid REFERENCES bill_pass_register(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_bpr_merged_into ON bill_pass_register(merged_into_bill_id)
+  WHERE merged_into_bill_id IS NOT NULL;
   WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
   WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
 CREATE OR REPLACE FUNCTION trg_bpr_adjustments_sync() RETURNS trigger LANGUAGE plpgsql AS $$
