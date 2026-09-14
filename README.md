@@ -37,6 +37,13 @@ login (a single sign-in can be granted access to one, two, or all three companie
 - **Finance** — Bill Pass Register (unified vendor/courier/salary payable ledger) with a two-level
   approval workflow, Party Ledger, Office Expenses, Bill Payment, Backup Export (one-click
   all-orders-and-invoices Excel export).
+- **Bill Payment extras** — per-bill Credit Notes panel (new CN, link an existing CN, or manual
+  register; two CN kinds: buyer refunds vs supplier/courier CNs with GST slabs 5/12/18), a
+  multi-AWB mode (one courier credit note split across several AWB bills), one-click Party Ledger
+  from any bill row, admin-only editing once a payment exists on a bill, and a **cross-company
+  invoice merge**: the same vendor invoice entered under several companies folds into one keeper
+  row (payments and CN/DN adjustments re-point to it; the folded rows stay as zeroed audit
+  entries, never deleted).
 - **Inventory & stock** — raw-material Stock In/Out (Chalan-No.-mandatory), finished-goods
   inventory with auto-restock on refund, reorder alerts.
 - **Reports** — a filterable, column-picker-driven Reports hub (Orders, Purchase Bill,
@@ -75,7 +82,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Database schema
 
-`db/schema.sql` is the full PostgreSQL schema (70+ tables, RLS enabled on every one, trigger-based
+`db/schema.sql` is the full PostgreSQL schema (100+ tables, RLS enabled on every one, trigger-based
 document numbering) — apply it to a fresh Supabase project via the SQL Editor, or
 `psql "$SUPABASE_DB_URL" -f db/schema.sql`. Read `db/SCHEMA_NOTES.md` first — it explains the
 design decisions and the mapping from the original spreadsheet system.
@@ -147,6 +154,12 @@ Every rule the business explicitly relies on is preserved — see comments in `d
 - Capability-based access control is re-checked server-side on every privileged action, never
   trusting a client-side check alone.
 - Company scoping is enforced server-side on every write, not just filtered in the UI.
+- Bill ledger duplicates: a manually-entered bill can never repeat the same (company, party,
+  vendor invoice no., type, date) — enforced by a partial unique index. The same invoice across
+  DIFFERENT companies is legitimate (the 10/5/5 order split) and is combined for payment via the
+  cross-company merge, not by relaxing the guard.
+- Merged bill rows are never deleted: the keeper keeps its id/URL, folded rows are zeroed and
+  tagged (`bill_pass_register.merged_into_bill_id`) so the audit trail survives.
 
 ## Operating rules for anyone working on this codebase
 

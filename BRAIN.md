@@ -25,8 +25,10 @@ happen — treat every bug report as real production impact, not a hypothetical.
 
 ## 2. Where everything lives
 
-- **Local working clone**: `/home/claude/oms/webapp` (this repo, in the cloud sandbox)
-- **Live production**: `https://nykomart-oms-oohq.vercel.app/` — Vercel, **Hobby plan** (confirmed
+- **Local working clone**: this repo (currently a Freebuff Cloud workspace; older docs reference
+  `/home/claude/oms/webapp`)
+- **Live production**: `https://nykoinfotech.com/` (custom domain; older reference:
+  `https://nykomart-oms-oohq.vercel.app/`) — Vercel, **Hobby plan** (confirmed
   via code comments: hard 2-cron-job cap, 60s max function duration — see
   `src/app/api/cron/poll-fedex-tracking/route.ts`)
 - **GitHub repo**: `infonykomart-ai/nykomart-oms`
@@ -41,9 +43,11 @@ happen — treat every bug report as real production impact, not a hypothetical.
 These were established the hard way, across many rounds, each one catching a real near-miss. They
 are not optional style preferences.
 
-1. **NEVER run `git push`.** Every code change ships as: `SendUserFile` a zip → user uploads via the
-   GitHub web UI → verify with `git fetch origin main` + diff comparison against `origin/main`. Never
-   trust "done"/"pushed" claims without that verification.
+1. **Git delivery (updated 2026-09-14): the repo now runs in a Freebuff Cloud workspace with a
+   managed, repository-scoped GitHub credential** — `git push origin main` works normally when the
+   user asks for it ("push kar do") and is the established delivery path; never ask for a PAT/SSH
+   setup, and never push without the user asking. (The old zip-upload rule predates this
+   environment.) Never use `git reset --hard`/history rewrites regardless.
 2. **NEVER execute database-altering SQL directly.** INSERT/UPDATE/DELETE/CREATE TABLE/ALTER
    TABLE/CREATE POLICY — generate the `.sql` file, deliver it via `SendUserFile`, the user runs it
    themselves in the Supabase SQL Editor. Read-only `SELECT` via Chrome browser automation on the
@@ -111,6 +115,11 @@ are not optional style preferences.
   it does NOT reflect what's necessarily live in production.** It had drifted out of sync for the
   `purchase_bills` table across 3 migrations before being caught and fixed on 2026-08-17. Update it
   whenever you write a new migration, in the same pass, not as a follow-up.
+- **Generated columns reject direct writes.** `bill_pass_register.to_be_pay` and `balance_due` are
+  `GENERATED ALWAYS AS ... STORED` (inlined formulas — see §3 rule 8). To zero out a merged/negated
+  bill you write `total_amt = 0`, never `balance_due = 0` — the generated value follows
+  automatically (this is exactly what `mergeDuplicateBills` does). Same shape as the existing
+  `purchase_bills` generated columns.
 - **Service-role vs. browser client**: `createServiceRoleClient()` (bypasses RLS, server-only) is
   used for essentially all real data access from Server Actions and Server Components, after the
   capability/company checks above. The `createClient()` browser-facing client uses the
@@ -136,7 +145,7 @@ are not optional style preferences.
 | `/dashboard/documents` | Credit/Debit Notes, Washing Entry, Internal Invoice, Purchase/Freight/Duty bills, CSB Filing, Shipment Chalan | `doc_entry` |
 | `/dashboard/stock` | Raw-material Stock In/Out per (vendor party, SKU) — company-agnostic pool by design, current stock always computed live from the ledger, never stored. Now includes **Reorder Alerts** (added 2026-08-17, see §8) | `stock_entry` |
 | `/dashboard/inventory` | Finished-goods stock — **auto-restock only** (a cancelled+refunded+already-purchased order flows qty back in); there is no manual finished-goods Stock Out, so this table has no consumption data to forecast from (don't confuse this with `/dashboard/stock`) | `finished_stock_view` |
-| `/dashboard/bill-payment` | Bill Pass Register (the unified payable ledger — vendor/courier bills + salary/advance payouts) | `bill_payment` |
+| `/dashboard/bill-payment` | Bill Pass Register (the unified payable ledger — vendor/courier bills + salary/advance payouts). 2026-09-13/14 additions: per-bill 🧾 Credit Notes panel (new CN / link existing / manual register, 2 CN kinds: buyer_refund vs supplier/courier, GST slabs 5/12/18), per-row 📒 party-ledger link, payment-locked editing (admin-only once a payment exists), cross-company **invoice merge** (below), and a multi-AWB credit-note mode (one CN split across several AWB bills) | `bill_payment` |
 | `/dashboard/crm` | Company-wide overview: order-status counts, today's attendance, data-quality alerts, P&L Dashboard, Quick Find, **Top Buyers** (added 2026-08-17, see §8) | `crm_dashboard` |
 | `/dashboard/reports` | Orders report with filters, CSV/Excel/Word/PDF/Email/WhatsApp export. Links to **Returns/Refunds** (added 2026-08-17, see §8) | `reports` |
 | `/dashboard/returns` | New — Returns/Refunds report (see §8) | `reports` (reused) |
@@ -148,8 +157,32 @@ are not optional style preferences.
 | `/dashboard/invoices` | Export sales invoice generation (CSB-V/CSB-IV) | `invoicing` |
 | `/dashboard/admin/*` | Employee roster, Roles & Permissions, Companies/Items, Help Center admin | various `*_admin` |
 
-Full table list: 74 tables in `public` schema, see `db/schema.sql` (3,158 lines, organized into
+Full table list: 103 tables in `public` schema, see `db/schema.sql` (4,617 lines, organized into
 numbered sections — Section 17 is the reporting-views section, a good landing point).
+
+## 5b. Cross-company invoice merge (2026-09-14) — how it works
+
+The same real vendor invoice legitimately exists as SEPARATE `bill_pass_register` rows under
+DIFFERENT companies (the owner's own workflow: 20 orders split 10/5/5 across Nyko Mart/Rugara/
+CASA ARRA = one Purchase entry per company, same party + vendor invoice no.). The duplicate-guard
+unique index deliberately allows this (company_id is part of its key — see the 2026-09-13 comment
+in `db/schema.sql`). The merge feature folds those rows into ONE keeper for display/payment:
+
+- **UI**: `bill-payment-list.tsx` — select the rows by checkbox; when the selection contains the
+  same (party_id + vendor_invoice_no + invoice_type) under ≥2 companies, a teal merge bar offers to
+  pick the keeper company. `merge-actions.ts` does the work.
+- **Mechanics**: keeper's id/URL never change; every loser's `bill_pass_register_payments` and
+  `bill_pass_register_adjustments` rows are RE-POINTED onto the keeper (payment documents are never
+  copied/duplicated), then the keeper's `total_paid` recomputes from the combined ledger (same
+  recompute-from-ledger pattern as `recordBillPayment`) and the losers' `credit_note_amt`/`adj_amt`
+  sums move over. Losers are zeroed via `total_amt = 0` (generated to_be_pay/balance_due follow —
+  see §4) and tagged with the new `merged_into_bill_id` FK (`db/2026-09-14-bill-merge.sql`), so
+  they drop out of every `.gt("balance_due", 0)` view but survive as audit rows. There is no
+  unmerge — a merged row refuses further merges.
+- **Server-side sanity**: party/vendor-invoice-no/type must match across all participants, all
+  companies must be within the caller's access, and `merged_into_bill_id` must be NULL on every
+  participant. Party Ledger and every other consumer of `bill_pass_register` show the combined
+  figures automatically because everything reads the same tables.
 
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
