@@ -2125,8 +2125,6 @@ ALTER TABLE bill_pass_register
   ADD COLUMN IF NOT EXISTS merged_into_bill_id uuid REFERENCES bill_pass_register(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_bpr_merged_into ON bill_pass_register(merged_into_bill_id)
   WHERE merged_into_bill_id IS NOT NULL;
-  WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
-  WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
 CREATE OR REPLACE FUNCTION trg_bpr_adjustments_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   v_ids uuid[];
