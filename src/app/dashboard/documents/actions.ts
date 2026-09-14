@@ -174,6 +174,12 @@ type CreditNoteParams = {
   qty: number | null;
   poRate: number | null;
   billedRate: number | null;
+  // 2026-09-13 — "BHAI 2 PARKAR KE CREDIT NOTE HONGE": which of the two
+  // kinds this note is — 'buyer_refund' (we refund the buyer against an
+  // order) or 'supplier' (against a bill we owe: purchase-party or
+  // courier-issued CN). The form derives it from party selection;
+  // nullable so legacy rows and any unmigrated caller stay valid.
+  cnKind: string | null;
 };
 
 async function saveCreditNoteCore(
@@ -214,6 +220,7 @@ async function saveCreditNoteCore(
       qty: p.qty,
       po_rate: p.poRate,
       billed_rate: p.billedRate,
+      cn_kind: (p.cnKind as "buyer_refund" | "supplier" | null) ?? null,
       created_by_employee_id: employee.id,
       remark: p.remark,
     })
@@ -276,6 +283,7 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
     qty: numOrNull(formData, "qty"),
     poRate: numOrNull(formData, "po_rate"),
     billedRate: numOrNull(formData, "billed_rate"),
+    cnKind: strOrNull(formData, "cn_kind"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -1055,6 +1063,35 @@ type PurchaseBillParams = {
   // can't be unambiguously split across them.
   roundOffAmt: number;
 };
+
+/**
+ * 2026-09-13 — "KISI INVIOCE KI DO BAAR ENTRY NAHI AAYEGI DUPLICATE
+ * RESTICATION JARURI HAI": the app-level duplicate guard that pairs with
+ * the DB's uq_bill_pass_manual_no_duplicates partial unique index (which
+ * only covers source IS NULL rows). These sends ALWAYS insert with a
+ * source (freight_bill/duty_tax_bill), so the index never fires for them —
+ * but re-sending the SAME vendor invoice number under a DIFFERENT bill
+ * row (the realistic double-entry: courier's invoice typed twice as two
+ * freight_bills) would still post twice to Finance. This pre-check
+ * catches that at the moment it matters: before a second Finance entry
+ * exists. Scoped to the target company; case/whitespace-insensitive.
+ */
+async function findDuplicateFinanceEntry(
+  supabase: ServiceClient,
+  companyId: string,
+  vendorInvoiceNo: string | null
+): Promise<{ id: string; invoice_type: string | null; company_id: string } | null> {
+  const inv = (vendorInvoiceNo ?? '').trim();
+  if (!inv) return null;
+  const { data } = await supabase
+    .from('bill_pass_register')
+    .select('id, invoice_type, company_id, vendor_invoice_no')
+    .eq('company_id', companyId)
+    .ilike('vendor_invoice_no', inv)
+    .limit(2);
+  const rows = (data ?? []).filter((r) => (r.vendor_invoice_no ?? '').trim().toLowerCase() === inv.toLowerCase());
+  return rows.length > 0 ? { id: rows[0].id, invoice_type: rows[0].invoice_type, company_id: rows[0].company_id } : null;
+}
 
 async function savePurchaseBillCore(
   employee: AuthedEmployee,
@@ -2186,6 +2223,15 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
     .eq("id", freightBillId)
     .maybeSingle();
 
+  // 2026-09-13 — duplicate Finance entry guard (see
+  // findDuplicateFinanceInvoiceEntry note / DB index comment).
+  {
+    const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+    if (dup) {
+      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. Kisi invoice ki do baar entry nahi hoti — agar amount alag hai to purani entry edit karein.`, success: false };
+    }
+  }
+
   const { data: bprData, error } = await supabase
     .from("bill_pass_register")
     .insert({
@@ -2558,6 +2604,14 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
     .select("invoice_no, invoice_date, vendor_party_id")
     .eq("id", dutyTaxBillId)
     .maybeSingle();
+
+  // 2026-09-13 — duplicate Finance entry guard (same as freight above).
+  {
+    const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+    if (dup) {
+      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. Kisi invoice ki do baar entry nahi hoti — agar amount alag hai to purani entry edit karein.`, success: false };
+    }
+  }
 
   const { data: bprData, error } = await supabase
     .from("bill_pass_register")
@@ -3290,6 +3344,7 @@ export async function bulkSaveCreditNotes(_prev: BulkDocState, formData: FormDat
       qty: null,
       poRate: null,
       billedRate: null,
+      cnKind: "buyer_refund",
     });
 
     results.push({ row: rowNum, label: refNo, docNo: result.docNo, error: result.error });

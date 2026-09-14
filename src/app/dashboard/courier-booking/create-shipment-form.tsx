@@ -9,11 +9,11 @@ import {
   createDelhiveryBooking,
   createShiprocketBooking,
   createDhlBooking,
-  previewFedexInvoicePdf,
   type CourierBookingLookupState,
   type CourierBookingCreateState,
   type CourierBookingLookupOrder,
 } from "./actions";
+import { previewCsbVDraftInvoice } from "./csb-v-preview-actions";
 import { createManualBooking, type ManualBookingState } from "./manual-booking-actions";
 import { MANUAL_BOOKING_COURIERS, type ManualBookingCourierChoice } from "./manual-booking-config";
 import { lookupPostalCode, countryCodeFor } from "@/lib/postal-lookup";
@@ -416,13 +416,19 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
   const [invoicePreviewError, setInvoicePreviewError] = useState<string | null>(null);
   const [invoicePreviewBlobUrl, setInvoicePreviewBlobUrl] = useState<string | null>(null);
 
+  // 2026-09-13 — "JO BLUE COLOUR ME MARK KIYA HAI US INVOICE KI JAGH LINK
+  // KARO SECOND IMAGE ME JO INVOICE HAI USKO YAHA LINK KARO": the preview
+  // button now renders the REAL Invoices-module CSB-V (the exact document
+  // the booking uploads to the courier), not the old simplified FedEx
+  // lookalike. Draft markers instead of real invoice/AWB numbers — those
+  // are only assigned at booking.
   async function handlePreviewFedexInvoice() {
     if (!fedexFormRef.current) return;
     setInvoicePreviewLoading(true);
     setInvoicePreviewError(null);
     try {
       const fd = new FormData(fedexFormRef.current);
-      const result = await previewFedexInvoicePdf(fd);
+      const result = await previewCsbVDraftInvoice(fd);
       if (result.error || !result.dataUri) {
         setInvoicePreviewError(result.error ?? "Could not generate the invoice preview.");
         return;
@@ -1004,7 +1010,7 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
-              <span className="text-sm font-semibold text-slate-700">Invoice Preview (draft — not yet booked)</span>
+              <span className="text-sm font-semibold text-slate-700">CSB-V Invoice Preview (draft — yahi document booking par courier ko jayega)</span>
               <button
                 type="button"
                 onClick={closeInvoicePreview}

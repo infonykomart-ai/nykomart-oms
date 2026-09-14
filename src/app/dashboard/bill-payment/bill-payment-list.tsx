@@ -74,12 +74,18 @@ export function BillPaymentList({
   bills,
   parties,
   existingCreditNotes = [],
+  isPaidLockedViewer = false,
 }: {
   bills: PayableBillRow[];
   parties: PartyOption[];
   // 2026-09-13 — this company(ies)' recent credit notes, for the panel's
   // "link an existing credit note" dropdown.
   existingCreditNotes?: { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number }[];
+  // 2026-09-13 — "payment ho gaya ho to phir uski entry edit SIRF ADMIN SE
+  // ho": true when the signed-in user is not an Admin (Admin = holds
+  // permissions_admin); the bill edit form AND the credit-note panel of
+  // any bill with total_paid > 0 lock themselves when it's set.
+  isPaidLockedViewer?: boolean;
 }) {
   const groups = useMemo(() => groupBills(bills), [bills]);
   const [selected, setSelected] = useState<Set<string>>(new Set()); // group keys
@@ -186,6 +192,7 @@ export function BillPaymentList({
                   group={g}
                   parties={parties}
                   existingCreditNotes={existingCreditNotes}
+                  isPaidLockedViewer={isPaidLockedViewer}
                   checked={selected.has(g.key)}
                   onToggle={() => toggle(g.key)}
                 />
@@ -211,12 +218,14 @@ function GroupRow({
   group,
   parties,
   existingCreditNotes,
+  isPaidLockedViewer,
   checked,
   onToggle,
 }: {
   group: BillGroup<PayableBillRow>;
   parties: PartyOption[];
   existingCreditNotes: { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number }[];
+  isPaidLockedViewer: boolean;
   checked: boolean;
   onToggle: () => void;
 }) {
@@ -233,6 +242,11 @@ function GroupRow({
   // 'purchase_bill' (see bill-grouping.ts), so it's never editable here —
   // consistent with the pre-existing rule, unaffected by grouping.
   const editable = !first.source && !group.isGroup;
+  // 2026-09-13 — "payment ho gaya ho to phir uski entry edit sirf ADMIN se
+  // ho": a bill with payments recorded is locked for editing unless the
+  // viewer is an Admin. (Server side enforces it too — see
+  // updateBillPassRegisterEntry.)
+  const editLockedForPayments = isPaidLockedViewer && first.total_paid > 0;
   const partyGroups = groupPartyOptions(parties);
 
   const toBePay = group.bills.reduce((sum, b) => sum + b.to_be_pay, 0);
@@ -275,7 +289,23 @@ function GroupRow({
           </div>
         </td>
         <td className="whitespace-nowrap px-3 py-2 text-slate-600">{first.invoice_type ?? "—"}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-slate-600">{first.party_name ?? "—"}</td>
+        <td className="whitespace-nowrap px-3 py-2 text-slate-600">
+          {first.party_name ?? "—"}
+          {/* 2026-09-13 — \"ladger to bill master ke sath usme hi dikhna
+              chahiye\": the party's full ledger (bills + partial payments
+              + CN/DN adjustments, passbook format) is one click from the
+              bill row itself — no need to route through Party Master. */}
+          {first.party_id && (
+            <Link
+              href={`/dashboard/parties/${first.party_id}/ledger?allCompanies=1`}
+              target="_blank"
+              title="Open this party's full ledger (bills, payments, credit/debit notes)"
+              className="ml-1 text-[11px] text-teal-700 underline decoration-dotted hover:text-teal-900"
+            >
+              📒 ledger
+            </Link>
+          )}
+        </td>
         <td className={`whitespace-nowrap px-3 py-2 ${overdue ? "font-semibold text-red-600" : "text-slate-600"}`}>
           {first.due_date ?? "—"}
         </td>
@@ -283,10 +313,14 @@ function GroupRow({
         <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{totalPaid.toFixed(2)}</td>
         <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{balanceDue.toFixed(2)}</td>
         <td className="whitespace-nowrap px-3 py-2 text-right space-x-2">
-          {editable ? (
+          {editable && !editLockedForPayments ? (
             <button type="button" onClick={() => setEditOpen((v) => !v)} className="text-xs font-semibold text-slate-600 hover:underline">
               {editOpen ? "Cancel" : "✏️ Edit"}
             </button>
+          ) : editable && editLockedForPayments ? (
+            <span className="text-[11px] text-amber-600" title="Payments recorded on this bill — only an Admin can edit its entry.">
+              🔒 admin only
+            </span>
           ) : (
             <span className="text-[11px] text-slate-400" title={group.isGroup ? "Grouped invoice — edit items via Purchase Bill" : `Auto-linked from ${first.source?.replace("_", " ")} — edit it there`}>
               (auto-linked)
@@ -443,9 +477,12 @@ function GroupRow({
           <CreditNotePanel
             billId={first.id}
             billLabel={first.invoice_no || first.vendor_invoice_no || first.id.slice(0, 8)}
+            billType={first.invoice_type}
+            partyId={first.party_id}
             manualCreditNoteAmt={first.credit_note_amt}
             applied={first.credit_notes}
             existingNotes={existingCreditNotes}
+            isPaidLocked={isPaidLockedViewer && first.total_paid > 0}
           />
         </tr>
       )}

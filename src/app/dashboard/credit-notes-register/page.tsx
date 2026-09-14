@@ -1,6 +1,7 @@
 import { requireAnyCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { listCreditNoteRegister, findUnregisteredManualCreditNotes } from "@/app/dashboard/bill-payment/credit-note-actions";
+import { cnKindLabel } from "../bill-payment/credit-note-kinds";
 import { CreditNoteRegisterActions } from "./register-actions-bar";
 
 // Credit Note Register — 2026-09-13. "us se ye hoga ki apne ko pata chal
@@ -105,8 +106,9 @@ export default async function CreditNotesRegisterPage({
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">CN No.</th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-500">Kind</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Party&apos;s CN No.</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-500">GST</th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-500">GST (total)</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Against Invoice</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Status</th>
@@ -118,8 +120,21 @@ export default async function CreditNotesRegisterPage({
                   {g.notes.map((n) => (
                     <tr key={n.id}>
                       <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{n.cn_no ?? "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            n.cn_kind === "buyer_refund"
+                              ? "bg-sky-100 text-sky-700"
+                              : n.cn_kind === "supplier"
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {n.cn_kind === "buyer_refund" ? n.buyer_name || "Buyer refund" : cnKindLabel(n.cn_kind)}
+                        </span>
+                      </td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.vendor_cn_no ?? "—"}</td>
-                      <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.gst_rate_pct != null ? `${n.gst_rate_pct}%` : "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.gst_rate_pct != null ? `${n.gst_rate_pct * 2}%` : "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.credit_note_date}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.invoice_no ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-500">{n.status ?? "—"}</td>

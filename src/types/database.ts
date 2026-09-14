@@ -766,6 +766,8 @@ export type Database = {
           company_id: string;
           store_id: string | null;
           cn_no: string | null;
+          cn_kind: string | null;
+          awb_no: string | null;
           vendor_cn_no: string | null;
           gst_rate_pct: number | null;
           credit_note_date: string;
@@ -799,6 +801,8 @@ export type Database = {
           company_id: string;
           store_id?: string | null;
           cn_no?: string | null;
+          cn_kind?: string | null;
+          awb_no?: string | null;
           vendor_cn_no?: string | null;
           gst_rate_pct?: number | null;
           credit_note_date: string;

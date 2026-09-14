@@ -1472,7 +1472,9 @@ CREATE TABLE credit_notes (
   store_id                    uuid REFERENCES stores(id),        -- old "PORTAL"
   cn_no                         text UNIQUE,     -- auto-assigned, format NM/CN/26-27/0001
   vendor_cn_no                    text,          -- 2026-09-13: the issuing party's own CN number as printed on their document (db/2026-09-13-credit-note-vendor-no-and-gst.sql)
-  gst_rate_pct                    numeric(4,2) CHECK (gst_rate_pct IN (2.5, 3, 4, 9)),  -- 2026-09-13: GST rate on this CN; NULL = no GST (same enum as purchase_bills.gst_rate_pct)
+  cn_kind                           text CHECK (cn_kind IN ('buyer_refund', 'supplier')),  -- 2026-09-13: the TWO kinds of credit note (db/2026-09-13-credit-note-kinds-and-gst-slabs.sql) - 'buyer_refund' = we refund the BUYER against an ORDER (raised by us, no bill involved); 'supplier' = against a BILL we owe: purchase-party shortage/rate-diff (we raise it) or a courier's own freight CN (they issue it - quoted 3k, billed 5k, case raised, CN 2k + 18% GST). NULL = legacy rows predating the concept.
+  awb_no                              text,          -- 2026-09-13: the AWB/tracking no(s) this CN refunds - a courier CN often covers MORE THAN ONE AWB on one document (free text). Multi-AWB adjustment against matching bill_pass_register rows is driven from this (db/2026-09-13-credit-note-awb-and-duplicate-guard.sql).
+  gst_rate_pct                    numeric(4,2) CHECK (gst_rate_pct IN (2.5, 3, 4, 6, 9)),  -- 2026-09-13: GST rate on this CN; NULL = no GST. INDIVIDUAL cgst/sgst rate - TOTAL GST is double it, matching purchase_bills.gst_rate_pct convention: 2.5=5% total (rugs/cloth), 6=12% total (kurti > Rs.1000/pc), 9=18% total (courier freight CNs, office expenses, everything else)
   credit_note_date                date NOT NULL,
   order_id                          uuid REFERENCES orders(id),   -- old "ORDER ID" (marketplace order no. or PO — see SCHEMA_NOTES #7)
   item_id                             text,       -- marketplace line-item id, when applicable
@@ -2089,6 +2091,18 @@ CREATE TABLE bill_pass_register_adjustments (
 CREATE INDEX idx_bpr_adjustments_target ON bill_pass_register_adjustments(bill_pass_register_id);
 CREATE INDEX idx_bpr_adjustments_debit_note ON bill_pass_register_adjustments(debit_note_id);
 CREATE INDEX idx_bpr_adjustments_credit_note ON bill_pass_register_adjustments(credit_note_id);
+
+-- 2026-09-13 — "KISI INVIOCE KI DO BAAR ENTRY NAHI AAYEGI DUPLICATE
+-- RESTICATION JARURI HAI" — hard DB-level guard: a MANUALLY-ENTERED bill
+-- (source IS NULL) can never repeat the same (party, vendor invoice no.,
+-- invoice type) — that is always a double entry. App-mirrored rows
+-- (source IS NOT NULL: purchase_bill per-PO mirrors, freight/duty imports)
+-- are exempt via the partial WHERE, since one real vendor document
+-- legitimately lands as several mirrored rows (see
+-- db/2026-09-13-credit-note-awb-and-duplicate-guard.sql).
+CREATE UNIQUE INDEX uq_bill_pass_manual_no_duplicates
+  ON bill_pass_register (party_id, lower(btrim(vendor_invoice_no)), invoice_type)
+  WHERE source IS NULL AND vendor_invoice_no IS NOT NULL AND btrim(vendor_invoice_no) <> '' AND party_id IS NOT NULL;
 CREATE OR REPLACE FUNCTION trg_bpr_adjustments_sync() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   v_ids uuid[];

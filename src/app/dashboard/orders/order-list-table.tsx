@@ -11,6 +11,7 @@ import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
 import type { OrderStatusSummary } from "@/lib/orders/order-status-summary";
+import { BulkVendorAssignBar } from "./bulk-vendor-assign-bar";
 
 // company_id isn't part of EditableOrder (that type is shared with the Edit
 // form, which never needs to change an order's company) but it IS selected
@@ -750,8 +751,26 @@ export function OrderListTable({
               </button>
             </>
           )}
-          <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
         </div>
+      </div>
+
+      {/* 2026-09-13 — "order ko check box se select kar ke vendor assign kar
+          sake": the checkbox selection that already existed for Print
+          Selected now also drives bulk party assignment — one party + date
+          applies to every selected order, same assignment cycles as the
+          single-order button. Also answers "konse order ka abhi tak
+          purchase bill nahi aaya" per-order via the existing PB Entry
+          column (✓ INV… / No PB yet) + its Yes/No filter. */}
+      {selectedIds.size > 0 && (
+        <BulkVendorAssignBar
+          selectedIds={Array.from(selectedIds)}
+          parties={parties}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+
+      <div className="mb-2 flex flex-wrap items-center gap-2 print:hidden">
+        <ExportBar title="Orders" filenameBase="orders" columns={EXPORT_COLUMNS} rows={exportRows} printAreaId="orders-print-area" />
       </div>
 
       {showColumnPanel && (

@@ -140,6 +140,31 @@ async function PartyLedgerInner(
         .in("bill_pass_register_id", billIds)
         .order("payment_date", { ascending: true })
     : { data: [] };
+
+  // 2026-09-13 — "CREDIT OR DEBIT NOTE ADJUST KI ENTRY EK SATH DIKHE NA":
+  // the party's CN/DN adjustments against these bills, joined to their
+  // note numbers, so EACH adjustment shows as its own dated ledger line
+  // (exactly like each partial payment already does) instead of one
+  // opaque adj_amt sum.
+  const { data: adjustmentsRaw } = billIds.length
+    ? await supabase
+        .from("bill_pass_register_adjustments")
+        .select("id, bill_pass_register_id, amount, remark, created_at, debit_note_id, credit_note_id")
+        .in("bill_pass_register_id", billIds)
+        .order("created_at", { ascending: true })
+    : { data: [] };
+  const noteIds = (adjustmentsRaw ?? []).map((a) => a.credit_note_id ?? a.debit_note_id).filter((v): v is string => !!v);
+  const [cnRows, dnRows] = await Promise.all([
+    noteIds.length ? supabase.from("credit_notes").select("id, cn_no, vendor_cn_no").in("id", noteIds) : Promise.resolve({ data: [] }),
+    noteIds.length ? supabase.from("debit_notes").select("id, debit_note_no").in("id", noteIds) : Promise.resolve({ data: [] }),
+  ]);
+  const noteLabel = new Map<string, string>();
+  for (const n of cnRows.data ?? []) {
+    noteLabel.set(n.id, n.vendor_cn_no ? `${n.cn_no ?? "CN"} (party: ${n.vendor_cn_no})` : n.cn_no ?? "CN");
+  }
+  for (const n of dnRows.data ?? []) {
+    noteLabel.set(n.id, n.debit_note_no ?? "DN");
+  }
   type LedgerPayment = { id: string; amount: number; payment_date: string; payment_mode: string | null; reference_no: string | null; remark: string | null };
   const paymentsByBill = new Map<string, LedgerPayment[]>();
   for (const p of paymentsRaw ?? []) {
@@ -301,21 +326,30 @@ async function PartyLedgerInner(
         status,
       });
     }
-    if (adjAmt > 0) {
-      txns.push({
-        date: billDate,
-        particulars: `Debit/Credit Note adjustment against ${ref}${groupSuffix}`,
-        type: "Debit",
-        debit: adjAmt,
-        credit: 0,
-        sortKey: `${billDate}_1_${eg.key}`,
-        billIds: groupBillIds,
-        invoiceNo: ref,
-        paymentMode: null,
-        referenceNo: null,
-        paymentId: null,
-        status,
-      });
+    // 2026-09-13 — "CREDIT OR DEBIT NOTE ADJUST KI ENTRY EK SATH DIKHE
+    // NA": each adjustment is its OWN dated line with the note number in
+    // Particulars (falling back to the old single sum only when the
+    // adjustment rows couldn't be loaded). Same math — the lines still sum
+    // to adj_amt, so Debit/Credit/Balance are byte-identical.
+    const groupAdjRows = (adjustmentsRaw ?? []).filter((a) => groupBillIds.includes(a.bill_pass_register_id));
+    if (adjAmt > 0 && groupAdjRows.length > 0) {
+      for (const a of groupAdjRows) {
+        const noteNo = a.credit_note_id ?? a.debit_note_id ? noteLabel.get(a.credit_note_id ?? a.debit_note_id ?? "") ?? "Note" : "Note";
+        txns.push({
+          date: a.created_at.slice(0, 10),
+          particulars: `${a.credit_note_id ? "Credit Note" : "Debit Note"} ${noteNo} adjusted against ${ref}${groupSuffix}`,
+          type: "Debit",
+          debit: Number(a.amount),
+          credit: 0,
+          sortKey: `${a.created_at.slice(0, 10)}_1b_${eg.key}_${a.id}`,
+          billIds: [a.bill_pass_register_id],
+          invoiceNo: ref,
+          paymentMode: null,
+          referenceNo: null,
+          paymentId: null,
+          status,
+        });
+      }
     }
     for (const b of eg.bills) {
       for (const p of paymentsByBill.get(b.id) ?? []) {

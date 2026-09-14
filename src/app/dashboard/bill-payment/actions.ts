@@ -213,12 +213,25 @@ export async function updateBillPassRegisterEntry(_prev: EditBillState, formData
 
   const { data: bill, error: billError } = await supabase
     .from("bill_pass_register")
-    .select("id, company_id, source")
+    .select("id, company_id, source, total_paid")
     .eq("id", billId)
     .single();
   if (billError || !bill) return { error: "Bill not found.", success: false };
   if (!employee.companyIds.includes(bill.company_id)) {
     return { error: "You don't have access to this bill's company.", success: false };
+  }
+  // 2026-09-13 — "agar us bill ke against payment refrence add ho gaya ya
+  // uska payment ho gaya ho to phir uski entry edit SIRF ADMIN se ho, baki
+  // ki entry chalu rahe": once any payment is recorded against a bill the
+  // entry is payment-locked — editing it would change what those payments
+  // were computed against. Non-Admin viewers never see the Edit button
+  // (bill-payment-list.tsx), and this server-side re-check stops a
+  // hand-crafted submit even if the UI were bypassed.
+  if (Number(bill.total_paid ?? 0) > 0 && !employee.capabilities.includes("permissions_admin")) {
+    return {
+      error: "Payments have been recorded against this bill, so its entry is locked — only an Admin can edit it.",
+      success: false,
+    };
   }
   if (bill.source) {
     return {

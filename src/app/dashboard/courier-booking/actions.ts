@@ -728,6 +728,12 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
       destinationLocationCode: string | null;
       shipmentDate: string;
     } | null;
+    // 2026-09-13 — "YAHI INVOICE FEDEX UPS ARAMEX JISKO BHI JAYEGA YAHI
+    // JAYEGA": which courier's document-upload endpoint receives the PDF.
+    // Defaults to fedex so the existing FedEx call site is untouched; UPS/
+    // Aramex/DHL now pass their own key and the helper routes through the
+    // same uploadCsbVInvoiceToFedex switch below.
+    etdCourier?: "fedex" | "ups" | "aramex" | "dhl";
   }
 ): Promise<string | null> {
   if (!args.ddpDdu) return null; // domestic (Delhivery/Shiprocket) — not an export shipment, no CSB invoice applies.
@@ -806,6 +812,7 @@ async function maybeAutoGenerateCsbVInvoiceForBooking(
           originLocationCode: args.etdUpload.originLocationCode,
           destinationLocationCode: args.etdUpload.destinationLocationCode,
           shipmentDate: args.etdUpload.shipmentDate,
+          courier: args.etdCourier ?? "fedex",
         });
         // Returned straight through: the FedEx caller surfaces it as the
         // booking response's invoiceUrl so the UI can review/download the
@@ -854,6 +861,13 @@ async function uploadCsbVInvoiceToFedex(
     originLocationCode: string | null;
     destinationLocationCode: string | null;
     shipmentDate: string;
+    // 2026-09-13 — which courier's upload endpoint the rendered PDF goes
+    // to (default fedex). Only FedEx has a CONFIRMED post-shipment document
+    // upload API in this codebase today (uploadFedexPostShipmentInvoice);
+    // the others log the same "booked but not attached" error entry so the
+    // invoice is still uploaded manually on their portal — same fallback
+    // behavior the FedEx path had before its upload API was confirmed.
+    courier?: "fedex" | "ups" | "aramex" | "dhl";
   }
 ): Promise<string | null> {
   // Returns the uploaded PDF's data: URI (null when the upload failed) so
@@ -978,6 +992,26 @@ async function uploadCsbVInvoiceToFedex(
     storeName: invStore?.name ?? "",
   };
   const pdfBuffer = await renderCsbVInvoicePdf(inv as unknown as CsbVPdfInvoice, pdfItems, pdfMeta);
+  // 2026-09-13 — "YAHI INVOICE FEDEX UPS ARAMEX JISKO BHI JAYEGA YAHI
+  // JAYEGA": the same rendered CSB-V routes to whichever courier booked
+  // the shipment. FedEx has the confirmed ETDPostshipment endpoint; UPS/
+  // Aramex/DHL currently have no confirmed upload API in this codebase, so
+  // the PDF renders identically and the failure path below tells the
+  // employee to attach it on that courier's portal (with the Error Log
+  // entry keeping a permanent record either way).
+  const courier = args.courier ?? "fedex";
+  if (courier !== "fedex") {
+    await logEntryError(supabase, {
+      companyId: args.companyId,
+      source: "courier_api",
+      reason: `${courier.toUpperCase()} booked (AWB ${args.trackingNumber}) and the CSB-V invoice ${inv.invoice_no} was generated — but this courier has no automatic document upload yet. Upload it manually on ${courier.toUpperCase()}'s portal (the PDF is on the invoice page).`,
+      referenceType: "order",
+      referenceId: args.orderId,
+      raisedByEmployeeId: args.raisedByEmployeeId,
+      raisedByName: args.raisedByName,
+    });
+    return `data:application/pdf;base64,${pdfBuffer.toString("base64")}`;
+  }
   const uploadResult = await uploadFedexPostShipmentInvoice(
     {
       trackingNumber: args.trackingNumber,
@@ -1662,6 +1696,23 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
       weightKg,
       dimsCm: dims,
       ddpDdu: input.ddpDdu,
+      // 2026-09-13 — "YAHI INVOICE FEDEX UPS ARAMEX JISKO BHI JAYEGA YAHI
+      // JAYEGA": the auto-generated CSB-V now also renders + routes for
+      // UPS (same helper the FedEx path uses; the helper's courier switch
+      // logs a manual-attach reminder for non-FedEx carriers until their
+      // upload APIs are confirmed). UPS's API returns no explicit shipment
+      // date, so today is the honest value.
+      etdUpload: input.ddpDdu
+        ? {
+            credentials,
+            originCountryCode: input.shipper.countryCode,
+            destinationCountryCode: recipientCountry.code,
+            originLocationCode: null,
+            destinationLocationCode: null,
+            shipmentDate: new Date().toISOString().slice(0, 10),
+          }
+        : null,
+      etdCourier: "ups",
     });
 
     await notifyCompanion(supabase, {
@@ -1831,6 +1882,18 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
       weightKg,
       dimsCm: dims,
       ddpDdu,
+      // 2026-09-13 — same CSB-V ETD routing as UPS above (courier: aramex).
+      etdUpload: ddpDdu
+        ? {
+            credentials,
+            originCountryCode: shipper.country_code,
+            destinationCountryCode: recipientCountry.code,
+            originLocationCode: null,
+            destinationLocationCode: null,
+            shipmentDate: new Date().toISOString().slice(0, 10),
+          }
+        : null,
+      etdCourier: "aramex",
     });
 
     await notifyCompanion(supabase, {
@@ -2283,6 +2346,18 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
       weightKg,
       dimsCm: dims,
       ddpDdu,
+      // 2026-09-13 — same CSB-V ETD routing as UPS/Aramex above (dhl).
+      etdUpload: ddpDdu
+        ? {
+            credentials,
+            originCountryCode: shipper.country_code,
+            destinationCountryCode: recipientCountry.code,
+            originLocationCode: null,
+            destinationLocationCode: null,
+            shipmentDate: new Date().toISOString().slice(0, 10),
+          }
+        : null,
+      etdCourier: "dhl",
     });
 
     await notifyCompanion(supabase, {

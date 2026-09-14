@@ -67,11 +67,45 @@
 // surfaces this file powers ("link to open hi nahi ho raha"). Credit
 // notes against bills are bill-payment work, so either capability grants
 // it — same posture as the register page itself.
-import { requireAnyCapability } from "@/lib/auth/require-capability";
+import { requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
 export type ApplyCreditNoteState = { error: string | null; success: boolean };
+
+/** Admin = a role that actually holds the permissions screen itself. */
+function isAdmin(employee: AuthedEmployee): boolean {
+  return employee.capabilities.includes("permissions_admin");
+}
+
+/**
+ * "AGAR US BILL KE AGAINST PAYMENT REFRANCE ADD HO GAYA YA USKA PAYMENT HO
+ * GAYA HO TO PHIR USKI ENTRY EDIT SIRF ADMIN SE HO" — a bill with any
+ * payment posted against it is payment-locked: its credit-note wiring
+ * changes what the already-recorded payments were computed against, so
+ * only Admin may touch it. Kept in ONE place because the panel's Remove
+ * button and (via this file's exports) the bill edit gate both need it.
+ */
+export async function billHasPayments(billId: string): Promise<boolean> {
+  const supabase = createServiceRoleClient();
+  const { count } = await supabase
+    .from("bill_pass_register_payments")
+    .select("id", { count: "exact", head: true })
+    .eq("bill_pass_register_id", billId);
+  return (count ?? 0) > 0;
+}
+
+/**
+ * Server-side gate shared by every mutation on a PAYMENT-LOCKED bill:
+ * callers pass the pre-checked employee + bill; this throws for
+ * non-admins (the caller renders the message instead).
+ */
+function assertPaymentLockAllowed(employee: AuthedEmployee, billTotalPaid: number): string | null {
+  if (billTotalPaid > 0 && !isAdmin(employee)) {
+    return "Payments have been recorded against this bill, so its credit notes are locked — only an Admin can change them.";
+  }
+  return null;
+}
 
 async function loadBillScoped(supabase: ReturnType<typeof createServiceRoleClient>, billId: string, companyIds: string[]) {
   const { data: bill } = await supabase
@@ -81,6 +115,42 @@ async function loadBillScoped(supabase: ReturnType<typeof createServiceRoleClien
     .maybeSingle();
   if (!bill || !companyIds.includes(bill.company_id)) return null;
   return bill;
+}
+
+// 2026-09-13 — "COURIOUR KA JO CREDIT NOTE HOTA HAI VO AWB KE AGAINST ME
+// AATA HAI TO AGAR EK CREDIT NOTE ME 1 SE JYADA AWB HUYE TO KYA UNKE
+// AGAINST ME ADJUST KARNE KA OPTION HAI": one courier CN document often
+// covers SEVERAL AWBs, each of which is its own bill_pass_register row
+// (freight bills post per-AWB). This lists the party's outstanding
+// freight/duty/purchase bills so the panel's multi-AWB mode can offer
+// them as split-adjustment targets.
+export type PartyAwbBill = {
+  id: string;
+  invoice_no: string | null;
+  vendor_invoice_no: string | null;
+  invoice_type: string | null;
+  balance_due: number;
+};
+
+export async function listPartyBillsForCn(partyId: string): Promise<PartyAwbBill[]> {
+  const employee = await requireAnyCapability("bill_payment", "doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!partyId) return [];
+  const { data } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, invoice_no, vendor_invoice_no, invoice_type, balance_due")
+    .eq("party_id", partyId)
+    .in("company_id", employee.companyIds)
+    .gt("balance_due", 0)
+    .order("invoice_date", { ascending: false, nullsFirst: false })
+    .limit(100);
+  return (data ?? []).map((b) => ({
+    id: b.id,
+    invoice_no: b.invoice_no,
+    vendor_invoice_no: b.vendor_invoice_no,
+    invoice_type: b.invoice_type,
+    balance_due: Number(b.balance_due),
+  }));
 }
 
 /**
@@ -110,9 +180,19 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
     const vendorCnNo = String(formData.get("vendor_cn_no") ?? "").trim() || null;
     const gstRaw = String(formData.get("gst_rate_pct") ?? "").trim();
     const gstRatePct = gstRaw ? Number(gstRaw) : null;
-    if (gstRatePct != null && ![2.5, 3, 4, 9].includes(gstRatePct)) return { error: "GST rate must be one of 2.5, 3, 4 or 9 (or leave blank for no GST).", success: false };
+    if (gstRatePct != null && ![2.5, 3, 4, 6, 9].includes(gstRatePct)) return { error: "GST rate must be one of 2.5, 3, 4, 6 or 9 (or leave blank for no GST).", success: false };
     if (!(amount > 0)) return { error: "Credit note amount must be a positive number.", success: false };
     if (!cnDate) return { error: "Credit note date is required.", success: false };
+
+    // Payment lock (admin-only once payments exist) — see
+    // assertPaymentLockAllowed above for the user's exact rule.
+    const { data: paidCheck } = await supabase
+      .from("bill_pass_register")
+      .select("total_paid")
+      .eq("id", bill.id)
+      .single();
+    const lockError = assertPaymentLockAllowed(employee, Number(paidCheck?.total_paid ?? 0));
+    if (lockError) return { error: lockError, success: false };
 
     // Insert the real document first (cn_no auto-assigns via trigger), so
     // the note shows up in Documents → Credit Notes and in the per-party
@@ -123,6 +203,7 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
         company_id: bill.company_id,
         credit_note_date: cnDate,
         vendor_cn_no: vendorCnNo,
+        cn_kind: "supplier" as const,
         gst_rate_pct: gstRatePct,
         invoice_no: bill.vendor_invoice_no ?? bill.invoice_no ?? null,
         refund_amount: amount,
@@ -162,6 +243,14 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
     const creditNoteId = String(formData.get("credit_note_id") ?? "");
     const amountRaw = String(formData.get("amount") ?? "").trim();
     if (!creditNoteId) return { error: "Pick a credit note to link.", success: false };
+
+    const { data: paidCheck2 } = await supabase
+      .from("bill_pass_register")
+      .select("total_paid")
+      .eq("id", bill.id)
+      .single();
+    const lockError2 = assertPaymentLockAllowed(employee, Number(paidCheck2?.total_paid ?? 0));
+    if (lockError2) return { error: lockError2, success: false };
 
     const { data: cn } = await supabase
       .from("credit_notes")
@@ -235,6 +324,98 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
     return { error: null, success: true };
   }
 
+  if (mode === "multi_awb") {
+    // 2026-09-13 — "EK CREDIT NOTE ME 1 SE JYADA AWB HUYE TO KYA UNKE
+    // AGAINST ME ADJUST KARNE KA OPTION HAI" + "CREDTI AMMOUNT + GST 18%
+    // = TOTAL AMMOUNT": ONE courier CN document covers several AWB bills.
+    // The party's outstanding bills are submitted as per-bill amounts
+    // (awb_amounts JSON: {billId: amount}); the CN document stores the
+    // TOTAL (base + GST) while each adjustment row carries that bill's
+    // base share — GST lives on the document, not per bill.
+    const cnDate = String(formData.get("credit_note_date") ?? "").trim();
+    const partyId = String(formData.get("party_id") ?? "").trim();
+    if (!partyId) return { error: "Party is required — open this from a bill row so the party is known.", success: false };
+    const awbNos = String(formData.get("awb_no") ?? "").trim() || null;
+    const vendorCnNo = String(formData.get("vendor_cn_no") ?? "").trim() || null;
+    const gstRaw = String(formData.get("gst_rate_pct") ?? "9").trim();
+    const gstRatePct = gstRaw ? Number(gstRaw) : null;
+    if (gstRatePct != null && ![2.5, 3, 4, 6, 9].includes(gstRatePct)) return { error: "GST rate must be one of 2.5, 3, 4, 6 or 9.", success: false };
+    const baseTotal = Number(formData.get("base_amount") ?? 0);
+    if (!(baseTotal > 0)) return { error: "Credit note base amount must be positive.", success: false };
+    if (!cnDate) return { error: "Credit note date is required.", success: false };
+
+    // Per-bill split (must sum to the base amount).
+    let splits: Record<string, number>;
+    try {
+      splits = JSON.parse(String(formData.get("awb_amounts") ?? "{}"));
+    } catch {
+      return { error: "Invalid AWB split — please retry.", success: false };
+    }
+    const splitEntries = Object.entries(splits).filter(([, v]) => Number(v) > 0);
+    if (splitEntries.length === 0) return { error: "Enter at least one AWB amount.", success: false };
+    const splitSum = splitEntries.reduce((sum, [, v]) => sum + Number(v), 0);
+    if (Math.abs(splitSum - baseTotal) > 0.05) {
+      return { error: `AWB amounts total (Rs ${splitSum.toFixed(2)}) must equal the CN base amount (Rs ${baseTotal.toFixed(2)}).`, success: false };
+    }
+
+    // Load + scope-check every target bill in one query.
+    const targetIds = splitEntries.map(([id]) => id);
+    const { data: targets } = await supabase
+      .from("bill_pass_register")
+      .select("id, company_id, party_id, vendor_invoice_no, invoice_no, total_paid")
+      .in("id", targetIds);
+    const targetById = new Map((targets ?? []).map((t) => [t.id, t]));
+    for (const [id] of splitEntries) {
+      const t = targetById.get(id);
+      if (!t || !employee.companyIds.includes(t.company_id)) return { error: "One of the selected AWB bills is not accessible.", success: false };
+      const lockErr = assertPaymentLockAllowed(employee, Number(t.total_paid ?? 0));
+      if (lockErr) return { error: `AWB bill ${t.vendor_invoice_no ?? t.invoice_no ?? id.slice(0, 8)}: ${lockErr}`, success: false };
+    }
+
+    const gstTotal = gstRatePct != null ? Math.round(baseTotal * (1 + (gstRatePct * 2) / 100) * 100) / 100 : baseTotal;
+
+    // ONE real CN document carrying the GST-inclusive total + the AWB list.
+    const { data: cn, error: cnError } = await supabase
+      .from("credit_notes")
+      .insert({
+        company_id: employee.currentCompanyId,
+        credit_note_date: cnDate,
+        vendor_cn_no: vendorCnNo,
+        cn_kind: "supplier" as const,
+        awb_no: awbNos,
+        gst_rate_pct: gstRatePct,
+        invoice_no: vendorCnNo ?? null,
+        refund_amount: gstTotal,
+        party_id: partyId,
+        credit_note_status: "Applied to bills",
+        remark: remark ? `Against ${splitEntries.length} AWB bill(s) — ${remark}` : `Against ${splitEntries.length} AWB bill(s)`,
+        created_by_employee_id: employee.id,
+      })
+      .select("id, cn_no")
+      .single();
+    if (cnError || !cn) return { error: `Failed to save the Credit Note: ${cnError?.message ?? "unknown error"}`, success: false };
+
+    // Split adjustments: per-bill base amounts (the document carries GST).
+    const adjRows = splitEntries.map(([id, amt]) => ({
+      bill_pass_register_id: id,
+      credit_note_id: cn.id,
+      amount: Number(amt),
+      remark: remark ? remark : `Credit note ${cn.cn_no ?? ""} (multi-AWB)`.trim(),
+      created_by_employee_id: employee.id,
+    }));
+    const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert(adjRows);
+    if (adjError) {
+      return {
+        error: `Credit Note ${cn.cn_no ?? ""} saved, but applying it to the bills failed: ${adjError.message} — apply it from Documents → Credit Note.`,
+        success: false,
+      };
+    }
+
+    revalidatePath("/dashboard/bill-payment");
+    revalidatePath("/dashboard/documents");
+    revalidatePath("/dashboard/credit-notes-register");
+    return { error: null, success: true };
+  }
   return { error: "Unknown action.", success: false };
 }
 
@@ -255,6 +436,18 @@ export async function removeBillCreditNote(adjustmentId: string): Promise<ApplyC
   const bill = await loadBillScoped(supabase, adj.bill_pass_register_id, employee.companyIds);
   if (!bill) return { error: "You don't have access to this bill's company.", success: false };
 
+  // Removing a credit note RAISES the payable — on a bill that already has
+  // payments recorded that silently breaks the "paid in full" state those
+  // payments assumed. Admin-only, same lock as adding (see
+  // assertPaymentLockAllowed).
+  const { data: paidRow } = await supabase
+    .from("bill_pass_register")
+    .select("total_paid")
+    .eq("id", adj.bill_pass_register_id)
+    .single();
+  const removeLock = assertPaymentLockAllowed(employee, Number(paidRow?.total_paid ?? 0));
+  if (removeLock) return { error: removeLock, success: false };
+
   const { error } = await supabase.from("bill_pass_register_adjustments").delete().eq("id", adjustmentId);
   if (error) return { error: error.message, success: false };
 
@@ -268,7 +461,10 @@ export type RegisterCnRow = {
   id: string;
   cn_no: string | null;
   vendor_cn_no: string | null;
+  cn_kind: string | null;
+  buyer_name: string | null;
   gst_rate_pct: number | null;
+  awb_no: string | null;
   credit_note_date: string;
   invoice_no: string | null;
   refund_amount: number;
@@ -301,7 +497,7 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
   const [{ data: notes }, { data: parties }] = await Promise.all([
     supabase
       .from("credit_notes")
-      .select("id, cn_no, vendor_cn_no, gst_rate_pct, company_id, credit_note_date, invoice_no, refund_amount, remark, credit_note_status, party_id")
+      .select("id, cn_no, vendor_cn_no, cn_kind, buyer_name, awb_no, gst_rate_pct, company_id, credit_note_date, invoice_no, refund_amount, remark, credit_note_status, party_id")
       .in("company_id", scoped)
       .order("credit_note_date", { ascending: false }),
     supabase.from("parties").select("id, name"),
@@ -317,6 +513,9 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
       id: n.id,
       cn_no: n.cn_no,
       vendor_cn_no: n.vendor_cn_no,
+      cn_kind: n.cn_kind,
+      buyer_name: n.buyer_name,
+      awb_no: n.awb_no,
       gst_rate_pct: n.gst_rate_pct,
       credit_note_date: n.credit_note_date,
       invoice_no: n.invoice_no,

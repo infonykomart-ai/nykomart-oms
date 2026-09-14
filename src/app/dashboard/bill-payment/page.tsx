@@ -221,7 +221,14 @@ export default async function BillPaymentPage({
         <a href="/dashboard/bill-payment" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
-      <BillPaymentList bills={rows} parties={parties ?? []} existingCreditNotes={(pageCreditNotes ?? []).map((n) => ({ id: n.id, cn_no: n.cn_no, credit_note_date: n.credit_note_date, refund_amount: Number(n.refund_amount ?? 0) }))} />
+      <BillPaymentList
+        bills={rows}
+        parties={parties ?? []}
+        existingCreditNotes={(pageCreditNotes ?? []).map((n) => ({ id: n.id, cn_no: n.cn_no, credit_note_date: n.credit_note_date, refund_amount: Number(n.refund_amount ?? 0) }))}
+        // 2026-09-13 — "edit sirf admin se ho" once payments exist: non-Admin
+        // viewers get locked edit forms + credit-note panels on paid bills.
+        isPaidLockedViewer={!employee.capabilities.includes("permissions_admin")}
+      />
     </div>
   );
 }

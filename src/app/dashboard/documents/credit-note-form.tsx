@@ -99,6 +99,12 @@ export function CreditNoteForm({
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
       <input type="hidden" name="party_id" value={partyId} />
+      {/* 2026-09-13 — "BHAI 2 PARKAR KE CREDIT NOTE HONGE": this form
+          serves both kinds, discriminated by whether a Party is selected —
+          party → 'supplier' (against a bill we owe: purchase-party or
+          courier CN), no party → 'buyer_refund' (we refund the buyer
+          against an order). The Bill Payment panel always sends 'supplier'. */}
+      <input type="hidden" name="cn_kind" value={partyId ? "supplier" : "buyer_refund"} />
       <input type="hidden" name="bill_pass_register_id" value={raisedAgainstBillId} />
       <input type="hidden" name="adjust_target_bill_pass_register_id" value={applyAdjustment ? adjustTargetBill?.primaryBillId ?? "" : ""} />
       <input type="hidden" name="adjust_amount" value={applyAdjustment ? adjustAmount : ""} />
