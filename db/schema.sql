@@ -1333,6 +1333,42 @@ FROM freight_bills fb
 LEFT JOIN freight_reconciliation_view v ON v.freight_bill_id = fb.id
 GROUP BY fb.id, fb.invoice_no, fb.gross_total_amt;
 
+-- 2026-09-14 — FedEx ledger mismatch diagnosis ("fedex ke jitne ke bill
+-- apne pass credit match huye ... lekin phir bhi match nahi ho raha
+-- credit note adjust karne vala fourmula ki vajh se to nahi ho raha kahi
+-- galt tarike se to nahi bana diya"): a courier/duty CN can reach a
+-- bill's payable through TWO doors — baked into total_amt at "Send to
+-- Finance" time (the send form's default is source gross − CN), and/or
+-- afterwards as a bill_pass_register_adjustments row (adj_amt). Both
+-- doors on the same bill = the payable was reduced TWICE, which is
+-- exactly the "payments don't match" symptom. This read-only view lists
+-- every finance-ledger courier/duty bill with both CN amounts side by
+-- side and flags the double-applied cases; see
+-- db/2026-09-14-courier-cn-audit-view.sql for the usage queries.
+CREATE VIEW courier_cn_audit_view AS
+SELECT
+  bpr.id                                     AS bill_pass_register_id,
+  bpr.company_id,
+  bpr.party_id,
+  bpr.vendor_invoice_no,
+  bpr.invoice_type,
+  bpr.source,
+  bpr.source_id,
+  bpr.total_amt                              AS ledger_total_amt,
+  COALESCE(fb.gross_total_amt, dtb.gross_total_amt) AS source_gross_amt,
+  COALESCE(fb.credit_note_amt, 0)            AS source_cn_amt,
+  GREATEST(COALESCE(fb.gross_total_amt, dtb.gross_total_amt, 0) - bpr.total_amt, 0) AS cn_in_total,
+  bpr.adj_amt                                AS cn_adjusted,
+  bpr.credit_note_amt                        AS manual_cn_amt,
+  bpr.total_paid,
+  bpr.balance_due,
+  (bpr.adj_amt > 0
+    AND COALESCE(fb.gross_total_amt, dtb.gross_total_amt, 0) > bpr.total_amt) AS double_applied_flag
+FROM bill_pass_register bpr
+LEFT JOIN freight_bills fb   ON bpr.source = 'freight_bill'   AND bpr.source_id = fb.id
+LEFT JOIN duty_tax_bills dtb ON bpr.source = 'duty_tax_bill'  AND bpr.source_id = dtb.id
+WHERE bpr.invoice_type IN ('FREIGHT INVOICE', 'DUTY TAX');
+
 -- Old Duty Reconciliation sheet — same idea, additionally pulling its
 -- "SHIPPING AMT" from freight_reconciliation_view.gross_shipping_amt
 -- (matched by order_id) exactly as the source pulled it from Freight
