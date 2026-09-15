@@ -3889,6 +3889,8 @@ export type Database = {
           amount_inr: number;
           payment_mode: string | null;
           remark: string | null;
+          recurring_debit_id: string | null;
+          recurring_month: string | null;
           created_by_employee_id: string | null;
           created_at: string;
         };
@@ -3900,6 +3902,8 @@ export type Database = {
           amount_inr: number;
           payment_mode?: string | null;
           remark?: string | null;
+          recurring_debit_id?: string | null;
+          recurring_month?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
         };
@@ -3911,6 +3915,8 @@ export type Database = {
           amount_inr?: number;
           payment_mode?: string | null;
           remark?: string | null;
+          recurring_debit_id?: string | null;
+          recurring_month?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
         };
@@ -5178,6 +5184,83 @@ export type Database = {
         Relationships: [
         ];
       };
+      party_wallet_txns: {
+        Row: {
+          id: string;
+          company_id: string;
+          party_id: string;
+          txn_type: string;
+          direction: string;
+          amount: number;
+          txn_date: string;
+          payment_mode: string | null;
+          reference_no: string | null;
+          remark: string | null;
+          bill_pass_register_id: string | null;
+          entered_by: string | null;
+          entered_on: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          party_id: string;
+          txn_type: string;
+          direction: string;
+          amount: number;
+          txn_date: string;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          remark?: string | null;
+          bill_pass_register_id?: string | null;
+          entered_by?: string | null;
+          entered_on?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          party_id?: string;
+          txn_type?: string;
+          direction?: string;
+          amount?: number;
+          txn_date?: string;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          remark?: string | null;
+          bill_pass_register_id?: string | null;
+          entered_by?: string | null;
+          entered_on?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "party_wallet_txns_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "party_wallet_txns_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "party_wallet_txns_entered_by_fkey";
+            columns: ["entered_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "party_wallet_txns_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       portal_payment_reconciliation: {
         Row: {
           id: string;
@@ -5381,6 +5464,66 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      recurring_card_debits: {
+        Row: {
+          id: string;
+          company_id: string;
+          vendor_name: string;
+          category: string;
+          amount: number | null;
+          card_label: string | null;
+          day_of_month: number;
+          active: boolean;
+          last_logged_month: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          vendor_name: string;
+          category?: string;
+          amount?: number | null;
+          card_label?: string | null;
+          day_of_month: number;
+          active?: boolean;
+          last_logged_month?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          vendor_name?: string;
+          category?: string;
+          amount?: number | null;
+          card_label?: string | null;
+          day_of_month?: number;
+          active?: boolean;
+          last_logged_month?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "recurring_card_debits_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "recurring_card_debits_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];

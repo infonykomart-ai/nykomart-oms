@@ -2346,6 +2346,39 @@ CREATE TABLE internal_expenses (
 CREATE INDEX idx_internal_expenses_company ON internal_expenses(company_id);
 CREATE INDEX idx_internal_expenses_date    ON internal_expenses(expense_date);
 
+-- 2026-09-15 — "kuch payment auto debit hote hai credit card se — erank,
+-- etsy bill, ebay & other": the REGISTRY of recurring card auto-debits
+-- (eRank, Etsy bill, eBay store…). NOT the expense itself — each month's
+-- actual expense still lands in internal_expenses (stamped with
+-- recurring_debit_id + recurring_month) so the P&L views keep folding it
+-- in unchanged. See db/2026-09-15-recurring-card-debits.sql for the full
+-- rationale (idempotency cursor last_logged_month, day_of_month clamping,
+-- variable-amount bills).
+CREATE TABLE recurring_card_debits (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  vendor_name       text NOT NULL,
+  category          text NOT NULL DEFAULT 'Bank/Card Charges',
+  amount            numeric(14,2) CHECK (amount IS NULL OR amount > 0),
+  card_label        text,
+  day_of_month      int NOT NULL CHECK (day_of_month BETWEEN 1 AND 31),
+  active            boolean NOT NULL DEFAULT true,
+  last_logged_month text,
+  remark            text,
+  created_by_employee_id uuid REFERENCES employees(id),
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, lower(vendor_name))
+);
+CREATE INDEX idx_recurring_card_debits_company ON recurring_card_debits(company_id) WHERE active;
+ALTER TABLE internal_expenses
+  ADD COLUMN recurring_debit_id uuid REFERENCES recurring_card_debits(id) ON DELETE SET NULL;
+ALTER TABLE internal_expenses
+  ADD COLUMN recurring_month text;
+CREATE INDEX idx_internal_expenses_recurring ON internal_expenses(recurring_debit_id) WHERE recurring_debit_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_internal_expenses_recurring_month
+  ON internal_expenses(recurring_debit_id, recurring_month)
+  WHERE recurring_debit_id IS NOT NULL AND recurring_month IS NOT NULL;
+
 -- 2026-08-20 (order-value fix, part 2 — P&L goes live): user confirmed P&L
 -- should also switch to orders.order_value_inr as its revenue driver
 -- instead of only ever reading the CSV-imported sale_profit_ledger. Per
@@ -4356,6 +4389,37 @@ CREATE TABLE courier_pickup_request_awbs (
 );
 CREATE INDEX idx_pickup_request_awbs_request  ON courier_pickup_request_awbs(pickup_request_id);
 CREATE INDEX idx_pickup_request_awbs_shipment ON courier_pickup_request_awbs(order_shipment_id);
+
+-- 2026-09-15 — "kuch kuch courier me shipment bhejne se pehle wallet
+-- recharge karna padta hai phir baad me adjust hota hai jab uska invoice
+-- aata hai": prepaid courier wallets (FedEx/UPS/Delhivery-style). Money
+-- goes IN before shipments fly (recharge), invoices later consume it, and
+-- the balance must stay >= 0 before a wallet payment is allowed. See
+-- db/2026-09-15-courier-wallet.sql for the full design rationale — in
+-- particular why consumes deliberately DON'T insert into
+-- bill_pass_register_payments (that table means bank money left; a wallet
+-- consume never touched the bank) and why wallet_paid is set explicitly
+-- by the app instead of a trigger.
+CREATE TABLE party_wallet_txns (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id     uuid NOT NULL REFERENCES companies(id),
+  party_id       uuid NOT NULL REFERENCES parties(id),
+  txn_type       text NOT NULL CHECK (txn_type IN ('recharge', 'consume', 'refund')),
+  direction      text NOT NULL CHECK (direction IN ('in', 'out')),
+  amount         numeric(14,2) NOT NULL CHECK (amount > 0),
+  txn_date       date NOT NULL,
+  payment_mode   text,
+  reference_no   text,
+  remark         text,
+  bill_pass_register_id uuid REFERENCES bill_pass_register(id) ON DELETE SET NULL,
+  entered_by     uuid REFERENCES employees(id),
+  entered_on     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_party_wallet_company_party ON party_wallet_txns(company_id, party_id, txn_date);
+CREATE INDEX idx_party_wallet_bill ON party_wallet_txns(bill_pass_register_id) WHERE bill_pass_register_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_party_wallet_bill_consume
+  ON party_wallet_txns(bill_pass_register_id)
+  WHERE txn_type = 'consume' AND bill_pass_register_id IS NOT NULL;
 
 -- =============================================================================
 -- SECTION 17c — FREIGHT COST ESTIMATOR (Gap 5 part 1 of the 5-gaps plan)

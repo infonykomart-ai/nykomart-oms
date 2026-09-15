@@ -3,6 +3,10 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { ExpenseEntrySection } from "./expense-entry-section";
 import { ExpenseReportTable, type ExpenseReportRow } from "./expense-report-table";
+// 2026-09-15 — "kuch payment auto debit hote hai credit card se — erank,
+// etsy bill, ebay & other": the Card Auto-Debits tab (registry + one-click
+// monthly logging into internal_expenses).
+import { RecurringDebitsSection, type RecurringDebitRow } from "./recurring-debits-section";
 
 // Office/cash expenses (Gap 4 of the 2026-08-20 five-gaps plan — see
 // claude/five-gaps-implementation-plan-2026-08-20.md). Rent, electricity,
@@ -22,7 +26,7 @@ export default async function ExpensesPage({
   const supabase = createServiceRoleClient();
   const sp = await searchParams;
 
-  const tab = sp.tab === "report" ? "report" : "entry";
+  const tab = sp.tab === "report" ? "report" : sp.tab === "recurring" ? "recurring" : "entry";
 
   const { data: companies } = await supabase
     .from("companies")
@@ -63,7 +67,9 @@ export default async function ExpensesPage({
   }
 
   let reportRows: ExpenseReportRow[] = [];
-  const now = new Date(); // server-render time, fine here (not inside a workflow script)
+  // server-render time, fine here (not inside a workflow script) — shared
+  // by the Report tab's default range and the recurring tab's month cursor.
+  const now = new Date();
   const defaultFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
   const defaultTo = now.toISOString().slice(0, 10);
   const from = typeof sp.from === "string" && sp.from ? sp.from : defaultFrom;
@@ -98,6 +104,29 @@ export default async function ExpensesPage({
   const tabClass = (active: boolean) =>
     `rounded-lg px-3 py-1.5 text-xs font-semibold transition ${active ? "bg-amber-500 text-white" : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`;
 
+  // 2026-09-15 — Card Auto-Debits registry (recurring tab only).
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  let recurringRows: RecurringDebitRow[] = [];
+  if (tab === "recurring") {
+    const { data: reg } = await supabase
+      .from("recurring_card_debits")
+      .select("id, company_id, vendor_name, category, amount, card_label, day_of_month, active, last_logged_month")
+      .in("company_id", employee.companyIds)
+      .order("day_of_month", { ascending: true });
+    recurringRows = (reg ?? []).map((r) => ({
+      id: r.id,
+      company_id: r.company_id,
+      company_name: companyName.get(r.company_id) ?? "—",
+      vendor_name: r.vendor_name,
+      category: r.category,
+      amount: r.amount === null ? null : Number(r.amount),
+      card_label: r.card_label,
+      day_of_month: r.day_of_month,
+      active: r.active,
+      last_logged_month: r.last_logged_month,
+    }));
+  }
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -119,10 +148,13 @@ export default async function ExpensesPage({
       <div className="mb-4 flex gap-2">
         <Link href="/dashboard/expenses?tab=entry" className={tabClass(tab === "entry")}>Log Expense</Link>
         <Link href="/dashboard/expenses?tab=report" className={tabClass(tab === "report")}>Report</Link>
+        <Link href="/dashboard/expenses?tab=recurring" className={tabClass(tab === "recurring")}>🔁 Card Auto-Debits</Link>
       </div>
 
       {tab === "entry" ? (
         <ExpenseEntrySection companies={companies ?? []} recentEntries={recentEntries} />
+      ) : tab === "recurring" ? (
+        <RecurringDebitsSection registry={recurringRows} companies={companies ?? []} currentMonth={currentMonth} />
       ) : (
         <ExpenseReportTable
           companies={companies ?? []}

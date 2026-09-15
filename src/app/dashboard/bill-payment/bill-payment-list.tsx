@@ -37,6 +37,9 @@ import { groupPartyOptions, type PartyOption } from "../documents/party-options"
 import { RelatedNotesBadge } from "../documents/related-notes-badge";
 import type { RelatedNote } from "../documents/actions";
 import { CreditNotePanel, type AppliedCn } from "./credit-note-panel";
+// 2026-09-15 — courier prepaid wallet: per-bill "Pay from Wallet" on rows
+// whose party holds a wallet (see wallet-actions.ts / wallet-panel.tsx).
+import { WalletPayButton } from "./wallet-pay-button";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -77,6 +80,7 @@ export function BillPaymentList({
   parties,
   existingCreditNotes = [],
   isPaidLockedViewer = false,
+  partyWalletBalances = {},
 }: {
   bills: PayableBillRow[];
   parties: PartyOption[];
@@ -88,6 +92,11 @@ export function BillPaymentList({
   // permissions_admin); the bill edit form AND the credit-note panel of
   // any bill with total_paid > 0 lock themselves when it's set.
   isPaidLockedViewer?: boolean;
+  // 2026-09-15 — party_id → current wallet balance (party_wallet_txns sum,
+  // from getWalletOverview). Only courier parties with wallet txns appear;
+  // a bill whose party is in here gets a "💳 Pay from Wallet" action.
+  // Record Payment (bank) stays as-is.
+  partyWalletBalances?: Record<string, number>;
 }) {
   const groups = useMemo(() => groupBills(bills), [bills]);
   const [selected, setSelected] = useState<Set<string>>(new Set()); // group keys
@@ -227,6 +236,7 @@ export function BillPaymentList({
                   parties={parties}
                   existingCreditNotes={existingCreditNotes}
                   isPaidLockedViewer={isPaidLockedViewer}
+                  partyWalletBalances={partyWalletBalances}
                   checked={selected.has(g.key)}
                   onToggle={() => toggle(g.key)}
                 />
@@ -264,6 +274,7 @@ function GroupRow({
   parties,
   existingCreditNotes,
   isPaidLockedViewer,
+  partyWalletBalances,
   checked,
   onToggle,
 }: {
@@ -271,6 +282,7 @@ function GroupRow({
   parties: PartyOption[];
   existingCreditNotes: { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number }[];
   isPaidLockedViewer: boolean;
+  partyWalletBalances: Record<string, number>;
   checked: boolean;
   onToggle: () => void;
 }) {
@@ -413,6 +425,16 @@ function GroupRow({
           <button type="button" onClick={() => setPayOpen((v) => !v)} className="text-xs font-semibold text-amber-600 hover:underline">
             {payOpen ? "Cancel" : "Record Payment"}
           </button>
+          {/* 2026-09-15 — prepaid courier wallet: only for bills whose party
+              has wallet money (party_wallet_balances). balanceDue is the
+              group's combined due; the button pays min(due, balance). */}
+          {first.party_id && partyWalletBalances[first.party_id] !== undefined && balanceDue > 0 && (
+            <WalletPayButton
+              billId={first.id}
+              balanceDue={balanceDue}
+              walletBalance={partyWalletBalances[first.party_id]}
+            />
+          )}
         </td>
       </tr>
       {expanded && group.isGroup && (

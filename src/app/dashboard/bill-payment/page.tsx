@@ -3,6 +3,11 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 import { listRelatedNotesForBills } from "../documents/actions";
+// 2026-09-15 — courier prepaid wallets ("shipment bhejne se PEHLE wallet
+// recharge karna padta hai, invoice aane pe adjust hota hai"). The panel
+// (recharge/refund/history) + per-bill "Pay from Wallet" balance map.
+import { WalletSection } from "./wallet-section";
+import { getWalletOverview } from "./wallet-actions";
 
 // Bill Payment (round 11) — see actions.ts header comment. Lists every
 // bill_pass_register row (any invoice_type — vendor/courier/duty/salary/
@@ -177,6 +182,14 @@ export default async function BillPaymentPage({
 
   const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);
 
+  // 2026-09-15 — wallet overview for the visible companies. Client-side
+  // show/hide toggle (useState) instead of a route param so opening the
+  // panel never loses the bill filters.
+  const walletOverview = await getWalletOverview(effectiveCompanyIds);
+  const partyWalletBalances = Object.fromEntries(walletOverview.balances.map((b) => [b.party_id, b.balance]));
+  const walletCompanies = (companies ?? []).map((c) => ({ id: c.id, name: c.name }));
+  const hasWalletParties = Object.keys(partyWalletBalances).length > 0;
+
   return (
     <div>
       <div className="mb-6">
@@ -193,6 +206,13 @@ export default async function BillPaymentPage({
           <Link href="/dashboard/credit-notes-register" className="font-medium text-teal-700 underline hover:text-teal-800">
             🧾 Credit Note Register — credit received per party
           </Link>
+        </p>
+        {/* 2026-09-15 — prepaid courier wallets: recharge / refund / history,
+            plus the per-bill "💳 Pay from Wallet" action on rows below. */}
+        <p className="mt-1 text-[11px] text-slate-400">
+          {hasWalletParties
+            ? `💳 ${Object.keys(partyWalletBalances).length} courier wallet${Object.keys(partyWalletBalances).length === 1 ? "" : "s"} active — jis bill ka party wallet me hai, uspe "Pay from Wallet" action dikhega.`
+            : "💳 Prepaid courier wallet (FedEx/UPS style): pehle recharge karo, phir invoice wallet se pay hoga. Panel se shuru karo."}
         </p>
       </div>
 
@@ -221,6 +241,8 @@ export default async function BillPaymentPage({
         <a href="/dashboard/bill-payment" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
+      <WalletSection overview={walletOverview} companies={walletCompanies} />
+
       <BillPaymentList
         bills={rows}
         parties={parties ?? []}
@@ -228,6 +250,7 @@ export default async function BillPaymentPage({
         // 2026-09-13 — "edit sirf admin se ho" once payments exist: non-Admin
         // viewers get locked edit forms + credit-note panels on paid bills.
         isPaidLockedViewer={!employee.capabilities.includes("permissions_admin")}
+        partyWalletBalances={partyWalletBalances}
       />
     </div>
   );

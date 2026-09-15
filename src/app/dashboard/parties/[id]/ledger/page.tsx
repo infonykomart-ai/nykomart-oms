@@ -165,6 +165,31 @@ async function PartyLedgerInner(
   for (const n of dnRows.data ?? []) {
     noteLabel.set(n.id, n.debit_note_no ?? "DN");
   }
+
+  // 2026-09-15 — "kuch kuch courier me shipment bhejne se pehle wallet
+  // recharge karna padta hai phir baad me adjust hota hai jab uska invoice
+  // aata hai": the party's prepaid courier wallet txns belong in THIS
+  // passbook too. Recharge = we gave the courier money (CREDIT — our
+  // receivable from them rises, exactly like a payment TO us in spirit;
+  // convention: ledger balance > 0 = we owe the party, so a recharge
+  // pushes the balance DOWN as a debit… but wallet money is the OPPOSITE
+  // of a payable — it's prepaid). Simplest true-to-cash model: recharge
+  // lines post as CREDIT (courier owes us that money back in service),
+  // consume lines post as DEBIT (their invoice settled against it) — the
+  // running balance then shows a positive figure while wallet credit is
+  // unused and crosses to the payable side as invoices eat it. Refund =
+  // DEBIT (courier handed cash back, wallet credit consumed).
+  const { data: walletRaw } = await supabase
+    .from("party_wallet_txns")
+    .select("id, company_id, txn_type, direction, amount, txn_date, payment_mode, reference_no, remark, bill_pass_register_id")
+    .eq("party_id", id)
+    .in("company_id", scopedCompanyIds)
+    .order("txn_date", { ascending: true });
+  const walletBillIds = (walletRaw ?? []).map((w) => w.bill_pass_register_id).filter((v): v is string => !!v);
+  const { data: walletBills } = walletBillIds.length
+    ? await supabase.from("bill_pass_register").select("id, invoice_no, vendor_invoice_no").in("id", walletBillIds)
+    : { data: [] };
+  const walletBillLabel = new Map((walletBills ?? []).map((b) => [b.id, b.vendor_invoice_no || b.invoice_no || b.id.slice(0, 8)] as const));
   type LedgerPayment = { id: string; amount: number; payment_date: string; payment_mode: string | null; reference_no: string | null; remark: string | null };
   const paymentsByBill = new Map<string, LedgerPayment[]>();
   for (const p of paymentsRaw ?? []) {
@@ -371,6 +396,33 @@ async function PartyLedgerInner(
         });
       }
     }
+  }
+  // 2026-09-15 — wallet txns as their own dated lines (see the fetch-side
+  // comment above for the credit/debit convention). sortKey tier "1c"
+  // slots them same-day before payments ("_2").
+  for (const w of walletRaw ?? []) {
+    const isRecharge = w.txn_type === "recharge";
+    const isConsume = w.txn_type === "consume";
+    const billRef = w.bill_pass_register_id ? walletBillLabel.get(w.bill_pass_register_id) ?? "" : "";
+    const label = isRecharge
+      ? `Wallet recharge${w.payment_mode ? ` via ${w.payment_mode}` : ""}`
+      : isConsume
+        ? `Wallet paid invoice ${billRef || ""}`.trim()
+        : `Wallet refund to us`;
+    txns.push({
+      date: w.txn_date,
+      particulars: label,
+      type: isRecharge ? "Credit" : "Debit",
+      debit: isRecharge ? 0 : Number(w.amount),
+      credit: isRecharge ? Number(w.amount) : 0,
+      sortKey: `${w.txn_date}_1c_${w.id}`,
+      billIds: w.bill_pass_register_id ? [w.bill_pass_register_id] : [],
+      invoiceNo: billRef,
+      paymentMode: w.payment_mode,
+      referenceNo: w.reference_no ?? w.remark,
+      paymentId: null,
+      status: null,
+    });
   }
   txns.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 
