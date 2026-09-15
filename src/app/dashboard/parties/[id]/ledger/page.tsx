@@ -231,10 +231,11 @@ async function PartyLedgerInner(
     invoiceNo: string;
     paymentMode: string | null;
     referenceNo: string | null;
-    // Set on payment rows only — the bill_pass_register_payments.id this
-    // line posts from, so the Admin edit form targets the exact row
-    // instead of re-matching by (amount, mode, ref).
-    paymentId: string | null;
+    // Set on payment rows only — every bill_pass_register_payments.id this
+    // line posts from (a merged group's collapsed batch carries several),
+    // so the Admin edit forms target the exact rows instead of
+    // re-matching by (amount, mode, ref).
+    paymentItems: { id: string; amount: number; payment_date: string; payment_mode: string | null; reference_no: string | null }[];
     // The worst status across every bill this row represents — drives the
     // green/amber/red shading. Payments inherit their bill's status so
     // "dono entry green ho jaye" literally holds.
@@ -331,7 +332,7 @@ async function PartyLedgerInner(
         invoiceNo: ref,
         paymentMode: null,
         referenceNo: null,
-        paymentId: null,
+        paymentItems: [],
         status,
       });
     }
@@ -347,7 +348,7 @@ async function PartyLedgerInner(
         invoiceNo: ref,
         paymentMode: null,
         referenceNo: null,
-        paymentId: null,
+        paymentItems: [],
         status,
       });
     }
@@ -371,30 +372,55 @@ async function PartyLedgerInner(
           invoiceNo: ref,
           paymentMode: null,
           referenceNo: null,
-          paymentId: null,
+          paymentItems: [],
           status,
         });
       }
     }
-    for (const b of eg.bills) {
-      for (const p of paymentsByBill.get(b.id) ?? []) {
-        txns.push({
-          date: p.payment_date,
-          // #8 — Particulars now names the mode explicitly ("via UPI"),
-          // with mode+UTR ALSO in their own columns below.
-          particulars: `Payment against ${ref}${p.payment_mode ? ` via ${p.payment_mode}` : ""}`,
-          type: "Debit",
-          debit: p.amount,
-          credit: 0,
-          sortKey: `${p.payment_date}_2_${eg.key}`,
-          billIds: [b.id],
-          invoiceNo: ref,
-          paymentMode: p.payment_mode,
-          referenceNo: p.reference_no,
-          paymentId: p.id,
-          status,
-        });
-      }
+    // 2026-09-15 — "ek invoice me 10 po ki agar entry kar raha hu to
+    // payment me bhi alag alag ho raha, mearge ho jana chahiye na": one
+    // vendor invoice becomes one bill_pass_register row per PO, and every
+    // PO row used to render its own payment lines — Prachi's ledger showed
+    // 13 separate NEFT lines for the single invoice P/26-27/41. Within a
+    // merged group, payments collapse into ONE line per (date, mode, UTR)
+    // batch — the same bank transaction split across PO rows reads as one
+    // debit with the summed amount. A different date/mode/UTR still gets
+    // its own line, so genuinely distinct transactions are never falsely
+    // combined.
+    const groupPayments = eg.bills.flatMap((b) => (paymentsByBill.get(b.id) ?? []).map((p) => ({ ...p, billId: b.id })));
+    const batchesByKey = new Map<string, typeof groupPayments>();
+    for (const p of groupPayments) {
+      const batchKey = `${p.payment_date}|${p.payment_mode ?? ""}|${p.reference_no ?? ""}`;
+      const batch = batchesByKey.get(batchKey);
+      if (batch) batch.push(p);
+      else batchesByKey.set(batchKey, [p]);
+    }
+    for (const batch of [...batchesByKey.values()].sort((a, b) => (a[0].payment_date < b[0].payment_date ? -1 : a[0].payment_date > b[0].payment_date ? 1 : 0))) {
+      const p0 = batch[0];
+      const batchTotal = batch.reduce((s, p) => s + p.amount, 0);
+      txns.push({
+        date: p0.payment_date,
+        // #8 — Particulars names the mode explicitly ("via UPI"), with
+        // mode+UTR ALSO in their own columns below. A collapsed batch of
+        // several payment rows says how many it merged.
+        particulars: `Payment against ${ref}${p0.payment_mode ? ` via ${p0.payment_mode}` : ""}${batch.length > 1 ? ` (${batch.length} payments merged)` : ""}`,
+        type: "Debit",
+        debit: batchTotal,
+        credit: 0,
+        sortKey: `${p0.payment_date}_2_${eg.key}_${p0.reference_no ?? ""}`,
+        billIds: batch.map((p) => p.billId),
+        invoiceNo: ref,
+        paymentMode: p0.payment_mode,
+        referenceNo: p0.reference_no,
+        paymentItems: batch.map((p) => ({
+          id: p.id,
+          amount: p.amount,
+          payment_date: p.payment_date,
+          payment_mode: p.payment_mode,
+          reference_no: p.reference_no,
+        })),
+        status,
+      });
     }
   }
   // 2026-09-15 — wallet txns as their own dated lines (see the fetch-side
@@ -420,7 +446,7 @@ async function PartyLedgerInner(
       invoiceNo: billRef,
       paymentMode: w.payment_mode,
       referenceNo: w.reference_no ?? w.remark,
-      paymentId: null,
+      paymentItems: [],
       status: null,
     });
   }
@@ -644,19 +670,23 @@ async function PartyLedgerInner(
                         }}
                       />
                     )}
-                    {isAdmin && t.paymentId && (
+                    {/* 2026-09-15 — a merged payment batch line carries every
+                        underlying bill_pass_register_payments row; each gets
+                        its own hover edit/delete form (Admin only). */}
+                    {isAdmin && t.paymentItems.map((pi) => (
                       <LedgerPaymentAdminActions
-                        paymentId={t.paymentId}
+                        key={pi.id}
+                        paymentId={pi.id}
                         partyId={id}
                         defaults={{
-                          amount: t.debit,
-                          payment_date: t.date,
-                          payment_mode: t.paymentMode,
-                          reference_no: t.referenceNo,
-                          remark: paymentsByBillRemark.get(t.paymentId) ?? null,
+                          amount: pi.amount,
+                          payment_date: pi.payment_date,
+                          payment_mode: pi.payment_mode,
+                          reference_no: pi.reference_no,
+                          remark: paymentsByBillRemark.get(pi.id) ?? null,
                         }}
                       />
-                    )}
+                    ))}
                   </td>
                   <td className="py-1 pr-2">{t.paymentMode ?? ""}</td>
                   <td className="py-1 pr-2 font-mono text-[11px]">{t.referenceNo ?? ""}</td>
