@@ -649,7 +649,25 @@ async function PartyLedgerInner(
               {displayedLines.map((t, i) => (
                 <tr key={i} className={`group border-b border-slate-100 align-top text-slate-700 ${t.status ? rowShade[t.status] : ""}`}>
                   <td className="whitespace-nowrap py-1 pr-2">{t.date}</td>
-                  <td className="py-1 pr-2 font-medium text-slate-900">{t.invoiceNo || ""}</td>
+                  <td className="py-1 pr-2 font-medium text-slate-900">
+                    {/* 2026-09-15 — "invoice no par click kar ke uski puri entry
+                        dekhni ho to read only form open ho jaye": the invoice
+                        cell of a BILL row (Credit) links to the read-only,
+                        printable bill statement. Payment/adjustment lines
+                        repeat the same invoice as plain text — one link per
+                        bill, on the row that IS the bill. */}
+                    {t.type === "Credit" && t.billIds[0] ? (
+                      <Link
+                        href={`/dashboard/parties/${id}/ledger/${t.billIds[0]}`}
+                        className="underline decoration-amber-400 decoration-2 underline-offset-2 hover:text-amber-700"
+                        title="Open read-only bill statement (print / WhatsApp / email)"
+                      >
+                        {t.invoiceNo || ""}
+                      </Link>
+                    ) : (
+                      t.invoiceNo || ""
+                    )}
+                  </td>
                   <td className="py-1 pr-2 font-medium text-slate-900">
                     {t.particulars}
                     {/* #8 admin actions — hover-revealed, Admin-only,
