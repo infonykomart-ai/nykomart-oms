@@ -182,6 +182,109 @@ export async function adminEditPayment(_prev: LedgerAdminState, formData: FormDa
   return { error: null, success: true };
 }
 
+/**
+ * 2026-09-15 — batch edit for a MERGED payment line. The ledger now
+ * collapses an invoice's same-(date, mode, UTR) payment rows into one
+ * line ("13 payments merged"); the Admin edit form on that line edits the
+ * WHOLE batch: one total amount + shared date/mode/UTR/remark. The total
+ * is re-split across the batch's rows proportionally to their current
+ * split (rounding drift absorbed by the largest row), and every affected
+ * bill's total_paid is recomputed from the ledger afterwards.
+ */
+export async function adminEditPaymentBatch(_prev: LedgerAdminState, formData: FormData): Promise<LedgerAdminState> {
+  const employee = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const ids = str(formData, "payment_ids").split(",").map((s) => s.trim()).filter(Boolean);
+  const partyId = str(formData, "party_id");
+  if (ids.length === 0 || !partyId) return { error: "Missing payment/party reference.", success: false };
+
+  const amountStr = str(formData, "amount");
+  const amount = Number(amountStr);
+  if (!amountStr || !Number.isFinite(amount) || amount <= 0) {
+    return { error: "Amount must be a positive number.", success: false };
+  }
+  const paymentDate = str(formData, "payment_date");
+  if (!paymentDate) return { error: "Payment date is required.", success: false };
+
+  const { data: rows } = await supabase
+    .from("bill_pass_register_payments")
+    .select("id, amount, bill_pass_register_id")
+    .in("id", ids);
+  if (!rows || rows.length !== ids.length) return { error: "Some payments in this batch were not found.", success: false };
+
+  const billIds = Array.from(new Set(rows.map((r) => r.bill_pass_register_id)));
+  const { data: bills } = await supabase.from("bill_pass_register").select("id, company_id").in("id", billIds);
+  const allowed = new Set((bills ?? []).filter((b) => employee.companyIds.includes(b.company_id)).map((b) => b.id));
+  if (rows.some((r) => !allowed.has(r.bill_pass_register_id))) {
+    return { error: "Payment's bill not in a company you can access.", success: false };
+  }
+
+  if (amount < 0.01 * rows.length) {
+    return { error: `Amount too small to split across ${rows.length} payment rows.`, success: false };
+  }
+  const split = splitBatchAmount(amount, rows.map((r) => Number(r.amount)));
+  const sharedFields = {
+    payment_date: paymentDate,
+    payment_mode: strOrNull(formData, "payment_mode"),
+    reference_no: strOrNull(formData, "reference_no"),
+    remark: strOrNull(formData, "remark"),
+  };
+  for (let i = 0; i < rows.length; i++) {
+    const { error } = await supabase
+      .from("bill_pass_register_payments")
+      .update({ amount: split[i], ...sharedFields })
+      .eq("id", rows[i].id);
+    if (error) return { error: error.message, success: false };
+  }
+
+  for (const billId of billIds) await recomputeTotalPaid(supabase, billId);
+  await revalidateLedgers(supabase, partyId);
+  return { error: null, success: true };
+}
+
+/** Batch delete for a merged payment line — removes every underlying row at once. */
+export async function adminDeletePaymentBatch(paymentIds: string, partyId: string): Promise<LedgerAdminState> {
+  const employee = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const ids = paymentIds.split(",").map((s) => s.trim()).filter(Boolean);
+  if (ids.length === 0) return { error: "Missing payment reference.", success: false };
+
+  const { data: rows } = await supabase
+    .from("bill_pass_register_payments")
+    .select("id, bill_pass_register_id")
+    .in("id", ids);
+  if (!rows || rows.length !== ids.length) return { error: "Some payments in this batch were not found.", success: false };
+
+  const billIds = Array.from(new Set(rows.map((r) => r.bill_pass_register_id)));
+  const { data: bills } = await supabase.from("bill_pass_register").select("id, company_id").in("id", billIds);
+  const allowed = new Set((bills ?? []).filter((b) => employee.companyIds.includes(b.company_id)).map((b) => b.id));
+  if (rows.some((r) => !allowed.has(r.bill_pass_register_id))) {
+    return { error: "Payment's bill not in a company you can access.", success: false };
+  }
+
+  const { error } = await supabase.from("bill_pass_register_payments").delete().in("id", ids);
+  if (error) return { error: error.message, success: false };
+
+  for (const billId of billIds) await recomputeTotalPaid(supabase, billId);
+  await revalidateLedgers(supabase, partyId);
+  return { error: null, success: true };
+}
+
+// Proportional re-split of a new batch total across its rows, keeping each
+// row's current share (all rows are > 0 by the table's CHECK constraint) and
+// letting the largest row absorb the paise of rounding drift so the parts
+// always sum back to exactly `total`.
+function splitBatchAmount(total: number, weights: number[]): number[] {
+  const wsum = weights.reduce((a, b) => a + b, 0) || 1;
+  const raw = weights.map((w) => Math.max(0.01, Math.round(((total * w) / wsum) * 100) / 100));
+  const drift = Math.round((total - raw.reduce((a, b) => a + b, 0)) * 100) / 100;
+  const maxIdx = raw.indexOf(Math.max(...raw));
+  raw[maxIdx] = Math.round((raw[maxIdx] + drift) * 100) / 100;
+  return raw;
+}
+
 /** Admin delete of one payment; recomputes the bill's total_paid from the ledger. */
 export async function adminDeletePayment(paymentId: string, partyId: string): Promise<LedgerAdminState> {
   const employee = await requireCapability("employee_admin");

@@ -5,7 +5,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea } from "@/components/print-view";
 import { groupBills } from "@/lib/bill-grouping";
 import { LedgerExportBar } from "./ledger-export-bar";
-import { LedgerBillAdminActions, LedgerPaymentAdminActions } from "./admin-row-actions";
+import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAdminActions } from "./admin-row-actions";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
 // MERE HISAB SE". Investigated first (see db/2026-08-17-freight-duty-bills-
@@ -670,23 +670,35 @@ async function PartyLedgerInner(
                         }}
                       />
                     )}
-                    {/* 2026-09-15 — a merged payment batch line carries every
-                        underlying bill_pass_register_payments row; each gets
-                        its own hover edit/delete form (Admin only). */}
-                    {isAdmin && t.paymentItems.map((pi) => (
-                      <LedgerPaymentAdminActions
-                        key={pi.id}
-                        paymentId={pi.id}
+                    {/* 2026-09-15 — ONE Edit/Delete control per payment line
+                        (Admin only). A merged batch line gets the batch
+                        form (edits the total, re-splits across rows); a
+                        single-payment line keeps the original single form. */}
+                    {isAdmin && t.paymentItems.length > 1 && (
+                      <LedgerPaymentBatchAdminActions
+                        paymentIds={t.paymentItems.map((pi) => pi.id)}
                         partyId={id}
                         defaults={{
-                          amount: pi.amount,
-                          payment_date: pi.payment_date,
-                          payment_mode: pi.payment_mode,
-                          reference_no: pi.reference_no,
-                          remark: paymentsByBillRemark.get(pi.id) ?? null,
+                          amount: t.debit,
+                          payment_date: t.date,
+                          payment_mode: t.paymentMode,
+                          reference_no: t.referenceNo,
                         }}
                       />
-                    ))}
+                    )}
+                    {isAdmin && t.paymentItems.length === 1 && (
+                      <LedgerPaymentAdminActions
+                        paymentId={t.paymentItems[0].id}
+                        partyId={id}
+                        defaults={{
+                          amount: t.debit,
+                          payment_date: t.date,
+                          payment_mode: t.paymentMode,
+                          reference_no: t.referenceNo,
+                          remark: paymentsByBillRemark.get(t.paymentItems[0].id) ?? null,
+                        }}
+                      />
+                    )}
                   </td>
                   <td className="py-1 pr-2">{t.paymentMode ?? ""}</td>
                   <td className="py-1 pr-2 font-mono text-[11px]">{t.referenceNo ?? ""}</td>

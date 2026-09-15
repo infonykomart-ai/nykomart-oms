@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { adminEditBill, adminEditPayment, type LedgerAdminState } from "./admin-actions";
+import { adminEditBill, adminEditPayment, adminEditPaymentBatch, type LedgerAdminState } from "./admin-actions";
 
 // 2026-09-13 — the Admin edit/delete buttons rendered inline on the Party
 // Ledger's rows (employee_admin capability only, see admin-actions.ts).
@@ -162,6 +162,116 @@ export function LedgerPaymentAdminActions({
         </button>
       )}
     </div>
+  );
+}
+
+// 2026-09-15 — ONE Edit/Delete control for a merged payment line ("13
+// payments merged"): previously every underlying row stacked its own
+// edit/delete form on the line, 13 deep. Editing the batch posts the new
+// TOTAL to adminEditPaymentBatch, which re-splits it across the rows
+// proportionally; deleting removes every row at once.
+export function LedgerPaymentBatchAdminActions({
+  paymentIds,
+  partyId,
+  defaults,
+}: {
+  paymentIds: string[];
+  partyId: string;
+  defaults: { amount: number; payment_date: string; payment_mode: string | null; reference_no: string | null };
+}) {
+  const [state, formAction, pending] = useActionState(adminEditPaymentBatch, initialState);
+  const [confirming, setConfirming] = useState(false);
+  const joinedIds = paymentIds.join(",");
+
+  return (
+    <div className="mt-2 hidden group-hover:block print:hidden">
+      <details>
+        <summary className="cursor-pointer text-[11px] font-semibold text-amber-700 hover:underline">
+          ✏️ Edit this payment (Admin) — {paymentIds.length} merged rows
+        </summary>
+        <form action={formAction} className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 md:grid-cols-3">
+          <input type="hidden" name="payment_ids" value={joinedIds} />
+          <input type="hidden" name="party_id" value={partyId} />
+          {state.error && <p className="col-span-2 rounded bg-red-50 px-2 py-1 text-[11px] text-red-700 md:col-span-3">{state.error}</p>}
+          {state.success && <p className="col-span-2 rounded bg-green-50 px-2 py-1 text-[11px] text-green-700 md:col-span-3">✓ Payment updated across {paymentIds.length} rows.</p>}
+          <div>
+            <label className={labelClass} htmlFor={`pb_amt_${joinedIds.slice(-8)}`}>Total Amount (₹) — re-split across rows</label>
+            <input id={`pb_amt_${joinedIds.slice(-8)}`} name="amount" type="number" step="0.01" min={0.01} defaultValue={defaults.amount} className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor={`pb_date_${joinedIds.slice(-8)}`}>Payment Date</label>
+            <input id={`pb_date_${joinedIds.slice(-8)}`} name="payment_date" type="date" defaultValue={defaults.payment_date} className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor={`pb_mode_${joinedIds.slice(-8)}`}>Payment Mode</label>
+            <select id={`pb_mode_${joinedIds.slice(-8)}`} name="payment_mode" defaultValue={defaults.payment_mode ?? ""} className={inputClass}>
+              <option value="">—</option>
+              {PAYMENT_MODES.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelClass} htmlFor={`pb_ref_${joinedIds.slice(-8)}`}>UTR / Ref No.</label>
+            <input id={`pb_ref_${joinedIds.slice(-8)}`} name="reference_no" defaultValue={defaults.reference_no ?? ""} className={inputClass} />
+          </div>
+          <div className="col-span-2 md:col-span-3">
+            <label className={labelClass} htmlFor={`pb_rem_${joinedIds.slice(-8)}`}>Remark</label>
+            <input id={`pb_rem_${joinedIds.slice(-8)}`} name="remark" defaultValue="" className={inputClass} />
+          </div>
+          <div className="col-span-2 md:col-span-3">
+            <button
+              type="submit"
+              disabled={pending}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+            >
+              {pending ? "Saving..." : `Save Payment (${paymentIds.length} rows)`}
+            </button>
+          </div>
+        </form>
+      </details>
+      {confirming ? (
+        <p className="mt-1.5 text-[11px] text-red-700">
+          Delete all {paymentIds.length} merged payment rows permanently (each bill&apos;s paid total is recomputed automatically)?{" "}
+          <LedgerBatchDeleteButton ids={joinedIds} partyId={partyId} onDone={() => setConfirming(false)} />{" "}
+          <button type="button" className="underline" onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </p>
+      ) : (
+        <button type="button" onClick={() => setConfirming(true)} className="mt-1.5 text-[11px] font-semibold text-red-600 hover:underline print:hidden">
+          🗑 Delete this payment (Admin)
+        </button>
+      )}
+    </div>
+  );
+}
+
+function LedgerBatchDeleteButton({ ids, partyId, onDone }: { ids: string; partyId: string; onDone: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setPending(true);
+    setError(null);
+    const mod = await import("./admin-actions");
+    const res = await mod.adminDeletePaymentBatch(ids, partyId);
+    setPending(false);
+    if (res.error) {
+      setError(res.error);
+    } else {
+      onDone();
+      window.location.reload();
+    }
+  }
+
+  return (
+    <>
+      <button type="button" onClick={run} disabled={pending} className="font-semibold text-red-700 underline disabled:opacity-60">
+        {pending ? "Deleting..." : "Yes, delete all"}
+      </button>
+      {error && <span className="ml-1 text-red-600">({error})</span>}
+    </>
   );
 }
 
