@@ -23,7 +23,7 @@
 // checkboxes now operate per GROUP (selecting a grouped row selects every
 // underlying bill id), so the bulk bar still works across several
 // different invoices/parties at once exactly as before.
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { groupBills, type BillGroup } from "@/lib/bill-grouping";
 import {
@@ -40,6 +40,7 @@ import { CreditNotePanel, type AppliedCn } from "./credit-note-panel";
 // 2026-09-15 — courier prepaid wallet: per-bill "Pay from Wallet" on rows
 // whose party holds a wallet (see wallet-actions.ts / wallet-panel.tsx).
 import { WalletPayButton } from "./wallet-pay-button";
+import { BillStatementDialog } from "@/components/bill-statement-dialog";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -101,6 +102,15 @@ export function BillPaymentList({
   const groups = useMemo(() => groupBills(bills), [bills]);
   const [selected, setSelected] = useState<Set<string>>(new Set()); // group keys
   const [partyFilter, setPartyFilter] = useState("");
+  // 2026-09-15 — "jese hi kisi vender ka payment ki entry ho jaye to
+  // dilogbox open ho jaye ki send to whatsaap email, print, save as pdf":
+  // when a payment records successfully, PerBillAmountForm calls
+  // onPaymentRecorded(billId) with the FIRST successfully-paid bill and
+  // this state renders the auto-open BillStatementDialog on top of the
+  // list — payment sent dialog ready to fire WhatsApp/Telegram/Email with
+  // the attached PDF. Single-bill payments (the common case) give exactly
+  // one bill; bulk gives the first one.
+  const [statementForBill, setStatementForBill] = useState<string | null>(null);
 
   const partyNames = useMemo(
     () => Array.from(new Set(bills.map((b) => b.party_name).filter((n): n is string => !!n))).sort(),
@@ -166,6 +176,13 @@ export function BillPaymentList({
 
   return (
     <div>
+      {/* 2026-09-15 — the auto-open share dialog after a payment records
+          (see statementForBill above). Rendered here, at the list root, so
+          every payment form (single-row and bulk sticky bar) triggers the
+          same one. */}
+      {statementForBill && (
+        <BillStatementDialog billId={statementForBill} autoOpen onClose={() => setStatementForBill(null)} />
+      )}
       {partyNames.length > 0 && (
         <div className="mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
           <span className="text-xs text-slate-500">Quick select:</span>
@@ -239,6 +256,7 @@ export function BillPaymentList({
                   partyWalletBalances={partyWalletBalances}
                   checked={selected.has(g.key)}
                   onToggle={() => toggle(g.key)}
+                  onPaymentRecorded={(billId) => setStatementForBill(billId)}
                 />
               ))}
             </tbody>
@@ -262,6 +280,7 @@ export function BillPaymentList({
           bills={selectedBills}
           title={`${selectedBills.length} bill${selectedBills.length === 1 ? "" : "s"} selected`}
           onDone={() => setSelected(new Set())}
+          onPaymentRecorded={(billId) => setStatementForBill(billId)}
           sticky
         />
       )}
@@ -277,6 +296,7 @@ function GroupRow({
   partyWalletBalances,
   checked,
   onToggle,
+  onPaymentRecorded,
 }: {
   group: BillGroup<PayableBillRow>;
   parties: PartyOption[];
@@ -285,6 +305,9 @@ function GroupRow({
   partyWalletBalances: Record<string, number>;
   checked: boolean;
   onToggle: () => void;
+  // 2026-09-15 — bubbles PerBillAmountForm's success up to the list root,
+  // where the auto-open BillStatementDialog renders.
+  onPaymentRecorded: (billId: string) => void;
 }) {
   const [payOpen, setPayOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -336,7 +359,11 @@ function GroupRow({
                 {expanded ? "▾" : "▸"}
               </button>
             )}
-            <span>{first.invoice_no || first.vendor_invoice_no || "—"}</span>
+            {/* 2026-09-15 — invoice no. opens the read-only bill statement
+                sheet (access-checked via /api/bill-statement). The group's
+                FIRST bill_pass_register id drives it; a merged group is one
+                invoice, so one statement. */}
+            <BillStatementDialog billId={first.id} label={first.invoice_no || first.vendor_invoice_no || "—"} />
             {group.isGroup && (
               <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
                 {group.bills.length} items · 1 invoice
@@ -560,6 +587,7 @@ function GroupRow({
               bills={group.bills}
               title={group.isGroup ? "Record payment for this invoice (per item)" : undefined}
               onDone={() => setPayOpen(false)}
+              onPaymentRecorded={onPaymentRecorded}
             />
           </td>
         </tr>
@@ -581,11 +609,17 @@ function PerBillAmountForm({
   bills,
   title,
   onDone,
+  onPaymentRecorded,
   sticky,
 }: {
   bills: PayableBillRow[];
   title?: string;
   onDone: () => void;
+  // 2026-09-15 — "jese hi kisi vender ka payment ki entry ho jaye to
+  // dilogbox open ho jaye": fired once per successful payment row with
+  // that row's bill id (first one wins at the caller). The caller renders
+  // an auto-open BillStatementDialog for it.
+  onPaymentRecorded: (billId: string) => void;
   sticky?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(recordBulkBillPayment, initialBulkState);
@@ -613,6 +647,11 @@ function PerBillAmountForm({
                 {r.ok ? "✓" : "✗"} {r.label} {r.error ? `— ${r.error}` : ""}
               </p>
             ))}
+            {/* 2026-09-15 — fire the auto-open share dialog for the first
+                successful bill, once. A keyed effect on the results object
+                would loop; a one-shot call here runs on every re-render,
+                so the guard below keeps it to a single fire per save. */}
+            <PaymentRecordedTrigger results={state.success.results} onFired={onPaymentRecorded} />
             <button type="button" onClick={onDone} className="mt-1 rounded border border-green-300 bg-white px-2 py-0.5 font-medium text-green-700 hover:bg-green-50">
               Done
             </button>
@@ -754,4 +793,28 @@ function MergeBar({
       )}
     </div>
   );
+}
+
+// 2026-09-15 — one-shot effect component: when a payment batch succeeds,
+// fires onFired with the FIRST successful bill id exactly once. Lives as
+// its own component so the useEffect's dependency is that single result
+// array instance (useActionState gives a fresh object per save) — a plain
+// useEffect inside PerBillAmountForm would re-run on unrelated rerenders.
+function PaymentRecordedTrigger({
+  results,
+  onFired,
+}: {
+  results: { billId: string; label: string; ok: boolean; error: string | null }[];
+  onFired: (billId: string) => void;
+}) {
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return;
+    const firstOk = results.find((r) => r.ok);
+    if (firstOk) {
+      fired.current = true;
+      onFired(firstOk.billId);
+    }
+  }, [results, onFired]);
+  return null;
 }

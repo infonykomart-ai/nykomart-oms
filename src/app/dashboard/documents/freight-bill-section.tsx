@@ -21,6 +21,11 @@ import {
 } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { RelatedNotesBadge } from "./related-notes-badge";
+// 2026-09-15 — 📄 View opens this bill's read-only statement sheet. The
+// bill_pass_register id comes from the first related note (present only
+// after Send to Finance); before that the bill has no Finance row yet and
+// the button doesn't render — the statement IS the finance-ledger record.
+import { BillStatementDialog } from "@/components/bill-statement-dialog";
 
 const initialFormState: DocFormState = { error: null, success: null };
 const initialSimple: SimpleResult = { error: null, success: false };
@@ -258,6 +263,7 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
           <div className="flex items-center gap-1.5 font-medium text-slate-900">
             {bill.invoice_no}
             <RelatedNotesBadge notes={bill.related_notes} />
+            {bill.related_notes[0] && <BillStatementDialog billId={bill.related_notes[0].billPassRegisterId} />}
           </div>
           <div className="text-slate-400">
             {bill.invoice_date ?? "—"} · {bill.assignments.length} AWB(s) assigned

@@ -155,6 +155,102 @@ function waPhoneFromRaw(raw: string | null | undefined): string {
   return digits.length === 10 ? `91${digits}` : digits;
 }
 
+// 2026-09-15 (evening) — "agar whatsaap email par update bhej rahe hai to
+// pdf file bhi jani chahiye na" — the SHARED plumbing behind every
+// PDF-carrying share: fetch the file from the caller's access-checked
+// endpoint, then try the Web Share API with the real file attached (the
+// only path that actually ATTACHES a file — the WhatsApp/Telegram app
+// both appear in the mobile share sheet), else download the PDF locally
+// and open the text deep-link (wa.me / t.me / mailto) so the message is
+// still pre-filled and the PDF sits in Downloads to drag in. Returns
+// "linked" when only the text link could carry the message.
+export async function fetchEndpointPdf(endpoint: string, payload?: unknown): Promise<Blob | null> {
+  try {
+    const res = payload
+      ? await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+      : await fetch(endpoint);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  triggerDownload(blob, filename);
+}
+
+export type PdfShareTarget = "whatsapp" | "telegram" | "email" | "download";
+
+/**
+ * Shares `summary` text WITH the real PDF from `pdfEndpoint`:
+ *  - whatsapp → wa.me/`phone` deep link (Web-Share sheet first on mobile)
+ *  - telegram → t.me/share/url deep link
+ *  - email    → mailto: with subject+body (PDF downloads alongside;
+ *               mailto cannot attach files by spec)
+ *  - download → just the file, no share sheet
+ */
+export async function sharePdfWithText({
+  target,
+  pdfEndpoint,
+  pdfPayload,
+  filename,
+  summary,
+  subject,
+  phone,
+}: {
+  target: PdfShareTarget;
+  pdfEndpoint: string;
+  pdfPayload?: unknown;
+  filename: string;
+  summary: string;
+  subject?: string;
+  phone?: string | null;
+}): Promise<"shared" | "linked" | "failed"> {
+  const blob = await fetchEndpointPdf(pdfEndpoint, pdfPayload);
+  if (!blob) return "failed";
+
+  if (target === "download") {
+    downloadBlob(blob, filename);
+    return "shared";
+  }
+
+  if (target !== "email" && typeof navigator !== "undefined" && "share" in navigator && "canShare" in navigator) {
+    try {
+      const file = new File([blob], filename, { type: "application/pdf" });
+      const shareData = { files: [file], text: summary, title: subject ?? filename };
+      if (navigator.canShare(shareData)) {
+        await navigator.share(shareData);
+        return "shared";
+      }
+    } catch {
+      // user cancelled or share failed — fall through to the link path
+    }
+  }
+
+  // Desktop fallback: file can't be pushed into WhatsApp Web / Telegram
+  // Web / mailto programmatically — download it and pre-fill the text.
+  downloadBlob(blob, filename);
+  const text = encodeURIComponent(summary);
+  if (target === "email") {
+    // Only use `phone` as the recipient when it actually looks like an
+    // email address (callers pass contact_no for WhatsApp here — a phone
+    // number in mailto: would silently break the draft).
+    const to = phone && phone.includes("@") ? phone : "";
+    window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject ?? filename)}&body=${text}`;
+  } else if (target === "whatsapp") {
+    const digits = waPhoneFromRaw(phone);
+    window.open(digits ? `https://wa.me/${digits}?text=${text}` : `https://wa.me/?text=${text}`, "_blank", "noopener,noreferrer");
+  } else {
+    window.open(`https://t.me/share/url?url=${encodeURIComponent(subject ?? filename)}&text=${text}`, "_blank", "noopener,noreferrer");
+  }
+  return "linked";
+}
+
 // Same Web-Share-first / wa.me-fallback pattern as
 // order-whatsapp-button.tsx, generalised to any exported file (CSV here —
 // small, text-based, and opens fine if someone taps it on WhatsApp).
@@ -185,5 +281,35 @@ export async function shareOnWhatsApp<T>(
   const url = phoneDigits
     ? `https://wa.me/${phoneDigits}?text=${encodeURIComponent(summary)}`
     : `https://wa.me/?text=${encodeURIComponent(summary)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+// 2026-09-15 — "sabhi jagh telegram ka option bhi kar dena jaha par
+// whatsaap ka option hai": the Telegram twin of shareOnWhatsApp. Web
+// Share first (the mobile sheet lists the Telegram app and it's the only
+// path that can carry a real file attachment), then the
+// t.me/share/url deep link with the summary text pre-filled.
+export async function shareOnTelegram<T>(
+  title: string,
+  columns: ExportColumn<T>[],
+  rows: T[]
+) {
+  const summary = buildSummaryText(title, columns, rows);
+  const csv = toDelimitedString(columns, rows, ",");
+
+  if (typeof navigator !== "undefined" && "share" in navigator) {
+    try {
+      const file = new File(["\ufeff" + csv], `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`, { type: "text/csv" });
+      const shareData = { files: [file], text: summary, title };
+      if ("canShare" in navigator && navigator.canShare(shareData)) {
+        await navigator.share(shareData);
+        return;
+      }
+    } catch {
+      // Fall through to the t.me link below (user cancelled, unsupported).
+    }
+  }
+
+  const url = `https://t.me/share/url?url=${encodeURIComponent(title)}&text=${encodeURIComponent(summary)}`;
   window.open(url, "_blank", "noopener,noreferrer");
 }

@@ -39,6 +39,7 @@ import {
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { RelatedNotesBadge } from "./related-notes-badge";
+import { BillStatementDialog } from "@/components/bill-statement-dialog";
 
 type Company = { id: string; name: string };
 type Party = PartyOption;
@@ -58,7 +59,7 @@ type Recent = {
   debitNotes: (EditableDebitNote & { companyName: string })[];
   washingEntries: (EditableWashingEntry & { companyName: string; amount: number })[];
   internalInvoices: (EditableInternalInvoice & { fromCompanyName: string; toCompanyName: string; total_amount: number })[];
-  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number; g_total_plus_gst: number | null; related_notes: RelatedNote[] })[];
+  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number; g_total_plus_gst: number | null; related_notes: RelatedNote[]; finance_bpr_id: string | null })[];
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
@@ -403,6 +404,7 @@ export function DocumentEntryTabs({
                   : `₹${r.total_amount}`,
             record: r,
             notes: r.related_notes,
+            statementBillId: r.finance_bpr_id ?? undefined,
           }))}
           onDelete={deletePurchaseBill}
           renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
@@ -558,7 +560,13 @@ function DocList<T extends { id: string }>({
   // page (e.g. credit-notes/[id]/report) — see that page's header comment
   // for why Credit Note/Debit Note/Internal Invoice needed this (previously
   // only the whole flat list could be printed, never one document).
-  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[]; printHref?: string }[];
+  // 2026-09-15 — optional `statementBillId`: when set, a "📄 View" button
+  // appears next to Print/Edit/Delete, opening the row's READ-ONLY bill
+  // statement sheet (access-checked via /api/bill-statement — a bill in a
+  // company you can't access shows an error instead of the document).
+  // Wired for Purchase/Courier/Duty bills via their bill_pass_register
+  // link ids passed from page.tsx.
+  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[]; printHref?: string; statementBillId?: string }[];
   // 2026-08-29 (evening, follow-up round) — optional: Material OUT Chalan
   // and Received Chalan (multi-item chalans, create+delete only, matching
   // Material OUT Chalan's own established shape) have no edit form — when
@@ -613,6 +621,7 @@ function DocList<T extends { id: string }>({
                       🖨 Print
                     </Link>
                   )}
+                  {r.statementBillId && <BillStatementDialog billId={r.statementBillId} />}
                   {renderEdit && (
                     <button
                       type="button"

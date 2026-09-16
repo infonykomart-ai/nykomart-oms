@@ -5,7 +5,9 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea } from "@/components/print-view";
 import { groupBills } from "@/lib/bill-grouping";
 import { LedgerExportBar } from "./ledger-export-bar";
+import type { LedgerPdfInput } from "@/lib/ledger-pdf";
 import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAdminActions } from "./admin-row-actions";
+import { BillStatementDialog } from "@/components/bill-statement-dialog";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
 // MERE HISAB SE". Investigated first (see db/2026-08-17-freight-duty-bills-
@@ -92,7 +94,7 @@ async function PartyLedgerInner(
   const isAdmin = employee.capabilities.includes("employee_admin");
   const supabase = createServiceRoleClient();
 
-  const { data: party } = await supabase.from("parties").select("id, name, party_type").eq("id", id).maybeSingle();
+  const { data: party } = await supabase.from("parties").select("id, name, party_type, contact_no, email, gst").eq("id", id).maybeSingle();
   if (!party) notFound();
 
   const spVal = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
@@ -516,6 +518,32 @@ async function PartyLedgerInner(
     balance: t.balance,
   }));
 
+  // 2026-09-15 — "agar ladger bhi pdf bhejni ho to pdf to whatsaap or
+  // email par a4 ke page par portrait me sabhi fixes ke sath jaye company
+  // logo ke sath": the exact on-screen rows + totals + scope go to
+  // /api/ledger-pdf (via LedgerExportBar's pdfInput) — the A4-portrait
+  // PDF (company logo re-read server-side) that WhatsApp/Email/Telegram
+  // now attach, and that 📥 Save PDF downloads.
+  const ledgerPdfInput: LedgerPdfInput = {
+    party: {
+      name: party.name,
+      party_type: party.party_type,
+      contact_no: party.contact_no,
+      email: party.email,
+      gst: party.gst,
+    },
+    // Overwritten server-side (logo + profile + party row re-read there);
+    // placeholders keep the shape valid until the route does that.
+    companyName: currentCompanyName,
+    profile: null,
+    logoUrl: null,
+    scopeLine: allCompanies ? "All companies (merged)" : currentCompanyName,
+    rows: exportRows,
+    totalDebit,
+    totalCredit,
+    closingBalance,
+  };
+
   // #8 — row shading. The shade classes are defined in globals.css (search
   // "oms-row-paid") — 2026-09-13: "green collom red collor dark me dikhe":
   // plain Tailwind pastels were tuned for the white card and nearly
@@ -536,7 +564,7 @@ async function PartyLedgerInner(
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link href="/dashboard/parties" className="text-sm text-slate-500 hover:underline">← Back to Party Master</Link>
-        <LedgerExportBar partyName={party.name} rows={exportRows} printAreaId="party-ledger-area" />
+        <LedgerExportBar partyId={id} partyName={party.name} rows={exportRows} printAreaId="party-ledger-area" pdfInput={ledgerPdfInput} />
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm print:hidden">
@@ -651,19 +679,14 @@ async function PartyLedgerInner(
                   <td className="whitespace-nowrap py-1 pr-2">{t.date}</td>
                   <td className="py-1 pr-2 font-medium text-slate-900">
                     {/* 2026-09-15 — "invoice no par click kar ke uski puri entry
-                        dekhni ho to read only form open ho jaye": the invoice
-                        cell of a BILL row (Credit) links to the read-only,
-                        printable bill statement. Payment/adjustment lines
-                        repeat the same invoice as plain text — one link per
-                        bill, on the row that IS the bill. */}
+                        dekhni ho to read only form open ho jaye" + "dilogbox
+                        me hi open ho usi me aaye puri report, dure page par
+                        nahi lekar jaye": the invoice cell of a BILL row
+                        (Credit) opens the read-only bill statement IN A
+                        DIALOG — no navigation. Payment/adjustment lines
+                        repeat the same invoice as plain text. */}
                     {t.type === "Credit" && t.billIds[0] ? (
-                      <Link
-                        href={`/dashboard/parties/${id}/ledger/${t.billIds[0]}`}
-                        className="underline decoration-amber-400 decoration-2 underline-offset-2 hover:text-amber-700"
-                        title="Open read-only bill statement (print / WhatsApp / email)"
-                      >
-                        {t.invoiceNo || ""}
-                      </Link>
+                      <BillStatementDialog billId={t.billIds[0]} label={t.invoiceNo || ""} />
                     ) : (
                       t.invoiceNo || ""
                     )}

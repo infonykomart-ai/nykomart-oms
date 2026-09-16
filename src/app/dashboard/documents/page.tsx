@@ -453,6 +453,9 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             g_total_plus_gst: r.g_total_plus_gst != null ? Number(r.g_total_plus_gst) : null,
             vendorName: partyName.get(r.vendor_party_id) ?? "",
             related_notes: notesFor(bprIdByPurchaseBillId.get(r.id)),
+            // 2026-09-15 — the bill's bill_pass_register id (when the bill
+            // has been sent to Finance) drives the 📄 statement sheet link.
+            finance_bpr_id: bprIdByPurchaseBillId.get(r.id) ?? null,
           })),
           csbFilings: (recentCsbFilings ?? []).map((r) => ({
             ...r,

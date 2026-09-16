@@ -92,6 +92,15 @@ export function CustomerWhatsAppButton({ order, tracking }: { order: OrderForMes
     setOpen(false);
   }
 
+  function handleSendTelegram() {
+    window.open(
+      `https://t.me/share/url?url=${encodeURIComponent(`Order ${order.ref_no}`)}&text=${encodeURIComponent(message)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+    setOpen(false);
+  }
+
   return (
     <div className="relative">
       <button
@@ -142,6 +151,17 @@ export function CustomerWhatsAppButton({ order, tracking }: { order: OrderForMes
               Open in WhatsApp
             </button>
           </div>
+          {/* 2026-09-15 — "sabhi jagh telegram ka option or kar dena jaha par
+              whatsaap ka option hai usi ke sath telegram ka bhi aaye" — the
+              same editable message through Telegram's t.me/share/url deep
+              link (text-only; t.me cannot pre-attach files either). */}
+          <button
+            type="button"
+            onClick={handleSendTelegram}
+            className="mt-2 w-full rounded-md bg-sky-500 px-2 py-1 text-xs font-semibold text-white hover:bg-sky-400"
+          >
+            ☁️ Open in Telegram
+          </button>
         </div>
       )}
     </div>
