@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   type ExportColumn,
   downloadCSV,
@@ -11,6 +11,7 @@ import {
   shareOnWhatsApp,
   shareOnTelegram,
   sharePdfWithText,
+  preloadExportLibs,
 } from "@/lib/export/export-table";
 
 // Reusable export/send toolbar — item 6 (Universal Reports/Export/Send
@@ -69,10 +70,40 @@ export function ExportBar<T>({
   const [isSharing, startShare] = useTransition();
   const [notice, setNotice] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // 2026-09-15 — building an xlsx (dynamic chunk fetch + workbook write) can
+  // take a beat on big reports; without a busy flag the button just sat
+  // there looking dead, which is exactly what made the ledger's Excel
+  // download feel like "it didn't happen".
+  const [downloading, setDownloading] = useState(false);
+
+  // 2026-09-15 — "excel download nahi hui... pura system dubara check
+  // karo": warm the lazy xlsx chunk on mount so the FIRST Excel click in a
+  // fresh session neither waits on a network fetch nor dies silently if
+  // that fetch fails (every button below now also catches and flashes an
+  // error — see the guards added this round).
+  useEffect(() => {
+    preloadExportLibs();
+  }, []);
 
   function flash(msg: string) {
     setNotice(msg);
     setTimeout(() => setNotice(null), 3500);
+  }
+
+  // One shared guard for every download/share handler: an exception in a
+  // click handler previously vanished without a trace (the exact "Excel
+  // download didn't happen and nothing said why" report). Now the user
+  // always sees what happened, and the busy flag shows the click registered.
+  async function runSafely(action: () => Promise<void>) {
+    setDownloading(true);
+    try {
+      await action();
+    } catch (err) {
+      console.error("[ExportBar] export failed:", err);
+      flash("Download failed — please try again. (Details in browser console.)");
+    } finally {
+      setDownloading(false);
+    }
   }
 
   // PDF-carrying share — one handler for all three channels (see
@@ -80,21 +111,23 @@ export function ExportBar<T>({
   function sharePdf(target: "whatsapp" | "telegram" | "email" | "download") {
     if (!pdfEndpoint) return;
     startShare(async () => {
-      const summary = buildSummaryText(title, columns, rows);
-      const result = await sharePdfWithText({
-        target,
-        pdfEndpoint,
-        pdfPayload,
-        filename: pdfFilename ?? `${filenameBase}.pdf`,
-        summary,
-        subject: title,
-        phone: whatsappPhone ?? undefined,
+      await runSafely(async () => {
+        const summary = buildSummaryText(title, columns, rows);
+        const result = await sharePdfWithText({
+          target,
+          pdfEndpoint,
+          pdfPayload,
+          filename: pdfFilename ?? `${filenameBase}.pdf`,
+          summary,
+          subject: title,
+          phone: whatsappPhone ?? undefined,
+        });
+        if (result === "failed") {
+          flash("Could not generate the PDF — try again.");
+        } else if (target !== "download" && result === "linked") {
+          flash("PDF saved to your Downloads — attach it in the chat/draft that just opened.");
+        }
       });
-      if (result === "failed") {
-        flash("Could not generate the PDF — try again.");
-      } else if (target !== "download" && result === "linked") {
-        flash("PDF saved to your Downloads — attach it in the chat/draft that just opened.");
-      }
     });
   }
 
@@ -131,7 +164,7 @@ export function ExportBar<T>({
         disabled={!rows.length || isSharing}
         onClick={() =>
           startShare(async () => {
-            await shareOnWhatsApp(title, columns, rows, filenameBase, whatsappPhone);
+            await runSafely(() => shareOnWhatsApp(title, columns, rows, filenameBase, whatsappPhone));
           })
         }
       >
@@ -148,7 +181,7 @@ export function ExportBar<T>({
         disabled={!rows.length || isSharing}
         onClick={() =>
           startShare(async () => {
-            await shareOnTelegram(title, columns, rows);
+            await runSafely(() => shareOnTelegram(title, columns, rows));
           })
         }
       >
@@ -191,18 +224,23 @@ export function ExportBar<T>({
           )}
         </div>
       )}
-      <button type="button" className={btnClass} disabled={!rows.length} onClick={() => downloadCSV(filenameBase, columns, rows)}>
+      <button type="button" className={btnClass} disabled={!rows.length || downloading} onClick={() => runSafely(() => Promise.resolve(downloadCSV(filenameBase, columns, rows)))}>
         ⬇️ CSV
       </button>
       <button
         type="button"
         className={btnClass}
-        disabled={!rows.length}
-        onClick={() => downloadXLSX(filenameBase, title, columns, rows)}
+        disabled={!rows.length || downloading}
+        onClick={() => runSafely(() => downloadXLSX(filenameBase, title, columns, rows))}
       >
-        ⬇️ Excel
+        {downloading ? "⏳ Preparing…" : "⬇️ Excel"}
       </button>
-      <button type="button" className={btnClass} disabled={!rows.length} onClick={() => downloadDoc(filenameBase, title, columns, rows)}>
+      <button
+        type="button"
+        className={btnClass}
+        disabled={!rows.length || downloading}
+        onClick={() => runSafely(() => Promise.resolve(downloadDoc(filenameBase, title, columns, rows)))}
+      >
         ⬇️ Word
       </button>
       {printAreaId && (

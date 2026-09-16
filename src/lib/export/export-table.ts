@@ -106,12 +106,35 @@ export async function downloadXLSX<T>(
   // Reasonable column widths so the sheet isn't unreadable on open.
   ws["!cols"] = columns.map((c) => ({ wch: Math.max(c.label.length + 2, 12) }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31)); // Excel sheet-name length limit
+  XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(sheetName));
   const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
   triggerDownload(
     new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
     `${filenameBase}.xlsx`
   );
+}
+
+// 2026-09-15 — "mene ladger me jakr excel download karne ka kiya to vo nahi
+// hui to me chahta hu pura system dubara check karo" — audit of every
+// export path found TWO latent Excel bugs, both fixed here and in
+// ExportBar: (1) sheet names silently carried Excel's ILLEGAL characters —
+// [ ] : * ? / \ — so a report titled e.g. "Freight/Duty" produced a
+// workbook Excel refuses to open (or SheetJS throws on); (2) the first
+// Excel click in a fresh session depended on a runtime dynamic-chunk fetch
+// of the xlsx library with NO error handling, so a failed chunk fetch
+// made the click do NOTHING — no download, no message. sanitizeSheetName
+// fixes (1); preloadExportLibs (called on ExportBar mount) fixes (2).
+function sanitizeSheetName(raw: string): string {
+  const cleaned = raw.replace(/[[\]:*?/\\]/g, " ").trim().slice(0, 31);
+  return cleaned.length > 0 ? cleaned : "Sheet1";
+}
+
+// Warms the lazy-loaded xlsx chunk as soon as an ExportBar mounts, so the
+// first Excel click never waits on (or fails from) a network fetch. Safe
+// to call anywhere; failures are intentionally swallowed — the click
+// handler retries the import and now REPORTS an error if it still fails.
+export function preloadExportLibs() {
+  void import("xlsx").catch(() => {});
 }
 
 function escapeHtml(v: string): string {
