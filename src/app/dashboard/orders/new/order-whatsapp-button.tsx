@@ -54,8 +54,14 @@ export function OrderWhatsAppButton({
 }) {
   const [sentAt, setSentAt] = useState(order.whatsapp_sent_at);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [copied, setCopied] = useState(false);
+
+  function flashNotice(msg: string) {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 12000); // long enough to act on the steps
+  }
 
   // 2026-09-02: "tassel fringes sirf cotton rug me hota hai" — the field is
   // only meaningful for cotton rugs; showing "Tassel/Fringes: No" on every
@@ -90,99 +96,117 @@ export function OrderWhatsAppButton({
     return lines.join("\n");
   }
 
-  async function handleShare() {
+  // 2026-09-15 (round 2) — "whatsaap or telegram ek msg me, photo or
+  // caption jisko agar whatsaap par search kiya jaye to search ho jaye":
+  // the baked-pixels composite alone is NOT searchable (WhatsApp search
+  // only indexes real text/captions, never pixels). So the flow is now
+  // platform-aware, always one message, and the caption is REAL text
+  // wherever the platform allows it:
+  //
+  //  • Mobile (share sheet keeps files+text together — Android and iOS
+  //    both compose image+text as ONE message with the text as the
+  //    image's caption): navigator.share({ files, text }) → real
+  //    searchable caption, one message. The composite (details ALSO
+  //    baked above the photo) is what gets shared, so even there the
+  //    info survives a text-dropping target.
+  //  • Desktop (WhatsApp/Telegram Desktop drop the text field — the
+  //    exact bug reported on Windows): the composite DOWNLOADS and the
+  //    caption AUTO-COPIES to the clipboard, with on-screen steps:
+  //    attach the photo → paste (Ctrl+V) in the caption box → send.
+  //    That is one message with a real, searchable caption. No auto-open
+  //    of any deep link — a prefilled text input would just become a
+  //    SECOND message.
+  //  • If the composite can't be fetched at all: fall back to the old
+  //    wa.me text link so the message still goes.
+  async function fetchComposite(): Promise<Blob | null> {
+    if (!order.photo_url) return null;
+    const imageParams = new URLSearchParams({
+      url: order.photo_url,
+      ref_no: order.ref_no,
+      qty: String(order.qty),
+      size: order.size_label || "-",
+      dispatch_date: order.dispatch_date || "-",
+      photo_type: order.photo_type || "-",
+      colour: order.colour || "-",
+      tassel_fringes: order.tassel_fringes ? "1" : "0",
+      show_tassel_fringes: isCottonRug ? "1" : "0",
+      sku: order.sku_label || "-",
+      note: order.remark || "-",
+      is_amazon: order.is_amazon ? "1" : "0",
+    });
+    const res = await fetch(`/api/order-whatsapp-image?${imageParams.toString()}`);
+    return res.ok ? res.blob() : null;
+  }
+
+  async function shareOrder(target: "whatsapp" | "telegram") {
     setError(null);
+    setNotice(null);
     const text = buildMessage();
 
-    // Path 1: native share sheet with ONLY the composite image (photo + all
-    // the order details baked in as a caption panel — see
-    // /api/order-whatsapp-image). No separate `text` field is passed here.
-    //
-    // History of this exact decision flip-flopping — read before changing
-    // it again:
-    //  - 2026-08-08: "PHOTO OR MSG DONO ALAG ALAG KYU JA RAHE HAI EK SATH
-    //    JANA CHAHIYE" — photo + a separate `text` field were arriving as 2
-    //    SEPARATE WhatsApp messages, on both phone and computer. Fix: drop
-    //    `text` entirely, rely only on the caption baked into the image
-    //    pixels — nothing left for any platform to split apart.
-    //  - 2026-09-01: "SIRF PHOTO HI JA RAHI HAI JO MSG APNE NE SETUP KIYA
-    //    THA VO NAHI JA RAHA" — misdiagnosed as the caption not being sent
-    //    at all; it was actually just easy to miss on a compressed
-    //    chat-bubble thumbnail without opening the image. `text` was added
-    //    back as a "considered, not independently device-verified"
-    //    trade-off, with the caption panel kept as a safety net.
-    //  - 2026-09-02: user reported the EXACT 2026-08-08 symptom again, with
-    //    screenshots proving it: photo and text as 2 separate bubbles, 2
-    //    separate timestamps. So the 2026-09-01 trade-off did reintroduce
-    //    the split on real devices — confirmed, not hypothetical. Back to
-    //    image-only, and this time the root complaint the 2026-09-01 change
-    //    was chasing (caption easy to miss) is fixed properly instead of by
-    //    re-adding `text`: the details panel now renders ABOVE the photo
-    //    inside the composite image (see route.ts), not below it, so it's
-    //    the first thing visible in a WhatsApp feed thumbnail even when a
-    //    tall image gets cropped there — no separate `text` field needed to
-    //    make it visible.
-    //
-    // 2026-09-03: "photo+text message ek sath" — user explicitly asked for
-    // the caption to go as real, copyable/searchable WhatsApp text again
-    // (an image-only caption can't be searched or copy-pasted inside
-    // WhatsApp). Told directly, in the same conversation, that this exact
-    // combination — image file + a `text` field in one shareData — was
-    // tried and reverted twice before (2026-08-08, then again 2026-09-01
-    // -> 2026-09-02) because it split into 2 separate WhatsApp bubbles on
-    // real devices both times. User chose to go ahead anyway, so `text` is
-    // back here — but per that history, treat this as UNVERIFIED on real
-    // devices until it's actually been tried on both a phone and a
-    // computer (both split last time). If it splits again: don't just
-    // flip it back a third time — remove `text` here again AND lean on
-    // the "📋 Copy caption" button below as the intended workaround
-    // instead (copies the same text to the clipboard, paste it as its own
-    // WhatsApp message only when actually needed — searchable/copyable on
-    // demand, with no risk of an automatic split).
-    if (order.photo_url && typeof navigator !== "undefined" && "share" in navigator) {
+    let blob: Blob | null = null;
+    try {
+      blob = await fetchComposite();
+    } catch {
+      blob = null;
+    }
+
+    // Path 1 — mobile share sheet: files+text arrive as ONE message whose
+    // caption is the real, searchable text (and the pixels carry the same
+    // details as a safety net).
+    if (blob && typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        const imageParams = new URLSearchParams({
-          url: order.photo_url,
-          ref_no: order.ref_no,
-          qty: String(order.qty),
-          size: order.size_label || "-",
-          dispatch_date: order.dispatch_date || "-",
-          photo_type: order.photo_type || "-",
-          colour: order.colour || "-",
-          tassel_fringes: order.tassel_fringes ? "1" : "0",
-          show_tassel_fringes: isCottonRug ? "1" : "0",
-          sku: order.sku_label || "-",
-          note: order.remark || "-",
-          is_amazon: order.is_amazon ? "1" : "0",
-        });
-        const res = await fetch(`/api/order-whatsapp-image?${imageParams.toString()}`);
-        if (res.ok) {
-          const blob = await res.blob();
-          const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
-          const shareData = { files: [file], text };
-          if ("canShare" in navigator && navigator.canShare(shareData)) {
-            await navigator.share(shareData);
-            markSent();
-            return;
-          }
+        const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
+        const shareData = { files: [file], text };
+        if ("canShare" in navigator && navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+          markSent();
+          return;
         }
-      } catch {
-        // Fetch/share failed (CORS, user cancelled, unsupported) — fall
-        // through to the wa.me link below rather than leaving the button
-        // stuck with no feedback.
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
+        // real failure → desktop path below
       }
     }
 
-    // Path 2: wa.me text-only link — always works, opens WhatsApp itself.
-    // Deliberately NEVER pre-fills order.contact_no here: that's the
-    // BUYER's number, but this message (PO/RF/RG + production specs) is
-    // for whoever is packing/dispatching, not the customer. Auto-targeting
-    // the buyer's number was the actual cause of "the number ... isn't on
-    // WhatsApp" errors — a customer's saved contact number often isn't a
-    // WhatsApp number at all. Opening a blank chat instead lets the
-    // employee pick the right person/group themselves, every time.
+    // Path 2 — desktop: composite downloads + caption auto-copies; the
+    // employee attaches the photo and pastes the caption in the caption
+    // box → ONE message, searchable caption. (Clipboard write here rides
+    // on the click's user activation — if the browser refuses it, the
+    // 📋 Copy caption button right below is the same text.)
+    if (blob) {
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = `${order.ref_no}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+
+      let copiedOk = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        copiedOk = true;
+      } catch {
+        copiedOk = false;
+      }
+      const appName = target === "whatsapp" ? "WhatsApp" : "Telegram";
+      flashNotice(
+        `📷 Photo (details ke sath) download ho gayi — ${appName} me photo ATTACH karo, caption box me ${
+          copiedOk ? "Ctrl+V se PASTE karo (caption copy ho chuka hai)" : "📋 Copy caption button se caption copy karke paste karo"
+        }, phir send. Ek hi message jayega aur caption search me milega.`
+      );
+      markSent();
+      return;
+    }
+
+    // Path 3 — last resort (composite fetch failed / no photo): text-only
+    // deep link so the message still goes out.
     const fullText = order.photo_url ? `${text}\n\n*Photo Link:* ${order.photo_url}` : text;
-    const url = `https://wa.me/?text=${encodeURIComponent(fullText)}`;
+    const url =
+      target === "whatsapp"
+        ? `https://wa.me/?text=${encodeURIComponent(fullText)}`
+        : `https://t.me/share/url?url=${encodeURIComponent(order.photo_url || " ")}&text=${encodeURIComponent(text)}`;
     window.open(url, "_blank", "noopener,noreferrer");
     markSent();
   }
@@ -226,7 +250,7 @@ export function OrderWhatsAppButton({
         <button
           type="button"
           disabled={isPending}
-          onClick={handleShare}
+          onClick={() => shareOrder("whatsapp")}
           className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
             sentAt
               ? "border-green-400 bg-green-100 text-green-800 hover:bg-green-200"
@@ -234,6 +258,17 @@ export function OrderWhatsAppButton({
           }`}
         >
           {sentAt ? "✓ Sent — Send Again" : "📱 Send on WhatsApp"}
+        </button>
+        {/* 2026-09-15 — "whatsaap or telegram par ek hi msg me..." — Telegram
+            twin of the WhatsApp button: same composite image (details baked
+            in) + same caption text, t.me deep link as the fallback path. */}
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => shareOrder("telegram")}
+          className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+        >
+          ☁️ Send on Telegram
         </button>
         <button
           type="button"
@@ -249,6 +284,11 @@ export function OrderWhatsAppButton({
         </button>
       </div>
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {notice && (
+        <p className="mt-1 max-w-md rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs leading-relaxed text-amber-800">
+          {notice}
+        </p>
+      )}
     </div>
   );
 }
