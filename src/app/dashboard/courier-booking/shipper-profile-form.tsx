@@ -1,6 +1,26 @@
 "use client";
 
-import { useActionState } from "react";
+// 2026-09-15 — "kisi company ka account setup kar diya to shiper profile
+// save karne ke baad VIEW EDIT or MODIFY UPDATE karne ka option hona
+// chahiye — ye jab bhi jate hai ye NEW FORM show ho jata hai jis se pata
+// nahi chalta ki setup hai k nahi": the old markup collapsed the saved
+// profile into just "(saved ✓)" in the heading, so reopening this tab
+// always LOOKED like an empty new form and there was no way to actually
+// see what was saved without expanding and reading input defaultValues.
+//
+// Now:
+//   • No profile saved  → the form opens directly (exactly as before),
+//     heading says "(not set up yet)".
+//   • Profile saved     → a green ✓ VIEW card shows the full saved address
+//     at a glance (contact/company/phone/email/address/city/state/
+//     postcode/country/GSTIN), with a "✏️ Edit Profile" button that swaps
+//     the card for the pre-filled form (heading "(saved ✓ — editing)") and
+//     a Cancel to go back. After a successful save the server re-renders
+//     this server component tree (revalidatePath in the action), so the
+//     card returns showing the NEW values automatically.
+//   • The summary line now carries a live status chip — setup state is
+//     obvious without opening anything.
+import { useActionState, useState } from "react";
 import { saveCourierShipperProfile, type ShipperProfileState } from "./actions";
 
 const initialState: ShipperProfileState = { error: null, success: false };
@@ -30,12 +50,87 @@ export type ExistingShipperProfile = {
 // since its addOrder.php has Shipglobal-specific fields this doesn't).
 export function ShipperProfileForm({ existing, companyName }: { existing: ExistingShipperProfile; companyName: string }) {
   const [state, formAction, pending] = useActionState(saveCourierShipperProfile, initialState);
+  // "view" = saved-profile card; "edit" = the form. Only reachable when a
+  // profile exists — without one there is nothing to view, so the form is
+  // the only state (matching the old behavior for first-time setup).
+  const [mode, setMode] = useState<"view" | "edit">(existing ? "view" : "edit");
 
+  const summary = (
+    <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">
+      Shipper Profile (&quot;Ship From&quot; address) — {companyName}{" "}
+      {existing ? (
+        <span className="ml-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">✓ Setup done</span>
+      ) : (
+        <span className="ml-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Not set up yet</span>
+      )}
+    </summary>
+  );
+
+  // ── Saved profile VIEW card ────────────────────────────────────────────
+  if (existing && mode === "view") {
+    return (
+      <details className="rounded-lg border border-slate-200 bg-white" open>
+        {summary}
+        <div className="space-y-3 border-t border-slate-100 px-4 py-4">
+          <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            ✓ This company&apos;s pickup/ship-from address is saved — every courier (FedEx, UPS, Aramex, Delhivery, Shiprocket)
+            booking uses it. Use ✏️ Edit below to modify it any time.
+          </div>
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <dt className="text-xs font-medium text-slate-400">Contact Name</dt>
+              <dd className="font-medium text-slate-800">{existing.contact_name}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-400">Company Name</dt>
+              <dd className="font-medium text-slate-800">{existing.company_name}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-400">Phone</dt>
+              <dd className="font-medium text-slate-800">{existing.phone}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-400">Email</dt>
+              <dd className="font-medium text-slate-800">{existing.email}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-medium text-slate-400">Address</dt>
+              <dd className="font-medium text-slate-800">
+                {existing.address1}
+                {existing.address2 ? `, ${existing.address2}` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-400">City / State / Postcode</dt>
+              <dd className="font-medium text-slate-800">
+                {existing.city}, {existing.state} {existing.postcode}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-400">Country</dt>
+              <dd className="font-medium text-slate-800">{existing.country_code}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-400">Tax ID / GSTIN</dt>
+              <dd className="font-medium text-slate-800">{existing.tax_id || "—"}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            onClick={() => setMode("edit")}
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 transition hover:bg-amber-100"
+          >
+            ✏️ Edit Profile
+          </button>
+        </div>
+      </details>
+    );
+  }
+
+  // ── Form (first-time setup, or Edit mode) ──────────────────────────────
   return (
-    <details className="rounded-lg border border-slate-200 bg-white" open={!existing}>
-      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">
-        Shipper Profile (&quot;Ship From&quot; address) — {companyName} {existing ? "(saved ✓)" : "(not set up yet)"}
-      </summary>
+    <details className="rounded-lg border border-slate-200 bg-white" open>
+      {summary}
       <form action={formAction} className="space-y-3 border-t border-slate-100 px-4 py-4">
         <p className="text-xs text-slate-500">
           One shared pickup/ship-from address for this company, used by every courier below (FedEx, UPS, Aramex, Delhivery,
@@ -43,6 +138,18 @@ export function ShipperProfileForm({ existing, companyName }: { existing: Existi
         </p>
         {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
         {state.success && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Saved.</p>}
+        {existing && (
+          <div className="flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+            <span>Editing the saved profile — change any field and save to update.</span>
+            <button
+              type="button"
+              onClick={() => setMode("view")}
+              className="rounded border border-sky-300 bg-white px-2 py-0.5 font-medium text-sky-700 transition hover:bg-sky-50"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           <div>
             <label className={labelClass}>Contact Name *</label>
@@ -94,7 +201,7 @@ export function ShipperProfileForm({ existing, companyName }: { existing: Existi
           disabled={pending}
           className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-slate-900 disabled:opacity-50"
         >
-          {pending ? "Saving..." : "Save Shipper Profile"}
+          {pending ? "Saving..." : existing ? "Update Shipper Profile" : "Save Shipper Profile"}
         </button>
       </form>
     </details>

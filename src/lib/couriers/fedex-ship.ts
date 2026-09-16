@@ -323,6 +323,28 @@ export async function createFedexShipment(
 ): Promise<FedexShipResult> {
   const accessToken = await getFedexAccessToken({ clientId: credentials?.client_id, clientSecret: credentials?.client_secret });
 
+  // 2026-09-15 — real 400 from FedEx: "Account number not found. Please
+  // provide a valid account number." Two defenses here:
+  //
+  // 1. NORMALIZE: the account number arrives from the booking form's
+  //    prefill (saved in Account Setup) — pasted values commonly carry
+  //    stray spaces or copy artifacts (zero-width chars, "FedEx:"-
+  //    prefixes). FedEx's account numbers are pure digits (typically 9,
+  //    but leading zeros are significant so no length is enforced here);
+  //    strip everything that isn't 0-9 before sending.
+  // 2. DIAGNOSE: if FedEx still rejects it, re-throw with the masked
+  //    account and which API base was hit, so the fix (check Account
+  //    Setup / confirm the account is linked to THIS API key) is obvious
+  //    from the error itself instead of a bare FedEx message.
+  const rawAccount = input.shipper.accountNumber ?? "";
+  const accountNumber = rawAccount.replace(/\D/g, "");
+  if (!accountNumber) {
+    throw new Error(
+      `FedEx account number is missing or has no digits (got "${rawAccount.slice(0, 20)}") — check Courier Ops → Account Setup → FedEx.`
+    );
+  }
+  input.shipper.accountNumber = accountNumber;
+
   const isInternational = input.shipper.countryCode !== input.recipient.countryCode;
 
   // 2026-09-11 — see FedexShipInput.references' header comment for the
@@ -600,7 +622,21 @@ export async function createFedexShipment(
   }
   if (!res.ok) {
     const msg = parsed.errors?.map((e) => e.message).filter(Boolean).join("; ") || text.slice(0, 500);
-    throw new Error(`FedEx Ship API failed ${res.status}${retriedNote}: ${msg}`);
+    // 2026-09-15 — make the account-number rejection actionable (see the
+    // normalize comment at the top of this function): show WHICH account
+    // (masked) was sent and WHICH FedEx environment was hit. The two real
+    // causes are (a) the number in Account Setup isn't the account linked
+    // to this API key (each FedEx developer org's key can only book
+    // against its own linked accounts), or (b) sandbox credentials used
+    // against production / vice-versa.
+    const isAccountError = /account number/i.test(msg);
+    const masked = accountNumber.length > 4 ? `${"*".repeat(accountNumber.length - 4)}${accountNumber.slice(-4)}` : accountNumber;
+    throw new Error(
+      `FedEx Ship API failed ${res.status}${retriedNote}: ${msg}` +
+        (isAccountError
+          ? ` — sent account ${masked} against ${FEDEX_API_BASE}. Check Courier Ops → Account Setup → FedEx: the account number must belong to THIS API key's organization${FEDEX_API_BASE.includes("apis.fedex.com") ? " (production API)" : " (test API)"}.`
+          : "")
+    );
   }
 
   const shipment = parsed.output?.transactionShipments?.[0];
