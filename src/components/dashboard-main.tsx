@@ -28,10 +28,25 @@ import { useNavStyle } from "@/components/nav-style-context";
  * footprint (each sits ~80px tall including its own bottom offset) with a
  * safety margin; Dock mode keeps its own taller `pb-28` since the Dock bar
  * itself is wider/taller and already needed more room before this fix.
+ *
+ * 2026-09-15 — "mobile view & tablate view sahi nahi hai ek dusre par chadh
+ * rahe hain, page ese hona chahiye ki screen auto adjust hojaye": padding
+ * now scales with the viewport (p-3 on phones → p-6 on desktop). Most
+ * content overlap on small screens comes from page-level grids, so the
+ * main scroll container also opts in to Tailwind's CSS-container queries —
+ * pages using `@container` / `@lg:` variants now adapt to THEIR OWN width
+ * instead of the browser window, which is what makes grids reflow
+ * correctly even when this main pane is sharing width with the sidebar.
  */
 export function DashboardMain({ children }: { children: ReactNode }) {
   const { navStyle, mounted } = useNavStyle();
   const dockActive = mounted && navStyle === "dock";
 
-  return <main className={`flex-1 overflow-y-auto p-6 ${dockActive ? "pb-28" : "pb-24"}`}>{children}</main>;
+  return (
+    <main
+      className={`@container flex-1 overflow-y-auto p-3 md:p-6 ${dockActive ? "pb-28" : "pb-24"}`}
+    >
+      {children}
+    </main>
+  );
 }

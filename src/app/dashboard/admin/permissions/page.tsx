@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { PermissionsMatrix } from "./permissions-matrix";
+import { RolesManager } from "./roles-manager";
 
 export default async function PermissionsAdminPage() {
   await requireCapability("permissions_admin");
@@ -26,6 +27,10 @@ export default async function PermissionsAdminPage() {
           Click a checkbox to save immediately.
         </p>
       </div>
+
+      {/* 2026-09-15 — "agar naye role banayenge to kese banayenge": role
+          create/rename/delete lives directly above the matrix now. */}
+      <RolesManager roles={roles ?? []} />
 
       <PermissionsMatrix roles={roles ?? []} capabilities={capabilities ?? []} initialGrants={initialGrants} />
     </div>

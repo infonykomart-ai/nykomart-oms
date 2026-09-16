@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import { setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
+import { changeEmployeeRole, setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
 import { EmployeeDetailsForm, type EmployeeDetails } from "./employee-details-form";
 import { EmployeeStoreAccessForm } from "./employee-store-access-form";
 import { EmployeeDocumentsPanel, type EmployeeDocumentRow } from "./employee-documents-panel";
@@ -10,16 +10,24 @@ const initialResetState: SimpleActionState = { error: null, success: false };
 
 export function EmployeeRowActions({
   employeeId,
+  employeeName,
   active,
   details,
+  roleId,
+  roles,
   stores,
   currentStoreIds,
   reportsToOptions,
   documents,
 }: {
   employeeId: string;
+  employeeName: string;
   active: boolean;
   details: EmployeeDetails;
+  // 2026-09-15 — role change: current role id + the full role list, so the
+  // admin can move any employee to a different role right from the row.
+  roleId: string;
+  roles: { id: string; name: string }[];
   stores: { id: string; name: string; company_id: string }[];
   currentStoreIds: string[];
   // 2026-09-11 (Payroll Phase 3) — same-company employees this one could
@@ -32,9 +40,51 @@ export function EmployeeRowActions({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [storeAccessOpen, setStoreAccessOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
+  // 2026-09-15 — "agar kisi employe ka role change karenge to kaha se
+  // karenge abhi to koi option nahi hai": inline role <select> per row.
+  // Until now a role could only be chosen while CREATING the login.
+  const [roleError, setRoleError] = useState<string | null>(null);
+  const [roleSaved, setRoleSaved] = useState(false);
+
+  function onRoleChange(newRoleId: string) {
+    if (!newRoleId || newRoleId === roleId) return;
+    setRoleError(null);
+    setRoleSaved(false);
+    startTransition(async () => {
+      const result = await changeEmployeeRole(employeeId, newRoleId);
+      if (result.error) {
+        setRoleError(result.error);
+      } else {
+        setRoleSaved(true);
+        // Nudge the server-rendered row so the Role/Company cell refreshes.
+        setTimeout(() => window.location.reload(), 600);
+      }
+    });
+  }
 
   return (
     <div>
+      {/* Role changer — compact select, sits first so it reads as the row's
+          primary admin control. Server-side guards (self-demote, last
+          admin) return errors that surface right here. */}
+      <div className="mb-2 flex flex-wrap items-center justify-end gap-1.5">
+        <select
+          aria-label={`Role for ${employeeName}`}
+          value={roleId}
+          disabled={isPending}
+          onChange={(e) => onRoleChange(e.target.value)}
+          className="max-w-[11rem] rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-700 outline-none transition hover:border-violet-400 focus:border-violet-500 disabled:opacity-60"
+        >
+          {roles.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
+            </option>
+          ))}
+        </select>
+        {isPending && <span className="text-xs text-slate-400">saving…</span>}
+        {roleSaved && <span className="text-xs text-green-700">✓ Role updated</span>}
+        {roleError && <span className="text-xs text-red-700">{roleError}</span>}
+      </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"

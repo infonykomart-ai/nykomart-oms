@@ -188,7 +188,7 @@ export function CompanySwitcher({
             setOptimisticPick(e.target.value);
             e.currentTarget.form?.requestSubmit();
           }}
-          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-amber-500 disabled:cursor-wait disabled:opacity-60"
+          className="max-w-[9.5rem] truncate rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-amber-500 disabled:cursor-wait disabled:opacity-60 md:max-w-none"
           aria-label="Switch company"
           aria-busy={pending}
         >

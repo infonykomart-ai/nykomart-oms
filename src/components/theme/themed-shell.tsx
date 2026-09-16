@@ -35,6 +35,15 @@
 import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { useTheme } from "./theme-provider";
 
+// 2026-09-15 — "mobile view & tablate view sahi nahi hai ek dusre par chadh
+// rahe hain, page ese hona chahiye ki screen auto adjust hojaye": the shell
+// height now uses dvh (dynamic viewport height) instead of vh — on mobile
+// browsers the URL bar collapsing/expanding used to leave the shell taller
+// than the visible screen, pushing the bottom of every page (and the fixed
+// dock/messenger widgets) under the fold. `h-screen` → `h-dvh` is the one-
+// line fix; everything else about the layout model (fixed sidebar +
+// scrollable main) is unchanged.
+
 /**
  * Cheap perceived-luminance check (ITU-R BT.601) to pick a legible
  * black/white contrast color for a user-chosen custom accent — same idea
@@ -83,7 +92,7 @@ export function ThemedShell({ children }: { children: ReactNode }) {
   }, [themeId, customAccent]);
 
   return (
-    <div data-theme={themeId} style={style} className="flex h-screen overflow-hidden bg-[var(--oms-canvas)] text-[var(--oms-text)]">
+    <div data-theme={themeId} style={style} className="flex h-dvh overflow-hidden bg-[var(--oms-canvas)] text-[var(--oms-text)]">
       {children}
     </div>
   );

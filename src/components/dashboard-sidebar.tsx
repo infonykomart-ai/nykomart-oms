@@ -1,46 +1,32 @@
 "use client";
 
+// 2026-09-15 — "mobile view & tablate view sahi nahi hai ek dusre par chadh
+// rahe hain, page ese hona chahiye ki screen auto adjust hojaye": the sidebar
+// is now width-responsive and phone-aware:
+//
+//   • ≥1024px (lg) — exactly today's behavior: w-72 pinned column, pin/hover
+//     strip, dock switch. Nothing changes on desktop.
+//   • 768–1023px (tablet) — same pinned column but narrower (w-60), so the
+//     page content keeps most of the width instead of the old fixed 288px
+//     squeezing tables under the fold.
+//   • <768px (phone) — the pinned sidebar NEVER takes layout width; it
+//     slides in as a fixed overlay over the page (with a backdrop), opened
+//     from a ☰ button in the header, and auto-closes after choosing a
+//     tile. The hover-strip stays desktop-only (touch has no hover).
+//
+// The pinned-vs-hovered localStorage preference keeps controlling lg+
+// behavior exactly as before; on phones it's ignored in favor of the
+// overlay drawer. Custom event `oms:sidebar-open` (fired by the header's
+// hamburger) is the cross-component open signal — same lightweight
+// pattern the dock already uses internally.
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CAPABILITY_INFO } from "@/lib/capability-info";
 import { useNavStyle } from "@/components/nav-style-context";
 
-/**
- * Professional role-based left sidebar work menu — only shows tiles for
- * capabilities the signed-in employee's role actually has (server-resolved
- * in dashboard/layout.tsx, passed down as plain data).
- *
- * 2026-08-06: redesigned from a flat vertical link list into a 2-column
- * "app launcher" style box/tile grid, per the user's ask: "jo menu ek line
- * me aate hai vo boxes me style me aaye, pura dashboard bhara hua lage aur
- * pyara lage." Each item is a square-ish tile with its icon large and
- * centered, label below — denser and more visual than a row of text links,
- * while keeping the same dark sidebar theme, active-state highlight, and
- * capability-filtered items as before.
- *
- * 2026-08-17 — "MENU SECTION HIDE HO JAYE JAB KUCH DHUNDHNA HO TO SIDE ME
- * DIKH JAYE, HIDE AUTO HIDE KA OPTION HO JIS SE WINDOW BADI HO JAYE" — both
- * requested behaviors: a pin button (click to permanently hide/show, no
- * layout width reserved while hidden — <main> gets the space back) AND,
- * while unpinned, a thin hover strip on the left edge that slides the full
- * menu in as an overlay on hover and back out on mouse-leave, so it's still
- * one hover away without taking up permanent width. Preference persists via
- * localStorage so it survives reloads. Defaults to pinned (today's
- * behavior) so nothing changes for anyone who doesn't touch the new button.
- *
- * 2026-09-04 — "Dock" nav style: a second, independent per-browser
- * preference (see nav-style-context.tsx) lets an employee swap this whole
- * sidebar out for a macOS-Dock-style bottom-center bar
- * (dashboard-dock.tsx) — same tiles, same capability filtering, different
- * chrome. A small ⬇️ button next to the existing 📌 pin button switches to
- * it; this component renders nothing at all once that preference is
- * "dock" (checked after the same `mounted` gate the pin state already
- * uses, so there's no flash of the sidebar before the dock takes over).
- * Defaults to "sidebar" — today's behavior — for anyone who hasn't opted
- * in, exactly like `pinned` defaults to true above.
- */
 const PIN_STORAGE_KEY = "oms_sidebar_pinned";
+export const SIDEBAR_OPEN_EVENT = "oms:sidebar-open";
 
 export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const pathname = usePathname();
@@ -49,6 +35,7 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const [pinned, setPinned] = useState(true);
   const [hovered, setHovered] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const { navStyle, mounted: navStyleMounted, setNavStyle } = useNavStyle();
 
   useEffect(() => {
@@ -60,6 +47,24 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved !== null) setPinned(saved === "1");
     setMounted(true);
+  }, []);
+
+  // Phone drawer: opened by the header hamburger via the custom event,
+  // closed on Escape. (Closing on tile-tap happens in SidebarTile's own
+  // onClick — an effect on `pathname` would fire a cascading re-render.)
+  useEffect(() => {
+    function onOpen() {
+      setMobileOpen(true);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileOpen(false);
+    }
+    window.addEventListener(SIDEBAR_OPEN_EVENT, onOpen);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener(SIDEBAR_OPEN_EVENT, onOpen);
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   function togglePinned() {
@@ -78,7 +83,13 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const menu = (
     <nav className="flex-1 overflow-y-auto p-3">
       <div className="grid grid-cols-2 gap-2.5">
-        <SidebarTile href="/dashboard" icon="🏠" label="Home" active={pathname === "/dashboard"} />
+        <SidebarTile
+          href="/dashboard"
+          icon="🏠"
+          label="Home"
+          active={pathname === "/dashboard"}
+          onNavigate={pathname === "/dashboard" ? undefined : () => setMobileOpen(false)}
+        />
         {items.map((item) => (
           <SidebarTile
             key={item.code}
@@ -86,77 +97,107 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
             icon={item.icon}
             label={item.label}
             active={pathname.startsWith(item.href)}
+            onNavigate={pathname.startsWith(item.href) ? undefined : () => setMobileOpen(false)}
           />
         ))}
       </div>
     </nav>
   );
 
+  const chrome = (closeBtn: boolean) => (
+    <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-4 md:px-6">
+      <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
+      <div className="flex items-center gap-1">
+        {closeBtn && (
+          <button
+            type="button"
+            onClick={() => setMobileOpen(false)}
+            title="Close menu"
+            className="rounded-lg px-2 py-1.5 text-lg text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)] md:hidden"
+          >
+            ✕
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setNavStyle("dock")}
+          title="Switch to Dock menu (bottom bar)"
+          className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+        >
+          ⬇️
+        </button>
+        <button
+          type="button"
+          onClick={togglePinned}
+          title={closeBtn ? "Hide menu (reopen with ☰)" : "Keep menu pinned open"}
+          className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+        >
+          📌
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Phone drawer (below md): fixed overlay, never steals layout width ──
+  const drawer = (
+    <div className={`md:hidden ${mobileOpen ? "" : "pointer-events-none"}`}>
+      {/* Backdrop — tap anywhere outside to close */}
+      <button
+        type="button"
+        aria-label="Close menu"
+        onClick={() => setMobileOpen(false)}
+        className={`fixed inset-0 z-40 bg-black/40 transition-opacity duration-200 ${
+          mobileOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      />
+      <aside
+        className={`oms-sidebar fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] shadow-2xl transition-transform duration-200 ease-out ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        {chrome(true)}
+        {menu}
+      </aside>
+    </div>
+  );
+
   // Render the pinned layout during SSR + first paint (before localStorage
   // has been read) so there's no flash of the wrong layout.
   if (!mounted || pinned) {
     return (
-      <aside className="oms-sidebar flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)]">
-        <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-6">
-          <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setNavStyle("dock")}
-              title="Switch to Dock menu (bottom bar)"
-              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-            >
-              ⬇️
-            </button>
-            <button
-              type="button"
-              onClick={togglePinned}
-              title="Hide menu (hover the edge to bring it back)"
-              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-            >
-              📌
-            </button>
-          </div>
-        </div>
-        {menu}
-      </aside>
+      <>
+        {/* ≥md: pinned in-flow column (w-72 desktop / w-60 tablet) */}
+        <aside className="oms-sidebar hidden w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] md:flex lg:w-60">
+          {chrome(false)}
+          {menu}
+        </aside>
+        {drawer}
+      </>
     );
   }
 
+  // Unpinned (desktop hover-strip) layout — the strip itself is desktop-only.
   return (
-    <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-      <div className="group flex h-full w-3 shrink-0 cursor-pointer flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3">
-        <div className="h-10 w-1 rounded-full bg-[var(--oms-sidebar-tile-border)] transition group-hover:bg-[var(--oms-accent)]" />
-      </div>
-      <aside
-        className={`oms-sidebar fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] shadow-2xl transition-transform duration-200 ease-out ${
-          hovered ? "translate-x-0" : "-translate-x-full"
-        }`}
+    <>
+      <div
+        className="hidden md:block"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
-        <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-6">
-          <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setNavStyle("dock")}
-              title="Switch to Dock menu (bottom bar)"
-              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-            >
-              ⬇️
-            </button>
-            <button
-              type="button"
-              onClick={togglePinned}
-              title="Keep menu pinned open"
-              className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-            >
-              📌
-            </button>
-          </div>
+        <div className="group flex h-full w-3 shrink-0 cursor-pointer flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3">
+          <div className="h-10 w-1 rounded-full bg-[var(--oms-sidebar-tile-border)] transition group-hover:bg-[var(--oms-accent)]" />
         </div>
-        {menu}
-      </aside>
-    </div>
+        <aside
+          className={`oms-sidebar fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] shadow-2xl transition-transform duration-200 ease-out lg:w-60 ${
+            hovered ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          {chrome(false)}
+          {menu}
+        </aside>
+      </div>
+      {drawer}
+    </>
   );
 }
 
@@ -165,11 +206,16 @@ function SidebarTile({
   icon,
   label,
   active,
+  onNavigate,
 }: {
   href: string;
   icon: string;
   label: string;
   active: boolean;
+  // 2026-09-15 — phone drawer closes itself when a tile that actually
+  // navigates is tapped (undefined for the already-active tile so tapping
+  // it doesn't flash the drawer shut for no reason). No-op on desktop.
+  onNavigate?: () => void;
 }) {
   return (
     <Link
@@ -187,6 +233,7 @@ function SidebarTile({
       // speculative fetch that happened before any click.
       prefetch={false}
       data-active={active}
+      onClick={onNavigate}
       className={`oms-nav-tile group flex flex-col items-center justify-center gap-1.5 rounded-xl border px-2 py-4 text-center transition ${
         active
           ? "border-[var(--oms-accent)] bg-[var(--oms-accent)] text-[var(--oms-accent-contrast)] shadow-md shadow-[var(--oms-accent)]/20"

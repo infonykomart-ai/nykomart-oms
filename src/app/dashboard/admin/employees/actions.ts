@@ -10,6 +10,7 @@
 // employees.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -28,8 +29,8 @@ function strOrNull(formData: FormData, key: string): string | null {
 
 // 2026-08-07: Employee Master expansion — shared by createEmployee (new
 // login) and updateEmployeeDetails (existing employee) below, so the same
-// field set/validation applies whether you're filling this in on day one
-// or backfilling it later for one of the 15 employees who already existed
+// field set/validation applies whether you're filling this in on day one or
+// backfilling it later for one of the 15 employees who already existed
 // before these columns did.
 function profileFields(formData: FormData) {
   return {
@@ -75,6 +76,88 @@ function profileFields(formData: FormData) {
 // column itself didn't change, only how it gets filled in.
 const EMPLOYEE_PHOTO_BUCKET = "employee-photos";
 const MAX_EMPLOYEE_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB — matches order-photos' cap
+
+// ── 2026-09-15 — Role change (new) ─────────────────────────────────────────
+// "agar kisi employe ka role change karenge to kaha se karenge abhi to koi
+// option nahi hai" — until now a role could only be picked while CREATING a
+// login (createEmployee's role_id select); there was no way to move an
+// existing employee to a different role without editing the row by hand in
+// Supabase. This action powers the inline "Role" dropdown in each row of
+// the Employees page (employee-row-actions.tsx). Guards mirror the
+// permissions page's lockout protection (toggleRoleCapability):
+//   • you cannot demote yourself (you'd instantly lose employee_admin and
+//     be locked out of this very screen), and
+//   • you cannot move the last remaining employee_admin-capable employee
+//     off an admin-capable role.
+export async function changeEmployeeRole(employeeId: string, newRoleId: string): Promise<{ error: string | null }> {
+  const me = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  if (employeeId === me.id) {
+    return { error: "You cannot change your own role — ask another Admin/MD to do it (prevents accidental lockout)." };
+  }
+
+  const [{ data: target }, { data: newRole }] = await Promise.all([
+    supabase.from("employees").select("id, name, role_id").eq("id", employeeId).maybeSingle(),
+    supabase.from("roles").select("id, name").eq("id", newRoleId).maybeSingle(),
+  ]);
+  if (!target) return { error: "Employee not found." };
+  if (!newRole) return { error: "Selected role does not exist." };
+  if (target.role_id === newRoleId) return { error: null }; // no-op, treat as success
+
+  // Would the OLD role lose its last employee_admin holder?
+  const { data: oldRoleCaps } = await supabase
+    .from("role_capabilities")
+    .select("capability_code")
+    .eq("role_id", target.role_id)
+    .eq("capability_code", "employee_admin");
+  const oldRoleIsAdmin = (oldRoleCaps?.length ?? 0) > 0;
+
+  const { data: newRoleCaps } = await supabase
+    .from("role_capabilities")
+    .select("capability_code")
+    .eq("role_id", newRoleId)
+    .eq("capability_code", "employee_admin");
+  const newRoleIsAdmin = (newRoleCaps?.length ?? 0) > 0;
+
+  if (oldRoleIsAdmin && !newRoleIsAdmin) {
+    // Everyone whose CURRENT role carries employee_admin. Note: keyed by
+    // role, not by employee — counting active employees per admin role is
+    // the accurate "who can still get back into this screen" check.
+    const { data: adminRoleIds } = await supabase
+      .from("role_capabilities")
+      .select("role_id")
+      .eq("capability_code", "employee_admin");
+    const adminIds = new Set((adminRoleIds ?? []).map((r) => r.role_id));
+    const { data: adminEmployees } = await supabase
+      .from("employees")
+      .select("id")
+      .in("role_id", [...adminIds])
+      .eq("active", true);
+    // Exclude the one being moved — after this change they can no longer
+    // administer.
+    const remaining = (adminEmployees ?? []).filter((e) => e.id !== employeeId);
+    if (remaining.length === 0) {
+      return { error: `${newRole.name} has no Permissions access — this is the last Admin/MD employee, so the role cannot be changed (prevents lockout).` };
+    }
+  }
+
+  const { error } = await supabase.from("employees").update({ role_id: newRoleId }).eq("id", employeeId);
+  if (error) return { error: error.message };
+
+  await logAudit(supabase, {
+    employeeId: me.id,
+    employeeName: me.name,
+    action: "employee.role_changed",
+    entityType: "employee",
+    entityId: employeeId,
+    entityLabel: target.name,
+    changes: { role_id: { from: target.role_id, to: newRoleId } },
+  });
+
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null };
+}
 
 export async function uploadEmployeePhoto(formData: FormData): Promise<{ url: string | null; error: string | null }> {
   await requireCapability("employee_admin");

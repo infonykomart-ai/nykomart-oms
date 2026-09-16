@@ -103,13 +103,19 @@ export default async function EmployeesAdminPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
+      {/* 2026-09-15 — "screen auto adjust hojaye": @lg: variants respond to
+          THIS page's own width (DashboardMain is a CSS container), not the
+          browser window — with the sidebar taking 240-288px the old
+          window-based lg: breakpoint stacked the form over the table far
+          too late on tablets. The table also scrolls horizontally below
+          @3xl instead of clipping under overflow-hidden. */}
+      <div className="grid grid-cols-1 gap-6 @lg:grid-cols-3">
+        <div className="@lg:col-span-1">
           <EmployeeForm roles={roles ?? []} companies={companies ?? []} stores={stores ?? []} />
         </div>
 
-        <div className="lg:col-span-2">
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="@lg:col-span-2">
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
@@ -153,8 +159,11 @@ export default async function EmployeesAdminPage() {
                     <td className="px-4 py-3">
                       <EmployeeRowActions
                         employeeId={e.id}
+                        employeeName={e.name}
                         active={e.active}
                         details={e}
+                        roleId={e.role_id}
+                        roles={roles ?? []}
                         stores={stores ?? []}
                         currentStoreIds={storeIdsByEmployee.get(e.id) ?? []}
                         reportsToOptions={(employeesByCompany.get(e.company_id) ?? []).filter((o) => o.id !== e.id)}
