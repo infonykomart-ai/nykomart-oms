@@ -7855,6 +7855,11 @@ export type Database = {
           profit_pct: number | null;
           total_internal_expenses_inr: number | null;
           net_earn_after_overhead: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_purchase_adjustments_inr: number | null;
+          expense_historical_inr: number | null;
         };
         Relationships: [];
       };
@@ -7867,6 +7872,11 @@ export type Database = {
           profit_pct: number | null;
           total_internal_expenses_inr: number | null;
           net_earn_after_overhead: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_purchase_adjustments_inr: number | null;
+          expense_historical_inr: number | null;
         };
         Relationships: [];
       };

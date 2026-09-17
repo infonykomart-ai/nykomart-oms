@@ -2,6 +2,50 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 
+// 2026-09-17 — "jo jo expense huye vo sab aane chahiye na jis se confirm
+// ho ki kya kya kese kese ghataya jara": the single "Expenses (INR)"
+// number is now hover-expandable into its 5 sources (courier, duty,
+// purchase bills, Debit/Credit-Note adjustments shown negative, and the
+// pre-orders CSV history). Data comes from the views' breakdown columns
+// (db/2026-09-17-pl-expense-breakdown.sql) — pure display, nothing here
+// recomputes. A tiny client island inside this otherwise server page
+// (details/summary needs no JS but React must render it; "use client"
+// scope comes via this shared component being imported by the server
+// component below without a directive — React renders <details> as plain
+// HTML, so no island is actually needed; kept as a plain function).
+type PlRow = {
+  expense_courier_inr?: number | null;
+  expense_duty_inr?: number | null;
+  expense_purchase_inr?: number | null;
+  expense_purchase_adjustments_inr?: number | null;
+  expense_historical_inr?: number | null;
+};
+
+function PlExpenseBreakdown({ row }: { row: PlRow }) {
+  const lines: Array<[string, number | null | undefined]> = [
+    ["Courier (freight bills)", row.expense_courier_inr],
+    ["Duty (duty bills)", row.expense_duty_inr],
+    ["Purchase bills (GST-incl.)", row.expense_purchase_inr],
+    ["Debit/Credit Note adjustments", row.expense_purchase_adjustments_inr],
+    ["Old CSV history (pre-orders)", row.expense_historical_inr],
+  ];
+  return (
+    <details className="group inline-block text-left">
+      <summary className="ml-1 cursor-pointer list-none text-[10px] font-semibold text-sky-700 hover:text-sky-900">▾</summary>
+      <div className="absolute z-10 mt-1 min-w-56 rounded-lg border border-slate-200 bg-white p-2 text-[11px] shadow-lg">
+        {lines.map(([label, val]) => (
+          <div key={label} className="flex items-center justify-between gap-4 py-0.5">
+            <span className="text-slate-500">{label}</span>
+            <span className={`font-medium ${Number(val ?? 0) < 0 ? "text-emerald-700" : "text-slate-800"}`}>
+              {Number(val ?? 0).toFixed(2)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 // CRM Overview (round 11) — rebuild of the old Apps Script system's
 // getCrmDashboardData()/getAlerts_() (see claude/hr-attendance-crm-notes.md
 // for the old design this is modeled on: order-status counts, today's
@@ -66,8 +110,8 @@ export default async function CrmOverviewPage({
     supabase.rpc("get_order_status_counts", { p_company_id: employee.currentCompanyId }),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
-    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead").limit(24),
+    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_historical_inr").in("company_id", employee.companyIds),
+    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_historical_inr").limit(24),
     query
       ? supabase
           .from("orders")
@@ -255,7 +299,10 @@ export default async function CrmOverviewPage({
                 <tr key={r.company_id}>
                   <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.company_name}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_expenses_inr ?? 0).toFixed(2)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700" title="Courier + Duty + Purchase − Note adjustments + history — hover the ▾ for the line-by-line split">
+                    {Number(r.total_expenses_inr ?? 0).toFixed(2)}
+                    <PlExpenseBreakdown row={r} />
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn ?? 0).toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
@@ -290,7 +337,10 @@ export default async function CrmOverviewPage({
                 <tr key={r.month}>
                   <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.month}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_expenses_inr ?? 0).toFixed(2)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700" title="Courier + Duty + Purchase − Note adjustments + history — hover the ▾ for the line-by-line split">
+                    {Number(r.total_expenses_inr ?? 0).toFixed(2)}
+                    <PlExpenseBreakdown row={r} />
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn ?? 0).toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
