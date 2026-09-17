@@ -129,8 +129,7 @@ are not optional style preferences.
 - **`Promise.all` for independent queries, sequential `await` only for genuinely dependent ones.**
   Several pages got this wrong (see §6) — new pages should batch from the start.
 - **Excel/CSV import gotchas** (recur constantly across every bulk-import feature — Amazon/eBay/Etsy
-  fee matching, bank statement import, payment reconciliation):
-  - openpyxl reads numeric-looking cells (AWB/invoice numbers) as Python floats — `str()` on them
+  fee matching, bank statement import, payment reconciliation):  - openpyxl reads numeric-looking cells (AWB/invoice numbers) as Python floats — `str()` on them
     produces a wrong trailing `.0`. Fix: `str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)`.
   - A single sheet can silently mix `DD-MM-YYYY` and `DD/MM/YYYY` string formats plus native
     datetime objects in the same column — handle all three; never fabricate a fallback date for a
@@ -153,6 +152,7 @@ are not optional style preferences.
 | `/dashboard/parties` | Party (vendor) master | `party_admin` |
 | `/dashboard/salary` | Salary + advance tracking | `salary_admin` |
 | `/dashboard/statements` | Manual entry for PDF-only statements (Etsy Monthly Tax Invoice, eBay Financial Summary) | `statement_entry` |
+| `/dashboard/bank-recon` | 2026-09-17: Bank & Card Reconciliation — multi bank/card accounts (`recon_accounts`), flexible statement upload (auto column mapping + dedupe fingerprint), auto UTR/order/party/expense matching with verify dialog. **Writes only `bank_recon_links` + the statement line's own link columns — never touches bill_pass_register/internal_expenses/orders** | `bank_recon` |
 | `/dashboard/shipglobal` | Real external shipment creation (costs money, real customs declaration) | `shipglobal_shipment` |
 | `/dashboard/invoices` | Export sales invoice generation (CSB-V/CSB-IV) | `invoicing` |
 | `/dashboard/admin/*` | Employee roster, Roles & Permissions, Companies/Items, Help Center admin | various `*_admin` |

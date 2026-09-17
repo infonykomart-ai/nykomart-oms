@@ -4470,6 +4470,97 @@ CREATE TABLE freight_cost_estimates (
 CREATE INDEX idx_freight_cost_estimates_company ON freight_cost_estimates(company_id);
 CREATE INDEX idx_freight_cost_estimates_order   ON freight_cost_estimates(order_id);
 
+-- =============================================================================
+-- SECTION 17d - BANK & CARD RECONCILIATION (2026-09-17)
+-- User's ask: "bank recolantions ke liye jese jo account add hoyega bank ka
+-- agar uske alava bhi koi dusra account ho jisme pese aate ho to kese hoyega
+-- us bank statement upload karne ka option ho or vo auto metic ye cler kar
+-- de ki itna paisa is store se aaya" + "sath me ese hi ek se jyada credit
+-- card bhi add karne ka option ho" + "statement kesa bhi ho auto adjust
+-- kare collom vagera sabhi" + "har mahine statement dalae ya daily duplicate
+-- entry nhi hoye". Full rationale + sanity checks:
+-- db/2026-09-17-bank-recon.sql. Screen: /dashboard/bank-recon
+-- (capability bank_recon - Finance/Admin/MD).
+--
+-- THE INVARIANT: matching only writes bank_recon_links + the statement
+-- line's own link columns. bill_pass_register / internal_expenses / orders
+-- are never modified by this module - "purane payment ko distrub nahi kare"
+-- cuts both ways (link AND unlink are equally safe).
+-- =============================================================================
+
+-- The REGISTRY of bank accounts and credit cards (any number per company).
+-- account_type: 'bank' | 'card'. company_share_pct splits a joint/personal
+-- account across companies (NULL = 100%). statement_kind is reserved for
+-- future direct feeds - today every account is 'upload'.
+CREATE TABLE bank_recon_accounts (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  account_type      text NOT NULL DEFAULT 'bank' CHECK (account_type IN ('bank', 'card')),
+  account_name      text NOT NULL,
+  bank_name         text,
+  account_number    text,
+  card_label        text,
+  statement_kind    text NOT NULL DEFAULT 'upload',
+  company_share_pct numeric(5,2) CHECK (company_share_pct IS NULL OR (company_share_pct > 0 AND company_share_pct <= 100)),
+  opening_balance   numeric(14,2),
+  active            boolean NOT NULL DEFAULT true,
+  notes             text,
+  created_by_employee_id uuid REFERENCES employees(id),
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_bank_recon_accounts_company ON bank_recon_accounts(company_id) WHERE active;
+
+-- bank_statement_lines EXTENDED (columns added via ALTER in the migration,
+-- mirrored here as indexes for documentation): recon_account_id,
+-- recon_status (unmatched/suggested/linked), linked_party_id, linked_store_id,
+-- linked_bill_id, linked_order_id, linked_reference, linked_at,
+-- linked_by_employee_id, match_method, import_fingerprint, imported_batch_id.
+-- Legacy rows (recon_account_id IS NULL, from the old PNB CSV-upload flow)
+-- are stamped recon_status='linked' by the migration so they never look
+-- pending. Dedupe fingerprint: UTR/ref-no when present, else
+-- (account, date, +/-amount, 8-char narration stem) - two same-day same-
+-- amount payments to one vendor have different UTRs so both import; a
+-- re-uploaded file fingerprint-matches every row and imports nothing.
+CREATE INDEX idx_bank_stmt_account_status ON bank_statement_lines(recon_account_id, recon_status);
+CREATE INDEX idx_bank_stmt_fingerprint ON bank_statement_lines(import_fingerprint) WHERE import_fingerprint IS NOT NULL;
+
+-- One verified/matched link per statement line. Audit-only - deleting a
+-- link touches nothing outside this module. target_id is the target row's
+-- uuid, or 'party:<uuid>' for party-only suggestions (no bill exists yet);
+-- linked_bill_id on the statement line has NO FK on purpose so links
+-- survive bill merges (which re-point/zero bill rows). Verified links from
+-- the dialog stamp verified_by_employee_id; auto-matched links leave it
+-- NULL until the user clicks Verify ("check and verify karte hi payment
+-- reference auto link ho jaye").
+CREATE TABLE bank_recon_links (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  statement_line_id uuid NOT NULL REFERENCES bank_statement_lines(id) ON DELETE CASCADE,
+  target_type       text NOT NULL CHECK (target_type IN ('bill_payment', 'salary_payment', 'card_expense', 'order_sale', 'expense', 'unmatched')),
+  target_id         text NOT NULL,
+  target_label      text NOT NULL,
+  target_company_id uuid,
+  matched_amount    numeric(14,2),
+  match_method      text NOT NULL DEFAULT 'verified',
+  match_score       numeric(5,1),
+  verified_by_employee_id uuid REFERENCES employees(id),
+  verified_at       timestamptz NOT NULL DEFAULT now(),
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_bank_recon_links_line ON bank_recon_links(statement_line_id);
+CREATE INDEX idx_bank_recon_links_target ON bank_recon_links(target_type, target_id);
+
+-- Per-account LEARNED column mapping (the bank's own header text -> recon
+-- field) - the second upload of the same bank parses silently, whatever
+-- its column naming ("collom vagera sabhi").
+CREATE TABLE bank_statement_columns (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id  uuid NOT NULL REFERENCES bank_recon_accounts(id) ON DELETE CASCADE,
+  file_header text NOT NULL,
+  maps_to     text NOT NULL CHECK (maps_to IN ('txn_date','description','ref_no','withdrawal','deposit','balance','cheque_no')),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, lower(file_header))
+);
+
 
 -- =============================================================================
 -- SECTION 18 — SEED DATA
@@ -4686,6 +4777,8 @@ JOIN (VALUES
 -- Duty Reconciliation                 -> duty_bill_awb_assignments (manual data) + duty_reconciliation_view (computed)
 -- Portal Payment Reconciliation       -> portal_payment_reconciliation
 -- Bank Statement                      -> bank_statement_lines
+-- (2026-09-17: Bank & Card Reconciliation extends it -> bank_recon_accounts +
+--  bank_recon_links + bank_statement_columns; see SECTION 17d)
 -- Etsy Ledger                         -> etsy_ledger_lines
 -- eBay Transaction Report             -> ebay_transaction_lines
 -- eBay Freight Invoice                -> ebay_freight_invoice_lines

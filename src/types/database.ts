@@ -12,6 +12,164 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      bank_recon_accounts: {
+        Row: {
+          id: string;
+          company_id: string;
+          account_type: string;
+          account_name: string;
+          bank_name: string | null;
+          account_number: string | null;
+          card_label: string | null;
+          statement_kind: string;
+          company_share_pct: number | null;
+          opening_balance: number | null;
+          active: boolean;
+          notes: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          account_type: string;
+          account_name: string;
+          bank_name?: string | null;
+          account_number?: string | null;
+          card_label?: string | null;
+          statement_kind?: string;
+          company_share_pct?: number | null;
+          opening_balance?: number | null;
+          active?: boolean;
+          notes?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          account_type?: string;
+          account_name?: string;
+          bank_name?: string | null;
+          account_number?: string | null;
+          card_label?: string | null;
+          statement_kind?: string;
+          company_share_pct?: number | null;
+          opening_balance?: number | null;
+          active?: boolean;
+          notes?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "bank_recon_accounts_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_recon_accounts_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      bank_recon_links: {
+        Row: {
+          id: string;
+          statement_line_id: string;
+          target_type: string;
+          target_id: string;
+          target_label: string;
+          target_company_id: string | null;
+          matched_amount: number | null;
+          match_method: string;
+          match_score: number | null;
+          verified_by_employee_id: string | null;
+          verified_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          statement_line_id: string;
+          target_type: string;
+          target_id: string;
+          target_label: string;
+          target_company_id?: string | null;
+          matched_amount?: number | null;
+          match_method?: string;
+          match_score?: number | null;
+          verified_by_employee_id?: string | null;
+          verified_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          statement_line_id?: string;
+          target_type?: string;
+          target_id?: string;
+          target_label?: string;
+          target_company_id?: string | null;
+          matched_amount?: number | null;
+          match_method?: string;
+          match_score?: number | null;
+          verified_by_employee_id?: string | null;
+          verified_at?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "bank_recon_links_statement_line_id_fkey";
+            columns: ["statement_line_id"];
+            isOneToOne: false;
+            referencedRelation: "bank_statement_lines";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_recon_links_verified_by_employee_id_fkey";
+            columns: ["verified_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      bank_statement_columns: {
+        Row: {
+          id: string;
+          account_id: string;
+          file_header: string;
+          maps_to: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          account_id: string;
+          file_header: string;
+          maps_to: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          account_id?: string;
+          file_header?: string;
+          maps_to?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "bank_statement_columns_account_id_fkey";
+            columns: ["account_id"];
+            isOneToOne: false;
+            referencedRelation: "bank_recon_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       amazon_transactions: {
         Row: {
           id: string;
@@ -177,6 +335,7 @@ export type Database = {
         Row: {
           id: string;
           company_id: string;
+          recon_account_id: string | null;
           txn_no: string | null;
           txn_date: string | null;
           description: string | null;
@@ -187,11 +346,23 @@ export type Database = {
           balance: number | null;
           kims_remarks: string | null;
           status: string | null;
+          recon_status: string;
+          linked_party_id: string | null;
+          linked_store_id: string | null;
+          linked_bill_id: string | null;
+          linked_order_id: string | null;
+          linked_reference: string | null;
+          linked_at: string | null;
+          linked_by_employee_id: string | null;
+          match_method: string | null;
+          import_fingerprint: string | null;
+          imported_batch_id: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           company_id: string;
+          recon_account_id?: string | null;
           txn_no?: string | null;
           txn_date?: string | null;
           description?: string | null;
@@ -202,11 +373,23 @@ export type Database = {
           balance?: number | null;
           kims_remarks?: string | null;
           status?: string | null;
+          recon_status?: string;
+          linked_party_id?: string | null;
+          linked_store_id?: string | null;
+          linked_bill_id?: string | null;
+          linked_order_id?: string | null;
+          linked_reference?: string | null;
+          linked_at?: string | null;
+          linked_by_employee_id?: string | null;
+          match_method?: string | null;
+          import_fingerprint?: string | null;
+          imported_batch_id?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           company_id?: string;
+          recon_account_id?: string | null;
           txn_no?: string | null;
           txn_date?: string | null;
           description?: string | null;
@@ -217,6 +400,17 @@ export type Database = {
           balance?: number | null;
           kims_remarks?: string | null;
           status?: string | null;
+          recon_status?: string;
+          linked_party_id?: string | null;
+          linked_store_id?: string | null;
+          linked_bill_id?: string | null;
+          linked_order_id?: string | null;
+          linked_reference?: string | null;
+          linked_at?: string | null;
+          linked_by_employee_id?: string | null;
+          match_method?: string | null;
+          import_fingerprint?: string | null;
+          imported_batch_id?: string | null;
           created_at?: string;
         };
         Relationships: [

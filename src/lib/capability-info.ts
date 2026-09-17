@@ -130,6 +130,13 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // flag an entry from the order detail page.
   { code: "error_log_view", label: "Error Tab", icon: "⚠️", href: "/dashboard/error-log",
     description: "Wrong entries in one place — form validation failures, failed courier bookings, and staff-flagged mistakes, with who/when and a resolved/pending status." },
+  // 2026-09-17: Bank & Card Reconciliation — see db/2026-09-17-bank-recon.sql.
+  // Deliberately its own capability (Finance/Admin/MD grant to start): it
+  // shows real bank balances + card outstanding, more sensitive than
+  // bill_payment alone. Finance also keeps csv_upload, so Finance can do
+  // the whole flow without a permissions change.
+  { code: "bank_recon", label: "Bank & Card Reconciliation", icon: "🏦", href: "/dashboard/bank-recon",
+    description: "Add every bank account and credit card, upload their statements (any format auto-maps), and auto-match UTR / reference / invoice / party / store payouts — old payments are never modified." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {
