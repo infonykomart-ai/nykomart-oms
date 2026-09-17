@@ -3,9 +3,7 @@ import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capabil
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
-import { DashboardDock } from "@/components/dashboard-dock";
 import { DashboardMain } from "@/components/dashboard-main";
-import { NavStyleProvider } from "@/components/nav-style-context";
 import { redirect } from "next/navigation";
 import { CelebrationProvider } from "@/components/celebration/celebration-context";
 import { TodaysCelebrationsBanner } from "@/components/celebration/todays-celebrations-banner";
@@ -270,8 +268,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         <HelpCenterProvider articles={helpArticles} hideButton={myThemePrefs?.companion_enabled === true}>
           <ThemeProvider initialThemeId={myThemePrefs?.theme_id ?? null} initialCustomAccent={myThemePrefs?.custom_accent_color ?? null}>
             <ThemedShell>
-              <NavStyleProvider>
-                <ModuleTabsProvider>
+              <ModuleTabsProvider>
                 <DashboardSidebar capabilities={employee.capabilities} />
                 <div className="flex flex-1 flex-col overflow-hidden">
                   <DashboardHeader
@@ -296,14 +293,11 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                     <PageTransition>{children}</PageTransition>
                   </DashboardMain>
                 </div>
-                {/* Bottom-center dock, opt-in alternative to the left
-                    sidebar above — renders nothing unless the employee has
-                    switched to Dock mode (nav-style-context.tsx). `fixed`
-                    positioning takes it out of this flex row regardless of
-                    where it sits in the tree. */}
-                <DashboardDock capabilities={employee.capabilities} />
-                </ModuleTabsProvider>
-              </NavStyleProvider>
+                {/* 2026-09-17 — Dock nav mode (bottom-center bar, opt-in
+                    alternative to the sidebar above) removed entirely per
+                    owner request ("docer remove karna hai"). The sidebar is
+                    now the only nav; see dashboard-sidebar.tsx. */}
+              </ModuleTabsProvider>
             </ThemedShell>
           </ThemeProvider>
           <MessageToastProvider meId={employee.id} employeesById={employeesById} />

@@ -21,6 +21,24 @@ It is not open source and is not intended for reuse outside these three companie
 - **Production**: https://nykomart-oms-oohq.vercel.app/ (Vercel, auto-deploys from `main`)
 - **Database**: PostgreSQL via [Supabase](https://supabase.com) (Postgres + Auth + Storage)
 
+## Recent changes (2026-09-17)
+
+- **Left Work Menu simplified** — the alternative "Dock" bottom-nav mode is removed system-wide.
+  The old hover-to-reveal pin strip + ⋮ options menu is replaced with one explicit button: a ⇤
+  "Hide menu" button in the sidebar header, and a slim ⇥ "Show menu" rail when hidden — same idea
+  as the Claude app's own sidebar collapse control. State persists per browser. Mobile keeps its
+  slide-in drawer, since that's a screen-size adaptation, not a preference.
+- Confirmed working end-to-end this pass (each was built in earlier rounds but not
+  previously written up here): the real CSB-V company invoice going to FedEx electronically
+  (preview, upload, and final download are now the same document), the Stores admin panel
+  (add/rename/deactivate a store, shows its company), manual per-order shipping fields
+  (invoice no./date, weight, dimensions, AWB, courier), auto-"Dispatched" status once both
+  AWB and invoice no. are present, a manual invoice-numbering toggle on Generate Invoice,
+  party-ledger bill status colors (green = paid, amber = pending, red = overdue) with
+  Admin edit/delete on any bill or payment row, the cross-company bill merge (same vendor
+  invoice split across companies, mergeable into one payable row), and the module tab strip
+  (several dashboard modules stay open as tabs at once).
+
 ## What it does
 
 A day-to-day back office covering the full order lifecycle across all three companies, from one
@@ -31,12 +49,19 @@ login (a single sign-in can be granted access to one, two, or all three companie
 - **Dispatch & shipments** — Order Shipments & Packages (multi-package/multi-AWB tracking per
   order), Bulk Tracking Update via CSV, Shipglobal label creation, courier webhook ingestion
   (Delhivery, Shiprocket, UPS, and a generic webhook), a manual courier-rate card and freight cost
-  estimator.
+  estimator, and a manual per-order shipping-details form (invoice no./date, weight, dimensions,
+  AWB/tracking no., courier company) for orders not booked through the courier-booking flow —
+  an order auto-flips to **Dispatched** as soon as it has both an AWB no. and an invoice no.
 - **Documents** — Credit/Debit Notes, Washing Entry, Internal Invoice, Purchase/Freight/Duty
-  Bills, CSB-V/CSB-IV export invoices with origin declarations, Shipment Chalan.
+  Bills, CSB-V/CSB-IV export invoices with origin declarations, Shipment Chalan. The CSB-V export
+  invoice is also what's sent to FedEx electronically on international bookings (preview, the
+  file FedEx receives, and the final downloadable document are all the same real company invoice —
+  not a separate simplified one). Generate Invoice also has a manual invoice-numbering toggle, for
+  entering historical/retroactive invoices outside the automatic sequence.
 - **Finance** — Bill Pass Register (unified vendor/courier/salary payable ledger) with a two-level
-  approval workflow, Party Ledger, Office Expenses, Bill Payment, Backup Export (one-click
-  all-orders-and-invoices Excel export).
+  approval workflow, Party Ledger (bills color-coded green/amber/red for paid/pending/overdue,
+  with Admin-only edit/delete on any bill or payment row for fixing mis-entered dates/amounts),
+  Office Expenses, Bill Payment, Backup Export (one-click all-orders-and-invoices Excel export).
 - **Bill Payment extras** — per-bill Credit Notes panel (new CN, link an existing CN, or manual
   register; two CN kinds: buyer refunds vs supplier/courier CNs with GST slabs 5/12/18), a
   multi-AWB mode (one courier credit note split across several AWB bills), one-click Party Ledger
@@ -56,7 +81,8 @@ login (a single sign-in can be granted access to one, two, or all three companie
 - **CRM** — company-wide order-status overview, data-quality alerts, top-buyer tracking, a P&L
   dashboard.
 - **Admin** — Employees, Roles & Permissions (capability-based, not hardcoded roles), Company/Item
-  master data, Help Center, an **Audit Log** for sensitive actions, and a small **Automation Rules
+  master data, a **Stores panel** (add/rename/deactivate a store, showing which company it belongs
+  to), Help Center, an **Audit Log** for sensitive actions, and a small **Automation Rules
   engine** (trigger → condition → action, currently order Hold/Cancel → internal remark/tag).
 - **Security** — capability-based access control re-checked server-side on every action, Row-Level
   Security on every table, encrypted marketplace/courier credentials, HMAC-verified courier

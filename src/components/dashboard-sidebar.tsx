@@ -1,63 +1,55 @@
 "use client";
 
-// 2026-09-15 — "mobile view & tablate view sahi nahi hai ek dusre par chadh
-// rahe hain, page ese hona chahiye ki screen auto adjust hojaye": the sidebar
-// is now width-responsive and phone-aware:
-//
-//   • ≥1024px (lg) — exactly today's behavior: w-72 pinned column, pin/hover
-//     strip, dock switch. Nothing changes on desktop.
-//   • 768–1023px (tablet) — same pinned column but narrower (w-60), so the
-//     page content keeps most of the width instead of the old fixed 288px
-//     squeezing tables under the fold.
-//   • <768px (phone) — the pinned sidebar NEVER takes layout width; it
-//     slides in as a fixed overlay over the page (with a backdrop), opened
-//     from a ☰ button in the header, and auto-closes after choosing a
-//     tile. The hover-strip stays desktop-only (touch has no hover).
-//
-// The pinned-vs-hovered localStorage preference keeps controlling lg+
-// behavior exactly as before; on phones it's ignored in favor of the
-// overlay drawer. Custom event `oms:sidebar-open` (fired by the header's
-// hamburger) is the cross-component open signal — same lightweight
-// pattern the dock already uses internally.
-import { useEffect, useRef, useState } from "react";
+// 2026-09-17 — Two-part request, with screenshots of the Claude app's own
+// left sidebar as the style reference:
+//   (a) "isme se dock (docer) remove karna hai" — remove Dock nav mode
+//       entirely. Done below — no useNavStyle import, no dock early return.
+//   (b) FIRST PASS: "vese pin option nahi rakhna" was read as "remove the
+//       hide/show control entirely" and the whole ⋮ menu + toggle was
+//       deleted. OWNER CORRECTED THIS the same day: "claude ai app me menu
+//       hide karne ka jese option hai vese chahiye tha" — I DID want a
+//       hide-the-menu option, like Claude's own app has. So the toggle is
+//       back, just not as a "pin" (hover-to-reveal strip + ⋮ dropdown) —
+//       a single, explicit click-to-hide / click-to-show button, the way
+//       Claude's own sidebar has one clear collapse control rather than a
+//       hidden options menu. State still persists per browser
+//       (localStorage `oms_sidebar_hidden`), read once on mount behind the
+//       same `mounted` gate pattern used everywhere else in this file so
+//       SSR/first paint never mismatches the client.
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CAPABILITY_INFO } from "@/lib/capability-info";
-import { useNavStyle } from "@/components/nav-style-context";
 
-const PIN_STORAGE_KEY = "oms_sidebar_pinned";
+const HIDDEN_STORAGE_KEY = "oms_sidebar_hidden";
 export const SIDEBAR_OPEN_EVENT = "oms:sidebar-open";
 
 export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const pathname = usePathname();
   const items = CAPABILITY_INFO.filter((c) => capabilities.includes(c.code));
 
-  const [pinned, setPinned] = useState(true);
-  const [hovered, setHovered] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  // 2026-09-17 — ⋮ overflow-menu state. Declared here (top of the component,
-  // before the dock-mode early return below) rather than next to the chrome
-  // JSX: hooks must run in the same order every render, and this component
-  // returns early once navStyle is confirmed "dock".
-  const [moreOpen, setMoreOpen] = useState(false);
-  const chromeRef = useRef<HTMLDivElement | null>(null);
-  // setNavStyle not destructured anymore: the ⋮ menu's dock-switch item was
-  // removed (2026-09-17 amendment) — the only way INTO dock mode is
-  // Settings → navigation preference; the dock's own "⬅️ Switch to sidebar
-  // menu" button remains the way back.
-  const { navStyle, mounted: navStyleMounted } = useNavStyle();
 
   useEffect(() => {
     // Reading localStorage (an external system) on mount, not deriving from
-    // props/state React already knows about — the "mounted" gate above (and
-    // the pinned-layout fallback while !mounted) exists specifically so this
-    // one-time sync can't cause a hydration mismatch.
-    const saved = window.localStorage.getItem(PIN_STORAGE_KEY);
+    // props/state React already knows about — the "mounted" gate exists
+    // specifically so this one-time sync can't cause a hydration mismatch.
+    // Default (unmounted / never-set) is always visible.
+    const saved = window.localStorage.getItem(HIDDEN_STORAGE_KEY);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved !== null) setPinned(saved === "1");
+    if (saved === "1") setHidden(true);
     setMounted(true);
   }, []);
+
+  function toggleHidden() {
+    setHidden((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(HIDDEN_STORAGE_KEY, next ? "1" : "0");
+      return next;
+    });
+  }
 
   // Phone drawer: opened by the header hamburger via the custom event,
   // closed on Escape. (Closing on tile-tap happens in SidebarTile's own
@@ -76,37 +68,6 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
       window.removeEventListener("keydown", onKey);
     };
   }, []);
-
-  // ⋮ overflow menu: click-outside + Escape close it (state declared above,
-  // before the dock-mode early return — hooks order rule).
-  useEffect(() => {
-    if (!moreOpen) return;
-    function onDocPointer(e: PointerEvent) {
-      if (chromeRef.current && !chromeRef.current.contains(e.target as Node)) setMoreOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMoreOpen(false);
-    }
-    document.addEventListener("pointerdown", onDocPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDocPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [moreOpen]);
-
-  function togglePinned() {
-    setPinned((prev) => {
-      const next = !prev;
-      window.localStorage.setItem(PIN_STORAGE_KEY, next ? "1" : "0");
-      return next;
-    });
-  }
-
-  // Dock mode fully replaces this sidebar — see the 2026-09-04 header
-  // comment above. Nothing renders here (not even the thin hover-strip)
-  // once the preference is confirmed as "dock"; DashboardDock takes over.
-  if (navStyleMounted && navStyle === "dock") return null;
 
   const menu = (
     <nav className="flex-1 overflow-y-auto p-3">
@@ -132,19 +93,23 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
     </nav>
   );
 
-  // 2026-09-17 — Gmail-style ⋮ overflow menu, AMENDED per user: the dock
-  // switch and pinned-state line are gone — the ⋮ holds exactly ONE action,
-  // hide/unhide for the Work Menu itself ("📌/⬇️ remove both section. ⋮
-  // Work Menu hide/unhide"). Hide = the old pin-off behavior (collapses to
-  // the 3px hover strip; reopen by hovering it or the header's ☰). Show =
-  // pin it open again. Click-outside + Escape close the menu.
-  const chrome = (closeBtn: boolean) => (
-    <div
-      ref={chromeRef}
-      className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-4 md:px-6"
-    >
+  // Header strip — title, a desktop-only hide button (⇤), and a mobile-only
+  // ✕ close button on the phone drawer. No ⋮ dropdown — one visible button,
+  // one job, same as Claude's own sidebar collapse control.
+  const chrome = (closeBtn: boolean, showHideButton: boolean) => (
+    <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-4 md:px-6">
       <span className="truncate text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
-      <div className="relative flex items-center gap-1">
+      <div className="flex items-center gap-1">
+        {showHideButton && (
+          <button
+            type="button"
+            onClick={toggleHidden}
+            title="Hide menu"
+            className="hidden rounded-lg px-2 py-1.5 text-lg text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)] md:inline-flex"
+          >
+            ⇤
+          </button>
+        )}
         {closeBtn && (
           <button
             type="button"
@@ -154,35 +119,6 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
           >
             ✕
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setMoreOpen((v) => !v)}
-          aria-expanded={moreOpen}
-          aria-haspopup="menu"
-          title="Menu options"
-          className={`rounded-lg px-2.5 py-1.5 text-xl leading-none transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)] ${moreOpen ? "bg-[var(--oms-sidebar-tile-bg)] text-[var(--oms-sidebar-text)]" : "text-[var(--oms-sidebar-text-muted)]"}`}
-        >
-          ⋮
-        </button>
-        {moreOpen && (
-          <div
-            role="menu"
-            className="oms-tile-enter absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-xl border border-[var(--oms-sidebar-border)] bg-[var(--oms-surface)] py-1 shadow-2xl"
-          >
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMoreOpen(false);
-                togglePinned();
-              }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--oms-text)] transition hover:bg-[var(--oms-canvas)]"
-            >
-              <span aria-hidden="true">{pinned ? "⇤" : "⇥"}</span>
-              {pinned ? "Hide menu" : "Show menu (keep open)"}
-            </button>
-          </div>
         )}
       </div>
     </div>
@@ -205,47 +141,38 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {chrome(true)}
+        {chrome(true, false)}
         {menu}
       </aside>
     </div>
   );
 
-  // Render the pinned layout during SSR + first paint (before localStorage
+  // Render the full sidebar during SSR + first paint (before localStorage
   // has been read) so there's no flash of the wrong layout.
-  if (!mounted || pinned) {
-    return (
-      <>
-        {/* ≥md: pinned in-flow column (w-72 desktop / w-60 tablet) */}
-        <aside className="oms-sidebar hidden w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] md:flex lg:w-60">
-          {chrome(false)}
-          {menu}
-        </aside>
-        {drawer}
-      </>
-    );
-  }
+  const showFull = !mounted || !hidden;
 
-  // Unpinned (desktop hover-strip) layout — the strip itself is desktop-only.
   return (
     <>
-      <div
-        className="hidden md:block"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <div className="group flex h-full w-3 shrink-0 cursor-pointer flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3">
-          <div className="h-10 w-1 rounded-full bg-[var(--oms-sidebar-tile-border)] transition group-hover:bg-[var(--oms-accent)]" />
-        </div>
-        <aside
-          className={`oms-sidebar fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] shadow-2xl transition-transform duration-200 ease-out lg:w-60 ${
-            hovered ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
-          {chrome(false)}
+      {showFull ? (
+        // ≥md: always-visible in-flow column (w-72 desktop / w-60 tablet).
+        <aside className="oms-sidebar hidden w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] md:flex lg:w-60">
+          {chrome(false, true)}
           {menu}
         </aside>
-      </div>
+      ) : (
+        // Hidden: a slim always-there rail with just one button to bring
+        // the menu back — same idea as Claude's own collapsed sidebar edge.
+        <div className="hidden w-10 shrink-0 flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3 md:flex">
+          <button
+            type="button"
+            onClick={toggleHidden}
+            title="Show menu"
+            className="rounded-lg px-2 py-1.5 text-lg text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+          >
+            ⇥
+          </button>
+        </div>
+      )}
       {drawer}
     </>
   );

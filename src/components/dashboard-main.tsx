@@ -1,16 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useNavStyle } from "@/components/nav-style-context";
 
 /**
- * 2026-09-04 — thin client wrapper around dashboard/layout.tsx's <main>,
- * existing only so it can read NavStyleContext and add bottom padding
- * while Dock mode is active. DashboardDock is `fixed` to the bottom of the
- * viewport, above page content, so without this the last bit of scrollable
- * page content would sit underneath it. Sidebar mode (default, and every
- * page before this preference has been read on mount) is untouched — same
- * `p-6` as before, byte-for-byte.
+ * 2026-09-04 — thin client wrapper around dashboard/layout.tsx's <main>.
+ *
+ * 2026-09-17 — Dock nav mode (and its NavStyleContext) was removed entirely
+ * per owner request, so this no longer needs to read any nav-style
+ * preference or add extra bottom padding for it — just the fixed
+ * MessengerPopup/AI-Companion clearance from the 2026-09-10 note below.
  *
  * 2026-09-10 — "pich button chup raha hai": the SAME class of problem as
  * the Dock-nav one above, just from two DIFFERENT always-on-top fixed
@@ -39,13 +37,8 @@ import { useNavStyle } from "@/components/nav-style-context";
  * correctly even when this main pane is sharing width with the sidebar.
  */
 export function DashboardMain({ children }: { children: ReactNode }) {
-  const { navStyle, mounted } = useNavStyle();
-  const dockActive = mounted && navStyle === "dock";
-
   return (
-    <main
-      className={`@container flex-1 overflow-y-auto p-3 md:p-6 ${dockActive ? "pb-28" : "pb-24"}`}
-    >
+    <main className="@container flex-1 overflow-y-auto p-3 pb-24 md:p-6">
       {children}
     </main>
   );
