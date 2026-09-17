@@ -42,7 +42,11 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   // returns early once navStyle is confirmed "dock".
   const [moreOpen, setMoreOpen] = useState(false);
   const chromeRef = useRef<HTMLDivElement | null>(null);
-  const { navStyle, mounted: navStyleMounted, setNavStyle } = useNavStyle();
+  // setNavStyle not destructured anymore: the ⋮ menu's dock-switch item was
+  // removed (2026-09-17 amendment) — the only way INTO dock mode is
+  // Settings → navigation preference; the dock's own "⬅️ Switch to sidebar
+  // menu" button remains the way back.
+  const { navStyle, mounted: navStyleMounted } = useNavStyle();
 
   useEffect(() => {
     // Reading localStorage (an external system) on mount, not deriving from
@@ -128,18 +132,12 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
     </nav>
   );
 
-  // 2026-09-17 — Gmail-style overflow menu ("pin ka option ki jagah three
-  // dot vala jese gmail me aata hai. ya us se best"): the 📌 pin toggle and
-  // ⬇️ dock-switch buttons are folded into ONE ⋮ dropdown so the header
-  // reads as a clean "Work Menu" bar instead of a button cluster.
-  // Items:
-  //   • Collapse menu  — same hide-to-hover-strip behavior the pin button
-  //     had (reopen with the header's ☰ or by hovering the strip).
-  //   • Bottom Dock menu — replaces the always-visible ⬇️ button; switch
-  //     BACK is still the dock's own "⬅️ Switch to sidebar menu" button.
-  //   • Pinned ✓ / Unpinned — read-only state line, so the old pin concept
-  //     is still discoverable without its own button.
-  // Click-outside + Escape close it; it's the drawer's ✕ slot on phones.
+  // 2026-09-17 — Gmail-style ⋮ overflow menu, AMENDED per user: the dock
+  // switch and pinned-state line are gone — the ⋮ holds exactly ONE action,
+  // hide/unhide for the Work Menu itself ("📌/⬇️ remove both section. ⋮
+  // Work Menu hide/unhide"). Hide = the old pin-off behavior (collapses to
+  // the 3px hover strip; reopen by hovering it or the header's ☰). Show =
+  // pin it open again. Click-outside + Escape close the menu.
   const chrome = (closeBtn: boolean) => (
     <div
       ref={chromeRef}
@@ -170,7 +168,7 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
         {moreOpen && (
           <div
             role="menu"
-            className="oms-tile-enter absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-[var(--oms-sidebar-border)] bg-[var(--oms-surface)] py-1 shadow-2xl"
+            className="oms-tile-enter absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-xl border border-[var(--oms-sidebar-border)] bg-[var(--oms-surface)] py-1 shadow-2xl"
           >
             <button
               type="button"
@@ -181,30 +179,9 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
               }}
               className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--oms-text)] transition hover:bg-[var(--oms-canvas)]"
             >
-              <span aria-hidden="true">⇤</span>
-              Collapse menu
-              <span className="ml-auto text-[10px] text-[var(--oms-text-muted)]">hover to reopen</span>
+              <span aria-hidden="true">{pinned ? "⇤" : "⇥"}</span>
+              {pinned ? "Hide menu" : "Show menu (keep open)"}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMoreOpen(false);
-                setNavStyle("dock");
-              }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--oms-text)] transition hover:bg-[var(--oms-canvas)]"
-            >
-              <span aria-hidden="true">⬇️</span>
-              Bottom Dock menu
-            </button>
-            <div
-              role="menuitem"
-              aria-disabled="true"
-              className="flex cursor-default items-center gap-2.5 border-t border-[var(--oms-surface-border)] px-3.5 py-2 text-[11px] text-[var(--oms-text-muted)]"
-            >
-              <span aria-hidden="true">{pinned ? "📌" : "─"}</span>
-              {pinned ? "Pinned open" : "Hover strip"}
-            </div>
           </div>
         )}
       </div>
