@@ -181,9 +181,14 @@ export async function importStatement(_prev: ImportState, formData: FormData): P
   const direction = str(formData, "amount_direction"); // 'withdrawal' | 'deposit' | 'auto'
   const insertRows: Record<string, unknown>[] = [];
   const newMappings: { file_header: string; maps_to: string }[] = [];
-  const learnedSet = new Set((learnedRows ?? []).map((l) => `${l.file_header.toLowerCase()}|${l.maps_to}`));
+  // Key on lower(file_header) ONLY — the same shape as the DB's unique
+  // index uq_bank_statement_columns_header (account_id, lower(file_header)).
+  // Including the field in the key (the old code did) would re-insert a
+  // header that's already learned for a DIFFERENT field, violate the index
+  // and silently drop every new mapping in the batch.
+  const learnedSet = new Set((learnedRows ?? []).map((l) => l.file_header.toLowerCase()));
   for (const [header, field] of Object.entries(mapping)) {
-    if (!learnedSet.has(`${header.toLowerCase()}|${field}`)) newMappings.push({ file_header: header, maps_to: field });
+    if (!learnedSet.has(header.toLowerCase())) newMappings.push({ file_header: header, maps_to: field });
   }
 
   for (const r of parsedRows) {
@@ -277,9 +282,11 @@ export async function importStatement(_prev: ImportState, formData: FormData): P
   // next upload of the same bank parses silently (the "auto adjust
   // collom vagera" ask).
   if (newMappings.length) {
-    await supabase.from("bank_statement_columns").insert(
+    // Failure here must not fail the import (data is already in) — just log.
+    const { error: mappingError } = await supabase.from("bank_statement_columns").insert(
       newMappings.map((m) => ({ account_id: accountId, file_header: m.file_header, maps_to: m.maps_to })) as never
     );
+    if (mappingError) console.error("bank_statement_columns save failed:", mappingError.message);
   }
 
   // Auto-match right after import (money-first ladder; only 'exact'

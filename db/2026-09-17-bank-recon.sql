@@ -142,9 +142,15 @@ CREATE TABLE IF NOT EXISTS bank_statement_columns (
   account_id uuid NOT NULL REFERENCES bank_recon_accounts(id) ON DELETE CASCADE,
   file_header text NOT NULL,   -- the bank's own header text, as-is
   maps_to     text NOT NULL CHECK (maps_to IN ('txn_date','description','ref_no','withdrawal','deposit','balance','cheque_no')),
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (account_id, lower(file_header))
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
+-- Postgres does not allow an expression inside a table-level UNIQUE
+-- constraint (that was the 42601 "syntax error at or near (" the first run
+-- hit) — expression uniqueness must be a separate CREATE UNIQUE INDEX.
+-- Case-insensitive so "Txn Date" and "TXN DATE" from the same bank map to
+-- one learned row, not two.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_statement_columns_header
+  ON bank_statement_columns(account_id, lower(file_header));
 
 -- ---------------------------------------------------------------------------
 -- 5. Capability + role grants (data change, not a redeploy — see roles/

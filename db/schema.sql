@@ -4557,9 +4557,12 @@ CREATE TABLE bank_statement_columns (
   account_id  uuid NOT NULL REFERENCES bank_recon_accounts(id) ON DELETE CASCADE,
   file_header text NOT NULL,
   maps_to     text NOT NULL CHECK (maps_to IN ('txn_date','description','ref_no','withdrawal','deposit','balance','cheque_no')),
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (account_id, lower(file_header))
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
+-- Postgres: table-level UNIQUE can't take an expression (42601 "syntax
+-- error at or near (") - expression uniqueness must be its own index.
+CREATE UNIQUE INDEX uq_bank_statement_columns_header
+  ON bank_statement_columns(account_id, lower(file_header));
 
 
 -- =============================================================================
