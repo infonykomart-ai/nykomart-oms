@@ -519,6 +519,18 @@ export async function saveCourierShipperProfile(_prev: ShipperProfileState, form
   return { error: null, success: true };
 }
 
+// 2026-09-17 — "delete ka option" on the shipper profile view card.
+// Clears the whole row for this company (the form above rebuilds it from
+// scratch); re-checks the capability server-side like every action here.
+export async function deleteCourierShipperProfile(_prev: ShipperProfileState, _formData: FormData): Promise<ShipperProfileState> {
+  const employee = await requireCapability("courier_booking_shipment");
+  const supabase = createServiceRoleClient();
+  const { error } = await supabase.from("courier_shipper_profiles").delete().eq("company_id", employee.currentCompanyId);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/courier-booking");
+  return { error: null, success: true };
+}
+
 // -----------------------------------------------------------------------
 // Shared plumbing every create* action below uses.
 // -----------------------------------------------------------------------
@@ -1324,8 +1336,14 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
-  const accountNumber = str(formData, "fedex_account_number");
-  if (!accountNumber) return { ...CREATE_INITIAL, error: "FedEx Account Number is required." };
+  // 2026-09-17 — "dropdown se company select karte hi automatically sabhi
+  // cheezein company profile ke hisab se ho jaye": the account number is
+  // the company's OWN saved value (Account Setup), with the form field as
+  // a visible override. Never the reverse — a mistyped/pasted number in
+  // the form was exactly how the *****1514 mismatch got booked repeatedly.
+  const savedFedex = await resolveCourierCredentials(supabase, employee.currentCompanyId, "fedex");
+  const accountNumber = str(formData, "fedex_account_number").trim() || (savedFedex.account_number ?? "").replace(/\D/g, "");
+  if (!accountNumber) return { ...CREATE_INITIAL, error: "FedEx Account Number is required — save it once in Courier Ops → Account Setup → FedEx and it will fill automatically hereafter." };
 
   const shipper = await resolveShipperProfile(supabase, employee.currentCompanyId);
   if (!shipper) return { ...CREATE_INITIAL, error: "No shipper profile set up for this company yet — fill in the shipper profile section above first." };
@@ -1582,8 +1600,9 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
-  const shipperNumber = str(formData, "ups_shipper_number");
-  if (!shipperNumber) return { ...CREATE_INITIAL, error: "UPS Shipper Number is required." };
+  const savedUps = await resolveCourierCredentials(supabase, employee.currentCompanyId, "ups");
+  const shipperNumber = str(formData, "ups_shipper_number").trim() || (savedUps.shipper_number ?? "");
+  if (!shipperNumber) return { ...CREATE_INITIAL, error: "UPS Shipper Number is required — save it once in Courier Ops → Account Setup → UPS and it will fill automatically hereafter." };
 
   const shipper = await resolveShipperProfile(supabase, employee.currentCompanyId);
   if (!shipper) return { ...CREATE_INITIAL, error: "No shipper profile set up for this company yet — fill in the shipper profile section above first." };
@@ -1759,8 +1778,9 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
-  const accountNumber = str(formData, "aramex_account_number");
-  if (!accountNumber) return { ...CREATE_INITIAL, error: "Aramex Account Number is required." };
+  const savedAramex = await resolveCourierCredentials(supabase, employee.currentCompanyId, "aramex");
+  const accountNumber = str(formData, "aramex_account_number").trim() || (savedAramex.account_number ?? "");
+  if (!accountNumber) return { ...CREATE_INITIAL, error: "Aramex Account Number is required — save it once in Courier Ops → Account Setup → Aramex and it will fill automatically hereafter." };
 
   const shipper = await resolveShipperProfile(supabase, employee.currentCompanyId);
   if (!shipper) return { ...CREATE_INITIAL, error: "No shipper profile set up for this company yet — fill in the shipper profile section above first." };
@@ -2228,8 +2248,9 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
-  const accountNumber = str(formData, "dhl_account_number");
-  if (!accountNumber) return { ...CREATE_INITIAL, error: "DHL Express Account Number is required." };
+  const savedDhl = await resolveCourierCredentials(supabase, employee.currentCompanyId, "dhl");
+  const accountNumber = str(formData, "dhl_account_number").trim() || (savedDhl.account_number ?? "");
+  if (!accountNumber) return { ...CREATE_INITIAL, error: "DHL Express Account Number is required — save it once in Courier Ops → Account Setup → DHL and it will fill automatically hereafter." };
 
   const shipper = await resolveShipperProfile(supabase, employee.currentCompanyId);
   if (!shipper) return { ...CREATE_INITIAL, error: "No shipper profile set up for this company yet — fill in the shipper profile section above first." };

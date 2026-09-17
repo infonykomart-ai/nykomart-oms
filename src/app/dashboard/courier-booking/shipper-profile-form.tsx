@@ -20,8 +20,8 @@
 //     card returns showing the NEW values automatically.
 //   • The summary line now carries a live status chip — setup state is
 //     obvious without opening anything.
-import { useActionState, useState } from "react";
-import { saveCourierShipperProfile, type ShipperProfileState } from "./actions";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { deleteCourierShipperProfile, saveCourierShipperProfile, type ShipperProfileState } from "./actions";
 
 const initialState: ShipperProfileState = { error: null, success: false };
 const inputClass =
@@ -54,6 +54,21 @@ export function ShipperProfileForm({ existing, companyName }: { existing: Existi
   // profile exists — without one there is nothing to view, so the form is
   // the only state (matching the old behavior for first-time setup).
   const [mode, setMode] = useState<"view" | "edit">(existing ? "view" : "edit");
+  // 2026-09-17 — "save karne ke baad bhi yahi aara (new form)": `mode` is
+  // mount-time state, so after a FIRST successful save the server re-render
+  // brought the new `existing` prop but the component stayed stuck in
+  // "edit" — exactly the "is it saved or not?" confusion this file was
+  // rebuilt to kill. Flip to the view card as soon as a save succeeds.
+  const prevSuccess = useRef(initialState.success);
+  useEffect(() => {
+    if (state.success && !prevSuccess.current && existing) setMode("view");
+    prevSuccess.current = state.success;
+  }, [state.success, existing]);
+  // Delete (2026-09-17 — "delete ka option"): clears the company's profile
+  // entirely (e.g. typed for the wrong company). Server action re-checks
+  // everything; window.confirm keeps it a deliberate two-step.
+  const [deleteState, deleteAction, deletePending] = useActionState(deleteCourierShipperProfile, initialState);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const summary = (
     <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">
@@ -122,6 +137,36 @@ export function ShipperProfileForm({ existing, companyName }: { existing: Existi
           >
             ✏️ Edit Profile
           </button>
+          {confirmingDelete ? (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-xs text-slate-500">Delete this profile for {companyName}?</span>
+              <form action={deleteAction} className="inline">
+                <button
+                  type="submit"
+                  disabled={deletePending}
+                  className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
+                >
+                  {deletePending ? "Deleting..." : "Yes, delete"}
+                </button>
+              </form>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                Keep it
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
+            >
+              🗑 Delete Profile
+            </button>
+          )}
+          {deleteState.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{deleteState.error}</p>}
         </div>
       </details>
     );

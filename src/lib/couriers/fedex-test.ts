@@ -91,15 +91,45 @@ export async function testFedexConnection(credentials: {
       signal: AbortSignal.timeout(25000),
     });
     const text = await res.text();
-    let parsed: { output?: unknown; errors?: Array<{ message?: string }> } | null = null;
+    let parsed: {
+      output?: { rateReplyDetails?: Array<{ ratedShipmentDetails?: Array<{ rateType?: string; totalNetCharge?: number; currency?: string }> }> };
+      errors?: Array<{ message?: string }>;
+      alerts?: Array<{ message?: string }>;
+    } | null = null;
     try {
       parsed = JSON.parse(text);
     } catch {
       // fall through — non-JSON is treated as an error below
     }
 
-    if (res.ok && parsed?.output) {
+    // THE FALSE POSITIVE THIS CHECK EXISTS FOR (the exact live bug this
+    // round — Test connection said ✓ but the very next real booking 400'd
+    // with "Account number not found"): FedEx's Rate API answers HTTP 200
+    // with output.rateReplyDetails EVEN WHEN the account number is
+    // rejected — it just silently prices the quote on published LIST
+    // rates instead of the account's negotiated rates. A bare res.ok
+    // therefore proves nothing about the account. The honest signal is
+    // rateType === "ACCOUNT" in the response: FedEx only produces that
+    // when it actually priced against THIS account number — which is the
+    // thing a booking needs. (Same response-shape parsing as
+    // fedex-rate.ts, including totalNetCharge being a plain number.)
+    const allRateDetails = (parsed?.output?.rateReplyDetails ?? []).flatMap((d) => d.ratedShipmentDetails ?? []);
+    const accountPriced = allRateDetails.find((r) => r.rateType === "ACCOUNT" && r.totalNetCharge != null);
+
+    if (res.ok && accountPriced) {
       return { ok: true, accountMasked, keySource };
+    }
+
+    if (res.ok && !accountPriced) {
+      const warn = parsed?.alerts?.map((a) => a.message).filter(Boolean).join("; ");
+      return {
+        ok: false,
+        accountMasked,
+        error:
+          `FedEx answered the rate request but priced it on LIST rates, not THIS account (${accountMasked}) — meaning the account number is NOT linked to this API key's organization, exactly why a real booking would fail with "Account number not found".` +
+          (warn ? ` FedEx said: ${warn}` : "") +
+          ` Fix the number, or save this company's own Client ID + Secret (whose org the account IS linked to) and Save.`,
+      };
     }
 
     const msg = parsed?.errors?.map((e) => e.message).filter(Boolean).join("; ") || `HTTP ${res.status}`;
