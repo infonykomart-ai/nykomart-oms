@@ -166,6 +166,27 @@ WHERE r.name IN ('Finance', 'Admin', 'MD')
 ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------
+-- 6. RLS policy (project convention, db/2026-08-08-enable-rls.sql): every
+--    table carries exactly one blanket policy for authenticated. Saves go
+--    through the service-role client anyway, but WITHOUT this any page
+--    read through the anon-key browser client silently returns nothing —
+--    the exact bug hit with courier_shipper_profiles the same day (see
+--    db/2026-09-17-rls-policy-followup.sql).
+-- ---------------------------------------------------------------------------
+ALTER TABLE bank_recon_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bank_recon_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bank_statement_columns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bank_statement_lines ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_authenticated_all ON bank_recon_accounts;
+CREATE POLICY allow_authenticated_all ON bank_recon_accounts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON bank_recon_links;
+CREATE POLICY allow_authenticated_all ON bank_recon_links FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON bank_statement_columns;
+CREATE POLICY allow_authenticated_all ON bank_statement_columns FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON bank_statement_lines;
+CREATE POLICY allow_authenticated_all ON bank_statement_lines FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ---------------------------------------------------------------------------
 -- Sanity checks — run after the file; expected values in comments.
 -- ---------------------------------------------------------------------------
 SELECT count(*) AS recon_accounts_table_exists FROM information_schema.tables
