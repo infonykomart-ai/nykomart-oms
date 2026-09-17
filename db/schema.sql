@@ -1333,6 +1333,42 @@ FROM freight_bills fb
 LEFT JOIN freight_reconciliation_view v ON v.freight_bill_id = fb.id
 GROUP BY fb.id, fb.invoice_no, fb.gross_total_amt;
 
+CREATE VIEW freight_awb_net_view AS
+SELECT
+  a.id AS assignment_id,
+  a.freight_bill_id,
+  a.order_id,
+  a.order_shipment_id,
+  os.awb_no,
+  COALESCE(v.gross_shipping_amt, 0) AS gross_shipping_amt,
+  -- whole-bill CN split pro-rata across the bill's AWBs by gross amount...
+  COALESCE(fb.credit_note_amt, 0)
+    * (COALESCE(v.gross_shipping_amt, 0) / NULLIF(bill_gross.total_gross, 0))
+  -- ...plus this AWB's own captured CN (single-AWB note, user-entered)
+    + COALESCE(a.credit_note_amt, 0)
+    - COALESCE(a.debit_note_amt, 0)   -- a debit note REVERSES a credit (billed later)
+    AS cn_allocated_inr,
+  COALESCE(v.gross_shipping_amt, 0)
+    - (COALESCE(fb.credit_note_amt, 0)
+         * (COALESCE(v.gross_shipping_amt, 0) / NULLIF(bill_gross.total_gross, 0))
+       + COALESCE(a.credit_note_amt, 0)
+       - COALESCE(a.debit_note_amt, 0)) AS net_shipping_amt
+FROM freight_bill_awb_assignments a
+JOIN freight_bills fb ON fb.id = a.freight_bill_id
+LEFT JOIN order_shipments os ON os.id = a.order_shipment_id
+LEFT JOIN freight_reconciliation_view v ON v.assignment_id = a.id
+LEFT JOIN (
+  SELECT x.freight_bill_id, SUM(COALESCE(v2.gross_shipping_amt, 0)) AS total_gross
+  FROM freight_bill_awb_assignments x
+  LEFT JOIN freight_reconciliation_view v2 ON v2.assignment_id = x.id
+  GROUP BY x.freight_bill_id
+) bill_gross ON bill_gross.freight_bill_id = a.freight_bill_id;
+COMMENT ON VIEW freight_awb_net_view IS
+  '2026-09-17: per-AWB NET freight after credit notes — whole-bill CN split '
+  'pro-rata by AWB gross (user-approved auto rule) + the AWB''s own '
+  'credit_note_amt/debit_note_amt (manual single-AWB capture). Feeds the P&L '
+  'courier expense net of CNs. Bill payable (bill_pass_register) unchanged.';
+
 -- 2026-09-14 — FedEx ledger mismatch diagnosis ("fedex ke jitne ke bill
 -- apne pass credit match huye ... lekin phir bhi match nahi ho raha
 -- credit note adjust karne vala fourmula ki vajh se to nahi ho raha kahi
@@ -1422,6 +1458,38 @@ LEFT JOIN freight_reconciliation_view frv ON frv.order_id = a.order_id;
 -- number is a per-company-per-FY running sequence, exactly like the old
 -- doc_number_formula()).
 -- =============================================================================
+
+CREATE VIEW duty_awb_net_view AS
+SELECT
+  a.id AS assignment_id,
+  a.duty_tax_bill_id,
+  a.order_id,
+  a.order_shipment_id,
+  os.awb_no,
+  COALESCE(v.duty_gross_amt, 0) AS gross_duty_amt,
+  COALESCE(dtb.credit_note_amt, 0)
+    * (COALESCE(v.duty_gross_amt, 0) / NULLIF(bill_gross.total_gross, 0))
+    + COALESCE(a.credit_note_amt, 0)
+    - COALESCE(a.debit_note_amt, 0)
+    AS cn_allocated_inr,
+  COALESCE(v.duty_gross_amt, 0)
+    - (COALESCE(dtb.credit_note_amt, 0)
+         * (COALESCE(v.duty_gross_amt, 0) / NULLIF(bill_gross.total_gross, 0))
+       + COALESCE(a.credit_note_amt, 0)
+       - COALESCE(a.debit_note_amt, 0)) AS net_duty_amt
+FROM duty_bill_awb_assignments a
+JOIN duty_tax_bills dtb ON dtb.id = a.duty_tax_bill_id
+LEFT JOIN order_shipments os ON os.id = a.order_shipment_id
+LEFT JOIN duty_reconciliation_view v ON v.assignment_id = a.id
+LEFT JOIN (
+  SELECT x.duty_tax_bill_id, SUM(COALESCE(v2.duty_gross_amt, 0)) AS total_gross
+  FROM duty_bill_awb_assignments x
+  LEFT JOIN duty_reconciliation_view v2 ON v2.assignment_id = x.id
+  GROUP BY x.duty_tax_bill_id
+) bill_gross ON bill_gross.duty_tax_bill_id = a.duty_tax_bill_id;
+COMMENT ON VIEW duty_awb_net_view IS
+  '2026-09-17: per-AWB NET duty after credit notes — same auto-proportional '
+  'CN split as freight_awb_net_view, by duty gross amount.';
 
 CREATE TABLE washing_entries (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2438,21 +2506,27 @@ WITH order_refund_totals AS (
   FROM order_refunds
   GROUP BY order_id
 ),
+-- 2026-09-17 (late): NET courier/duty — freight/duty AWB gross MINUS their
+-- allocated CN share (freight_awb_net_view / duty_awb_net_view above).
 courier_agg AS (
-  SELECT cd.company_id,
-    SUM(COALESCE(cd.courier_expense_inr,0)) FILTER (WHERE o.status <> 'Cancelled') AS courier_inr,
-    SUM(COALESCE(cd.duty_expense_inr,0))    FILTER (WHERE o.status <> 'Cancelled') AS duty_inr
+  SELECT o.company_id,
+    SUM(COALESCE(fn.net_shipping_amt, 0)) FILTER (WHERE o.status <> 'Cancelled') AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     FILTER (WHERE o.status <> 'Cancelled') AS duty_net_inr
   FROM orders o
-  LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
-  GROUP BY cd.company_id
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id
 ),
 order_agg AS (
   SELECT o.company_id,
-    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) FILTER (WHERE o.status <> 'Cancelled')               AS total_sale_value_inr,
-    SUM(COALESCE(cd.courier_expense_inr,0) + COALESCE(cd.duty_expense_inr,0)) FILTER (WHERE o.status <> 'Cancelled') AS order_expenses_inr
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) FILTER (WHERE o.status <> 'Cancelled') AS total_sale_value_inr,
+    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0)) FILTER (WHERE o.status <> 'Cancelled') AS order_expenses_inr
   FROM orders o
-  LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
-  LEFT JOIN order_refund_totals ort            ON ort.order_id = o.id
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
+  WHERE o.status <> 'Cancelled'
   GROUP BY o.company_id
 ),
 purchase_agg AS (
@@ -2461,11 +2535,6 @@ purchase_agg AS (
   WHERE company_id IS NOT NULL
   GROUP BY company_id
 ),
--- 2026-08-27: Debit/Credit Note adjustments applied against a
--- source='purchase_bill' bill_pass_register row net OUT of purchase
--- expense (a debit note for a vendor shortage/return means we really
--- spent less than the bill's face value) — see
--- db/2026-08-27-note-linking-and-adjustments.sql.
 purchase_adjustments AS (
   SELECT bpr.company_id, SUM(a.amount) AS adjustment_total_inr
   FROM bill_pass_register_adjustments a
@@ -2473,26 +2542,11 @@ purchase_adjustments AS (
   WHERE bpr.source = 'purchase_bill'
   GROUP BY bpr.company_id
 ),
--- 2026-09-17: washing chalans become a real P&L expense line (amount +
--- debit charges). Removes the old "manual Expenses entry required" gap —
--- see file header. FY/date validation guards chalan_date (2026-09-17).
 washing_agg AS (
   SELECT company_id, SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
   FROM washing_entries
   GROUP BY company_id
 ),
--- 2026-09-17 marketplace-fee hybrid. Aggregated PER SOURCE first (so a
--- data quirk matching one order in two marketplaces can't multiply rows),
--- then per order, then per company. Same matching keys as
--- src/lib/orders/marketplace-fees.ts (leading '#' trimmed, both sides).
--- COST CONVENTION: every source below yields a POSITIVE = fee cost number —
---   Etsy  fees_and_taxes is NEGATIVE for charges / positive for credits,
---         so cost = −SUM(fees_and_taxes) (a credit reduces cost);
---   eBay  tax-invoice lines are charges, cost = +SUM(total_amount * rate);
---   Amazon amazon_fees are charges, cost = +SUM(amazon_fees * rate).
--- Conversions use the official exchange-rate master as of each fee line's
--- own date (Etsy ledger is already INR; a missing rate row skips the
--- line — verification query at the end lists those).
 etsy_fee_by_order AS (
   SELECT o.id AS order_id, SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
   FROM orders o
@@ -2535,10 +2589,6 @@ marketplace_fee_totals AS (
     AND (e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL)
   GROUP BY o.company_id
 ),
--- 2026-09-17 (evening): verified bank inflow per company — linked CREDIT
--- statement lines only (bank_recon_links join), split by what they linked
--- to. The P&L shows the TOTAL (bank_inflow_inr) next to order value so the
--- "order value vs paisa actually aaya" difference is one glance.
 bank_inflow AS (
   SELECT bsl.company_id,
     SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
@@ -2549,7 +2599,6 @@ bank_inflow AS (
   GROUP BY bsl.company_id
 ),
 historical_agg AS (
-  -- pre-`orders`-table CSV backfill rows only — see comment above.
   SELECT company_id, SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
   FROM sale_profit_ledger
   WHERE order_id IS NULL
@@ -2563,8 +2612,8 @@ combined AS (
       + (COALESCE(pa.purchase_expenses_gross_inr,0) - COALESCE(padj.adjustment_total_inr,0))
       + COALESCE(wa.washing_inr, 0)
       + COALESCE(ha.hist_expense_inr,0) AS total_expenses_inr,
-    COALESCE(ca.courier_inr, 0)   AS expense_courier_inr,
-    COALESCE(ca.duty_inr, 0)      AS expense_duty_inr,
+    COALESCE(ca.courier_net_inr, 0)             AS expense_courier_inr,
+    COALESCE(ca.duty_net_inr, 0)                AS expense_duty_inr,
     COALESCE(pa.purchase_expenses_gross_inr, 0) AS expense_purchase_inr,
     -COALESCE(padj.adjustment_total_inr, 0)     AS expense_purchase_adjustments_inr,
     COALESCE(wa.washing_inr, 0)                 AS expense_washing_inr,
@@ -2587,16 +2636,21 @@ SELECT
   total_expenses_inr,
   (total_sale_value_inr - total_expenses_inr)                          AS net_total_value,
   (total_sale_value_inr * 0.25)                                        AS portal_expenses_25pct,
-  -- 2026-09-17: net_earn now uses the HYBRID portal expense — the flat
-  -- 25% estimate minus the real matched Etsy/eBay/Amazon fee COST
-  -- (portal_fees_matched_inr is positive = cost, credits already netted
-  -- per source), never below zero. portal_expenses_25pct stays the raw
-  -- estimate so the two are always comparable.
-  ((total_sale_value_inr - total_expenses_inr) - GREATEST((total_sale_value_inr * 0.25) - portal_fees_matched_inr, 0)) AS net_earn,
-  (((total_sale_value_inr - total_expenses_inr) - GREATEST((total_sale_value_inr * 0.25) - portal_fees_matched_inr, 0)) / NULLIF(total_sale_value_inr, 0)) AS profit_pct,
+  -- 2026-09-17 (late): REAL-IF-KNOWN portal expense — matched fees when
+  -- any exist for this scope, else the 25% estimate (user-approved).
+  CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+       ELSE (total_sale_value_inr * 0.25) END                          AS portal_expense_effective_inr,
+  ((total_sale_value_inr - total_expenses_inr)
+     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+            ELSE (total_sale_value_inr * 0.25) END)                    AS net_earn,
+  (((total_sale_value_inr - total_expenses_inr)
+     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+            ELSE (total_sale_value_inr * 0.25) END) / NULLIF(total_sale_value_inr, 0)) AS profit_pct,
   COALESCE(ie.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
-  (((total_sale_value_inr - total_expenses_inr) - GREATEST((total_sale_value_inr * 0.25) - portal_fees_matched_inr, 0)) - COALESCE(ie.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
-  -- 2026-09-17 breakdown (appended at the end — see file header):
+  (((total_sale_value_inr - total_expenses_inr)
+     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+            ELSE (total_sale_value_inr * 0.25) END)
+     - COALESCE(ie.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
   expense_courier_inr,
   expense_duty_inr,
   expense_purchase_inr,
@@ -2611,24 +2665,13 @@ LEFT JOIN (
   FROM internal_expenses GROUP BY company_id
 ) ie ON ie.company_id = combined.company_id;
 COMMENT ON VIEW pl_dashboard_by_company_view IS
-  '2026-08-20: rebuilt to be live off orders.order_value_inr + Courier/Duty reconciliation + purchase_bills '
-  '(company-wide) instead of only the CSV-imported sale_profit_ledger. 2026-08-27: purchase expense nets out '
-  'Debit/Credit Note adjustments. 2026-09-17: +expense breakdown columns, WASHING (washing_entries amount+'
-  'debit_charges) now folds into total_expenses_inr automatically, and net_earn uses the HYBRID portal expense '
-  '(25% estimate − real matched Etsy/eBay/Amazon fees, clamped at 0) — see db/2026-09-17-pl-expense-breakdown.sql. '
-  'Do NOT also log washing chalans as manual Expenses rows (double count).';
+  '2026-09-17 (late): portal expense is REAL-IF-KNOWN — matched Etsy/eBay/Amazon fees when the scope has '
+  'any, else the flat 25% estimate (portal_expense_effective_inr; the raw estimate stays in '
+  'portal_expenses_25pct for comparison). Courier/duty expense is now NET of credit notes '
+  '(auto-proportional per-AWB CN split + per-AWB manual notes — see freight_awb_net_view / '
+  'duty_awb_net_view). History: 2026-08-20 live rebuild, 2026-08-25 refund netting, 2026-08-27 '
+  'purchase adjustments, 2026-09-17 breakdown columns + washing + fee hybrid.';
 
--- 2026-08-20: rebuilt off a `months` CTE unioning distinct months from
--- orders.order_date, purchase_bills.vendor_invoice_date, the historical
--- (order_id IS NULL) sale_profit_ledger rows' invoice_date, and
--- internal_expenses — so a month with office expenses but zero sales
--- (e.g. rent paid in a slow month) still appears. Existing 5 columns keep
--- the same name/order/type as before; the 2 new columns are appended at
--- the end. See pl_dashboard_by_company_view's comment above for the same
--- "live orders + company-wide purchase + preserved pre-orders history"
--- design and the Cancelled/Returned assumption.
--- 2026-08-25: same refund-netting as pl_dashboard_by_company_view above —
--- see that view's comment for the full reasoning.
 CREATE OR REPLACE VIEW pl_dashboard_by_month_view AS
 WITH months AS (
   SELECT DISTINCT date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
@@ -2648,20 +2691,22 @@ order_refund_totals AS (
 ),
 courier_agg AS (
   SELECT date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(cd.courier_expense_inr,0)) AS courier_inr,
-    SUM(COALESCE(cd.duty_expense_inr,0))    AS duty_inr
+    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
   FROM orders o
-  LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
   WHERE o.status <> 'Cancelled'
   GROUP BY date_trunc('month', o.order_date)
 ),
 order_agg AS (
   SELECT date_trunc('month', o.order_date)::date AS month,
     SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0))                                 AS sale_inr,
-    SUM(COALESCE(cd.courier_expense_inr,0) + COALESCE(cd.duty_expense_inr,0))                  AS order_expense_inr
+    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0))                         AS order_expense_inr
   FROM orders o
-  LEFT JOIN order_courier_duty_expense_view cd ON cd.order_id = o.id
-  LEFT JOIN order_refund_totals ort            ON ort.order_id = o.id
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
   WHERE o.status <> 'Cancelled'
   GROUP BY date_trunc('month', o.order_date)
 ),
@@ -2671,8 +2716,6 @@ purchase_agg AS (
   WHERE vendor_invoice_date IS NOT NULL
   GROUP BY date_trunc('month', vendor_invoice_date)
 ),
--- 2026-08-27: bucketed by the TARGET bill's own invoice_date (the month
--- that purchase expense was originally booked) — see company view.
 purchase_adjustments AS (
   SELECT date_trunc('month', bpr.invoice_date)::date AS month, SUM(a.amount) AS adjustment_total_inr
   FROM bill_pass_register_adjustments a
@@ -2680,15 +2723,12 @@ purchase_adjustments AS (
   WHERE bpr.source = 'purchase_bill' AND bpr.invoice_date IS NOT NULL
   GROUP BY date_trunc('month', bpr.invoice_date)
 ),
--- 2026-09-17: washing bucketed by the CHALAN's own date.
 washing_agg AS (
   SELECT date_trunc('month', chalan_date)::date AS month,
     SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
   FROM washing_entries
   GROUP BY date_trunc('month', chalan_date)
 ),
--- 2026-09-17: matched fees bucketed by the ORDER's month — they offset the
--- 25% estimate, and that estimate is a % of the SAME month's sales.
 etsy_fee_by_order AS (
   SELECT o.id AS order_id,
     date_trunc('month', o.order_date)::date AS month,
@@ -2738,6 +2778,15 @@ marketplace_fee_totals AS (
   WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
   GROUP BY om.month
 ),
+bank_inflow AS (
+  SELECT date_trunc('month', bsl.txn_date)::date AS month,
+    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
+  FROM bank_statement_lines bsl
+  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
+  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
+    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
+  GROUP BY date_trunc('month', bsl.txn_date)
+),
 historical_agg AS (
   SELECT date_trunc('month', invoice_date)::date AS month,
     SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
@@ -2750,16 +2799,6 @@ expense_agg AS (
   FROM internal_expenses
   GROUP BY date_trunc('month', expense_date)
 ),
--- 2026-09-17 (evening): verified bank inflow, month-bucketed by txn_date.
-bank_inflow AS (
-  SELECT date_trunc('month', bsl.txn_date)::date AS month,
-    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
-  FROM bank_statement_lines bsl
-  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
-  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
-    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
-  GROUP BY date_trunc('month', bsl.txn_date)
-),
 combined AS (
   SELECT
     m.month,
@@ -2768,8 +2807,8 @@ combined AS (
       + (COALESCE(pa.purchase_expense_gross_inr, 0) - COALESCE(padj.adjustment_total_inr, 0))
       + COALESCE(wa.washing_inr, 0)
       + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr,
-    COALESCE(ca.courier_inr, 0)   AS expense_courier_inr,
-    COALESCE(ca.duty_inr, 0)      AS expense_duty_inr,
+    COALESCE(ca.courier_net_inr, 0)   AS expense_courier_inr,
+    COALESCE(ca.duty_net_inr, 0)      AS expense_duty_inr,
     COALESCE(pa.purchase_expense_gross_inr, 0) AS expense_purchase_inr,
     -COALESCE(padj.adjustment_total_inr, 0)    AS expense_purchase_adjustments_inr,
     COALESCE(wa.washing_inr, 0)                AS expense_washing_inr,
@@ -2791,11 +2830,19 @@ SELECT
   c.total_sale_value_inr,
   c.total_expenses_inr,
   (c.total_sale_value_inr * 0.25) AS portal_expenses_25pct,
-  ((c.total_sale_value_inr - c.total_expenses_inr) - GREATEST((c.total_sale_value_inr * 0.25) - c.portal_fees_matched_inr, 0)) AS net_earn,
-  (((c.total_sale_value_inr - c.total_expenses_inr) - GREATEST((c.total_sale_value_inr * 0.25) - c.portal_fees_matched_inr, 0)) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
+  CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+       ELSE (c.total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
+  ((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END) AS net_earn,
+  (((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
   COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
-  (((c.total_sale_value_inr - c.total_expenses_inr) - GREATEST((c.total_sale_value_inr * 0.25) - c.portal_fees_matched_inr, 0)) - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
-  -- 2026-09-17 breakdown (appended at the end — see file header):
+  (((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END)
+     - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
   c.expense_courier_inr,
   c.expense_duty_inr,
   c.expense_purchase_inr,
@@ -2808,10 +2855,8 @@ FROM combined c
 LEFT JOIN expense_agg ea ON ea.month = c.month
 ORDER BY c.month DESC;
 COMMENT ON VIEW pl_dashboard_by_month_view IS
-  'Month-wise P&L, live off orders + Courier/Duty + purchase_bills + washing + CSV history (see company view''s '
-  'comment for the 2026-08-20/08-27/09-17 history). 2026-09-17: washing bucketed by chalan_date; matched '
-  'marketplace fees bucketed by the ORDER''s month (they offset that month''s 25% portal estimate) — see '
-  'db/2026-09-17-pl-expense-breakdown.sql.';
+  '2026-09-17 (late): portal expense REAL-IF-KNOWN per month (matched fees when any, else 25%); '
+  'courier/duty NET of CNs. Month-wise history mirrors the company view''s comment.';
 
 
 -- =============================================================================

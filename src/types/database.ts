@@ -7851,6 +7851,7 @@ export type Database = {
           total_expenses_inr: number | null;
           net_total_value: number | null;
           portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
           net_earn: number | null;
           profit_pct: number | null;
           total_internal_expenses_inr: number | null;
@@ -7872,6 +7873,7 @@ export type Database = {
           total_sale_value_inr: number | null;
           total_expenses_inr: number | null;
           portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
           net_earn: number | null;
           profit_pct: number | null;
           total_internal_expenses_inr: number | null;
@@ -7894,6 +7896,32 @@ export type Database = {
           sku_code: string | null;
           product_name: string | null;
           current_stock: number | null;
+        };
+        Relationships: [];
+      };
+      freight_awb_net_view: {
+        Row: {
+          assignment_id: string | null;
+          freight_bill_id: string | null;
+          order_id: string | null;
+          order_shipment_id: string | null;
+          awb_no: string | null;
+          gross_shipping_amt: number | null;
+          cn_allocated_inr: number | null;
+          net_shipping_amt: number | null;
+        };
+        Relationships: [];
+      };
+      duty_awb_net_view: {
+        Row: {
+          assignment_id: string | null;
+          duty_tax_bill_id: string | null;
+          order_id: string | null;
+          order_shipment_id: string | null;
+          awb_no: string | null;
+          gross_duty_amt: number | null;
+          cn_allocated_inr: number | null;
+          net_duty_amt: number | null;
         };
         Relationships: [];
       };

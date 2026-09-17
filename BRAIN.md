@@ -246,6 +246,14 @@ Audit confirmed P&L is accrual (bill-basis — `total_paid`/`balance_due` never 
   AND the full net-profit chain (Sale − Expenses − portal-effective = Net) plus `bank_inflow_inr`
   (verified bank-recon credits, both views) vs order value difference. Month view gained the
   `portal_expenses_25pct` column (it never had one).
+- Same day (late, both user-approved): **portal REAL-IF-KNOWN** — `portal_expense_effective_inr` =
+  matched Etsy/eBay/Amazon fees when the scope has any, else the flat 25% estimate (the earlier
+  "25% − fees" hybrid was wrong: real fees ~10-15%, so a scope with real data must not also carry
+  the leftover estimate). **Courier/Duty CN auto-proportional** — `freight_awb_net_view` /
+  `duty_awb_net_view` split each bill's credit note across its AWBs pro-rata by gross amount (plus
+  each AWB's own manual credit/debit note columns), and P&L courier/duty expense now sums the NET
+  amounts; bill_pass_register payables untouched. Both in db/2026-09-17-pl-cn-allocation-and-
+  portal-real.sql (run AFTER the breakdown migration).
 
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 

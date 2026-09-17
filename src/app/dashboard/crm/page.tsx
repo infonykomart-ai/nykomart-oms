@@ -22,6 +22,7 @@ type PlRow = {
   expense_washing_inr?: number | null;
   expense_historical_inr?: number | null;
   portal_fees_matched_inr?: number | null;
+  portal_expense_effective_inr?: number | null;
   bank_inflow_inr?: number | null;
   total_sale_value_inr?: number | null;
   total_expenses_inr?: number | null;
@@ -47,13 +48,16 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
   const exp = Number(row.total_expenses_inr ?? 0);
   const est25 = Number(row.portal_expenses_25pct ?? sale * 0.25);
   const fees = Number(row.portal_fees_matched_inr ?? 0);
-  const portalEff = Math.max(est25 - fees, 0);
+  // 2026-09-17 (late): REAL-IF-KNOWN — matched fees when the scope has
+  // any, else the 25% estimate (same CASE as the SQL view).
+  const portalEff = fees > 0 ? fees : est25;
   const net = Number(row.net_earn ?? sale - exp - portalEff);
   const bank = Number(row.bank_inflow_inr ?? 0);
   const inflowDiff = bank - sale;
+  const portalMode = fees > 0 ? "real fees" : "25% estimate";
   const lines: Array<[string, number | null | undefined]> = [
-    ["Courier (freight bills)", row.expense_courier_inr],
-    ["Duty (duty bills)", row.expense_duty_inr],
+    ["Courier, net of credit notes", row.expense_courier_inr],
+    ["Duty, net of credit notes", row.expense_duty_inr],
     ["Purchase bills (GST-incl.)", row.expense_purchase_inr],
     ["Debit/Credit Note adjustments", row.expense_purchase_adjustments_inr],
     ["Washing chalans (auto)", row.expense_washing_inr],
@@ -86,7 +90,9 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
             <span className="font-semibold text-rose-600">{inr2(exp)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <span className="text-slate-600">− Portal est. 25% ({inr2(est25)} − fees {inr2(fees)} = {inr2(portalEff)})</span>
+            <span className="text-slate-600">
+              − Portal ({portalMode}{fees > 0 ? `: ${inr2(fees)} matched, estimate was ${inr2(est25)}` : `: ${inr2(est25)}`})
+            </span>
             <span className="font-semibold text-rose-600">{inr2(portalEff)}</span>
           </div>
           <div className="flex items-center justify-between gap-4 border-t border-slate-200 pt-1">
