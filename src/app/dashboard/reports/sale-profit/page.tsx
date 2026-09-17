@@ -171,9 +171,6 @@ export default async function SaleProfitReportPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">💹 Sale & Profit Report</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Per-order revenue vs. Courier+Duty expense — apply filters, then download or send.
-          </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">
           ← Back to Reports

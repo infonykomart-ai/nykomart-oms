@@ -26,10 +26,6 @@ export default async function LetterPage({ params }: { params: Promise<{ slug: s
         <h1 className="text-2xl font-semibold text-slate-900">
           {template.icon} {template.title}
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Select an employee — the company letterhead will be filled in automatically. You can edit the text below
-          before printing.
-        </p>
       </div>
 
       <LetterForm

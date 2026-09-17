@@ -99,9 +99,6 @@ export default async function PurchaseBillReportPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Purchase Bill Report</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Every Purchase Bill (raw-material/vendor purchases) — apply filters, then download or send.
-          </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">
           ← Back to Reports

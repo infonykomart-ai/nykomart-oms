@@ -10,10 +10,6 @@ export default async function PartiesBulkUploadPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📤 Bulk Party Master Upload (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Download the template, fill one row per vendor, then upload it here — existing party names are updated
-            in place instead of creating duplicates.
-          </p>
         </div>
         <Link
           href="/dashboard/parties"

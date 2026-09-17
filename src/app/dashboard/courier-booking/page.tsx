@@ -149,11 +149,6 @@ export default async function CourierBookingPage({
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">🚚 Courier Ops Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          FedEx / UPS / Aramex / Delhivery / Shiprocket / DHL — set up each courier&apos;s own account, stage orders, book a real
-          shipment + AWB, request pickups, track everything, and pull a combined report, all in one place. Start with Account Setup if
-          this is {company?.name ? ` ${company.name}'s` : " your company's"} first time booking with a courier.
-        </p>
       </div>
 
       <CourierBookingTabs

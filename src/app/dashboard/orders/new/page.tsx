@@ -37,10 +37,6 @@ export default async function NewOrderPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Order Entry</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            The PO/RF/RG number is assigned automatically as soon as you save. Duplicate dispatched
-            orders and buyer-batch grouping are also checked automatically. If there is more than one item, use &quot;+ Add More Item&quot;.
-          </p>
         </div>
         <Link
           href="/dashboard/orders"

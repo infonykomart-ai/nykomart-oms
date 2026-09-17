@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
+import { FY_START_MONTH, fyDateWindow } from "@/lib/fy-date";
 
 // 2026-09-17 — "jo jo expense huye vo sab aane chahiye na jis se confirm
 // ho ki kya kya kese kese ghataya jara": the single "Expenses (INR)"
@@ -32,6 +33,15 @@ type PlRow = {
 
 const inr2 = (n: number | null | undefined) =>
   Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// 2026-09-17 — P&L by Month FY selector helpers. Same April-start FY math
+// as fy_label()/src/lib/fy-date.ts — kept local because the page only
+// needs start-year bucketing + the '26-27' label shape.
+const fyStartYearOf = (dateStr: string) => {
+  const [y, m] = dateStr.split("-").map(Number);
+  return m < FY_START_MONTH ? y - 1 : y;
+};
+const fyLabelOf = (startYear: number) => `${String(startYear).slice(2)}-${String(startYear + 1).slice(2)}`;
 
 // 2026-09-17 (evening) — the user's layout ask: "arrow ke sath hi usi entry
 // ke niche dikh jaye" + per-company/month expense split + money colors +
@@ -64,50 +74,50 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
     ["Old CSV history (pre-orders)", row.expense_historical_inr],
   ];
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px]">
+    <div className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-canvas)] px-3 py-2 text-[11px]">
       <div className="grid gap-x-8 gap-y-0.5 sm:grid-cols-2">
-        <div className="font-semibold text-rose-600">Expense split (kam kya raha)</div>
-        <div className="font-semibold text-slate-500">Net profit kaise bana</div>
+        <div className="font-semibold pl-out text-rose-600">Expense split (kam kya raha)</div>
+        <div className="font-semibold text-[var(--oms-text-muted)]">Net profit kaise bana</div>
         {lines.map(([label, val]) => (
           <div key={label} className="flex items-center justify-between gap-4">
-            <span className="text-slate-500">{label}</span>
-            <span className={`font-medium ${Number(val ?? 0) < 0 ? "text-emerald-600" : "text-rose-600"}`}>
+            <span className="text-[var(--oms-text-muted)]">{label}</span>
+            <span className={`font-medium ${Number(val ?? 0) < 0 ? "pl-profit text-emerald-600" : "pl-out text-rose-600"}`}>
               {Number(val ?? 0) < 0 ? "+" : "−"} {inr2(Math.abs(Number(val ?? 0)))}
             </span>
           </div>
         ))}
         <div className="flex items-center justify-between gap-4">
-          <span className="text-slate-500">Portal fees matched (real)</span>
+          <span className="text-[var(--oms-text-muted)]">Portal fees matched (real)</span>
           <span className="font-medium text-sky-700">{inr2(fees)}</span>
         </div>
-        <div className="sm:col-span-2 mt-1 border-t border-slate-200 pt-1">
+        <div className="sm:col-span-2 mt-1 border-t border-[var(--oms-surface-border)] pt-1">
           <div className="flex items-center justify-between gap-4">
-            <span className="text-slate-600">Sale Value (INR)</span>
-            <span className="font-semibold text-sky-700">{inr2(sale)}</span>
+            <span className="text-[var(--oms-text-muted)]">Sale Value (INR)</span>
+            <span className="pl-in font-semibold text-sky-700">{inr2(sale)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <span className="text-slate-600">− Total Expenses</span>
-            <span className="font-semibold text-rose-600">{inr2(exp)}</span>
+            <span className="text-[var(--oms-text-muted)]">− Total Expenses</span>
+            <span className="font-semibold pl-out text-rose-600">{inr2(exp)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <span className="text-slate-600">
+            <span className="text-[var(--oms-text-muted)]">
               − Portal ({portalMode}{fees > 0 ? `: ${inr2(fees)} matched, estimate was ${inr2(est25)}` : `: ${inr2(est25)}`})
             </span>
-            <span className="font-semibold text-rose-600">{inr2(portalEff)}</span>
+            <span className="font-semibold pl-out text-rose-600">{inr2(portalEff)}</span>
           </div>
-          <div className="flex items-center justify-between gap-4 border-t border-slate-200 pt-1">
-            <span className="font-semibold text-slate-700">= Net Earn</span>
-            <span className={`font-bold ${net >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{inr2(net)}</span>
+          <div className="flex items-center justify-between gap-4 border-t border-[var(--oms-surface-border)] pt-1">
+            <span className="font-semibold text-[var(--oms-text)]">= Net Earn</span>
+            <span className={`font-bold ${net >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{inr2(net)}</span>
           </div>
         </div>
-        <div className="sm:col-span-2 mt-1 border-t border-slate-200 pt-1">
+        <div className="sm:col-span-2 mt-1 border-t border-[var(--oms-surface-border)] pt-1">
           <div className="flex items-center justify-between gap-4">
-            <span className="text-slate-600">Bank me aaya (verified statement credits)</span>
-            <span className="font-semibold text-sky-700">{inr2(bank)}</span>
+            <span className="text-[var(--oms-text-muted)]">Bank me aaya (verified statement credits)</span>
+            <span className="pl-in font-semibold text-sky-700">{inr2(bank)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <span className="text-slate-600">Order value vs bank ka difference {bank === 0 ? "(statement upload/link hone par dikhega)" : ""}</span>
-            <span className={`font-semibold ${inflowDiff >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+            <span className="text-[var(--oms-text-muted)]">Order value vs bank ka difference {bank === 0 ? "(statement upload/link hone par dikhega)" : ""}</span>
+            <span className={`font-semibold ${inflowDiff >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>
               {inflowDiff >= 0 ? "+" : "−"} {inr2(Math.abs(inflowDiff))}
             </span>
           </div>
@@ -131,12 +141,12 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
 export default async function CrmOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; fy?: string }>;
 }) {
   const employee = await requireCapability("crm_dashboard");
   const supabase = await createClient();
   const finSupabase = createServiceRoleClient();
-  const { q } = await searchParams;
+  const { q, fy: fyParam } = await searchParams;
   const query = (q ?? "").trim();
 
   const today = todayIST();
@@ -182,7 +192,7 @@ export default async function CrmOverviewPage({
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
     finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").limit(24),
+    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr"),
     query
       ? supabase
           .from("orders")
@@ -216,7 +226,7 @@ export default async function CrmOverviewPage({
   if (plByCompanyErr || plByMonthErr) {
     const [retryCompany, retryMonth] = await Promise.all([
       finSupabase.from("pl_dashboard_by_company_view").select(baseCompanyCols).in("company_id", employee.companyIds),
-      finSupabase.from("pl_dashboard_by_month_view").select(baseMonthCols).limit(24),
+      finSupabase.from("pl_dashboard_by_month_view").select(baseMonthCols),
     ]);
     // Cast is honest: base rows genuinely lack the breakdown columns at
     // runtime — PlExpenseBreakdown's `undefined` check renders nothing for
@@ -225,6 +235,30 @@ export default async function CrmOverviewPage({
     if (!retryMonth.error) plMonthRows = retryMonth.data as typeof plByMonth;
     console.error("P&L breakdown columns unavailable — rendered base P&L instead. Run db/2026-09-17-pl-expense-breakdown.sql. Errors:", plByCompanyErr?.message, plByMonthErr?.message);
   }
+
+  // 2026-09-17 — P&L by Month FY selector ("kahi par fy year select karne
+  // ka option to nahi diya"). Options derive from the SAME fyDateWindow()
+  // the entry validators use (current FY − 10 … current FY + 1) — nothing
+  // hardcoded, slides forward every April by itself. ?fy=<startYear>
+  // filters the month table to that FY; empty/all keeps the old
+  // most-recent-24 view. The view already orders month DESC and holds no
+  // data, so fetching all months (limit removed above) and slicing here
+  // is the whole implementation — zero SQL/view changes.
+  const fyMinStartYear = Number(fyDateWindow().min.slice(0, 4));
+  const fyMaxStartYear = fyStartYearOf(fyDateWindow().max);
+  const fyOptions = Array.from(
+    { length: fyMaxStartYear - fyMinStartYear + 1 },
+    (_, i) => fyMaxStartYear - i,
+  );
+  const fySelectedRaw = Number.parseInt(fyParam ?? "", 10);
+  const fySelected =
+    Number.isFinite(fySelectedRaw) && fySelectedRaw >= fyMinStartYear && fySelectedRaw <= fyMaxStartYear
+      ? fySelectedRaw
+      : null;
+  const allMonthRows = plMonthRows ?? [];
+  const plMonthRowsFiltered = fySelected
+    ? allMonthRows.filter((r) => r.month && fyStartYearOf(r.month) === fySelected)
+    : allMonthRows.slice(0, 24);
 
   const orderStatusCounts = new Map<string, number>();
   for (const row of orderStatusCountRows ?? []) {
@@ -269,62 +303,62 @@ export default async function CrmOverviewPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">📊 CRM Overview</h1>
-        <p className="mt-1 text-sm text-slate-500">Company-wide order/attendance snapshot, data-quality alerts, and the P&amp;L Dashboard.</p>
+        <h1 className="text-2xl font-semibold text-[var(--oms-text)]">📊 CRM Overview</h1>
+        <p className="mt-1 text-sm text-[var(--oms-text-muted)]">Company-wide order/attendance snapshot, data-quality alerts, and the P&amp;L Dashboard.</p>
       </div>
 
-      <form method="GET" className="rounded-xl border border-slate-200 bg-white p-4">
-        <label className="mb-1 block text-xs font-medium text-slate-500">Quick Find — PO/RF/RG No., buyer name, contact no., or marketplace order no.</label>
+      <form method="GET" className="oms-card rounded-xl border p-4">
+        <label className="mb-1 block text-xs font-medium text-[var(--oms-text-muted)]">Quick Find — PO/RF/RG No., buyer name, contact no., or marketplace order no.</label>
         <div className="flex gap-2">
           <input
             name="q"
             defaultValue={query}
             placeholder="e.g. PO-0001 or a buyer name"
-            className="w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+            className="w-full max-w-md rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-surface)] px-3 py-2 text-sm text-[var(--oms-text)] outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
           />
           <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">Search</button>
         </div>
         {query && (
           <div className="mt-3 space-y-1 text-sm">
-            {quickFindRows.length === 0 && <p className="text-slate-400">No matches.</p>}
+            {quickFindRows.length === 0 && <p className="text-[var(--oms-text-muted)]">No matches.</p>}
             {quickFindRows.map((o) => (
-              <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 py-1.5 last:border-0">
-                <span className="font-medium text-slate-800">{o.ref_no}</span>
-                <span className="text-slate-500">{o.buyer_name_address ?? "—"}</span>
-                <span className="text-slate-400">{o.contact_no ?? "—"}</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{o.status}</span>
+              <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--oms-surface-border)] py-1.5 last:border-0">
+                <span className="font-medium text-[var(--oms-text)]">{o.ref_no}</span>
+                <span className="text-[var(--oms-text-muted)]">{o.buyer_name_address ?? "—"}</span>
+                <span className="text-[var(--oms-text-muted)]">{o.contact_no ?? "—"}</span>
+                <span className="rounded-full bg-[var(--oms-canvas)] px-2 py-0.5 text-xs text-[var(--oms-text-muted)]">{o.status}</span>
               </div>
             ))}
           </div>
         )}
       </form>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-800">Top Buyers — Repeat Customers (current company)</h2>
-        <p className="mb-3 text-xs text-slate-400">
+      <div className="oms-card rounded-xl border p-4">
+        <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Top Buyers — Repeat Customers (current company)</h2>
+        <p className="mb-3 text-xs text-[var(--oms-text-muted)]">
           Grouped by contact number (falls back to buyer name when no number was captured). Only buyers with more than
           one order are shown.
         </p>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
+          <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+            <thead className="bg-[var(--oms-canvas)]">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Buyer</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Orders</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Total Value (USD)</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Buyer</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Orders</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Total Value (USD)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-[var(--oms-surface-border)]">
               {topBuyers.map((b) => (
                 <tr key={b.label + b.orderCount}>
-                  <td className="px-3 py-2 font-medium text-slate-800">{b.label}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">{b.orderCount}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-slate-900">${b.totalUsd.toFixed(2)}</td>
+                  <td className="px-3 py-2 font-medium text-[var(--oms-text)]">{b.label}</td>
+                  <td className="px-3 py-2 text-right text-[var(--oms-text)]">{b.orderCount}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-[var(--oms-text)]">${b.totalUsd.toFixed(2)}</td>
                 </tr>
               ))}
               {topBuyers.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="px-3 py-6 text-center text-slate-400">
+                  <td colSpan={3} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">
                     No repeat buyers yet for this company.
                   </td>
                 </tr>
@@ -335,79 +369,79 @@ export default async function CrmOverviewPage({
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-800">Orders by Status</h2>
+        <div className="oms-card rounded-xl border p-4">
+          <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Orders by Status</h2>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {ORDER_STATUSES.map((s) => (
-              <div key={s} className="rounded-lg bg-slate-50 p-3 text-center">
-                <div className="text-xl font-bold text-slate-900">{orderStatusCounts.get(s) ?? 0}</div>
-                <div className="text-xs text-slate-500">{s}</div>
+              <div key={s} className="rounded-lg bg-[var(--oms-canvas)] p-3 text-center">
+                <div className="text-xl font-bold text-[var(--oms-text)]">{orderStatusCounts.get(s) ?? 0}</div>
+                <div className="text-xs text-[var(--oms-text-muted)]">{s}</div>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-800">Today&apos;s Attendance ({today})</h2>
+        <div className="oms-card rounded-xl border p-4">
+          <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Today&apos;s Attendance ({today})</h2>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {ATTENDANCE_STATUSES.map((s) => (
-              <div key={s} className="rounded-lg bg-slate-50 p-3 text-center">
-                <div className="text-xl font-bold text-slate-900">{attendanceCounts.get(s) ?? 0}</div>
-                <div className="text-xs text-slate-500">{s}</div>
+              <div key={s} className="rounded-lg bg-[var(--oms-canvas)] p-3 text-center">
+                <div className="text-xl font-bold text-[var(--oms-text)]">{attendanceCounts.get(s) ?? 0}</div>
+                <div className="text-xs text-[var(--oms-text-muted)]">{s}</div>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-800">Data Quality Alerts ({(alerts ?? []).length} of up to 50)</h2>
+      <div className="oms-card rounded-xl border p-4">
+        <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Data Quality Alerts ({(alerts ?? []).length} of up to 50)</h2>
         <div className="space-y-1 text-xs">
-          {(alerts ?? []).length === 0 && <p className="text-slate-400">No alerts. 🎉</p>}
+          {(alerts ?? []).length === 0 && <p className="text-[var(--oms-text-muted)]">No alerts. 🎉</p>}
           {(alerts ?? []).map((a, i) => (
-            <div key={`${a.order_id}-${i}`} className="flex items-start gap-2 border-b border-slate-100 py-1.5 last:border-0">
+            <div key={`${a.order_id}-${i}`} className="flex items-start gap-2 border-b border-[var(--oms-surface-border)] py-1.5 last:border-0">
               <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">{a.alert_type}</span>
-              <span className="text-slate-600">{a.detail}</span>
+              <span className="text-[var(--oms-text-muted)]">{a.detail}</span>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-800">P&amp;L by Company</h2>
+      <div className="oms-card rounded-xl border p-4">
+        <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">P&amp;L by Company</h2>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
+          <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+            <thead className="bg-[var(--oms-canvas)]">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Company</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Sale Value (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Profit %</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Internal Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn (After Overhead)</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Company</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Expenses (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Profit %</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Internal Expenses (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn (After Overhead)</th>
                 <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-[var(--oms-surface-border)]">
               {(plCompanyRows ?? []).map((r) => (
                 <Fragment key={r.company_id}>
                   <tr className="pl-expand align-top">
-                    <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.company_name}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
+                    <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.company_name}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold pl-out text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
                       {Number(r.total_expenses_inr ?? 0).toFixed(2)}
                     </td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
                     <td className="px-2 py-2 text-center">
                       <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.company_name ?? "company"} P&L breakdown`} />
                     </td>
                   </tr>
                   <tr className="pl-detail">
-                    <td colSpan={8} className="bg-slate-50/60 px-6 py-2">
+                    <td colSpan={8} className="bg-[var(--oms-canvas)] px-6 py-2">
                       <PlExpenseBreakdown row={r} />
                     </td>
                   </tr>
@@ -418,44 +452,63 @@ export default async function CrmOverviewPage({
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-800">P&amp;L by Month (most recent 24)</h2>
+      <div className="oms-card rounded-xl border p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-[var(--oms-text)]">
+            P&amp;L by Month{fySelected ? ` — FY ${fyLabelOf(fySelected)}` : " (most recent 24)"}
+          </h2>
+          <form method="GET" className="flex items-center gap-2">
+            <label htmlFor="pl-fy" className="text-xs text-[var(--oms-text-muted)]">Financial Year</label>
+            <select
+              id="pl-fy"
+              name="fy"
+              defaultValue={fySelected ? String(fySelected) : "all"}
+              className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-surface)] px-2 py-1 text-xs text-[var(--oms-text)] outline-none focus:border-amber-500"
+            >
+              <option value="all">All FYs</option>
+              {fyOptions.map((y) => (
+                <option key={y} value={String(y)}>FY {fyLabelOf(y)}</option>
+              ))}
+            </select>
+            <button type="submit" className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600">Apply</button>
+          </form>
+        </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
+          <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+            <thead className="bg-[var(--oms-canvas)]">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Month</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Sale Value (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Profit %</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Internal Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn (After Overhead)</th>
+                <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Month</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Expenses (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Profit %</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Internal Expenses (INR)</th>
+                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn (After Overhead)</th>
                 <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {(plMonthRows ?? []).length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
+            <tbody className="divide-y divide-[var(--oms-surface-border)]">
+              {plMonthRowsFiltered.length === 0 && (
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
               )}
-              {(plMonthRows ?? []).map((r) => (
+              {plMonthRowsFiltered.map((r) => (
                 <Fragment key={r.month ?? ""}>
                   <tr className="pl-expand align-top">
-                    <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.month}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
+                    <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.month}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold pl-out text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
                       {Number(r.total_expenses_inr ?? 0).toFixed(2)}
                     </td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
                     <td className="px-2 py-2 text-center">
                       <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.month ?? "month"} P&L breakdown`} />
                     </td>
                   </tr>
                   <tr className="pl-detail">
-                    <td colSpan={8} className="bg-slate-50/60 px-6 py-2">
+                    <td colSpan={8} className="bg-[var(--oms-canvas)] px-6 py-2">
                       <PlExpenseBreakdown row={r} />
                     </td>
                   </tr>

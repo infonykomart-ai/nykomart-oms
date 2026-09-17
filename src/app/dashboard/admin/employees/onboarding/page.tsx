@@ -60,9 +60,6 @@ export default async function OnboardingPage({
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🧭 Onboarding</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          A simple checklist per employee — not e-signatures or document generation, just tracking what&apos;s done.
-        </p>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

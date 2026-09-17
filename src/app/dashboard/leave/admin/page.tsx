@@ -162,7 +162,6 @@ export default async function LeaveAdminPage({
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">✋ Leave Approvals</h1>
-        <p className="mt-1 text-sm text-slate-500">Approve/reject leave requests, and assign who covers the store while someone&apos;s away.</p>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

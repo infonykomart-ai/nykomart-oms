@@ -31,10 +31,6 @@ export default async function CompanyItemAdminPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🏢 Company &amp; Item Admin</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Add new companies, stores, item categories, and sizes — these show up immediately in every dropdown across the
-          app (Order Entry, Document Entry, Stock, Ad Spend, etc.).
-        </p>
       </div>
 
       <CompanyItemAdmin companies={companyRows} itemCategories={itemCategories ?? []} sizes={sizes ?? []} stores={storeRows} />

@@ -26,10 +26,6 @@ export default async function DocumentsBulkUploadPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📤 Bulk Document Upload (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Download the template for the document type you need, fill one row per document, then upload it here.
-            Each row is saved exactly like entering it by hand on the Document Entry screen.
-          </p>
         </div>
         <Link
           href="/dashboard/documents"

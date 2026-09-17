@@ -190,10 +190,6 @@ export default async function PartyLedgerReportPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📒 Party / Vendor Ledger Report</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Every debit/credit line across all parties (or one party), company-wide — apply filters, then download
-            or send.
-          </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">
           ← Back to Reports

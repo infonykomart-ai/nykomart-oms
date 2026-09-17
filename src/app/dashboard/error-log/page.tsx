@@ -62,10 +62,6 @@ export default async function ErrorLogPage({
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">⚠️ Error Tab</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Wrong entries in one place — form validation failures, failed courier bookings, and staff-flagged
-          mistakes — with who raised it, when, and whether it&apos;s been reviewed yet.
-        </p>
       </div>
 
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

@@ -20,9 +20,6 @@ export default async function DashboardHome() {
         <h1 className="text-2xl font-semibold text-slate-900">
           Welcome, {employee.name.split(" ")[0]}
         </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {employee.roleName} — here&apos;s everything on your desk today.
-        </p>
       </div>
 
       <NavTileGrid>

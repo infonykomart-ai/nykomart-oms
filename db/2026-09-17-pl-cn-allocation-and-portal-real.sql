@@ -25,12 +25,41 @@
 --    it's our money back, not marketplace income). bill_pass_register's
 --    payable side is untouched (payments/balance flow unchanged).
 --
--- Idempotent: CREATE OR REPLACE views only. Run AFTER
--- db/2026-09-17-pl-expense-breakdown.sql (extends those same views).
+-- THE ONLY 2026-09-17 P&L SQL YOU NEED TO RUN (the earlier
+-- db/2026-09-17-pl-expense-breakdown.sql is now a superseded stub).
+--
+-- NOT CREATE OR REPLACE — DELIBERATE DROP + CREATE. Reason (the exact
+-- error the user hit running the earlier file in Supabase):
+--   ERROR 42P16: cannot change name of view column "net_earn" to
+--   "portal_expenses_25pct"
+-- Postgres's CREATE OR REPLACE VIEW may only APPEND columns to an
+-- existing view; renaming / reordering / inserting between existing
+-- columns is rejected. The live month view predates portal_expenses_25pct
+-- (and the live company view, once any earlier file ran, predates
+-- portal_expense_effective_inr sitting mid-list) — so OR REPLACE can't
+-- express these changes. DROP VIEW ... CASCADE + CREATE VIEW can; the
+-- CASCADE drops this app's own dependent views, which the full CREATE
+-- VIEW statements below rebuild identically. No tables are touched, no
+-- data is lost (views hold no data), and ownership/grants are preserved
+-- because the views are recreated by the same owner.
+--
+-- Re-runnable: the DROPs are IF EXISTS, the CREATEs are unconditional
+-- full definitions. Running it twice is a no-op-ish rebuild — safe.
+--
+-- DROP ORDER MATTERS: on a RE-RUN the P&L views (and any schema view built
+-- on them) depend on the net views, so dependents go first:
+--   1. pl_dashboard_by_month_view  (built on the company view on re-run)
+--   2. pl_dashboard_by_company_view
+--   3. freight_awb_net_view / duty_awb_net_view  (bottom of the chain)
 
 -- ============================================================================
--- 1. Per-AWB NET views
+-- 1. Per-AWB NET views (fresh objects — DROP IF EXISTS keeps the file
+--    re-runnable; dependents dropped first — see the drop-order note above).
 -- ============================================================================
+DROP VIEW IF EXISTS pl_dashboard_by_month_view;
+DROP VIEW IF EXISTS pl_dashboard_by_company_view;
+DROP VIEW IF EXISTS duty_awb_net_view;
+DROP VIEW IF EXISTS freight_awb_net_view;
 CREATE VIEW freight_awb_net_view AS
 SELECT
   a.id AS assignment_id,
@@ -102,7 +131,10 @@ COMMENT ON VIEW duty_awb_net_view IS
 -- ============================================================================
 -- 2. P&L views — net courier/duty + portal real-if-known
 -- ============================================================================
-CREATE OR REPLACE VIEW pl_dashboard_by_company_view AS
+-- (DROP + CREATE, not OR REPLACE — see the header note on error 42P16.
+-- The two P&L views were already dropped above, before the net views,
+-- because on a re-run they DEPEND on the net views.)
+CREATE VIEW pl_dashboard_by_company_view AS
 WITH order_refund_totals AS (
   SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr
   FROM order_refunds
@@ -274,7 +306,8 @@ COMMENT ON VIEW pl_dashboard_by_company_view IS
   'duty_awb_net_view). History: 2026-08-20 live rebuild, 2026-08-25 refund netting, 2026-08-27 '
   'purchase adjustments, 2026-09-17 breakdown columns + washing + fee hybrid.';
 
-CREATE OR REPLACE VIEW pl_dashboard_by_month_view AS
+-- (Already dropped above — see the drop-order note; CREATE only here.)
+CREATE VIEW pl_dashboard_by_month_view AS
 WITH months AS (
   SELECT DISTINCT date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
   UNION

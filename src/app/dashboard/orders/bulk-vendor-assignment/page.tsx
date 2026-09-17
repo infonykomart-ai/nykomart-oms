@@ -21,11 +21,6 @@ export default async function BulkVendorAssignmentPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">👷 Bulk Vendor Assignment (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Assign one party to many PO/RF/RG orders in one upload — same assign history (cycle, date, remark,
-            receive later) as assigning from an order page, just 100–200 at a time. Each order keeps its own
-            assignment cycle, so receiving them later still works per order.
-          </p>
         </div>
         <Link
           href="/dashboard/orders"

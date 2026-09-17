@@ -64,10 +64,6 @@ export default async function FreightEstimatePage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧮 Freight Cost Estimator</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Estimate/compare shipping cost by courier, zone and weight — from the manually-maintained Courier Rate
-            Card, before booking or dispatch.
-          </p>
         </div>
         <Link
           href="/dashboard/courier-rates"

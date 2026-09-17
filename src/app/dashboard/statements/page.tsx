@@ -47,10 +47,6 @@ export default async function StatementsPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📄 Statement Entry</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Manual entry for the 2 PDF-only statements (Etsy Monthly Tax Invoice, eBay Financial Summary) — everything
-            else in the statement family (Bank Statement, Etsy Ledger, eBay Transaction Report, etc.) comes in via CSV.
-          </p>
         </div>
         <Link
           href="/dashboard/csv-upload"

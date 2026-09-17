@@ -40,7 +40,6 @@ export default async function MessagesPage() {
     <div className="h-[calc(100vh-8rem)]">
       <div className="mb-4">
         <h1 className="text-2xl font-semibold text-slate-900">💬 Messages</h1>
-        <p className="mt-1 text-sm text-slate-500">Message any teammate directly — text or a file/photo attachment.</p>
       </div>
       <MessagesClient meId={employee.id} employees={employees} initialMessages={messages ?? []} />
     </div>

@@ -46,11 +46,6 @@ export default async function SettlementsPage({
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🧾 Full &amp; Final Settlement</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          For resignation/termination — notice shortfall, leave encashment, a gratuity estimate, and outstanding
-          advances are all shown as reference numbers on the settlement page; every actual amount is a line item you
-          add yourself.
-        </p>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

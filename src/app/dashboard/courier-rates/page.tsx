@@ -37,10 +37,6 @@ export default async function CourierRatesPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">📊 Courier Rate Card</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Manually-maintained rate sheet by courier, zone and weight slab — feeds the Freight Cost Estimator. No
-          courier API involved, so any courier (Aramex, On Point Express, or anything else) can be entered here.
-        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

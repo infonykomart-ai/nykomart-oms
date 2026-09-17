@@ -70,10 +70,6 @@ export default async function EmployeesAdminPage() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Employees</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Create a new login, reset a password, or deactivate an employee — all from here, no need to go into the
-            Supabase dashboard.
-          </p>
         </div>
         {/* 2026-09-11 (Payroll Phase 3) — kept as in-page links rather than
             top-level sidebar tiles, since both stay gated to the same

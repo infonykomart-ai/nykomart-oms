@@ -14,10 +14,6 @@ export default async function CsvUploadPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">📤 CSV Upload</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Bulk-load bank/Etsy/eBay statement exports and historical Sale & Profit Ledger rows straight from a CSV or
-          Excel file — pick the sheet below, download its template if you need the exact headers, then upload.
-        </p>
       </div>
 
       <CsvUploadForm companies={companies ?? []} />

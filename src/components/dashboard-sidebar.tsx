@@ -19,7 +19,7 @@
 // overlay drawer. Custom event `oms:sidebar-open` (fired by the header's
 // hamburger) is the cross-component open signal — same lightweight
 // pattern the dock already uses internally.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CAPABILITY_INFO } from "@/lib/capability-info";
@@ -36,6 +36,12 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const [hovered, setHovered] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // 2026-09-17 — ⋮ overflow-menu state. Declared here (top of the component,
+  // before the dock-mode early return below) rather than next to the chrome
+  // JSX: hooks must run in the same order every render, and this component
+  // returns early once navStyle is confirmed "dock".
+  const [moreOpen, setMoreOpen] = useState(false);
+  const chromeRef = useRef<HTMLDivElement | null>(null);
   const { navStyle, mounted: navStyleMounted, setNavStyle } = useNavStyle();
 
   useEffect(() => {
@@ -66,6 +72,24 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
       window.removeEventListener("keydown", onKey);
     };
   }, []);
+
+  // ⋮ overflow menu: click-outside + Escape close it (state declared above,
+  // before the dock-mode early return — hooks order rule).
+  useEffect(() => {
+    if (!moreOpen) return;
+    function onDocPointer(e: PointerEvent) {
+      if (chromeRef.current && !chromeRef.current.contains(e.target as Node)) setMoreOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMoreOpen(false);
+    }
+    document.addEventListener("pointerdown", onDocPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [moreOpen]);
 
   function togglePinned() {
     setPinned((prev) => {
@@ -104,10 +128,25 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
     </nav>
   );
 
+  // 2026-09-17 — Gmail-style overflow menu ("pin ka option ki jagah three
+  // dot vala jese gmail me aata hai. ya us se best"): the 📌 pin toggle and
+  // ⬇️ dock-switch buttons are folded into ONE ⋮ dropdown so the header
+  // reads as a clean "Work Menu" bar instead of a button cluster.
+  // Items:
+  //   • Collapse menu  — same hide-to-hover-strip behavior the pin button
+  //     had (reopen with the header's ☰ or by hovering the strip).
+  //   • Bottom Dock menu — replaces the always-visible ⬇️ button; switch
+  //     BACK is still the dock's own "⬅️ Switch to sidebar menu" button.
+  //   • Pinned ✓ / Unpinned — read-only state line, so the old pin concept
+  //     is still discoverable without its own button.
+  // Click-outside + Escape close it; it's the drawer's ✕ slot on phones.
   const chrome = (closeBtn: boolean) => (
-    <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-4 md:px-6">
-      <span className="text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
-      <div className="flex items-center gap-1">
+    <div
+      ref={chromeRef}
+      className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[var(--oms-sidebar-border)] px-4 md:px-6"
+    >
+      <span className="truncate text-lg font-bold text-[var(--oms-sidebar-text)]">Work Menu</span>
+      <div className="relative flex items-center gap-1">
         {closeBtn && (
           <button
             type="button"
@@ -120,20 +159,54 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
         )}
         <button
           type="button"
-          onClick={() => setNavStyle("dock")}
-          title="Switch to Dock menu (bottom bar)"
-          className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
+          onClick={() => setMoreOpen((v) => !v)}
+          aria-expanded={moreOpen}
+          aria-haspopup="menu"
+          title="Menu options"
+          className={`rounded-lg px-2.5 py-1.5 text-xl leading-none transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)] ${moreOpen ? "bg-[var(--oms-sidebar-tile-bg)] text-[var(--oms-sidebar-text)]" : "text-[var(--oms-sidebar-text-muted)]"}`}
         >
-          ⬇️
+          ⋮
         </button>
-        <button
-          type="button"
-          onClick={togglePinned}
-          title={closeBtn ? "Hide menu (reopen with ☰)" : "Keep menu pinned open"}
-          className="rounded-lg px-2 py-1.5 text-[var(--oms-sidebar-text-muted)] transition hover:bg-[var(--oms-sidebar-tile-bg)] hover:text-[var(--oms-sidebar-text)]"
-        >
-          📌
-        </button>
+        {moreOpen && (
+          <div
+            role="menu"
+            className="oms-tile-enter absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-[var(--oms-sidebar-border)] bg-[var(--oms-surface)] py-1 shadow-2xl"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMoreOpen(false);
+                togglePinned();
+              }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--oms-text)] transition hover:bg-[var(--oms-canvas)]"
+            >
+              <span aria-hidden="true">⇤</span>
+              Collapse menu
+              <span className="ml-auto text-[10px] text-[var(--oms-text-muted)]">hover to reopen</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMoreOpen(false);
+                setNavStyle("dock");
+              }}
+              className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm text-[var(--oms-text)] transition hover:bg-[var(--oms-canvas)]"
+            >
+              <span aria-hidden="true">⬇️</span>
+              Bottom Dock menu
+            </button>
+            <div
+              role="menuitem"
+              aria-disabled="true"
+              className="flex cursor-default items-center gap-2.5 border-t border-[var(--oms-surface-border)] px-3.5 py-2 text-[11px] text-[var(--oms-text-muted)]"
+            >
+              <span aria-hidden="true">{pinned ? "📌" : "─"}</span>
+              {pinned ? "Pinned open" : "Hover strip"}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

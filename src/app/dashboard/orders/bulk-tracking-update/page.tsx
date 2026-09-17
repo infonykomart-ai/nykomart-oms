@@ -17,10 +17,6 @@ export default async function BulkTrackingUpdatePage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🚚 Bulk Courier Tracking Update (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Download the template, fill one row per order (matched by Ref No.), then upload it here to update
-            Shipment Status, AWB No., Courier Name, and Delivered info in bulk.
-          </p>
         </div>
         <Link
           href="/dashboard/orders"

@@ -456,9 +456,6 @@ export default async function AttendancePage({
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🕒 Attendance &amp; Daily Report</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Punch in/out happens automatically on login/logout — the button below is a manual backup only.
-        </p>
       </div>
 
       <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">

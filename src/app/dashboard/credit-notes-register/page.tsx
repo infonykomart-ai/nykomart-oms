@@ -61,11 +61,6 @@ export default async function CreditNotesRegisterPage({
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Credit Note Register</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Credit received per party — vendor credit notes against Purchase / Courier / Duty bills, plus buyer
-            refunds. Register a bill&apos;s manual credit-note amount from the backlog below so nothing stays
-            invisible.
-          </p>
         </div>
         <form method="get" className="flex items-end gap-2">
           <div>

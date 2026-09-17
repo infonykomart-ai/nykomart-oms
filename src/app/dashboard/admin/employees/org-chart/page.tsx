@@ -32,10 +32,6 @@ export default async function OrgChartPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🌳 Org Chart</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Built from each employee&apos;s &quot;Reports To&quot; field (set from Employees → Edit Details). An
-          employee with nobody set shows as a top-level node.
-        </p>
       </div>
 
       <div className="space-y-6">

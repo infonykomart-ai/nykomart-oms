@@ -17,10 +17,6 @@ export default async function BulkInvoiceUploadPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📤 Bulk Invoice Generation (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Download the template, fill one row per order, then upload it here. Orders sharing the same PO/RF/RG base
-            number combine into one invoice — exactly like generating one by hand.
-          </p>
         </div>
         <Link
           href="/dashboard/invoices"

@@ -132,10 +132,6 @@ export default async function ExpensesPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Office/Cash Expenses</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Rent, electricity, fuel and other overhead not tied to any purchase order or AWB. Feeds into the P&amp;L
-            Dashboard as a separate line from order/shipping expenses.
-          </p>
         </div>
         <Link
           href="/dashboard"

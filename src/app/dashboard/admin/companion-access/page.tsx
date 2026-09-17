@@ -36,10 +36,6 @@ export default async function CompanionAccessAdminPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">AI Companion Access</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Turn the live AI Companion on or off for specific employees — a per-person switch, not a role
-          permission. Changes apply instantly, no code deployment needed.
-        </p>
       </div>
 
       <CompanionAccessClient

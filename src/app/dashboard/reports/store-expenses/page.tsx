@@ -148,11 +148,6 @@ export default async function StoreExpenseReportPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Store Expense Report</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Real matched Etsy/eBay/Amazon marketplace fees — by order, monthly, or store-wise. An order shows up here
-            only once its store&apos;s statement has been imported and matched to it (see the Orders hub&apos;s own
-            &quot;🧾 fees matched&quot; column for per-order detail).
-          </p>
         </div>
         <Link
           href="/dashboard/reports"

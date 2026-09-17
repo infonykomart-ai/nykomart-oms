@@ -10,10 +10,6 @@ export default async function StockBulkUploadPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📤 Bulk Stock Upload (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Download the template, fill one row per movement, then upload it here — Stock In and Stock Out are
-            separate ledgers, pick the right tab below.
-          </p>
         </div>
         <Link
           href="/dashboard/stock"

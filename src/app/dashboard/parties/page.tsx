@@ -53,10 +53,6 @@ export default async function PartiesPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🤝 Party Master</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Vendors/parties used across Purchase Bill, Debit Note, Washing Entry, and Stock — add one here and it
-            shows up in every lookup dropdown across the app.
-          </p>
         </div>
         <Link
           href="/dashboard/parties/bulk-upload"

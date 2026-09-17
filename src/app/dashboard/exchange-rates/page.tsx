@@ -23,10 +23,6 @@ export default async function ExchangeRatesPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">💱 Exchange Rate Master</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Official CBIC/ICEGATE notified rates, one row per currency per Effective From date — the latest row on or
-          before an order/invoice date is what the rest of the app uses (get_official_rate_as_of).
-        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

@@ -167,10 +167,6 @@ export default async function AdSpendPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📈 Store Ad Spend</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Enter daily Budget/Spend per store. QTY ORD and USD are pulled automatically from Order Entry — no manual
-            duplication.
-          </p>
           {!canSeeAllStores && (
             <p className="mt-1 text-xs text-amber-700">
               {stores.length > 0

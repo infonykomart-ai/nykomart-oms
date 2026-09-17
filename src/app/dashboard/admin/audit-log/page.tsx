@@ -42,11 +42,6 @@ export default async function AuditLogPage({
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">🕵️ Audit Log</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Who changed or deleted what, and when. Currently covers: order Hold/Cancel, Purchase/Courier/Duty Bill
-          delete, Office Expense delete, Order Shipment delete — not every action in the app yet, more can be added
-          the same way.
-        </p>
       </div>
 
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

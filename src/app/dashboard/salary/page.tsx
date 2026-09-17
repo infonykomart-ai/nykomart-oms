@@ -255,9 +255,6 @@ export default async function SalaryPage({
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">💰 Salary &amp; Payroll</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Monthly fixed salary, absent-day deduction beyond allowed paid leaves. See the note below for the exact formula.
-        </p>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

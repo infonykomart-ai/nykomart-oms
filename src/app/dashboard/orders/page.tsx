@@ -181,9 +181,6 @@ export default async function OrdersPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📋 Orders — Edit / Modify / Delete</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Orders already sent on WhatsApp are shown in green. The PO/RF/RG number cannot be edited (it&apos;s tied to batch/suffix logic) — everything else is editable.
-          </p>
         </div>
         <div className="flex shrink-0 gap-2">
           <Link

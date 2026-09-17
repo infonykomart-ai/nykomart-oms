@@ -1058,3 +1058,36 @@ tr.pl-expand input.pl-toggle:checked ~ * ~ tr.pl-detail { display: table-row; }
    row; the detail row is the NEXT <tr>. :has() keeps the sibling selector
    robust regardless of td count. */
 tr.pl-expand:has(input.pl-toggle:checked) + tr.pl-detail { display: table-row; }
+
+/*
+ * 2026-09-17 (late) — CRM page theme-token pass ("niche ye page black kyu
+ * aara hai"). The CRM/P&L page was hardcoded `bg-white` + slate text, so
+ * on the night/nova dark themes the cards stayed WHITE while the page
+ * canvas around them went near-black — and after the shell fix below the
+ * opposite read ("black page") became possible. One `.oms-card` class now
+ * carries surface tokens for every card on that page (same mechanism the
+ * ledger card already uses), so card/canvas/text always resolve from the
+ * active theme together. Money colors follow: the raw Tailwind 600/700
+ * shades were tuned for white and go illegible on dark surfaces, so the
+ * dark-theme rules re-tint them (light themes byte-for-byte unchanged;
+ * print keeps the original light colors, same pattern as .oms-row-*).
+ */
+.oms-card {
+  background: var(--oms-surface);
+  border-color: var(--oms-surface-border);
+  color: var(--oms-text);
+}
+
+[data-theme="night"] .pl-in { color: #7dd3fc; }   /* sky-300 — money in   */
+[data-theme="night"] .pl-out { color: #fda4af; }  /* rose-300 — expense  */
+[data-theme="night"] .pl-profit { color: #6ee7b7; } /* emerald-300 — profit */
+[data-theme="night"] .pl-loss { color: #fda4af; }   /* loss reads as rose too */
+
+[data-theme="nova"] .pl-in { color: #7dd3fc; }
+[data-theme="nova"] .pl-out { color: #fda4af; }
+[data-theme="nova"] .pl-profit { color: #6ee7b7; }
+[data-theme="nova"] .pl-loss { color: #fda4af; }
+
+@media print {
+  .oms-card { background: #ffffff !important; }
+}

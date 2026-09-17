@@ -93,9 +93,6 @@ export default async function ReportsPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📈 Reports</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Orders report — apply filters, then download as CSV/Excel/Word/PDF or send via Email/WhatsApp.
-          </p>
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-2">
           {/* 2026-08-20 — "top order vali report ke jese ek report or banni

@@ -381,11 +381,6 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Document Entry</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Credit Note, Debit Note, Washing Entry, Internal Invoice, Purchase Bill, Courier Bill, Duty &amp; Tax
-            Bill — entering a PO/RF/RG (or AWB) number automatically fetches the order, so every document stays
-            linked back to it.
-          </p>
         </div>
         <Link
           href="/dashboard/documents/bulk-upload"

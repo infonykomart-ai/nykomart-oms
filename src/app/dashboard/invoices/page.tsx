@@ -91,10 +91,6 @@ export default async function InvoicesPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Invoices</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Orders grouped by PO/RF/RG number (buyer-batch). Search and select one to see its order detail and
-            generate an invoice — already-invoiced ones link straight to that invoice.
-          </p>
         </div>
         <Link
           href="/dashboard/invoices/bulk-upload"

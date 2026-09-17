@@ -25,10 +25,6 @@ export default async function AutomationRulesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">🤖 Automation Rules</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Trigger → condition → action. v1 covers one trigger — order Hold/Cancel — and internal-only actions (add a
-          note, set a tag). Nothing here sends anything to a customer.
-        </p>
       </div>
 
       <AutomationRulesClient companies={companies ?? []} rules={(rules ?? []) as AutomationRuleRow[]} />

@@ -22,10 +22,6 @@ export default async function PermissionsAdminPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Roles &amp; Permissions</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Control which sections each role can see — changes apply instantly here, no code deployment needed.
-          Click a checkbox to save immediately.
-        </p>
       </div>
 
       {/* 2026-09-15 — "agar naye role banayenge to kese banayenge": role

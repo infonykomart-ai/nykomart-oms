@@ -184,10 +184,6 @@ export default async function StockPage({
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📦 Stock (Raw Material)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Stock In / Stock Out per Source + SKU — Chalan No. mandatory on every live entry. Current Stock is always
-            computed live from the In/Out ledger, never stored.
-          </p>
         </div>
         <Link
           href="/dashboard/stock/bulk-upload"

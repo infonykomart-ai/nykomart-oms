@@ -14,10 +14,6 @@ export default async function HelpCenterAdminPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🛠️ Help Center Admin</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Manage the FAQ/guide articles shown in the 🤖 Help Center chat bubble every employee sees on every dashboard
-          page. Rule-based search only — not an AI chat.
-        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

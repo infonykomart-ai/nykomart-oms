@@ -16,10 +16,6 @@ export default async function HrLettersHubPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">HR Letters</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          You always get a chance to edit any letter or certificate before printing or sending it — nothing goes
-          straight to &ldquo;ready to print&rdquo;.
-        </p>
       </div>
 
       <NavTileGrid>

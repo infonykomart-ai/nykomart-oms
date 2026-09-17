@@ -208,10 +208,6 @@ export default async function ReturnsPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">↩️ Returns / Refunds</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Live order refunds (cancelled orders) + historical marketplace refunds (FBA / Dispatch / No-Dispatch), for
-            your accessible companies — apply filters, then download/send below.
-          </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">
           ← Back to Reports

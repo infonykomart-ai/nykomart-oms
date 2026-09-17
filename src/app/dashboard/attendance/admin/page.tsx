@@ -484,7 +484,6 @@ export default async function AttendanceAdminPage({
       <AutoRefresh intervalMs={15000} />
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🗓️ Attendance Admin</h1>
-        <p className="mt-1 text-sm text-slate-500">Holiday calendar, weekly off, team attendance &amp; daily work reports.</p>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
@@ -916,7 +915,6 @@ export default async function AttendanceAdminPage({
         <div className="mt-6">
           <div className="mb-6">
             <h2 className="text-2xl font-semibold text-slate-900">📊 Task Reports</h2>
-            <p className="mt-1 text-sm text-slate-500">Every employee&apos;s tasks and live timers, company-wide.</p>
           </div>
 
           <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">

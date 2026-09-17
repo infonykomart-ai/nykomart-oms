@@ -39,11 +39,6 @@ export default async function BulkOrderUploadPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📤 Bulk Order Entry (CSV/Excel)</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Download the template, fill one row per item, then upload it here. Each row is saved exactly like a normal
-            order entry — PO/RF/RG numbers, buyer-batching, and currency conversion all work the same way. One file can
-            mix rows from any of your companies — the company is picked up automatically from the Store name.
-          </p>
         </div>
         <Link
           href="/dashboard/orders"

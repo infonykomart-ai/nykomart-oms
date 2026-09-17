@@ -21,11 +21,6 @@ export default async function ShipglobalPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">🌍 Shipglobal Shipments</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Create a real Shipglobal shipment + label for an order (DPD / UniUni / VipParcel / DHL E-Commerce / UBI). This creates an
-          actual shipment and customs declaration once real credentials are live — see the seller profile section below before your
-          first shipment.
-        </p>
       </div>
 
       <SellerProfileForm existing={seller ?? null} companyName={company?.name ?? "this company"} />

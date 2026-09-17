@@ -64,10 +64,6 @@ export default async function InventoryPage({
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">📦 Inventory — Finished Goods</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Auto-restocked only — when a cancelled order that already had a Purchase Bill gets refunded, its purchased
-          quantity flows in here automatically. No manual Stock In/Out for finished goods.
-        </p>
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

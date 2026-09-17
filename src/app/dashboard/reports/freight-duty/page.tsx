@@ -154,10 +154,6 @@ export default async function FreightDutyReportPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🚚 Freight / Duty Bill Report</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Courier Freight Bills + Duty &amp; Tax Bills, one row per assigned shipment — apply filters, then
-            download or send.
-          </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">
           ← Back to Reports

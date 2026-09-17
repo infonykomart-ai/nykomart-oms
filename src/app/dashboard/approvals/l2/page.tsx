@@ -74,10 +74,6 @@ export default async function ApprovalsL2Page() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">✅ Approvals (L2)</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Final sign-off — bills already approved at L1, waiting on your approval before they&apos;re considered fully
-          passed. Multi-item/multi-order Purchase Bills show as one grouped entry per invoice.
-        </p>
       </div>
       <ApprovalList bills={rows} level={2} />
     </div>

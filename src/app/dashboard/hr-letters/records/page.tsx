@@ -73,10 +73,6 @@ export default async function HrLettersRecordsPage({
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📋 Issued Letters Record</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Every HR letter issued from this system, with its dispatch no. — search, filter, and reopen any past
-            letter to view, reprint, or re-export it.
-          </p>
         </div>
         <Link
           href="/dashboard/hr-letters"

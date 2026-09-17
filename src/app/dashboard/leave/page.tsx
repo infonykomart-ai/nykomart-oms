@@ -133,7 +133,6 @@ export default async function LeavePage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">🏖️ Leave</h1>
-        <p className="mt-1 text-sm text-slate-500">Apply for leave, and track approval status.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
