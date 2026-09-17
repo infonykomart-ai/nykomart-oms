@@ -10,6 +10,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { notifyCompanion } from "@/lib/companion/notify";
+import { validateDateFields } from "@/lib/fy-date";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -102,6 +103,16 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   if (!Number.isFinite(orderValueOriginal) || orderValueOriginal < 0) {
     return { error: "Order value must be a valid number.", success: false };
   }
+
+  // 2026-09-17 — FY-window validation on the edit path too (same gate as
+  // createOrderCore; a typo'd year here would feed the P&L by Month view).
+  const dateError = validateDateFields([
+    { value: orderDate, label: "Order date" },
+    { value: strOrNull(formData, "dispatch_date"), label: "Dispatch date" },
+    { value: strOrNull(formData, "po_date"), label: "PO date" },
+    { value: strOrNull(formData, "delivery_date"), label: "Delivery date" },
+  ]);
+  if (dateError) return { error: dateError, success: false };
 
   const conversion = await computeCurrencyConversion(supabase, orderCurrency, orderDate, orderValueOriginal);
 

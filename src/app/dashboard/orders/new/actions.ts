@@ -7,6 +7,7 @@ import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/currency";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
+import { validateDateFields } from "@/lib/fy-date";
 import { revalidatePath } from "next/cache";
 
 export type OrderFormState = {
@@ -195,6 +196,16 @@ export async function createOrderCore(
   if (!items.length) {
     return { error: "At least one item is required.", refNo: null };
   }
+
+  // 2026-09-17 — FY-window date validation ("pura system FY par depend
+  // hoyega"): manual entry AND the marketplace cron both flow through
+  // createOrderCore, so this one check guards every order-date path.
+  const dateError = validateDateFields([
+    { value: orderDate, label: "Order date" },
+    { value: input.poDate, label: "PO date" },
+    { value: input.deliveryDate, label: "Delivery date" },
+  ]);
+  if (dateError) return { error: dateError, refNo: null };
 
   const { data: company, error: companyError } = await supabase
     .from("companies")

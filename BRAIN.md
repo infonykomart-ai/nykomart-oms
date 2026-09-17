@@ -202,6 +202,26 @@ account — the shared env key is the usual culprit because the fallback is sile
 - `fedex-ship.ts`'s account-number 400 message also names the key source now, so a failed booking
   answers "whose key was my account paired with?" inline.
 
+## 5d. FY date validation (2026-09-17) — "pura system FY par depend hoyega"
+
+One typo'd year (20026-09-01) became its own bogus month at the top of P&L by Month because NO
+entry form validated dates and a Postgres `date` happily stores year 20026. The gate now has two
+halves, both anchored on the FY system (April = FY start, same as `fy_label()` in db/schema.sql —
+no hardcoded year anywhere):
+
+- `src/lib/fy-date.ts` — `validateBusinessDate()` / `validateDateFields()`: 4-digit-year +
+  real-calendar-date checks, then a FY-anchored window = current FY start − 10 years … current FY
+  end + 1 year (2016-04-01 → 2028-03-31 as of 2026). `FY_START_MONTH`/`PAST_FY_LIMIT`/
+  `FUTURE_FY_LIMIT` drive everything. Wired into: createOrderCore (manual + marketplace cron),
+  order edit, internal_expenses, purchase-bill core (single + multi-PO + CSV parse), debit/credit
+  note, washing chalan, internal invoice cores.
+- `db/2026-09-17-fy-date-validation.sql` — DB backstop: `NOT VALID` sanity CHECKs (1990–2099) on
+  orders.order_date, purchase_bills.vendor_invoice_date, sale_profit_ledger.invoice_date,
+  internal_expenses.expense_date — every OTHER write path (cron, CSV import, manual SQL) is
+  covered too; NOT VALID means existing rows (incl. the known bad one) never block applying it.
+- When a new form takes a business date, call `validateDateFields([...])` in its server action —
+  that's the convention now.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

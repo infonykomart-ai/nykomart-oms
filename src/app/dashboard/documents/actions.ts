@@ -38,6 +38,7 @@ import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
+import { validateDateFields } from "@/lib/fy-date";
 import { saveOrderRefundCore } from "../orders/actions";
 import { revalidatePath } from "next/cache";
 
@@ -190,6 +191,12 @@ async function saveCreditNoteCore(
   if (!p.companyId) return { error: "Select a company.", id: null, docNo: null };
   if (!employee.companyIds.includes(p.companyId)) return { error: "You do not have access to this company.", id: null, docNo: null };
   if (!p.creditNoteDate) return { error: "Credit Note Date is required.", id: null, docNo: null };
+  // 2026-09-17 — FY-window validation on every document date.
+  const cnDateError = validateDateFields([
+    { value: p.creditNoteDate, label: "Credit note date" },
+    { value: p.refundDate, label: "Refund date" },
+  ]);
+  if (cnDateError) return { error: cnDateError, id: null, docNo: null };
   if (p.adjustTargetBillPassRegisterId && (!p.adjustAmount || p.adjustAmount <= 0)) {
     return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
   }
@@ -584,6 +591,12 @@ async function saveDebitNoteCore(
   if (!p.companyId) return { error: "Select a company.", id: null, docNo: null };
   if (!employee.companyIds.includes(p.companyId)) return { error: "You do not have access to this company.", id: null, docNo: null };
   if (!p.debitNoteDate) return { error: "Debit Note Date is required.", id: null, docNo: null };
+  // 2026-09-17 — FY-window validation on every document date.
+  const dnDateError = validateDateFields([
+    { value: p.debitNoteDate, label: "Debit note date" },
+    { value: p.billDate, label: "Bill date" },
+  ]);
+  if (dnDateError) return { error: dnDateError, id: null, docNo: null };
   if (!p.partyId) return { error: "Select a party.", id: null, docNo: null };
   if (p.adjustTargetBillPassRegisterId && (!p.adjustAmount || p.adjustAmount <= 0)) {
     return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
@@ -694,6 +707,9 @@ async function saveWashingEntryCore(
   if (!employee.companyIds.includes(p.companyId)) return { error: "You do not have access to this company.", id: null, docNo: null };
   if (!p.partyId) return { error: "Select a party.", id: null, docNo: null };
   if (!p.chalanDate) return { error: "Chalan Date is required.", id: null, docNo: null };
+  // 2026-09-17 — FY-window validation (washing chalan gets an FY-keyed doc no).
+  const weDateError = validateDateFields([{ value: p.chalanDate, label: "Chalan date" }]);
+  if (weDateError) return { error: weDateError, id: null, docNo: null };
 
   const { data, error } = await supabase
     .from("washing_entries")
@@ -753,6 +769,9 @@ export async function saveInternalInvoice(_prev: DocFormState, formData: FormDat
   if (fromCompanyId === toCompanyId) return initialFail("The From and To companies must be different.");
   if (!employee.companyIds.includes(fromCompanyId)) return initialFail("You do not have access to the From company.");
   if (!invoiceDate) return initialFail("Invoice Date is required.");
+  // 2026-09-17 — FY-window validation (internal invoice numbers are FY-keyed).
+  const iiDateError = validateDateFields([{ value: invoiceDate, label: "Invoice date" }]);
+  if (iiDateError) return initialFail(iiDateError);
   if (!description) return initialFail("Description is required.");
   if (!qty || !rate) return initialFail("Qty and Rate are required.");
 
@@ -1100,6 +1119,13 @@ async function savePurchaseBillCore(
 ): Promise<{ error: string | null; id: string | null; docNo: string | null }> {
   if (!p.vendorPartyId) return { error: "Select a vendor party.", id: null, docNo: null };
   if (!p.vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", id: null, docNo: null };
+  // 2026-09-17 — FY-window validation (single-PO form, multi-PO form and
+  // the CSV bulk parse all funnel through this core) — a typo'd invoice
+  // year would feed the P&L purchase-bill expense line for a bogus month.
+  const pbDateError = validateDateFields([
+    { value: p.vendorInvoiceDate, label: "Vendor invoice date" },
+  ]);
+  if (pbDateError) return { error: pbDateError, id: null, docNo: null };
 
   // Order link is optional (see section header comment above) — when given,
   // it still pins down the company unambiguously and must be one the

@@ -13,6 +13,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit/log-audit";
 import { EXPENSE_CATEGORIES } from "./categories";
+import { validateBusinessDate } from "@/lib/fy-date";
 
 // NOTE: EXPENSE_CATEGORIES itself now lives in ./categories.ts, not here —
 // see that file's header note (a "use server" file may only export async
@@ -44,6 +45,10 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
 
   if (!companyId) return fail("Select a company.");
   if (!expenseDate) return fail("Date is required.");
+  // 2026-09-17 — FY-window validation: a typo'd year here lands directly in
+  // P&L by Month (the 20026-09-01 bug came from a path like this).
+  const dateError = validateBusinessDate(expenseDate, "Date");
+  if (dateError) return fail(dateError);
   if (!EXPENSE_CATEGORIES.includes(category as (typeof EXPENSE_CATEGORIES)[number])) {
     return fail("Select a valid category.");
   }
