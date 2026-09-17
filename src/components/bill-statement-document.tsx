@@ -11,7 +11,7 @@ export function BillStatementDocument({ data }: { data: BillStatementData }) {
   const inr = (n: number) => `₹${n.toFixed(2)}`;
 
   return (
-    <PrintArea id="bill-statement-print">
+    <PrintArea id="bill-statement-print" companyName={companyName} companyLogoUrl={company?.logo_url}>
       <div className="mx-auto min-h-[900px] w-full bg-white p-8 text-xs text-slate-900" style={{ fontFamily: "Arial, sans-serif" }}>
         <div className="mb-1 text-right text-sm font-bold tracking-wide">{data.docTitle}</div>
         <div className="mb-4 flex items-start justify-between border-b-2 border-slate-800 pb-3">

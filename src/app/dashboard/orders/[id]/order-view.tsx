@@ -339,7 +339,7 @@ export function OrderView({
         </div>
       </div>
 
-      <PrintArea id="order-print-area">
+      <PrintArea id="order-print-area" companyName={companyName} companyLogoUrl={companyLogoUrl}>
         <OrderPrintSheet
           order={order}
           companyName={companyName}

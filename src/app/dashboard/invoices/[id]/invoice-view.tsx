@@ -565,7 +565,7 @@ export function InvoiceView({
       </div>
 
       <div>
-        <PrintArea id="invoice-print-area">
+        <PrintArea id="invoice-print-area" companyName={company?.name} companyLogoUrl={company?.logo_url}>
         <div className="mx-auto min-h-[1100px] w-full bg-white p-8 text-xs text-slate-900" style={{ fontFamily: "Arial, sans-serif" }}>
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-bold tracking-wide">{invoice.csb_type} - INVOICE</span>

@@ -80,7 +80,7 @@ async function DebitNoteReportInner({ id }: { id: string }) {
         <PrintButton label="🖨 Download PDF" />
       </div>
 
-      <PrintArea id="debit-note-report-area">
+      <PrintArea id="debit-note-report-area" companyName={company?.name} companyLogoUrl={company?.logo_url}>
         <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-900 shadow-sm print:border-0 print:p-0" style={{ fontFamily: "Georgia, serif" }}>
           {/* 2026-08-29 (later, same day) — "top ful: Company letterhead ...
               top, just down center: document title + No. + Date, just down

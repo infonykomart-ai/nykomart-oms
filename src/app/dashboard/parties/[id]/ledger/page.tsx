@@ -129,9 +129,14 @@ async function PartyLedgerInner(
   // matches the pattern every other per-company page in this app already
   // uses (orders/new, shipglobal, attendance, etc.). The `allCompanies=1`
   // toggle above is the explicit exception, clearly labeled in the UI.
-  const { data: companies } = await supabase.from("companies").select("id, name");
+  const { data: companies } = await supabase.from("companies").select("id, name, logo_url");
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const currentCompanyName = companyName.get(employee.currentCompanyId) ?? "—";
+  // 2026-09-17 — report footer's company logo: only when this ledger is
+  // scoped to ONE company (not "All companies (merged)", which can
+  // legitimately span Nyko/Rugara/Casa Arra on one page — no single logo
+  // would be correct there, so the footer just shows the generic line).
+  const currentCompanyLogoUrl = (companies ?? []).find((c) => c.id === employee.currentCompanyId)?.logo_url ?? null;
 
   const entries = entriesRaw ?? [];
   const billIds = entries.map((e) => e.id);
@@ -605,7 +610,7 @@ async function PartyLedgerInner(
         </p>
       )}
 
-      <PrintArea id="party-ledger-area">
+      <PrintArea id="party-ledger-area" companyName={allCompanies ? undefined : currentCompanyName} companyLogoUrl={allCompanies ? undefined : currentCompanyLogoUrl}>
         <div className="oms-ledger-card rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
           <div className="mb-4 flex items-center justify-between">
             <div>

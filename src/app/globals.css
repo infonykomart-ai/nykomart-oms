@@ -1,7 +1,22 @@
 @import "tailwindcss";
 
+/* 2026-09-17 — "ye jo page ruk nahi rah raha or niche break hokar black aa
+ * raha": on a dark-mode OS/browser, this leftover create-next-app
+ * boilerplate (`prefers-color-scheme: dark` → near-black --background)
+ * painted the raw <body> almost black. It has NOTHING to do with this
+ * app's own per-company theme system (the --oms-* tokens, applied via
+ * data-theme on ThemedShell/<html> — see theme/themed-shell.tsx), so it
+ * was never meant to follow the OS's light/dark setting at all. Any small
+ * viewport/height shortfall (dvh rounding, zoom, a short page) let that
+ * near-black body show through below the app's own themed content —
+ * exactly the "black area at the bottom" the owner saw. Fixed by dropping
+ * the OS-dark-mode override entirely and giving body/html a fixed,
+ * neutral default (matching the default Navy/Gold theme's --oms-canvas,
+ * #f1f5f9) so even a gap never looks like a broken black hole — plus an
+ * explicit height:100% chain so a dvh shortfall is far less likely to
+ * begin with. */
 :root {
-  --background: #ffffff;
+  --background: #f1f5f9;
   --foreground: #171717;
 }
 
@@ -12,11 +27,8 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  height: 100%;
 }
 
 body {
