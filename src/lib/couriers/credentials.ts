@@ -196,7 +196,7 @@ export async function saveCourierCredentialFields(
   if (error) throw new Error(error.message);
 }
 
-export type CourierCredentialStatus = { configuredInDb: boolean; configured: boolean };
+export type CourierCredentialStatus = { configuredInDb: boolean; configured: boolean; hasAccountNumber: boolean };
 
 /**
  * Which couriers have enough saved (DB OR env var — same "either source
@@ -205,6 +205,9 @@ export type CourierCredentialStatus = { configuredInDb: boolean; configured: boo
  * distinguishes "saved through this UI" from "still riding on a global env
  * var" so the badge can say which. Never returns secret VALUES, only
  * booleans — safe to pass straight to a client component.
+ * 2026-09-17: adds hasAccountNumber (the non-secret account field), the
+ * Setup Matrix's "account saved ✓" signal — deliberately separate from
+ * `configured`, which only tracks the secret auth fields.
  */
 export async function getCourierCredentialStatus(
   supabase: ServiceClient,
@@ -228,7 +231,69 @@ export async function getCourierCredentialStatus(
         const def = fieldDefs.find((d) => d.key === f);
         return !!(def?.envVar && process.env[def.envVar]);
       });
-    result[key] = { configuredInDb, configured };
+    // The company's own saved account number (non-secret field) — the
+    // booking actions fall back to this automatically since 2026-09-17.
+    const accountField = fieldDefs.find((f) => !f.secret && /account|shipper_number/.test(f.key));
+    const hasAccountNumber = !!(accountField && enc[accountField.key]);
+    result[key] = { configuredInDb, configured, hasAccountNumber };
+  }
+  return result;
+}
+
+export type CompanyCourierStatus = Record<CourierKey, { configured: boolean; configuredInDb: boolean; hasAccountNumber: boolean; hasShipperProfile: boolean }>;
+
+// 2026-09-17 — the Setup Matrix's data: per-company status for EVERY
+// company the caller has access to (company switch karke dekhna padta
+// tha — ab ek grid me sab dikhta hai). Only booleans + the company NAME
+// leave this function: no secret values, no account numbers — safe for a
+// client component. The courier_credentials reads are batched (one .in()
+// query, not one per company) because this runs on every page load.
+export async function getSetupMatrixStatuses(
+  supabase: ServiceClient,
+  companyIds: string[]
+): Promise<Record<string, { companyName: string } & CompanyCourierStatus>> {
+  if (!companyIds.length) return {};
+
+  const [{ data: companies }, { data: credRows }, { data: profileRows }] = await Promise.all([
+    supabase.from("companies").select("id, name").in("id", companyIds).order("name"),
+    supabase.from("courier_credentials").select("company_id, courier, secrets_enc").in("company_id", companyIds),
+    supabase.from("courier_shipper_profiles").select("company_id").in("company_id", companyIds),
+  ]);
+
+  const credsByCompany = new Map<string, Map<CourierKey, Record<string, string>>>();
+  for (const row of credRows ?? []) {
+    const companyId = row.company_id as string;
+    if (!credsByCompany.has(companyId)) credsByCompany.set(companyId, new Map());
+    credsByCompany
+      .get(companyId)!
+      .set(row.courier as CourierKey, (row.secrets_enc as Record<string, string> | null) ?? {});
+  }
+  const profileCompanies = new Set((profileRows ?? []).map((p) => p.company_id as string));
+
+  const result: Record<string, { companyName: string } & CompanyCourierStatus> = {};
+  for (const company of companies ?? []) {
+    const byCourier = credsByCompany.get(company.id as string) ?? new Map();
+    const statuses = {} as CompanyCourierStatus;
+    for (const key of Object.keys(COURIER_CREDENTIAL_FIELDS) as CourierKey[]) {
+      const enc = byCourier.get(key) ?? {};
+      const fieldDefs = COURIER_CREDENTIAL_FIELDS[key];
+      const required = REQUIRED_FOR_CONFIGURED[key];
+      const configuredInDb = required.every((f) => !!enc[f]);
+      const configured =
+        configuredInDb ||
+        required.every((f) => {
+          const def = fieldDefs.find((d) => d.key === f);
+          return !!(def?.envVar && process.env[def.envVar]);
+        });
+      const accountField = fieldDefs.find((f) => !f.secret && /account|shipper_number/.test(f.key));
+      statuses[key] = {
+        configured,
+        configuredInDb,
+        hasAccountNumber: !!(accountField && enc[accountField.key]),
+        hasShipperProfile: profileCompanies.has(company.id as string),
+      };
+    }
+    result[company.id as string] = { companyName: company.name as string, ...statuses };
   }
   return result;
 }

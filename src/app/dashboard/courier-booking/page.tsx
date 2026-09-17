@@ -5,7 +5,8 @@ import { CreateShipmentForm, type CourierBookingPrefill, type BookPrefill } from
 import { AccountSetupForm } from "./account-setup-form";
 import { ShipmentsTracking } from "./shipments-tracking";
 import { CourierBookingTabs, type CourierBookingTab } from "./courier-booking-tabs";
-import { COURIERS, getCourierCredentialStatus, getNonSecretCredentialValues } from "@/lib/couriers/credentials";
+import { COURIERS, getCourierCredentialStatus, getNonSecretCredentialValues, getSetupMatrixStatuses } from "@/lib/couriers/credentials";
+import { SetupMatrix, type MatrixCompany } from "./setup-matrix";
 import { getTrackedShipments, type TrackingFilters } from "./tracking-data";
 import { getPendingOrders, groupIntoBatches, type PendingOrdersFilters } from "./pending-orders-data";
 import { PendingOrders } from "./pending-orders";
@@ -92,6 +93,7 @@ export default async function CourierBookingPage({
     ndrSummary,
     performanceReport,
     candidatesByCourier,
+    setupMatrixStatuses,
     ...prefillByCourier
   ] = await Promise.all([
     supabase.from("courier_shipper_profiles").select("*").eq("company_id", employee.currentCompanyId).maybeSingle(),
@@ -109,6 +111,9 @@ export default async function CourierBookingPage({
     // own header comment) — a fully avoidable extra sequential round-trip
     // on every load. Now it's just one more entry in this same batch.
     getPickupCandidatesForAllCouriers(serviceSupabase, employee.companyIds),
+    // 2026-09-17 — Setup Matrix: every company's × every courier's status
+    // in one batch of queries (see getSetupMatrixStatuses).
+    getSetupMatrixStatuses(serviceSupabase, employee.companyIds),
     ...COURIERS.map((c) => getNonSecretCredentialValues(serviceSupabase, employee.currentCompanyId, c.key)),
   ]);
 
@@ -116,6 +121,23 @@ export default async function CourierBookingPage({
   COURIERS.forEach((c, i) => {
     prefill[c.key] = prefillByCourier[i];
   });
+
+  // Setup Matrix rows (2026-09-17) — names come straight from the helper
+  // (same batched companies query); isCurrent marks the company the header
+  // dropdown is currently editing as, matching the per-company cards below.
+  const matrixCompanies: MatrixCompany[] = Object.entries(setupMatrixStatuses).map(([id, entry]) => ({
+    id,
+    name: entry.companyName,
+    isCurrent: id === employee.currentCompanyId,
+    statuses: {
+      fedex: entry.fedex,
+      ups: entry.ups,
+      aramex: entry.aramex,
+      delhivery: entry.delhivery,
+      shiprocket: entry.shiprocket,
+      dhl: entry.dhl,
+    },
+  }));
 
   const pendingBatches = groupIntoBatches(pendingOrderRows);
 
@@ -137,9 +159,12 @@ export default async function CourierBookingPage({
       <CourierBookingTabs
         initialTab={initialTab}
         setup={
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-800">Account Setup</h2>
-            <AccountSetupForm status={credentialStatus} canEdit={canEditCredentials} companyName={company?.name ?? "this company"} />
+          <div className="space-y-4">
+            <SetupMatrix companies={matrixCompanies} />
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <h2 className="mb-3 text-sm font-semibold text-slate-800">Account Setup — {company?.name ?? "this company"}</h2>
+              <AccountSetupForm status={credentialStatus} canEdit={canEditCredentials} companyName={company?.name ?? "this company"} />
+            </div>
           </div>
         }
         pending={<PendingOrders rows={pendingOrderRows} batches={pendingBatches} filters={pendingFilters} />}
