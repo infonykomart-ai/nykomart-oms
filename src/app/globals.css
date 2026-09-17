@@ -1043,3 +1043,18 @@ body {
   .oms-row-overdue { background-color: #fef2f2 !important; }
   .oms-ledger-card { background: #ffffff !important; }
 }
+
+/* 2026-09-17 (evening) — P&L inline breakdown. Pure-CSS row expander: the
+   summary row is a <tr class="pl-expand"> whose LAST cell contains a
+   checkbox (visually just the ▾ arrow). When checked, the NEXT sibling
+   <tr class="pl-detail"> (the full-width breakdown row directly under the
+   entry — "arrow ke sath hi usi entry ke niche dikh jaye") becomes visible.
+   No JS, works inside every table, and dark themes inherit fine because
+   the detail row uses the same surface tokens as the table. */
+tr.pl-detail { display: none; }
+tr.pl-expand input.pl-toggle { cursor: pointer; accent-color: #0284c7; }
+tr.pl-expand input.pl-toggle:checked ~ * ~ tr.pl-detail { display: table-row; }
+/* table-row structure: toggle checkbox sits in the last td of the expand
+   row; the detail row is the NEXT <tr>. :has() keeps the sibling selector
+   robust regardless of td count. */
+tr.pl-expand:has(input.pl-toggle:checked) + tr.pl-detail { display: table-row; }

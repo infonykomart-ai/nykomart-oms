@@ -27,6 +27,14 @@
 --      skips the line; verification query at the end lists those).
 --   4. All pre-existing columns keep name/order — this app queries named
 --      .select() columns, so appending is safe.
+--   5. 2026-09-17 (evening): bank_inflow_inr — money that actually ARRIVED
+--      in the bank for this scope (verified bank-recon credits only:
+--      bank_recon_links.target_type = 'order_sale'/'bill_payment'-credit
+--      style links, i.e. every linked CREDIT statement line). The user
+--      wants order value vs bank receipts side by side: "bank me jo pese
+--      aaye or order value dono ka difrance bhi pata chalna chhiye".
+--      Unlinked credits are NOT counted (they'd be guesses) — the
+--      unmatched backlog stays visible in /dashboard/bank-recon.
 --
 -- Both views: CREATE OR REPLACE with full definitions — safe to re-run.
 
@@ -136,6 +144,19 @@ marketplace_fee_totals AS (
     AND (e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL)
   GROUP BY o.company_id
 ),
+-- 2026-09-17 (evening): verified bank inflow per company — linked CREDIT
+-- statement lines only (bank_recon_links join), split by what they linked
+-- to. The P&L shows the TOTAL (bank_inflow_inr) next to order value so the
+-- "order value vs paisa actually aaya" difference is one glance.
+bank_inflow AS (
+  SELECT bsl.company_id,
+    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
+  FROM bank_statement_lines bsl
+  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
+  WHERE bsl.cr_amount IS NOT NULL
+    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
+  GROUP BY bsl.company_id
+),
 historical_agg AS (
   -- pre-`orders`-table CSV backfill rows only — see comment above.
   SELECT company_id, SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
@@ -157,7 +178,8 @@ combined AS (
     -COALESCE(padj.adjustment_total_inr, 0)     AS expense_purchase_adjustments_inr,
     COALESCE(wa.washing_inr, 0)                 AS expense_washing_inr,
     COALESCE(ha.hist_expense_inr, 0)            AS expense_historical_inr,
-    COALESCE(mf.fees_matched_inr, 0)            AS portal_fees_matched_inr
+    COALESCE(mf.fees_matched_inr, 0)            AS portal_fees_matched_inr,
+    COALESCE(bi.inflow_inr, 0)                  AS bank_inflow_inr
   FROM companies c
   LEFT JOIN order_agg oa              ON oa.company_id = c.id
   LEFT JOIN purchase_agg pa           ON pa.company_id = c.id
@@ -166,6 +188,7 @@ combined AS (
   LEFT JOIN marketplace_fee_totals mf ON mf.company_id = c.id
   LEFT JOIN historical_agg ha         ON ha.company_id = c.id
   LEFT JOIN courier_agg ca            ON ca.company_id = c.id
+  LEFT JOIN bank_inflow bi            ON bi.company_id = c.id
 )
 SELECT
   combined.company_id, company_name,
@@ -189,7 +212,8 @@ SELECT
   expense_purchase_adjustments_inr,
   expense_washing_inr,
   expense_historical_inr,
-  portal_fees_matched_inr
+  portal_fees_matched_inr,
+  bank_inflow_inr
 FROM combined
 LEFT JOIN (
   SELECT company_id, SUM(amount_inr) AS total_internal_expenses_inr
@@ -327,6 +351,16 @@ expense_agg AS (
   FROM internal_expenses
   GROUP BY date_trunc('month', expense_date)
 ),
+-- 2026-09-17 (evening): verified bank inflow, month-bucketed by txn_date.
+bank_inflow AS (
+  SELECT date_trunc('month', bsl.txn_date)::date AS month,
+    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
+  FROM bank_statement_lines bsl
+  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
+  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
+    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
+  GROUP BY date_trunc('month', bsl.txn_date)
+),
 combined AS (
   SELECT
     m.month,
@@ -341,7 +375,8 @@ combined AS (
     -COALESCE(padj.adjustment_total_inr, 0)    AS expense_purchase_adjustments_inr,
     COALESCE(wa.washing_inr, 0)                AS expense_washing_inr,
     COALESCE(ha.hist_expense_inr, 0)           AS expense_historical_inr,
-    COALESCE(mf.fees_matched_inr, 0)           AS portal_fees_matched_inr
+    COALESCE(mf.fees_matched_inr, 0)           AS portal_fees_matched_inr,
+    COALESCE(bi.inflow_inr, 0)                 AS bank_inflow_inr
   FROM months m
   LEFT JOIN order_agg oa              ON oa.month = m.month
   LEFT JOIN purchase_agg pa           ON pa.month = m.month
@@ -350,11 +385,13 @@ combined AS (
   LEFT JOIN marketplace_fee_totals mf ON mf.month = m.month
   LEFT JOIN historical_agg ha         ON ha.month = m.month
   LEFT JOIN courier_agg ca            ON ca.month = m.month
+  LEFT JOIN bank_inflow bi            ON bi.month = m.month
 )
 SELECT
   c.month,
   c.total_sale_value_inr,
   c.total_expenses_inr,
+  (c.total_sale_value_inr * 0.25) AS portal_expenses_25pct,
   ((c.total_sale_value_inr - c.total_expenses_inr) - GREATEST((c.total_sale_value_inr * 0.25) - c.portal_fees_matched_inr, 0)) AS net_earn,
   (((c.total_sale_value_inr - c.total_expenses_inr) - GREATEST((c.total_sale_value_inr * 0.25) - c.portal_fees_matched_inr, 0)) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
   COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
@@ -366,7 +403,8 @@ SELECT
   c.expense_purchase_adjustments_inr,
   c.expense_washing_inr,
   c.expense_historical_inr,
-  c.portal_fees_matched_inr
+  c.portal_fees_matched_inr,
+  c.bank_inflow_inr
 FROM combined c
 LEFT JOIN expense_agg ea ON ea.month = c.month
 ORDER BY c.month DESC;

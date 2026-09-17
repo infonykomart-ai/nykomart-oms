@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
@@ -21,16 +22,35 @@ type PlRow = {
   expense_washing_inr?: number | null;
   expense_historical_inr?: number | null;
   portal_fees_matched_inr?: number | null;
+  bank_inflow_inr?: number | null;
+  total_sale_value_inr?: number | null;
+  total_expenses_inr?: number | null;
+  net_earn?: number | null;
+  portal_expenses_25pct?: number | null;
 };
 
+const inr2 = (n: number | null | undefined) =>
+  Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// 2026-09-17 (evening) — the user's layout ask: "arrow ke sath hi usi entry
+// ke niche dikh jaye" + per-company/month expense split + money colors +
+// bank inflow vs order value difference. This renders an INLINE expansion
+// row under the clicked entry (no floating popover — that floated mid-
+// screen, the screenshot bug). Color language (same on every table):
+//   expense lines  rose-600  |  credits/negative  emerald-600
+//   profit         emerald-700 |  money-in (bank)  sky-700
+// Net-profit chain is shown line by line so "Sale − Expenses − Portal = Net"
+// is auditable without doing math in the head.
 function PlExpenseBreakdown({ row }: { row: PlRow }) {
-  // 2026-09-17 — the migration adds these columns to the views; until the
-  // SQL file is run, Postgres answers the named .select() with a 42703
-  // "column does not exist" error and the ENTIRE P&L comes back empty
-  // (that's the blank tables screenshot). Gating the breakdown — and the
-  // page's select list — on whether the view actually returned the column
-  // keeps the tables rendering with the pre-migration data instead.
   if (row.expense_courier_inr === undefined) return null;
+  const sale = Number(row.total_sale_value_inr ?? 0);
+  const exp = Number(row.total_expenses_inr ?? 0);
+  const est25 = Number(row.portal_expenses_25pct ?? sale * 0.25);
+  const fees = Number(row.portal_fees_matched_inr ?? 0);
+  const portalEff = Math.max(est25 - fees, 0);
+  const net = Number(row.net_earn ?? sale - exp - portalEff);
+  const bank = Number(row.bank_inflow_inr ?? 0);
+  const inflowDiff = bank - sale;
   const lines: Array<[string, number | null | undefined]> = [
     ["Courier (freight bills)", row.expense_courier_inr],
     ["Duty (duty bills)", row.expense_duty_inr],
@@ -40,23 +60,54 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
     ["Old CSV history (pre-orders)", row.expense_historical_inr],
   ];
   return (
-    <details className="group inline-block text-left">
-      <summary className="ml-1 cursor-pointer list-none text-[10px] font-semibold text-sky-700 hover:text-sky-900">▾</summary>
-      <div className="absolute z-10 mt-1 min-w-56 rounded-lg border border-slate-200 bg-white p-2 text-[11px] shadow-lg">
+    <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px]">
+      <div className="grid gap-x-8 gap-y-0.5 sm:grid-cols-2">
+        <div className="font-semibold text-rose-600">Expense split (kam kya raha)</div>
+        <div className="font-semibold text-slate-500">Net profit kaise bana</div>
         {lines.map(([label, val]) => (
-          <div key={label} className="flex items-center justify-between gap-4 py-0.5">
+          <div key={label} className="flex items-center justify-between gap-4">
             <span className="text-slate-500">{label}</span>
-            <span className={`font-medium ${Number(val ?? 0) < 0 ? "text-emerald-700" : "text-slate-800"}`}>
-              {Number(val ?? 0).toFixed(2)}
+            <span className={`font-medium ${Number(val ?? 0) < 0 ? "text-emerald-600" : "text-rose-600"}`}>
+              {Number(val ?? 0) < 0 ? "+" : "−"} {inr2(Math.abs(Number(val ?? 0)))}
             </span>
           </div>
         ))}
-        <div className="mt-1 flex items-center justify-between gap-4 border-t border-slate-100 pt-1">
-          <span className="text-slate-500">Matched portal fees (offset 25%)</span>
-          <span className="font-medium text-slate-800">{Number(row.portal_fees_matched_inr ?? 0).toFixed(2)}</span>
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-slate-500">Portal fees matched (real)</span>
+          <span className="font-medium text-sky-700">{inr2(fees)}</span>
+        </div>
+        <div className="sm:col-span-2 mt-1 border-t border-slate-200 pt-1">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-slate-600">Sale Value (INR)</span>
+            <span className="font-semibold text-sky-700">{inr2(sale)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-slate-600">− Total Expenses</span>
+            <span className="font-semibold text-rose-600">{inr2(exp)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-slate-600">− Portal est. 25% ({inr2(est25)} − fees {inr2(fees)} = {inr2(portalEff)})</span>
+            <span className="font-semibold text-rose-600">{inr2(portalEff)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4 border-t border-slate-200 pt-1">
+            <span className="font-semibold text-slate-700">= Net Earn</span>
+            <span className={`font-bold ${net >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{inr2(net)}</span>
+          </div>
+        </div>
+        <div className="sm:col-span-2 mt-1 border-t border-slate-200 pt-1">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-slate-600">Bank me aaya (verified statement credits)</span>
+            <span className="font-semibold text-sky-700">{inr2(bank)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-slate-600">Order value vs bank ka difference {bank === 0 ? "(statement upload/link hone par dikhega)" : ""}</span>
+            <span className={`font-semibold ${inflowDiff >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+              {inflowDiff >= 0 ? "+" : "−"} {inr2(Math.abs(inflowDiff))}
+            </span>
+          </div>
         </div>
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -124,8 +175,8 @@ export default async function CrmOverviewPage({
     supabase.rpc("get_order_status_counts", { p_company_id: employee.currentCompanyId }),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
-    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr").limit(24),
+    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").in("company_id", employee.companyIds),
+    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").limit(24),
     query
       ? supabase
           .from("orders")
@@ -329,22 +380,32 @@ export default async function CrmOverviewPage({
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Profit %</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Internal Expenses (INR)</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn (After Overhead)</th>
+                <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {(plCompanyRows ?? []).map((r) => (
-                <tr key={r.company_id}>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.company_name}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700" title="Courier + Duty + Purchase − Note adjustments + history — hover the ▾ for the line-by-line split">
-                    {Number(r.total_expenses_inr ?? 0).toFixed(2)}
-                    <PlExpenseBreakdown row={r} />
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
-                </tr>
+                <Fragment key={r.company_id}>
+                  <tr className="pl-expand align-top">
+                    <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.company_name}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
+                      {Number(r.total_expenses_inr ?? 0).toFixed(2)}
+                    </td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
+                    <td className="px-2 py-2 text-center">
+                      <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.company_name ?? "company"} P&L breakdown`} />
+                    </td>
+                  </tr>
+                  <tr className="pl-detail">
+                    <td colSpan={8} className="bg-slate-50/60 px-6 py-2">
+                      <PlExpenseBreakdown row={r} />
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -364,25 +425,35 @@ export default async function CrmOverviewPage({
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Profit %</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Internal Expenses (INR)</th>
                 <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net Earn (After Overhead)</th>
+                <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {(plMonthRows ?? []).length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
               )}
               {(plMonthRows ?? []).map((r) => (
-                <tr key={r.month}>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.month}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700" title="Courier + Duty + Purchase − Note adjustments + history — hover the ▾ for the line-by-line split">
-                    {Number(r.total_expenses_inr ?? 0).toFixed(2)}
-                    <PlExpenseBreakdown row={r} />
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
-                </tr>
+                <Fragment key={r.month ?? ""}>
+                  <tr className="pl-expand align-top">
+                    <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.month}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
+                      {Number(r.total_expenses_inr ?? 0).toFixed(2)}
+                    </td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
+                    <td className="px-2 py-2 text-center">
+                      <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.month ?? "month"} P&L breakdown`} />
+                    </td>
+                  </tr>
+                  <tr className="pl-detail">
+                    <td colSpan={8} className="bg-slate-50/60 px-6 py-2">
+                      <PlExpenseBreakdown row={r} />
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>

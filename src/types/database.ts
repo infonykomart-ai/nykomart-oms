@@ -7862,6 +7862,7 @@ export type Database = {
           expense_historical_inr: number | null;
           expense_washing_inr: number | null;
           portal_fees_matched_inr: number | null;
+          bank_inflow_inr: number | null;
         };
         Relationships: [];
       };
@@ -7870,6 +7871,7 @@ export type Database = {
           month: string | null;
           total_sale_value_inr: number | null;
           total_expenses_inr: number | null;
+          portal_expenses_25pct: number | null;
           net_earn: number | null;
           profit_pct: number | null;
           total_internal_expenses_inr: number | null;
@@ -7881,6 +7883,7 @@ export type Database = {
           expense_historical_inr: number | null;
           expense_washing_inr: number | null;
           portal_fees_matched_inr: number | null;
+          bank_inflow_inr: number | null;
         };
         Relationships: [];
       };

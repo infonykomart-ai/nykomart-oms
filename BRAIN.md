@@ -240,6 +240,12 @@ Audit confirmed P&L is accrual (bill-basis — `total_paid`/`balance_due` never 
   that would double-subtract against the estimate.
 - CRM page's P&L queries now fall back to base columns on view error — a missing migration can no
   longer blank both P&L tables (the empty-tables screenshot bug).
+- Same day (evening): the ▾ is now an INLINE expansion row directly under the clicked entry
+  (pure-CSS `tr.pl-expand`/`tr.pl-detail` pair in globals.css, no JS, no popover). Colors: expenses
+  rose-600, money-in (sale/bank) sky-700, profit emerald-700. The expansion shows the expense split
+  AND the full net-profit chain (Sale − Expenses − portal-effective = Net) plus `bank_inflow_inr`
+  (verified bank-recon credits, both views) vs order value difference. Month view gained the
+  `portal_expenses_25pct` column (it never had one).
 
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
