@@ -35,6 +35,30 @@ function cell(v: string | number | null | undefined): string {
   return String(v);
 }
 
+// 2026-09-17 (evening) — "jitni bhi report hai un sabhi me total aana
+// chahiye ... kitne order hai unki value kitni hai vahi par sahi se total
+// hokar aaye": every ExportColumn-driven report table (Orders, Purchase
+// Bills, Freight/Duty, SKU×Country×Size, ...) used to show only a row
+// COUNT, never a summed ₹/qty total — no way to see "does this table's
+// total tie out" without exporting and summing by hand. Shared so each
+// report's <tfoot> total row (or summary line) uses the exact same
+// sum-only-if-numeric logic instead of re-deriving it per page.
+export function sumNumericColumn<T>(rows: T[], col: ExportColumn<T>): number | null {
+  let sum = 0;
+  let sawNumber = false;
+  for (const r of rows) {
+    const v = col.value(r);
+    if (typeof v === "number") {
+      sum += v;
+      sawNumber = true;
+    }
+  }
+  return sawNumber ? sum : null;
+}
+export function fmtColumnTotal(n: number): string {
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function rowsToAoA<T>(columns: ExportColumn<T>[], rows: T[]): string[][] {
   const header = columns.map((c) => c.label);
   const body = rows.map((r) => columns.map((c) => cell(c.value(r))));

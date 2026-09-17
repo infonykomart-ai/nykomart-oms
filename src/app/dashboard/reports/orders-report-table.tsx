@@ -3,6 +3,7 @@
 import { ExportBar } from "@/components/export-bar";
 import { PrintArea } from "@/components/print-view";
 import type { ExportColumn } from "@/lib/export/export-table";
+import { sumNumericColumn, fmtColumnTotal } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 
 type OrderRow = {
@@ -166,6 +167,20 @@ export function OrdersReportTable({
               </tr>
             )}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+              <tr>
+                {visibleColumns.map((c, i) => {
+                  const sum = sumNumericColumn(rows, c);
+                  return (
+                    <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-800">
+                      {i === 0 ? `Total (${rows.length})` : sum !== null ? fmtColumnTotal(sum) : ""}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div></PrintArea>
     </div>

@@ -18,7 +18,15 @@ export default async function StatementsPage() {
   const employee = await requireCapability("statement_entry");
   const supabase = await createClient();
 
-  const [{ data: companies }, { data: etsyInvoices }, { data: ebaySummaries }, { data: ebayMonthlyStatements }] = await Promise.all([
+  const [
+    { data: companies },
+    { data: etsyInvoices },
+    { data: ebaySummaries },
+    { data: ebayMonthlyStatements },
+    { data: allEtsyForTotal },
+    { data: allEbaySummariesForTotal },
+    { data: allEbayMonthlyForTotal },
+  ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase
       .from("etsy_monthly_tax_invoices")
@@ -38,9 +46,30 @@ export default async function StatementsPage() {
       .eq("company_id", employee.currentCompanyId)
       .order("period_from", { ascending: false })
       .limit(20),
+    // 2026-09-17 (evening) — "jitni bhi report hai un sabhi me total aana
+    // chahiye": the 3 lists above are all capped to "recent 20", so a
+    // total computed from just those wouldn't be the real total once a
+    // company has more than 20 entries. 3 separate unlimited, single-column
+    // queries (cheap — one numeric column each) so the "Total" line under
+    // each list is accurate regardless of the cap.
+    supabase.from("etsy_monthly_tax_invoices").select("total_inr").eq("company_id", employee.currentCompanyId),
+    supabase.from("ebay_financial_summary_computed_view").select("net_cash_movement_check").eq("company_id", employee.currentCompanyId),
+    supabase.from("ebay_monthly_financial_statement").select("closing_funds_stated").eq("company_id", employee.currentCompanyId),
   ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const etsyTotal = {
+    count: (allEtsyForTotal ?? []).length,
+    amount: (allEtsyForTotal ?? []).reduce((s, r) => s + Number(r.total_inr ?? 0), 0),
+  };
+  const ebaySummaryTotal = {
+    count: (allEbaySummariesForTotal ?? []).length,
+    amount: (allEbaySummariesForTotal ?? []).reduce((s, r) => s + Number(r.net_cash_movement_check ?? 0), 0),
+  };
+  const ebayMonthlyTotal = {
+    count: (allEbayMonthlyForTotal ?? []).length,
+    amount: (allEbayMonthlyForTotal ?? []).reduce((s, r) => s + Number(r.closing_funds_stated ?? 0), 0),
+  };
 
   return (
     <div>
@@ -60,7 +89,10 @@ export default async function StatementsPage() {
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent Etsy Monthly Tax Invoices</h2>
+          <h2 className="mb-1 text-sm font-semibold text-slate-800">Recent Etsy Monthly Tax Invoices</h2>
+          <p className="mb-3 text-xs font-medium text-slate-500">
+            Total: {etsyTotal.count} invoice{etsyTotal.count === 1 ? "" : "s"} · ₹{etsyTotal.amount.toFixed(2)} (all-time)
+          </p>
           <div className="space-y-1 text-xs">
             {(etsyInvoices ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
             {(etsyInvoices ?? []).map((r) => (
@@ -72,7 +104,10 @@ export default async function StatementsPage() {
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent eBay Financial Summaries</h2>
+          <h2 className="mb-1 text-sm font-semibold text-slate-800">Recent eBay Financial Summaries</h2>
+          <p className="mb-3 text-xs font-medium text-slate-500">
+            Total: {ebaySummaryTotal.count} summar{ebaySummaryTotal.count === 1 ? "y" : "ies"} · ₹{ebaySummaryTotal.amount.toFixed(2)} (all-time)
+          </p>
           <div className="space-y-1 text-xs">
             {(ebaySummaries ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
             {(ebaySummaries ?? []).map((r) => (
@@ -84,7 +119,10 @@ export default async function StatementsPage() {
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-800">Recent eBay Financial Statements (Monthly)</h2>
+          <h2 className="mb-1 text-sm font-semibold text-slate-800">Recent eBay Financial Statements (Monthly)</h2>
+          <p className="mb-3 text-xs font-medium text-slate-500">
+            Total: {ebayMonthlyTotal.count} statement{ebayMonthlyTotal.count === 1 ? "" : "s"} · ${ebayMonthlyTotal.amount.toFixed(2)} closing funds stated (all-time)
+          </p>
           <div className="space-y-1 text-xs">
             {(ebayMonthlyStatements ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
             {(ebayMonthlyStatements ?? []).map((r) => {

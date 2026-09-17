@@ -124,6 +124,7 @@ export function DocumentEntryTabs({
   shipmentChalans,
   initialTab,
   billFilters,
+  washingEntriesTotal,
 }: {
   companies: Company[];
   parties: Party[];
@@ -138,6 +139,10 @@ export function DocumentEntryTabs({
   // resetting to Credit Note.
   initialTab: string;
   billFilters: BillFilters;
+  // 2026-09-17 (evening) — full-history {count, amount} for Washing
+  // Entries (the "Recent" list below is capped to 8/most recent) — see
+  // page.tsx's own comment on why this needed a separate unlimited query.
+  washingEntriesTotal?: { count: number; amount: number };
 }) {
   const [tab, setTab] = useState<TabKey>(isTabKey(initialTab) ? initialTab : "credit-note");
   // 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
@@ -346,6 +351,11 @@ export function DocumentEntryTabs({
         <div className={tab === "washing-entry" ? undefined : "print:hidden"}>
         <DocList
           title="Recent Washing Entries"
+          total={
+            washingEntriesTotal
+              ? `Total: ${washingEntriesTotal.count} washing entr${washingEntriesTotal.count === 1 ? "y" : "ies"} · ₹${washingEntriesTotal.amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (all-time, matches the CRM P&L "Washing Chalans" line — not just the ${recent.washingEntries.length} shown below)`
+              : undefined
+          }
           rows={recent.washingEntries.map((r) => ({
             id: r.id,
             no: r.chalan_no ?? "—",
@@ -545,11 +555,18 @@ function ShipmentChalanList({ rows }: { rows: ShipmentChalanRow[] }) {
 
 function DocList<T extends { id: string }>({
   title,
+  total,
   rows,
   renderEdit,
   onDelete,
 }: {
   title: string;
+  // 2026-09-17 (evening) — optional pre-formatted total line (e.g. "Total:
+  // 42 washing entries · ₹1,23,456.78"), rendered under the heading. Only
+  // Washing Entries passes this today (see document-entry-tabs.tsx's own
+  // washing-entry DocList call for why) — every other list here is still
+  // just the capped "recent 8", unchanged.
+  total?: string;
   // 2026-08-27 (later same day) — optional `notes`: when a caller passes
   // real linked Credit/Debit Note records (see actions.ts's
   // listRelatedNotesForBills), show the same RelatedNotesBadge preview
@@ -591,6 +608,7 @@ function DocList<T extends { id: string }>({
   return (
     <div>
       <h2 className="mb-2 text-sm font-semibold text-slate-700">{title}</h2>
+      {total && <p className="mb-2 text-xs font-medium text-slate-500">{total}</p>}
       <div className="space-y-1.5">
         {rows.map((r) =>
           editingId === r.id && renderEdit ? (

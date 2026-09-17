@@ -3,7 +3,18 @@
 import { ExportBar } from "@/components/export-bar";
 import { PrintArea } from "@/components/print-view";
 import type { ExportColumn } from "@/lib/export/export-table";
+import { sumNumericColumn as sumColumn, fmtColumnTotal as fmtTotal } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
+
+// 2026-09-17 (evening) — "jitni bhi report hai un sabhi me total aana
+// chahiye ... kitne order hai unki value kitni hai vahi par sahi se total
+// hokar aaye": every report table linked from the CRM P&L drill-down (this
+// one included) used to show only a row COUNT, never a summed ₹ total —
+// so there was no way to see "does this report's total actually match the
+// P&L number" without exporting and summing by hand. Both tables below now
+// render a <tfoot> total row via the shared sumNumericColumn/fmtColumnTotal
+// helpers in src/lib/export/export-table.ts (used the same way across
+// every ExportColumn-driven report — see that file's own comment).
 
 // Freight/Duty Bill report (2026-08-22) — one of the 3 new report pages,
 // following the Orders report's exact pattern. Two tables (Freight, Duty)
@@ -97,6 +108,20 @@ export function FreightReportTable({ rows }: { rows: FreightReportRow[] }) {
               </tr>
             )}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+              <tr>
+                {visibleColumns.map((c, i) => {
+                  const sum = sumColumn(rows, c);
+                  return (
+                    <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-800">
+                      {i === 0 ? `Total (${rows.length})` : sum !== null ? fmtTotal(sum) : ""}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
       </PrintArea>
@@ -186,6 +211,20 @@ export function DutyReportTable({ rows }: { rows: DutyReportRow[] }) {
               </tr>
             )}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+              <tr>
+                {visibleColumns.map((c, i) => {
+                  const sum = sumColumn(rows, c);
+                  return (
+                    <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-800">
+                      {i === 0 ? `Total (${rows.length})` : sum !== null ? fmtTotal(sum) : ""}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
       </PrintArea>

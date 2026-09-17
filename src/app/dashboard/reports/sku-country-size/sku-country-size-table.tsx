@@ -62,6 +62,20 @@ function AggTable({ title, labelHeader, rows, printId }: { title: string; labelH
               </tr>
             )}
           </tbody>
+          {/* 2026-09-17 (evening) — "jitni bhi report hai un sabhi me total
+              aana chahiye": summed footer row so orders/qty/value tie out
+              at a glance instead of needing an export + manual sum. */}
+          {rows.length > 0 && (
+            <tfoot className="sticky bottom-0 border-t-2 border-slate-300 bg-slate-50 font-semibold">
+              <tr>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-800">Total ({rows.length})</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-800">{rows.reduce((s, r) => s + r.orders, 0)}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-800">{rows.reduce((s, r) => s + r.qty, 0)}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-800">₹{rows.reduce((s, r) => s + r.valueInr, 0).toFixed(2)}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-800">${rows.reduce((s, r) => s + r.valueUsd, 0).toFixed(2)}</td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </div>
@@ -177,6 +191,17 @@ export function SkuCountrySizeTable({
                 </tr>
               )}
             </tbody>
+            {combined.length > 0 && (
+              <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+                <tr>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-800" colSpan={3}>Total ({combined.length} combinations)</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-800">{combined.reduce((s, r) => s + r.orders, 0)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-800">{combined.reduce((s, r) => s + r.qty, 0)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-800">₹{combined.reduce((s, r) => s + r.valueInr, 0).toFixed(2)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-800">${combined.reduce((s, r) => s + r.valueUsd, 0).toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>

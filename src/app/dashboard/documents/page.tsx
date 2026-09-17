@@ -91,6 +91,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     { data: recentShipmentChalans },
     { data: recentJournalVouchers },
     { data: recentReceivedChalans },
+    { data: allWashingEntriesForTotal },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     // 2026-08-12 (round 10): invoice_type/party_type added so the party
@@ -227,10 +228,32 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
+    // 2026-09-17 (evening) — "jitni bhi report hai un sabhi me total aana
+      // chahiye ... kitne order hai unki value kitni hai vahi par sahi se
+      // total hokar aaye": the "Recent Washing Entries" list above is
+      // capped to 8 rows, so a total computed from just those 8 would be
+      // wrong and wouldn't tie out to the CRM P&L's "Washing Chalans"
+      // expense line (which sums ALL of this company's washing entries).
+      // This is a SEPARATE unlimited query, just the 2 numeric columns
+      // (amount, debit_charges — same fields the P&L view sums), so the
+      // "Total" line shown under the list actually matches the P&L number.
+    supabase
+      .from("washing_entries")
+      .select("amount, debit_charges")
+      .eq("company_id", employee.currentCompanyId),
   ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
+
+  // 2026-09-17 (evening) — full-history total for Washing Entries (see the
+  // query's own comment above) — same "amount + debit_charges" sum the P&L
+  // view's washing_agg CTE uses (db/2026-09-17-pl-cn-allocation-and-portal-
+  // real.sql), so this number should match the P&L drill-down exactly.
+  const washingEntriesTotal = {
+    count: (allWashingEntriesForTotal ?? []).length,
+    amount: (allWashingEntriesForTotal ?? []).reduce((s, r) => s + Number(r.amount ?? 0) + Number(r.debit_charges ?? 0), 0),
+  };
 
   // Courier Bill / Duty & Tax Bill assignments + the order ref_no's they
   // point at — fetched separately since freight_bill_awb_assignments /
@@ -395,6 +418,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
         parties={parties ?? []}
         stores={stores ?? []}
         currencies={currencies ?? []}
+        washingEntriesTotal={washingEntriesTotal}
         recent={{
           creditNotes: (recentCreditNotes ?? []).map((r) => ({
             ...r,

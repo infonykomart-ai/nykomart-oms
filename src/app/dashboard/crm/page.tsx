@@ -128,29 +128,32 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
   const bank = Number(row.bank_inflow_inr ?? 0);
   const inflowDiff = bank - sale;
   const portalMode = fees > 0 ? "real fees" : "25% estimate";
-  // 2026-09-17 (later) — "hinglish ke word remove karne hai puri app se ...
-  // hindi me hona chahiye": labels here used to be casual Hinglish ("kam kya
-  // raha", "Bank me aaya") — now proper Hindi (Devanagari). The rest of the
-  // dashboard (column headers, currency labels) stays English by design —
-  // only these ad-hoc phrases were Hinglish.
+  // 2026-09-17 (evening) — REVERTED back to English. Round 2 same-day had
+  // translated these labels to Hindi (Devanagari) reading the owner's
+  // "hinglish ke word remove karne hai ... hindi me hona chahiye" too
+  // broadly — that request was about two specific casual-Hinglish phrases
+  // ("kam kya raha", "Bank me aaya"), not this whole table, which was
+  // already plain English before that round. Owner corrected: "JO ENGLISH
+  // ME KARNA THA USKO HINDI ME KAR DIYA ... ENGLISH ME KARO" — back to
+  // English labels, same links kept.
   //
   // "ye jo payment jaha jaha se aari vaha unke page bhi link hona chahiye":
-  // each line now links to the report/entry screen that actually produces
+  // each line still links to the report/entry screen that actually produces
   // that number, so a user can jump straight from "why is this ₹X" to the
   // underlying bills/entries instead of hunting for the right screen.
   const lines: Array<[string, number | null | undefined, string]> = [
-    ["कूरियर (क्रेडिट नोट घटाकर)", row.expense_courier_inr, "/dashboard/reports/freight-duty"],
-    ["ड्यूटी (क्रेडिट नोट घटाकर)", row.expense_duty_inr, "/dashboard/reports/freight-duty"],
-    ["पर्चेज़ बिल (GST सहित)", row.expense_purchase_inr, "/dashboard/reports/purchase-bills"],
-    ["डेबिट/क्रेडिट नोट समायोजन", row.expense_purchase_adjustments_inr, "/dashboard/credit-notes-register"],
-    ["वॉशिंग चालान (ऑटो)", row.expense_washing_inr, "/dashboard/documents?tab=washing-entry"],
-    ["पुराना CSV इतिहास (पुराने ऑर्डर)", row.expense_historical_inr, "/dashboard/csv-upload"],
+    ["Courier (net of credit notes)", row.expense_courier_inr, "/dashboard/reports/freight-duty"],
+    ["Duty (net of credit notes)", row.expense_duty_inr, "/dashboard/reports/freight-duty"],
+    ["Purchase Bills (incl. GST)", row.expense_purchase_inr, "/dashboard/reports/purchase-bills"],
+    ["Debit/Credit Note Adjustments", row.expense_purchase_adjustments_inr, "/dashboard/credit-notes-register"],
+    ["Washing Chalans (auto)", row.expense_washing_inr, "/dashboard/documents?tab=washing-entry"],
+    ["Old CSV History (pre-orders)", row.expense_historical_inr, "/dashboard/csv-upload"],
   ];
   return (
     <div className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-canvas)] px-3 py-2 text-[11px]">
       <div className="grid gap-x-8 gap-y-0.5 sm:grid-cols-2">
-        <div className="font-semibold pl-out text-rose-600">खर्च विवरण (कहाँ खर्च हुआ)</div>
-        <div className="font-semibold text-[var(--oms-text-muted)]">नेट प्रॉफ़िट कैसे बना</div>
+        <div className="font-semibold pl-out text-rose-600">Expense Breakdown (where it went)</div>
+        <div className="font-semibold text-[var(--oms-text-muted)]">How Net Profit was built</div>
         {lines.map(([label, val, href]) => (
           <div key={label} className="flex items-center justify-between gap-4">
             <Link href={href} className="text-[var(--oms-text-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--oms-text)]">
@@ -163,7 +166,7 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
         ))}
         <div className="flex items-center justify-between gap-4">
           <Link href="/dashboard/statements" className="text-[var(--oms-text-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--oms-text)]">
-            पोर्टल फीस, मिलान किया हुआ (असली)
+            Portal Fees, Matched (real)
           </Link>
           <span className="font-medium text-sky-700">{inr2(fees)}</span>
         </div>
@@ -196,13 +199,13 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
         <div className="sm:col-span-2 mt-1 border-t border-[var(--oms-surface-border)] pt-1">
           <div className="flex items-center justify-between gap-4">
             <Link href="/dashboard/bank-recon" className="text-[var(--oms-text-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--oms-text)]">
-              बैंक में आया (सत्यापित स्टेटमेंट क्रेडिट)
+              Bank Inflow (verified statement credit)
             </Link>
             <span className="pl-in font-semibold text-sky-700">{inr2(bank)}</span>
           </div>
           <div className="flex items-center justify-between gap-4">
             <span className="text-[var(--oms-text-muted)]">
-              ऑर्डर वैल्यू और बैंक का अंतर {bank === 0 ? "(स्टेटमेंट अपलोड/लिंक होने पर दिखेगा)" : ""}
+              Order Value vs Bank Difference {bank === 0 ? "(shows once a statement is uploaded/linked)" : ""}
             </span>
             <span className={`font-semibold ${inflowDiff >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>
               {inflowDiff >= 0 ? "+" : "−"} {inr2(Math.abs(inflowDiff))}

@@ -180,6 +180,18 @@ export default async function CreditNotesRegisterPage({
                   </tr>
                 ))}
               </tbody>
+              {/* 2026-09-17 (evening) — "jitni bhi report hai un sabhi me
+                  total aana chahiye": the main register above already had a
+                  grand total; this Backlog table didn't. */}
+              <tfoot className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+                <tr>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-800" colSpan={4}>Total ({backlog.length} bills)</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right text-slate-800">
+                    ₹{backlog.reduce((s, b) => s + b.credit_note_amt, 0).toFixed(2)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
