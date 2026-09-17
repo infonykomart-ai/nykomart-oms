@@ -222,6 +222,25 @@ no hardcoded year anywhere):
 - When a new form takes a business date, call `validateDateFields([...])` in its server action —
   that's the convention now.
 
+## 5e. P&L: washing auto + marketplace-fee hybrid + breakdown (2026-09-17)
+
+Audit confirmed P&L is accrual (bill-basis — `total_paid`/`balance_due` never appear in the views;
+ unpaid bills still count as expense). Two gaps the user then asked to fix, both in
+ `db/2026-09-17-pl-expense-breakdown.sql` (run once in Supabase; re-running the older
+ breakdown-only version is harmless — this file supersedes it):
+
+- **Washing is now automatic**: `washing_entries.amount + debit_charges` (chalan-date month) folds
+  into `total_expenses_inr` via `expense_washing_inr`. Do NOT also log washing chalans as manual
+  Expenses rows — double count. The old "log it manually in Expenses" advice (2026-08-20) is dead.
+- **Portal fee hybrid**: real matched Etsy/eBay/Amazon fee COST (`portal_fees_matched_inr`, same
+  matching keys as `matchMarketplaceFees()`, converted at each fee line's own-date official rate;
+  eBay/Amazon lines with no rate row are skipped — verification query #3 lists them) offsets the
+  flat 25% estimate: `net_earn = sale − expenses − GREATEST(25%·sale − fees_matched, 0)`.
+  `portal_expenses_25pct` stays the raw estimate. Fees are NOT added to `total_expenses_inr` —
+  that would double-subtract against the estimate.
+- CRM page's P&L queries now fall back to base columns on view error — a missing migration can no
+  longer blank both P&L tables (the empty-tables screenshot bug).
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

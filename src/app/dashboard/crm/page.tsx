@@ -18,15 +18,25 @@ type PlRow = {
   expense_duty_inr?: number | null;
   expense_purchase_inr?: number | null;
   expense_purchase_adjustments_inr?: number | null;
+  expense_washing_inr?: number | null;
   expense_historical_inr?: number | null;
+  portal_fees_matched_inr?: number | null;
 };
 
 function PlExpenseBreakdown({ row }: { row: PlRow }) {
+  // 2026-09-17 — the migration adds these columns to the views; until the
+  // SQL file is run, Postgres answers the named .select() with a 42703
+  // "column does not exist" error and the ENTIRE P&L comes back empty
+  // (that's the blank tables screenshot). Gating the breakdown — and the
+  // page's select list — on whether the view actually returned the column
+  // keeps the tables rendering with the pre-migration data instead.
+  if (row.expense_courier_inr === undefined) return null;
   const lines: Array<[string, number | null | undefined]> = [
     ["Courier (freight bills)", row.expense_courier_inr],
     ["Duty (duty bills)", row.expense_duty_inr],
     ["Purchase bills (GST-incl.)", row.expense_purchase_inr],
     ["Debit/Credit Note adjustments", row.expense_purchase_adjustments_inr],
+    ["Washing chalans (auto)", row.expense_washing_inr],
     ["Old CSV history (pre-orders)", row.expense_historical_inr],
   ];
   return (
@@ -41,6 +51,10 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
             </span>
           </div>
         ))}
+        <div className="mt-1 flex items-center justify-between gap-4 border-t border-slate-100 pt-1">
+          <span className="text-slate-500">Matched portal fees (offset 25%)</span>
+          <span className="font-medium text-slate-800">{Number(row.portal_fees_matched_inr ?? 0).toFixed(2)}</span>
+        </div>
       </div>
     </details>
   );
@@ -97,8 +111,8 @@ export default async function CrmOverviewPage({
     { data: orderStatusCountRows },
     { data: attendanceRows },
     { data: alerts },
-    { data: plByCompany },
-    { data: plByMonth },
+    { data: plByCompany, error: plByCompanyErr },
+    { data: plByMonth, error: plByMonthErr },
     quickFindResult,
     { data: buyerOrderRows },
   ] = await Promise.all([
@@ -110,16 +124,15 @@ export default async function CrmOverviewPage({
     supabase.rpc("get_order_status_counts", { p_company_id: employee.currentCompanyId }),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
-    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_historical_inr").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_historical_inr").limit(24),
+    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr").in("company_id", employee.companyIds),
+    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr").limit(24),
     query
       ? supabase
           .from("orders")
           .select("id, ref_no, company_id, buyer_name_address, contact_no, marketplace_order_no, status")
           .eq("company_id", employee.currentCompanyId)
           .or(`ref_no.ilike.%${query}%,buyer_name_address.ilike.%${query}%,contact_no.ilike.%${query}%,marketplace_order_no.ilike.%${query}%`)
-          .limit(20)
-      : Promise.resolve({ data: [] as { id: string; ref_no: string; company_id: string; buyer_name_address: string | null; contact_no: string | null; marketplace_order_no: string | null; status: string }[] }),
+          .limit(20)      : Promise.resolve({ data: [] as { id: string; ref_no: string; company_id: string; buyer_name_address: string | null; contact_no: string | null; marketplace_order_no: string | null; status: string }[] }),
     // 2026-08-17 — Top Buyers (gap identified in an OMS-features audit:
     // "customer database" had no repeat-buyer view). Grouped in JS below
     // by contact_no (falling back to buyer_name_address when contact_no is
@@ -131,6 +144,30 @@ export default async function CrmOverviewPage({
     // volume grows large enough to matter (not yet, at current volume).
     supabase.from("orders").select("buyer_name_address, contact_no, order_value_usd").eq("company_id", employee.currentCompanyId),
   ]);
+
+  // 2026-09-17 — blank-P&L guard. If either view query failed because the
+  // migration's new columns aren't in the DB yet (42703 "column does not
+  // exist"), retry ONCE with the pre-migration column list so the tables
+  // still render today's real numbers instead of an empty shell; the ▾
+  // breakdown renders nothing for those rows (undefined columns). Any
+  // other error also falls back the same way — P&L visibility is too
+  // important to blank the whole page over one missing column.
+  const baseCompanyCols = "company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead";
+  const baseMonthCols = "month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead";
+  let plCompanyRows = plByCompany;
+  let plMonthRows = plByMonth;
+  if (plByCompanyErr || plByMonthErr) {
+    const [retryCompany, retryMonth] = await Promise.all([
+      finSupabase.from("pl_dashboard_by_company_view").select(baseCompanyCols).in("company_id", employee.companyIds),
+      finSupabase.from("pl_dashboard_by_month_view").select(baseMonthCols).limit(24),
+    ]);
+    // Cast is honest: base rows genuinely lack the breakdown columns at
+    // runtime — PlExpenseBreakdown's `undefined` check renders nothing for
+    // them, and every other cell reads with ?? 0.
+    if (!retryCompany.error) plCompanyRows = retryCompany.data as typeof plByCompany;
+    if (!retryMonth.error) plMonthRows = retryMonth.data as typeof plByMonth;
+    console.error("P&L breakdown columns unavailable — rendered base P&L instead. Run db/2026-09-17-pl-expense-breakdown.sql. Errors:", plByCompanyErr?.message, plByMonthErr?.message);
+  }
 
   const orderStatusCounts = new Map<string, number>();
   for (const row of orderStatusCountRows ?? []) {
@@ -295,7 +332,7 @@ export default async function CrmOverviewPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {(plByCompany ?? []).map((r) => (
+              {(plCompanyRows ?? []).map((r) => (
                 <tr key={r.company_id}>
                   <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.company_name}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
@@ -330,10 +367,10 @@ export default async function CrmOverviewPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {(plByMonth ?? []).length === 0 && (
+              {(plMonthRows ?? []).length === 0 && (
                 <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
               )}
-              {(plByMonth ?? []).map((r) => (
+              {(plMonthRows ?? []).map((r) => (
                 <tr key={r.month}>
                   <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{r.month}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>

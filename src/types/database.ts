@@ -7860,6 +7860,8 @@ export type Database = {
           expense_purchase_inr: number | null;
           expense_purchase_adjustments_inr: number | null;
           expense_historical_inr: number | null;
+          expense_washing_inr: number | null;
+          portal_fees_matched_inr: number | null;
         };
         Relationships: [];
       };
@@ -7877,6 +7879,8 @@ export type Database = {
           expense_purchase_inr: number | null;
           expense_purchase_adjustments_inr: number | null;
           expense_historical_inr: number | null;
+          expense_washing_inr: number | null;
+          portal_fees_matched_inr: number | null;
         };
         Relationships: [];
       };
