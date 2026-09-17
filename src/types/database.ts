@@ -7864,6 +7864,14 @@ export type Database = {
           expense_washing_inr: number | null;
           portal_fees_matched_inr: number | null;
           bank_inflow_inr: number | null;
+          // 2026-09-17 (evening) — added by
+          // db/2026-09-17b-pl-usd-and-company-month.sql (CREATE OR REPLACE,
+          // appended last). Types file updated ahead of that migration
+          // actually being run in Supabase — see this repo's standing rule
+          // (never execute DB-altering SQL directly; delivered as a .sql
+          // file for the user to run) — so the app builds/type-checks today
+          // even though the column doesn't exist in the live DB yet.
+          total_sale_value_usd: number | null;
         };
         Relationships: [];
       };
@@ -7871,6 +7879,41 @@ export type Database = {
         Row: {
           month: string | null;
           total_sale_value_inr: number | null;
+          total_expenses_inr: number | null;
+          portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
+          net_earn: number | null;
+          profit_pct: number | null;
+          total_internal_expenses_inr: number | null;
+          net_earn_after_overhead: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_purchase_adjustments_inr: number | null;
+          expense_historical_inr: number | null;
+          expense_washing_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          bank_inflow_inr: number | null;
+          // 2026-09-17 (evening) — same as pl_dashboard_by_company_view above.
+          total_sale_value_usd: number | null;
+        };
+        Relationships: [];
+      };
+      // 2026-09-17 (evening) — new view, one row per (company, month), from
+      // db/2026-09-17b-pl-usd-and-company-month.sql — lets the CRM page's
+      // "P&L by Company" FY selector sum an FY's months per company. See
+      // that migration's own header comment for the full column derivation
+      // (mirrors pl_dashboard_by_month_view with company_id/company_name
+      // added to every CTE). Not yet run against the live DB — see the
+      // total_sale_value_usd comment above for why the types file is ahead
+      // of the actual schema here.
+      pl_dashboard_by_company_month_view: {
+        Row: {
+          company_id: string | null;
+          company_name: string | null;
+          month: string | null;
+          total_sale_value_inr: number | null;
+          total_sale_value_usd: number | null;
           total_expenses_inr: number | null;
           portal_expenses_25pct: number | null;
           portal_expense_effective_inr: number | null;

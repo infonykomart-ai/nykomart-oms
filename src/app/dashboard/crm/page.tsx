@@ -4,6 +4,57 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { FY_START_MONTH, fyDateWindow } from "@/lib/fy-date";
+import { BarChart, GroupedBarChart, LineChart } from "@/components/simple-charts";
+
+// 2026-09-17 (evening) — CRM page restructure: "CRM me ye jo section hai
+// sabhi CRM page par menu ban jaye ya phir dropdown lag jaye or sabhi
+// section ka digram/graph vagera" — the page used to be one long scroll of
+// 6 sections; it's now a `?tab=` menu (same convention as
+// dashboard/documents/document-entry-tabs.tsx's TABS) with exactly one
+// section visible at a time, and every section now carries a chart (see
+// simple-charts.tsx). Quick Find stays above the tab bar — it's a search
+// utility used regardless of which section you're looking at, not one of
+// the 6 listed report sections.
+const CRM_TABS = [
+  { key: "buyers", label: "Top Buyers" },
+  { key: "orders", label: "Orders by Status" },
+  { key: "attendance", label: "Today's Attendance" },
+  { key: "alerts", label: "Data Quality Alerts" },
+  { key: "pl-company", label: "P&L by Company" },
+  { key: "pl-month", label: "P&L by Month" },
+] as const;
+type CrmTabKey = (typeof CRM_TABS)[number]["key"];
+function isCrmTabKey(v: string | undefined): v is CrmTabKey {
+  return !!v && CRM_TABS.some((t) => t.key === v);
+}
+
+// Status → semantic color (good/warning/critical/neutral), never used as
+// the ONLY identity signal — every bar in these charts also carries its
+// own value + text label, so color-blind readers aren't relying on hue
+// alone. Palette validated via dataviz skill's validate_palette.js.
+const ORDER_STATUS_COLOR: Record<string, string> = {
+  Pending: "#94a3b8", // slate — not yet in motion
+  Confirmed: "#0284c7", // sky — in flow
+  "In Production": "#0284c7",
+  Dispatched: "#0284c7",
+  Delivered: "#059669", // emerald — good/done
+  Hold: "#f59e0b", // amber — warning/needs attention
+  Cancelled: "#dc2626", // rose — critical
+  Returned: "#dc2626",
+};
+const ATTENDANCE_STATUS_COLOR: Record<string, string> = {
+  Present: "#059669",
+  Absent: "#dc2626",
+  Late: "#f59e0b",
+  "Half Day": "#f59e0b",
+  "Week Off": "#94a3b8",
+  Leave: "#94a3b8",
+  Holiday: "#94a3b8",
+};
+
+function tabHref(key: CrmTabKey) {
+  return `/dashboard/crm?tab=${key}`;
+}
 
 // 2026-09-17 — "jo jo expense huye vo sab aane chahiye na jis se confirm
 // ho ki kya kya kese kese ghataya jara": the single "Expenses (INR)"
@@ -27,6 +78,7 @@ type PlRow = {
   portal_expense_effective_inr?: number | null;
   bank_inflow_inr?: number | null;
   total_sale_value_inr?: number | null;
+  total_sale_value_usd?: number | null;
   total_expenses_inr?: number | null;
   net_earn?: number | null;
   portal_expenses_25pct?: number | null;
@@ -34,6 +86,16 @@ type PlRow = {
 
 const inr2 = (n: number | null | undefined) =>
   Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usd2 = (n: number | null | undefined) =>
+  Number(n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// 2026-09-17 (evening) — short "Sep '26" x-axis tick label for the P&L by
+// Month trend chart (view rows are "YYYY-MM-01").
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthShortLabel = (dateStr: string | null | undefined) => {
+  if (!dateStr) return "—";
+  const [y, m] = dateStr.split("-").map(Number);
+  return `${MONTH_SHORT[(m ?? 1) - 1] ?? "?"} '${String(y).slice(2)}`;
+};
 
 // 2026-09-17 — P&L by Month FY selector helpers. Same April-start FY math
 // as fy_label()/src/lib/fy-date.ts — kept local because the page only
@@ -110,6 +172,12 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
             <span className="text-[var(--oms-text-muted)]">Sale Value (INR)</span>
             <span className="pl-in font-semibold text-sky-700">{inr2(sale)}</span>
           </div>
+          {row.total_sale_value_usd !== undefined && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[var(--oms-text-muted)]">Sale Value (USD)</span>
+              <span className="pl-in font-semibold text-sky-700">${usd2(row.total_sale_value_usd)}</span>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-4">
             <span className="text-[var(--oms-text-muted)]">− Total Expenses</span>
             <span className="font-semibold pl-out text-rose-600">{inr2(exp)}</span>
@@ -160,13 +228,14 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
 export default async function CrmOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; fy?: string }>;
+  searchParams: Promise<{ q?: string; fy?: string; fyc?: string; tab?: string }>;
 }) {
   const employee = await requireCapability("crm_dashboard");
   const supabase = await createClient();
   const finSupabase = createServiceRoleClient();
-  const { q, fy: fyParam } = await searchParams;
+  const { q, fy: fyParam, fyc: fycParam, tab: tabParam } = await searchParams;
   const query = (q ?? "").trim();
+  const activeTab: CrmTabKey = isCrmTabKey(tabParam) ? tabParam : "buyers";
 
   const today = todayIST();
 
@@ -199,6 +268,7 @@ export default async function CrmOverviewPage({
     { data: alerts },
     { data: plByCompany, error: plByCompanyErr },
     { data: plByMonth, error: plByMonthErr },
+    { data: plByCompanyMonth, error: plByCompanyMonthErr },
     quickFindResult,
     { data: buyerOrderRows },
   ] = await Promise.all([
@@ -210,8 +280,22 @@ export default async function CrmOverviewPage({
     supabase.rpc("get_order_status_counts", { p_company_id: employee.currentCompanyId }),
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
-    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr"),
+    finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").in("company_id", employee.companyIds),
+    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr"),
+    // 2026-09-17 (evening) — new pl_dashboard_by_company_month_view (see
+    // db/2026-09-17b-pl-usd-and-company-month.sql), fetched ONLY so the
+    // "P&L by Company" FY selector below can sum an FY's months per
+    // company client-side. Feature-detected: if this migration hasn't been
+    // run yet on the DB, the query errors, plByCompanyMonth stays
+    // undefined, and the FY selector on that section simply doesn't
+    // render (falls back to the existing all-time view) instead of
+    // breaking the page.
+    finSupabase
+      .from("pl_dashboard_by_company_month_view")
+      .select(
+        "company_id, company_name, month, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, total_internal_expenses_inr, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr",
+      )
+      .in("company_id", employee.companyIds),
     query
       ? supabase
           .from("orders")
@@ -279,6 +363,113 @@ export default async function CrmOverviewPage({
     ? allMonthRows.filter((r) => r.month && fyStartYearOf(r.month) === fySelected)
     : allMonthRows.slice(0, 24);
 
+  // 2026-09-17 (evening) — "P&L by Company (FY add karna hai)": same
+  // ?fy=<startYear> convention as P&L by Month above, but its own param
+  // (`fyc`) since the two selectors are independent. `pl_dashboard_by_company_view`
+  // is all-time (GROUP BY company only, no month), so an FY cut needs the
+  // new per-(company,month) view instead — summed here in JS for the
+  // selected FY, then net_earn/profit_pct/net_earn_after_overhead are
+  // RECOMPUTED from the summed raw figures using the exact same
+  // real-fees-else-25%-estimate CASE the SQL views use (see
+  // db/2026-09-17b-pl-usd-and-company-month.sql's own comment on this
+  // view) — summing each row's already-computed net_earn would double-count
+  // the estimate differently per month, so the sum must happen on the raw
+  // components, not the derived ones.
+  const fycSelectedRaw = Number.parseInt(fycParam ?? "", 10);
+  const fycSelected =
+    Number.isFinite(fycSelectedRaw) && fycSelectedRaw >= fyMinStartYear && fycSelectedRaw <= fyMaxStartYear
+      ? fycSelectedRaw
+      : null;
+  type CompanyMonthRow = NonNullable<typeof plByCompanyMonth>[number];
+  function aggregateCompanyForFy(rows: CompanyMonthRow[], fyStart: number) {
+    const byCompany = new Map<
+      string,
+      {
+        company_id: string;
+        company_name: string | null;
+        total_sale_value_inr: number;
+        total_sale_value_usd: number;
+        total_expenses_inr: number;
+        total_internal_expenses_inr: number;
+        expense_courier_inr: number;
+        expense_duty_inr: number;
+        expense_purchase_inr: number;
+        expense_purchase_adjustments_inr: number;
+        expense_washing_inr: number;
+        expense_historical_inr: number;
+        portal_fees_matched_inr: number;
+        bank_inflow_inr: number;
+      }
+    >();
+    for (const r of rows) {
+      if (!r.month || !r.company_id || fyStartYearOf(r.month) !== fyStart) continue;
+      const acc = byCompany.get(r.company_id) ?? {
+        company_id: r.company_id,
+        company_name: r.company_name,
+        total_sale_value_inr: 0,
+        total_sale_value_usd: 0,
+        total_expenses_inr: 0,
+        total_internal_expenses_inr: 0,
+        expense_courier_inr: 0,
+        expense_duty_inr: 0,
+        expense_purchase_inr: 0,
+        expense_purchase_adjustments_inr: 0,
+        expense_washing_inr: 0,
+        expense_historical_inr: 0,
+        portal_fees_matched_inr: 0,
+        bank_inflow_inr: 0,
+      };
+      acc.total_sale_value_inr += Number(r.total_sale_value_inr ?? 0);
+      acc.total_sale_value_usd += Number(r.total_sale_value_usd ?? 0);
+      acc.total_expenses_inr += Number(r.total_expenses_inr ?? 0);
+      acc.total_internal_expenses_inr += Number(r.total_internal_expenses_inr ?? 0);
+      acc.expense_courier_inr += Number(r.expense_courier_inr ?? 0);
+      acc.expense_duty_inr += Number(r.expense_duty_inr ?? 0);
+      acc.expense_purchase_inr += Number(r.expense_purchase_inr ?? 0);
+      acc.expense_purchase_adjustments_inr += Number(r.expense_purchase_adjustments_inr ?? 0);
+      acc.expense_washing_inr += Number(r.expense_washing_inr ?? 0);
+      acc.expense_historical_inr += Number(r.expense_historical_inr ?? 0);
+      acc.portal_fees_matched_inr += Number(r.portal_fees_matched_inr ?? 0);
+      acc.bank_inflow_inr += Number(r.bank_inflow_inr ?? 0);
+      byCompany.set(r.company_id, acc);
+    }
+    return Array.from(byCompany.values())
+      .map((acc) => {
+        const sale = acc.total_sale_value_inr;
+        const est25 = sale * 0.25;
+        const fees = acc.portal_fees_matched_inr;
+        const portalEff = fees > 0 ? fees : est25;
+        const netEarn = sale - acc.total_expenses_inr - portalEff;
+        return {
+          company_id: acc.company_id,
+          company_name: acc.company_name,
+          total_sale_value_inr: sale,
+          total_sale_value_usd: acc.total_sale_value_usd,
+          total_expenses_inr: acc.total_expenses_inr,
+          net_earn: netEarn,
+          profit_pct: sale !== 0 ? netEarn / sale : 0,
+          total_internal_expenses_inr: acc.total_internal_expenses_inr,
+          net_earn_after_overhead: netEarn - acc.total_internal_expenses_inr,
+          portal_expenses_25pct: est25,
+          expense_courier_inr: acc.expense_courier_inr,
+          expense_duty_inr: acc.expense_duty_inr,
+          expense_purchase_inr: acc.expense_purchase_inr,
+          expense_purchase_adjustments_inr: acc.expense_purchase_adjustments_inr,
+          expense_washing_inr: acc.expense_washing_inr,
+          expense_historical_inr: acc.expense_historical_inr,
+          portal_fees_matched_inr: fees,
+          bank_inflow_inr: acc.bank_inflow_inr,
+        };
+      })
+      .sort((a, b) => b.total_sale_value_inr - a.total_sale_value_inr);
+  }
+  // Only offer the FY selector when the new view actually returned data —
+  // if the migration hasn't been run yet, `fycOptionsAvailable` is false
+  // and the section quietly stays on the existing all-time view.
+  const fycOptionsAvailable = !plByCompanyMonthErr && (plByCompanyMonth ?? []).length > 0;
+  const plCompanyRowsFiltered =
+    fycSelected && plByCompanyMonth ? aggregateCompanyForFy(plByCompanyMonth, fycSelected) : (plCompanyRows ?? []);
+
   const orderStatusCounts = new Map<string, number>();
   for (const row of orderStatusCountRows ?? []) {
     orderStatusCounts.set(row.status, Number(row.cnt));
@@ -319,6 +510,25 @@ export default async function CrmOverviewPage({
     .sort((a, b) => b.orderCount - a.orderCount || b.totalUsd - a.totalUsd)
     .slice(0, 15);
 
+  // Data Quality Alerts — counted by alert_type for the section's chart.
+  const alertTypeCounts = new Map<string, number>();
+  for (const a of alerts ?? []) {
+    if (!a.alert_type) continue;
+    alertTypeCounts.set(a.alert_type, (alertTypeCounts.get(a.alert_type) ?? 0) + 1);
+  }
+  const alertTypeChartData = Array.from(alertTypeCounts.entries())
+    .map(([label, value]) => ({ label, value, color: "#f59e0b" }))
+    .sort((a, b) => b.value - a.value);
+
+  // P&L by Month trend chart — chronological (view rows are DESC), capped
+  // to the same rows the table already shows so the chart and table always
+  // agree with each other.
+  const plMonthChronological = [...plMonthRowsFiltered].reverse();
+  const plMonthChartSeries = [
+    { name: "Sale Value (INR)", color: "#0284c7", points: plMonthChronological.map((r) => ({ x: monthShortLabel(r.month), value: Number(r.total_sale_value_inr ?? 0) })) },
+    { name: "Net Earn (INR)", color: "#059669", points: plMonthChronological.map((r) => ({ x: monthShortLabel(r.month), value: Number(r.net_earn ?? 0) })) },
+  ];
+
   return (
     <div className="space-y-6">
       <div>
@@ -327,6 +537,7 @@ export default async function CrmOverviewPage({
       </div>
 
       <form method="GET" className="oms-card rounded-xl border p-4">
+        <input type="hidden" name="tab" value={activeTab} />
         <label className="mb-1 block text-xs font-medium text-[var(--oms-text-muted)]">Quick Find — PO/RF/RG No., buyer name, contact no., or marketplace order no.</label>
         <div className="flex gap-2">
           <input
@@ -352,44 +563,79 @@ export default async function CrmOverviewPage({
         )}
       </form>
 
-      <div className="oms-card rounded-xl border p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Top Buyers — Repeat Customers (current company)</h2>
-        <p className="mb-3 text-xs text-[var(--oms-text-muted)]">
-          Grouped by contact number (falls back to buyer name when no number was captured). Only buyers with more than
-          one order are shown.
-        </p>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
-            <thead className="bg-[var(--oms-canvas)]">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Buyer</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Orders</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Total Value (USD)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--oms-surface-border)]">
-              {topBuyers.map((b) => (
-                <tr key={b.label + b.orderCount}>
-                  <td className="px-3 py-2 font-medium text-[var(--oms-text)]">{b.label}</td>
-                  <td className="px-3 py-2 text-right text-[var(--oms-text)]">{b.orderCount}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-[var(--oms-text)]">${b.totalUsd.toFixed(2)}</td>
-                </tr>
-              ))}
-              {topBuyers.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">
-                    No repeat buyers yet for this company.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      {/* 2026-09-17 (evening) — CRM section menu. Server-driven (plain
+          <Link>s to ?tab=...), not client useState, since every section
+          below already round-trips its own GET forms (FY selectors, Quick
+          Find) — a URL-driven tab needs no extra client JS/island and the
+          FY forms just carry a hidden `tab` field to land back on the same
+          tab after Apply. */}
+      <div className="oms-card flex flex-wrap gap-1 rounded-xl border p-1">
+        {CRM_TABS.map((t) => (
+          <Link
+            key={t.key}
+            href={tabHref(t.key)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              activeTab === t.key ? "bg-amber-500 text-white" : "text-[var(--oms-text-muted)] hover:bg-[var(--oms-canvas)]"
+            }`}
+          >
+            {t.label}
+          </Link>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      {activeTab === "buyers" && (
+        <div className="oms-card rounded-xl border p-4">
+          <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Top Buyers — Repeat Customers (current company)</h2>
+          <p className="mb-3 text-xs text-[var(--oms-text-muted)]">
+            Grouped by contact number (falls back to buyer name when no number was captured). Only buyers with more than
+            one order are shown.
+          </p>
+          <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+            <p className="mb-2 text-xs font-semibold text-[var(--oms-text-muted)]">Orders per buyer (top 10)</p>
+            <BarChart
+              data={topBuyers.slice(0, 10).map((b) => ({ label: b.label, value: b.orderCount, color: "#0284c7" }))}
+              valueFormatter={(v) => String(v)}
+            />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+              <thead className="bg-[var(--oms-canvas)]">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Buyer</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Orders</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Total Value (USD)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--oms-surface-border)]">
+                {topBuyers.map((b) => (
+                  <tr key={b.label + b.orderCount}>
+                    <td className="px-3 py-2 font-medium text-[var(--oms-text)]">{b.label}</td>
+                    <td className="px-3 py-2 text-right text-[var(--oms-text)]">{b.orderCount}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[var(--oms-text)]">${b.totalUsd.toFixed(2)}</td>
+                  </tr>
+                ))}
+                {topBuyers.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">
+                      No repeat buyers yet for this company.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "orders" && (
         <div className="oms-card rounded-xl border p-4">
           <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Orders by Status</h2>
+          <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+            <BarChart
+              data={ORDER_STATUSES.map((s) => ({ label: s, value: orderStatusCounts.get(s) ?? 0, color: ORDER_STATUS_COLOR[s] }))}
+              valueFormatter={(v) => String(v)}
+            />
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {ORDER_STATUSES.map((s) => (
               <div key={s} className="rounded-lg bg-[var(--oms-canvas)] p-3 text-center">
@@ -399,9 +645,17 @@ export default async function CrmOverviewPage({
             ))}
           </div>
         </div>
+      )}
 
+      {activeTab === "attendance" && (
         <div className="oms-card rounded-xl border p-4">
           <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Today&apos;s Attendance ({today})</h2>
+          <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+            <BarChart
+              data={ATTENDANCE_STATUSES.map((s) => ({ label: s, value: attendanceCounts.get(s) ?? 0, color: ATTENDANCE_STATUS_COLOR[s] }))}
+              valueFormatter={(v) => String(v)}
+            />
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {ATTENDANCE_STATUSES.map((s) => (
               <div key={s} className="rounded-lg bg-[var(--oms-canvas)] p-3 text-center">
@@ -411,132 +665,191 @@ export default async function CrmOverviewPage({
             ))}
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="oms-card rounded-xl border p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Data Quality Alerts ({(alerts ?? []).length} of up to 50)</h2>
-        <div className="space-y-1 text-xs">
-          {(alerts ?? []).length === 0 && <p className="text-[var(--oms-text-muted)]">No alerts. 🎉</p>}
-          {(alerts ?? []).map((a, i) => (
-            <div key={`${a.order_id}-${i}`} className="flex items-start gap-2 border-b border-[var(--oms-surface-border)] py-1.5 last:border-0">
-              <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">{a.alert_type}</span>
-              <span className="text-[var(--oms-text-muted)]">{a.detail}</span>
+      {activeTab === "alerts" && (
+        <div className="oms-card rounded-xl border p-4">
+          <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">Data Quality Alerts ({(alerts ?? []).length} of up to 50)</h2>
+          {alertTypeChartData.length > 0 && (
+            <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+              <p className="mb-2 text-xs font-semibold text-[var(--oms-text-muted)]">Alerts by type</p>
+              <BarChart data={alertTypeChartData} valueFormatter={(v) => String(v)} />
             </div>
-          ))}
+          )}
+          <div className="space-y-1 text-xs">
+            {(alerts ?? []).length === 0 && <p className="text-[var(--oms-text-muted)]">No alerts. 🎉</p>}
+            {(alerts ?? []).map((a, i) => (
+              <div key={`${a.order_id}-${i}`} className="flex items-start gap-2 border-b border-[var(--oms-surface-border)] py-1.5 last:border-0">
+                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800">{a.alert_type}</span>
+                <span className="text-[var(--oms-text-muted)]">{a.detail}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="oms-card rounded-xl border p-4">
-        <h2 className="mb-3 text-sm font-semibold text-[var(--oms-text)]">P&amp;L by Company</h2>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
-            <thead className="bg-[var(--oms-canvas)]">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Company</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Profit %</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Internal Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn (After Overhead)</th>
-                <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--oms-surface-border)]">
-              {(plCompanyRows ?? []).map((r) => (
-                <Fragment key={r.company_id}>
-                  <tr className="pl-expand align-top">
-                    <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.company_name}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold pl-out text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
-                      {Number(r.total_expenses_inr ?? 0).toFixed(2)}
-                    </td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
-                    <td className="px-2 py-2 text-center">
-                      <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.company_name ?? "company"} P&L breakdown`} />
-                    </td>
-                  </tr>
-                  <tr className="pl-detail">
-                    <td colSpan={8} className="bg-[var(--oms-canvas)] px-6 py-2">
-                      <PlExpenseBreakdown row={r} />
-                    </td>
-                  </tr>
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+      {activeTab === "pl-company" && (
+        <div className="oms-card rounded-xl border p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-[var(--oms-text)]">
+              P&amp;L by Company{fycSelected && fycOptionsAvailable ? ` — FY ${fyLabelOf(fycSelected)}` : " (all time)"}
+            </h2>
+            {fycOptionsAvailable && (
+              <form method="GET" className="flex items-center gap-2">
+                <input type="hidden" name="tab" value="pl-company" />
+                <label htmlFor="pl-fyc" className="text-xs text-[var(--oms-text-muted)]">Financial Year</label>
+                <select
+                  id="pl-fyc"
+                  name="fyc"
+                  defaultValue={fycSelected ? String(fycSelected) : "all"}
+                  className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-surface)] px-2 py-1 text-xs text-[var(--oms-text)] outline-none focus:border-amber-500"
+                >
+                  <option value="all">All time</option>
+                  {fyOptions.map((y) => (
+                    <option key={y} value={String(y)}>FY {fyLabelOf(y)}</option>
+                  ))}
+                </select>
+                <button type="submit" className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600">Apply</button>
+              </form>
+            )}
+          </div>
+          <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+            <GroupedBarChart
+              groups={plCompanyRowsFiltered.map((r) => ({
+                label: r.company_name ?? "—",
+                values: [Number(r.total_sale_value_inr ?? 0), Number(r.total_expenses_inr ?? 0), Number(r.net_earn ?? 0)],
+              }))}
+              series={[
+                { name: "Sale Value (INR)", color: "#0284c7" },
+                { name: "Expenses (INR)", color: "#dc2626" },
+                { name: "Net Earn (INR)", color: "#059669" },
+              ]}
+              valueFormatter={(v) => inr2(v)}
+            />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+              <thead className="bg-[var(--oms-canvas)]">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Company</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (USD)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Expenses (INR)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Profit %</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Internal Expenses (INR)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn (After Overhead)</th>
+                  <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--oms-surface-border)]">
+                {plCompanyRowsFiltered.length === 0 && (
+                  <tr><td colSpan={9} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
+                )}
+                {plCompanyRowsFiltered.map((r) => (
+                  <Fragment key={r.company_id}>
+                    <tr className="pl-expand align-top">
+                      <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.company_name}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">${usd2(r.total_sale_value_usd)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-semibold pl-out text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
+                        {Number(r.total_expenses_inr ?? 0).toFixed(2)}
+                      </td>
+                      <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                      <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
+                      <td className="px-2 py-2 text-center">
+                        <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.company_name ?? "company"} P&L breakdown`} />
+                      </td>
+                    </tr>
+                    <tr className="pl-detail">
+                      <td colSpan={9} className="bg-[var(--oms-canvas)] px-6 py-2">
+                        <PlExpenseBreakdown row={r} />
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="oms-card rounded-xl border p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-[var(--oms-text)]">
-            P&amp;L by Month{fySelected ? ` — FY ${fyLabelOf(fySelected)}` : " (most recent 24)"}
-          </h2>
-          <form method="GET" className="flex items-center gap-2">
-            <label htmlFor="pl-fy" className="text-xs text-[var(--oms-text-muted)]">Financial Year</label>
-            <select
-              id="pl-fy"
-              name="fy"
-              defaultValue={fySelected ? String(fySelected) : "all"}
-              className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-surface)] px-2 py-1 text-xs text-[var(--oms-text)] outline-none focus:border-amber-500"
-            >
-              <option value="all">All FYs</option>
-              {fyOptions.map((y) => (
-                <option key={y} value={String(y)}>FY {fyLabelOf(y)}</option>
-              ))}
-            </select>
-            <button type="submit" className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600">Apply</button>
-          </form>
+      {activeTab === "pl-month" && (
+        <div className="oms-card rounded-xl border p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-[var(--oms-text)]">
+              P&amp;L by Month{fySelected ? ` — FY ${fyLabelOf(fySelected)}` : " (most recent 24)"}
+            </h2>
+            <form method="GET" className="flex items-center gap-2">
+              <input type="hidden" name="tab" value="pl-month" />
+              <label htmlFor="pl-fy" className="text-xs text-[var(--oms-text-muted)]">Financial Year</label>
+              <select
+                id="pl-fy"
+                name="fy"
+                defaultValue={fySelected ? String(fySelected) : "all"}
+                className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-surface)] px-2 py-1 text-xs text-[var(--oms-text)] outline-none focus:border-amber-500"
+              >
+                <option value="all">All FYs</option>
+                {fyOptions.map((y) => (
+                  <option key={y} value={String(y)}>FY {fyLabelOf(y)}</option>
+                ))}
+              </select>
+              <button type="submit" className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600">Apply</button>
+            </form>
+          </div>
+          <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+            <LineChart series={plMonthChartSeries} valueFormatter={(v) => inr2(v)} />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+              <thead className="bg-[var(--oms-canvas)]">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Month</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (USD)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Expenses (INR)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Profit %</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Internal Expenses (INR)</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn (After Overhead)</th>
+                  <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--oms-surface-border)]">
+                {plMonthRowsFiltered.length === 0 && (
+                  <tr><td colSpan={9} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
+                )}
+                {plMonthRowsFiltered.map((r) => (
+                  <Fragment key={r.month ?? ""}>
+                    <tr className="pl-expand align-top">
+                      <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.month}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">${usd2(r.total_sale_value_usd)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-semibold pl-out text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
+                        {Number(r.total_expenses_inr ?? 0).toFixed(2)}
+                      </td>
+                      <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
+                      <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
+                      <td className="px-2 py-2 text-center">
+                        <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.month ?? "month"} P&L breakdown`} />
+                      </td>
+                    </tr>
+                    <tr className="pl-detail">
+                      <td colSpan={9} className="bg-[var(--oms-canvas)] px-6 py-2">
+                        <PlExpenseBreakdown row={r} />
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
-            <thead className="bg-[var(--oms-canvas)]">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Month</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Profit %</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Internal Expenses (INR)</th>
-                <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net Earn (After Overhead)</th>
-                <th className="w-8 px-2 py-2"><span className="sr-only">Expand</span></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--oms-surface-border)]">
-              {plMonthRowsFiltered.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
-              )}
-              {plMonthRowsFiltered.map((r) => (
-                <Fragment key={r.month ?? ""}>
-                  <tr className="pl-expand align-top">
-                    <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.month}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold pl-out text-rose-600" title="Courier + Duty + Purchase − Note adjustments + Washing + history — click ▾ for the line-by-line split">
-                      {Number(r.total_expenses_inr ?? 0).toFixed(2)}
-                    </td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn ?? 0).toFixed(2)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{(Number(r.profit_pct ?? 0) * 100).toFixed(2)}%</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{Number(r.total_internal_expenses_inr ?? 0).toFixed(2)}</td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_earn_after_overhead ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{Number(r.net_earn_after_overhead ?? 0).toFixed(2)}</td>
-                    <td className="px-2 py-2 text-center">
-                      <input type="checkbox" className="pl-toggle" aria-label={`Expand ${r.month ?? "month"} P&L breakdown`} />
-                    </td>
-                  </tr>
-                  <tr className="pl-detail">
-                    <td colSpan={8} className="bg-[var(--oms-canvas)] px-6 py-2">
-                      <PlExpenseBreakdown row={r} />
-                    </td>
-                  </tr>
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
