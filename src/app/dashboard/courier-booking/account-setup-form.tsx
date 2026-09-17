@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { saveCourierCredentialsAction, type SaveCourierCredentialsState } from "./credentials-actions";
+import { saveCourierCredentialsAction, testFedexConnectionAction, type SaveCourierCredentialsState, type TestFedexConnectionState } from "./credentials-actions";
 import { COURIERS, COURIER_CREDENTIAL_FIELDS, type CourierKey, type CourierCredentialStatus } from "@/lib/couriers/credentials";
 
 const inputClass =
@@ -9,9 +9,16 @@ const inputClass =
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 const saveInitial: SaveCourierCredentialsState = { error: null, success: false };
+const testInitial: TestFedexConnectionState = { status: "idle", message: null, keySource: null };
 
 function CourierCredentialCard({ courierKey, label, status }: { courierKey: CourierKey; label: string; status: CourierCredentialStatus }) {
   const [state, formAction, pending] = useActionState(saveCourierCredentialsAction, saveInitial);
+  // 2026-09-17 — "Test connection": fires the live FedEx key+account check
+  // (a quote-only Rate API call — never creates a shipment) so a mismatch
+  // like "account number not found" surfaces HERE, before a real booking
+  // fails with it. FedEx-only because it's the only courier with this
+  // failure mode so far (see credentials-actions.ts's test action).
+  const [testState, testFormAction, testPending] = useActionState(testFedexConnectionAction, testInitial);
   const fields = COURIER_CREDENTIAL_FIELDS[courierKey];
 
   return (
@@ -52,6 +59,32 @@ function CourierCredentialCard({ courierKey, label, status }: { courierKey: Cour
           {pending ? "Saving..." : "Save"}
         </button>
       </form>
+      {courierKey === "fedex" && (
+        <div className="border-t border-slate-100 px-4 py-4">
+          {/* Separate <form> from the save form above (nested forms are
+              invalid HTML) — same data, different action. */}
+          <form action={testFormAction} className="flex items-center gap-3">
+            <input type="hidden" name="courier" value="fedex" />
+            <button
+              type="submit"
+              disabled={testPending}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              {testPending ? "Testing against FedEx..." : "Test connection"}
+            </button>
+            <span className="text-xs text-slate-500">Live-checks that THIS account number works with THIS API key — no shipment is created.</span>
+          </form>
+          {testState.message && (
+            <p
+              className={`mt-3 rounded-lg px-3 py-2 text-xs ${
+                testState.status === "ok" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"
+              }`}
+            >
+              {testState.message}
+            </p>
+          )}
+        </div>
+      )}
     </details>
   );
 }

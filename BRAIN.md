@@ -184,6 +184,24 @@ in `db/schema.sql`). The merge feature folds those rows into ONE keeper for disp
   participant. Party Ledger and every other consumer of `bill_pass_register` show the combined
   figures automatically because everything reads the same tables.
 
+## 5c. FedEx per-company credentials + "Test connection" (2026-09-17)
+
+Each of the 3 companies has its OWN FedEx account number, but the deployment's FedEx API key is one
+shared org's key unless a company saves its own in Courier Ops → Account Setup (per-company rows in
+`courier_credentials`, resolved field-by-field with env-var fallback — see
+`src/lib/couriers/credentials.ts`). A real production 400 ("Account number not found") happens the
+moment a company's account number is paired with a key whose FedEx org doesn't contain that
+account — the shared env key is the usual culprit because the fallback is silent.
+
+- `src/lib/couriers/fedex-test.ts` — `testFedexConnection()`: one quote-only Rate API call (never
+  creates a shipment) proving the key+account pair works TOGETHER; result names WHICH key was used
+  (company's own vs shared env).
+- Account Setup's FedEx card has a **Test connection** button (server action in
+  `credentials-actions.ts`, gated on `courier_credentials_admin`) that runs it against exactly what
+  a booking would send (same `resolveCourierCredentials` resolution).
+- `fedex-ship.ts`'s account-number 400 message also names the key source now, so a failed booking
+  answers "whose key was my account paired with?" inline.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

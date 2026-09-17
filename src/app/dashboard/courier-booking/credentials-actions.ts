@@ -9,7 +9,8 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { COURIER_CREDENTIAL_FIELDS, saveCourierCredentialFields, type CourierKey } from "@/lib/couriers/credentials";
+import { COURIER_CREDENTIAL_FIELDS, resolveCourierCredentials, saveCourierCredentialFields, type CourierKey } from "@/lib/couriers/credentials";
+import { testFedexConnection } from "@/lib/couriers/fedex-test";
 
 export type SaveCourierCredentialsState = { error: string | null; success: boolean };
 
@@ -45,6 +46,49 @@ export async function saveCourierCredentialsAction(
 
   revalidatePath("/dashboard/courier-booking");
   return { error: null, success: true };
+}
+
+// "Test connection" — Account Setup FedEx card ke andar (2026-09-17).
+// FedEx-only for now: the ONLY courier with a real key-vs-account mismatch
+// failure mode so far (the live 400 that motivated this — "Account number
+// not found"), and the only one whose auth helper already takes per-company
+// overrides cleanly. Other couriers can follow the same pattern later if
+// their vendors misbehave the same way.
+//
+// WHY an action instead of a plain fetch from the browser: the resolved
+// credentials must never leave the server, and the test must use EXACTLY
+// what a real booking would use (resolveCourierCredentials — DB first,
+// env fallback per field), not whatever a form currently has typed in it.
+// Cooldown note for reviewers: this calls FedEx's Rate API once per click;
+// FedEx's published rate limits are generous for this, and the UI gates
+// double-clicks while pending.
+export type TestFedexConnectionState = {
+  status: "idle" | "testing" | "ok" | "fail";
+  message: string | null;
+  keySource: "company" | "shared-env" | "none" | null;
+};
+
+export async function testFedexConnectionAction(_prev: TestFedexConnectionState, formData: FormData): Promise<TestFedexConnectionState> {
+  const employee = await requireCapability("courier_credentials_admin");
+  const supabase = createServiceRoleClient();
+
+  const courier = String(formData.get("courier") ?? "") as CourierKey;
+  if (courier !== "fedex") return { status: "fail", message: "Connection test is FedEx-only right now.", keySource: null };
+
+  try {
+    const credentials = await resolveCourierCredentials(supabase, employee.currentCompanyId, "fedex");
+    const result = await testFedexConnection(credentials);
+    if (result.ok) {
+      return {
+        status: "ok",
+        message: `✓ Works — FedEx accepted account ${result.accountMasked} with ${result.keySource === "company" ? "THIS company's own API key" : "the SHARED deployment API key (env var)"}. Bookings will use this same pair.`,
+        keySource: result.keySource,
+      };
+    }
+    return { status: "fail", message: result.error, keySource: null };
+  } catch (err) {
+    return { status: "fail", message: err instanceof Error ? err.message : "Test failed unexpectedly.", keySource: null };
+  }
 }
 
 export type ClearCourierCredentialFieldState = { error: string | null; success: boolean };

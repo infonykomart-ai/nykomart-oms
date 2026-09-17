@@ -631,10 +631,20 @@ export async function createFedexShipment(
     // against production / vice-versa.
     const isAccountError = /account number/i.test(msg);
     const masked = accountNumber.length > 4 ? `${"*".repeat(accountNumber.length - 4)}${accountNumber.slice(-4)}` : accountNumber;
+    // 2026-09-17 — name WHICH API key went out with this account. With 3
+    // companies sharing one deployment, the first question this error always
+    // raises is "whose key was my account paired with?" — answer it inline:
+    // the company's own saved key, or the shared env-var fallback when that
+    // company never saved its own in Account Setup (credentials.ts's
+    // field-by-field fallback is exactly how the shared key sneaks in).
+    const keySource =
+      credentials?.client_id && credentials?.client_secret
+        ? "the company's own API key (saved in Account Setup)"
+        : "the SHARED deployment API key (FEDEX_API_CLIENT_ID env var — this company has NO own key saved in Account Setup)";
     throw new Error(
       `FedEx Ship API failed ${res.status}${retriedNote}: ${msg}` +
         (isAccountError
-          ? ` — sent account ${masked} against ${FEDEX_API_BASE}. Check Courier Ops → Account Setup → FedEx: the account number must belong to THIS API key's organization${FEDEX_API_BASE.includes("apis.fedex.com") ? " (production API)" : " (test API)"}.`
+          ? ` — sent account ${masked} against ${FEDEX_API_BASE} with ${keySource}. Check Courier Ops → Account Setup → FedEx: the account number must belong to THIS API key's organization${FEDEX_API_BASE.includes("apis.fedex.com") ? " (production API)" : " (test API)"} — either fix the number, or save this company's own Client ID + Secret (whose org the account IS linked to) there, and use that page's "Test connection" button to verify the pair before booking.`
           : "")
     );
   }
