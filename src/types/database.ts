@@ -5111,6 +5111,9 @@ export type Database = {
           buyer_country: string | null;
           address_type: "Residential" | "Commercial";
           photo_type: "Dispatch" | "Website" | null;
+          // 2026-09-18 - multi-photo links (db/2026-09-18-orders-multi-
+          // photo-and-capability-sync.sql). photo_url stays photo #1.
+          photo_urls: string[] | null;
           colour: string | null;
           entry_by_employee_id: string;
           advance_tracking: string | null;
@@ -5174,6 +5177,7 @@ export type Database = {
           buyer_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
+          photo_urls?: string[] | null;
           colour?: string | null;
           entry_by_employee_id: string;
           advance_tracking?: string | null;
@@ -5237,6 +5241,7 @@ export type Database = {
           buyer_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
+          photo_urls?: string[] | null;
           colour?: string | null;
           entry_by_employee_id?: string;
           advance_tracking?: string | null;
@@ -7877,6 +7882,12 @@ export type Database = {
       };
       pl_dashboard_by_month_view: {
         Row: {
+          // 2026-09-18 - per-COMPANY month rows
+          // (db/2026-09-18-pl-month-per-company.sql rebuilds the view with
+          // company_id/company_name on every CTE - "p&l by month sabhi
+          // company ka ek sath aara hai... alag company ke hisab se aayega").
+          company_id: string | null;
+          company_name: string | null;
           month: string | null;
           total_sale_value_inr: number | null;
           total_expenses_inr: number | null;
@@ -8131,6 +8142,16 @@ export type Database = {
           p_scope: string;
           p_use_fy: boolean;
           p_as_of_date: string;
+        };
+        Returns: number;
+      };
+      // 2026-09-18: capability auto-sync RPC (db/2026-09-18-orders-multi-
+      // photo-and-capability-sync.sql). Mirrors the generated type that
+      // scripts/gen-types.mjs will emit after the migration runs.
+      sync_capabilities: {
+        Args: {
+          p_codes?: string[] | null;
+          p_descriptions?: string[] | null;
         };
         Returns: number;
       };

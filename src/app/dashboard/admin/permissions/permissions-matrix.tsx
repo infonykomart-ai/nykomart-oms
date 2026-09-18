@@ -4,7 +4,9 @@ import { useState, useTransition } from "react";
 import { toggleRoleCapability } from "./actions";
 
 type Role = { id: string; name: string };
-type Capability = { code: string; description: string | null };
+// 2026-09-18 — optional `label` arrives from the page's CAPABILITY_INFO
+// enrichment; the matrix falls back to the raw code when absent.
+type Capability = { code: string; description: string | null; label?: string | null };
 
 export function PermissionsMatrix({
   roles,
@@ -64,8 +66,8 @@ export function PermissionsMatrix({
             {capabilities.map((cap) => (
               <tr key={cap.code}>
                 <td className="sticky left-0 z-10 bg-white px-4 py-2.5">
-                  <div className="font-medium text-slate-900">{cap.code}</div>
-                  {cap.description && <div className="text-xs text-slate-400">{cap.description}</div>}
+                  <div className="font-medium text-slate-900">{cap.label ?? cap.code}</div>
+                  <div className="text-xs text-slate-400">{cap.code}{cap.description ? ` — ${cap.description}` : ""}</div>
                 </td>
                 {roles.map((r) => {
                   const k = key(r.id, cap.code);

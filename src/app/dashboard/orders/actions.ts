@@ -139,6 +139,20 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       colour: strOrNull(formData, "colour"),
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
       photo_url: strOrNull(formData, "photo_url"),
+      // 2026-09-18 — multi-photo links: merge photo #1 (the PhotoUrlField)
+      // with the "+ Add Photo" extra rows into the canonical photo_urls
+      // list; photo_url stays the first element so every pre-existing
+      // consumer (thumbnail/print/WhatsApp) is untouched. De-duped, blanks
+      // dropped. Empty array (not null) when no photos, matching the
+      // insert path in new/actions.ts.
+      photo_urls: (() => {
+        const extras = formData
+          .getAll("photo_extra_urls")
+          .map((v) => String(v ?? "").trim())
+          .filter(Boolean);
+        const first = strOrNull(formData, "photo_url");
+        return Array.from(new Set([first, ...extras].filter((u): u is string => !!u)));
+      })(),
       tassel_fringes: formData.get("tassel_fringes") === "on",
       buyer_name_address: buyerNameAddress,
       buyer_country: buyerCountry,

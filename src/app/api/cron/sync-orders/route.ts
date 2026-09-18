@@ -141,6 +141,7 @@ export async function GET(req: NextRequest) {
           buyerPostalCode: null,
           vendorPartyId: null, // no reliable source from marketplace sync — fillable later via the order edit panel, see Gap 2 note in new/actions.ts.
           remark: "Auto-imported by marketplace sync",
+          photoUrls: [], // 2026-09-18 — marketplace sync has no photo source; photos are added later via the order edit panel.
           items: [
             {
               // NOTE: item_category_id has no reliable source from most
@@ -158,6 +159,7 @@ export async function GET(req: NextRequest) {
               colour: null,
               photoType: null,
               photoUrl: null,
+              photoUrls: [], // 2026-09-18 — marketplace sync has no photo source; photos are added later via the order edit panel.
               tasselFringes: false,
               orderCurrency: o.orderCurrency,
               orderValueOriginal: o.orderValueOriginal,

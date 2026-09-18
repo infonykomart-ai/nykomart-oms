@@ -255,6 +255,34 @@ Audit confirmed P&L is accrual (bill-basis — `total_paid`/`balance_due` never 
   amounts; bill_pass_register payables untouched. Both in db/2026-09-17-pl-cn-allocation-and-
   portal-real.sql (run AFTER the breakdown migration).
 
+## 5f. P&L by Month is per-COMPANY + orders multi-photo + capability auto-sync (2026-09-18)
+
+- **P&L by Month per company**: the month view previously merged ALL companies into one row per
+  month — wrong for a multi-company system. `db/2026-09-18-pl-month-per-company.sql` rebuilds
+  `pl_dashboard_by_month_view` with company_id/company_name on every CTE (DROP+CREATE — NOT
+  CREATE OR REPLACE, which can only append columns and would 42P16 like the user's earlier
+  Supabase error). The CRM month table now defaults to the current company, with an "All
+  Companies" dropdown (`?fyco=`) next to the FY selector; month-row React keys are
+  `company_id:month` (a month now has one row per company).
+- **Orders multi-photo (links)**: `orders.photo_urls text[]` holds the FULL list;
+  `orders.photo_url` stays canonical photo #1 (thumbnail/print/WhatsApp unchanged).
+  Backfill: existing photo_url rows get `ARRAY[photo_url]` (idempotent, migration does it).
+  UI: "+ Add Photo" rows (`multi-photo-urls.tsx`) on the New Order item block and the inline
+  edit form — extra links are plain URL inputs sharing one name (edit path `formData.getAll`,
+  new-order path RadioNodeList off `form.elements`), serialized via items_json for the new
+  path. Detail/print view shows every photo, each linking to the full image. Marketplace cron
+  and CSV insert pass `photoUrls: []`/single-wrap.
+- **Capabilities auto-sync**: the `capabilities` TABLE was seeded once by db/schema.sql, so app
+  capabilities added later (bank_recon, companion_admin, leave_*) never appeared in Roles &
+  Permissions. Now `syncCapabilitiesFromRegistry()` (src/lib/capability-sync.ts) pushes the
+  live CAPABILITY_INFO registry through the `sync_capabilities(p_codes, p_descriptions)`
+  Postgres function on EVERY Roles & Permissions page load — upsert + description refresh,
+  grants NEVER touched; deploy + one page visit is the whole sync. The matrix's left column
+  now shows the app label above the raw code. db/schema.sql also gained the missing seed rows
+  (fresh databases) + the function definition; run
+  `db/2026-09-18-orders-multi-photo-and-capability-sync.sql` once on production for
+  photo_urls + the function (the next permissions page visit does the rest).
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

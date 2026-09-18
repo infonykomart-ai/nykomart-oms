@@ -46,6 +46,10 @@ export type Order = {
   colour: string | null;
   photo_type: string | null;
   photo_url: string | null;
+  // 2026-09-18 — multi-photo links; photo_url stays photo #1. Optional in
+  // the type so callers that haven't re-selected their rows yet keep
+  // compiling.
+  photo_urls?: string[] | null;
   order_currency: string;
   order_value_original: number;
   order_value_usd: number | null;
@@ -253,13 +257,37 @@ export function OrderPrintSheet({
             </div>
           )}
 
-          {order.photo_url && (
-            <div className="mb-3">
-              <div className="font-semibold">Photo{order.photo_type ? ` (${order.photo_type})` : ""}</div>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={order.photo_url} alt="" className="mt-1 h-32 w-32 rounded-lg border border-slate-200 object-cover" />
-            </div>
-          )}
+          {/* 2026-09-18 — multi-photo links: render EVERY photo in
+              photo_urls (photo #1 = photo_url first, then the extras). Each
+              thumbnail links to the full image so a click opens the
+              original. Falls back to photo_url alone when the caller
+              hasn't re-selected photo_urls yet. */}
+          {(() => {
+            const allPhotos = Array.from(
+              new Set([order.photo_url, ...(order.photo_urls ?? [])].filter((u): u is string => !!u))
+            );
+            if (allPhotos.length === 0) return null;
+            return (
+              <div className="mb-3">
+                <div className="font-semibold">
+                  Photo{order.photo_type ? ` (${order.photo_type})` : ""}
+                  {allPhotos.length > 1 ? ` — ${allPhotos.length} photos` : ""}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {allPhotos.map((url) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={url}
+                        alt=""
+                        className="h-32 w-32 rounded-lg border border-slate-200 object-cover"
+                      />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="mt-6 flex items-center justify-between text-[10px] text-slate-500">
             <span>Entered {new Date(order.entry_timestamp).toLocaleString()}</span>

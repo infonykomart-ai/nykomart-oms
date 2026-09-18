@@ -77,6 +77,10 @@ function tabHref(key: CrmTabKey) {
 // component below without a directive — React renders <details> as plain
 // HTML, so no island is actually needed; kept as a plain function).
 type PlRow = {
+  // 2026-09-18 — per-company month view (db/2026-09-18-pl-month-per-
+  // company.sql) adds company_id/company_name to pl_dashboard_by_month_view.
+  company_id?: string | null;
+  company_name?: string | null;
   expense_courier_inr?: number | null;
   expense_duty_inr?: number | null;
   expense_purchase_inr?: number | null;
@@ -240,12 +244,12 @@ function PlExpenseBreakdown({ row }: { row: PlRow }) {
 export default async function CrmOverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; fy?: string; fyc?: string; tab?: string }>;
+  searchParams: Promise<{ q?: string; fy?: string; fyc?: string; fyco?: string; tab?: string }>;
 }) {
   const employee = await requireCapability("crm_dashboard");
   const supabase = await createClient();
   const finSupabase = createServiceRoleClient();
-  const { q, fy: fyParam, fyc: fycParam, tab: tabParam } = await searchParams;
+  const { q, fy: fyParam, fyc: fycParam, fyco: fyCompanyParam, tab: tabParam } = await searchParams;
   const query = (q ?? "").trim();
   const activeTab: CrmTabKey = isCrmTabKey(tabParam) ? tabParam : "buyers";
 
@@ -259,10 +263,13 @@ export default async function CrmOverviewPage({
   // it's a one-row-per-company COMPARISON table by design
   // (`pl_dashboard_by_company_view` is `GROUP BY company`), so narrowing
   // it to a single company would defeat the point of that specific
-  // widget. "P&L by Month" (plByMonth) has no company_id column at all —
-  // `pl_dashboard_by_month_view` aggregates `sale_profit_ledger` straight
-  // to month with no per-company breakdown in the view itself, so it
-  // can't be scoped without a schema/view change; flagged, not fixed here.
+  // widget. "P&L by Month" (plByMonth) had no company_id column then —
+  // 2026-09-18 — RESOLVED: the month view now carries company_id/company_name
+  // (db/2026-09-18-pl-month-per-company.sql) so plByMonth below is filtered
+  // to employee.companyIds the same way the comparison table above is — one
+  // row per company+month, no more all-companies-merged totals. The FY
+  // selector still works on top; fallback column lists below were widened to
+  // include company_id so the company filter survives a missing migration.
   //
   // 2026-08-20 — Gap 4 (office/cash expenses, see
   // claude/five-gaps-implementation-plan-2026-08-20.md and
@@ -294,7 +301,7 @@ export default async function CrmOverviewPage({
     finSupabase.from("attendance").select("status").eq("company_id", employee.currentCompanyId).eq("attendance_date", today),
     finSupabase.from("data_quality_alerts_view").select("order_id, ref_no, alert_type, detail").eq("company_id", employee.currentCompanyId).limit(50),
     finSupabase.from("pl_dashboard_by_company_view").select("company_id, company_name, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").in("company_id", employee.companyIds),
-    finSupabase.from("pl_dashboard_by_month_view").select("month, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr"),
+    finSupabase.from("pl_dashboard_by_month_view").select("company_id, company_name, month, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead, portal_expenses_25pct, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr").in("company_id", employee.companyIds),
     // 2026-09-17 (evening) — new pl_dashboard_by_company_month_view (see
     // db/2026-09-17b-pl-usd-and-company-month.sql), fetched ONLY so the
     // "P&L by Company" FY selector below can sum an FY's months per
@@ -352,7 +359,10 @@ export default async function CrmOverviewPage({
   // other error also falls back the same way — P&L visibility is too
   // important to blank the whole page over one missing column.
   const baseCompanyCols = "company_id, company_name, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead";
-  const baseMonthCols = "month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead";
+  // 2026-09-18 — company_id kept in the fallback list: it ships WITH the
+  // first version of the per-company month view (this migration) so the
+  // company filter below keeps working even on the retry-on-error rows.
+  const baseMonthCols = "company_id, company_name, month, total_sale_value_inr, total_expenses_inr, net_earn, profit_pct, total_internal_expenses_inr, net_earn_after_overhead";
   let plCompanyRows = plByCompany;
   let plMonthRows = plByMonth;
   if (plByCompanyErr || plByMonthErr) {
@@ -388,9 +398,22 @@ export default async function CrmOverviewPage({
       ? fySelectedRaw
       : null;
   const allMonthRows = plMonthRows ?? [];
-  const plMonthRowsFiltered = fySelected
-    ? allMonthRows.filter((r) => r.month && fyStartYearOf(r.month) === fySelected)
-    : allMonthRows.slice(0, 24);
+  // 2026-09-18 — company switcher scope: the month table now follows the
+  // currently selected company (same convention as every other company-
+  // scoped widget here). "All companies" remains available via the new
+  // dropdown for the MD-style comparison view; per the user's ask the
+  // DEFAULT is their own company's rows only ("alag company ke hisab se
+  // aayega"). fyco=<companyId> pins one company; fyco="all" shows every
+  // accessible company.
+  const monthCompanyFilter =
+    fyCompanyParam === "all"
+      ? allMonthRows
+      : fyCompanyParam
+        ? allMonthRows.filter((r) => r.company_id === fyCompanyParam)
+        : allMonthRows.filter((r) => r.company_id === employee.currentCompanyId);
+  const plMonthRowsFiltered = monthCompanyFilter
+    .filter((r) => (fySelected ? r.month && fyStartYearOf(r.month) === fySelected : true))
+    .slice(0, fySelected ? undefined : 48);
 
   // 2026-09-17 (evening) — "P&L by Company (FY add karna hai)": same
   // ?fy=<startYear> convention as P&L by Month above, but its own param
@@ -557,11 +580,20 @@ export default async function CrmOverviewPage({
 
   // P&L by Month trend chart — chronological (view rows are DESC), capped
   // to the same rows the table already shows so the chart and table always
-  // agree with each other.
+  // agree with each other. 2026-09-18: rows are per-company now, so the
+  // x labels carry the company short-name too ("NM Sep '26") when the
+  // All-Companies view is on — otherwise every company's same month would
+  // collapse into one indistinguishable tick.
   const plMonthChronological = [...plMonthRowsFiltered].reverse();
+  const monthTick = (r: (typeof allMonthRows)[number]) => {
+    const label = monthShortLabel(r.month);
+    if (fyCompanyParam !== "all") return label;
+    const short = (plCompanyRows ?? []).find((c) => c.company_id === r.company_id)?.company_name ?? "?";
+    return `${short.split(" ")[0]} ${label}`;
+  };
   const plMonthChartSeries = [
-    { name: "Sale Value (INR)", color: "#0284c7", points: plMonthChronological.map((r) => ({ x: monthShortLabel(r.month), value: Number(r.total_sale_value_inr ?? 0) })) },
-    { name: "Net Earn (INR)", color: "#059669", points: plMonthChronological.map((r) => ({ x: monthShortLabel(r.month), value: Number(r.net_earn ?? 0) })) },
+    { name: "Sale Value (INR)", color: "#0284c7", points: plMonthChronological.map((r) => ({ x: monthTick(r), value: Number(r.total_sale_value_inr ?? 0) })) },
+    { name: "Net Earn (INR)", color: "#059669", points: plMonthChronological.map((r) => ({ x: monthTick(r), value: Number(r.net_earn ?? 0) })) },
   ];
 
   return (
@@ -815,10 +847,15 @@ export default async function CrmOverviewPage({
         <div className="oms-card rounded-xl border p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-[var(--oms-text)]">
-              P&amp;L by Month{fySelected ? ` — FY ${fyLabelOf(fySelected)}` : " (most recent 24)"}
+              P&amp;L by Month{fySelected ? ` — FY ${fyLabelOf(fySelected)}` : ""} · {fyCompanyParam === "all" ? "All Companies" : (plCompanyRows ?? []).find((c) => c.company_id === (fyCompanyParam || employee.currentCompanyId))?.company_name ?? "Current Company"}
             </h2>
             <form method="GET" className="flex items-center gap-2">
               <input type="hidden" name="tab" value="pl-month" />
+              {/* 2026-09-18 — FY + company selectors side by side (the company
+                  dropdown is the per-company month view ask). Both live in ONE
+                  GET form so Apply applies both at once; fyco="all" is the
+                  all-companies comparison view, otherwise it defaults to the
+                  currently switched company like every other widget here. */}
               <label htmlFor="pl-fy" className="text-xs text-[var(--oms-text-muted)]">Financial Year</label>
               <select
                 id="pl-fy"
@@ -829,6 +866,18 @@ export default async function CrmOverviewPage({
                 <option value="all">All FYs</option>
                 {fyOptions.map((y) => (
                   <option key={y} value={String(y)}>FY {fyLabelOf(y)}</option>
+                ))}
+              </select>
+              <label htmlFor="pl-fyco" className="text-xs text-[var(--oms-text-muted)]">Company</label>
+              <select
+                id="pl-fyco"
+                name="fyco"
+                defaultValue={fyCompanyParam === "all" ? "all" : fyCompanyParam ?? employee.currentCompanyId}
+                className="rounded-lg border border-[var(--oms-surface-border)] bg-[var(--oms-surface)] px-2 py-1 text-xs text-[var(--oms-text)] outline-none focus:border-amber-500"
+              >
+                <option value="all">All Companies</option>
+                {(plCompanyRows ?? []).map((c) => (
+                  <option key={c.company_id} value={c.company_id ?? ""}>{c.company_name ?? ""}</option>
                 ))}
               </select>
               <button type="submit" className="rounded-lg bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600">Apply</button>
@@ -857,7 +906,7 @@ export default async function CrmOverviewPage({
                   <tr><td colSpan={9} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No Sale &amp; Profit Ledger data yet — import via CSV Upload.</td></tr>
                 )}
                 {plMonthRowsFiltered.map((r) => (
-                  <Fragment key={r.month ?? ""}>
+                  <Fragment key={`${r.company_id ?? "all"}:${r.month ?? ""}`}>
                     <tr className="pl-expand align-top">
                       <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">{r.month}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{Number(r.total_sale_value_inr ?? 0).toFixed(2)}</td>

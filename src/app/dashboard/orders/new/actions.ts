@@ -32,6 +32,10 @@ type ParsedItem = {
   colour: string | null;
   photoType: "Dispatch" | "Website" | null;
   photoUrl: string | null;
+  // 2026-09-18 — multi-photo links ("order me ek se jyada photo link se
+  // dalegi"): the FULL list behind photo_url. photoUrl stays photo #1;
+  // see db/2026-09-18-orders-multi-photo-and-capability-sync.sql.
+  photoUrls: string[];
   tasselFringes: boolean;
   orderCurrency: string;
   orderValueOriginal: number;
@@ -82,6 +86,13 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
     const colour = String(raw.colour ?? "").trim();
     const photoType = String(raw.photoType ?? "").trim();
     const photoUrl = String(raw.photoUrl ?? "").trim();
+    // 2026-09-18 — extra photo links from order-form.tsx's ItemBlock; the
+    // FIRST photo comes in as photoUrl (same single field as before), the
+    // rest as photoUrls. Trim + de-dupe, and photo #1 is merged in below so
+    // the two fields can never disagree about which photo is first.
+    const extraPhotoUrls = (Array.isArray(raw.photoUrls) ? raw.photoUrls : [])
+      .map((u) => String(u ?? "").trim())
+      .filter(Boolean);
     const orderCurrency = String(raw.orderCurrency ?? "").trim();
     items.push({
       itemCategoryId,
@@ -91,6 +102,7 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
       colour: colour || null,
       photoType: photoType === "Dispatch" || photoType === "Website" ? photoType : null,
       photoUrl: photoUrl || null,
+      photoUrls: [photoUrl, ...extraPhotoUrls].filter(Boolean).filter((u, i, a) => a.indexOf(u) === i),
       tasselFringes: raw.tasselFringes === true,
       orderCurrency: orderCurrency || "USD",
       orderValueOriginal,
@@ -113,6 +125,11 @@ type CreateOrderInput = {
   addressType: "Residential" | "Commercial";
   remark: string | null;
   items: ParsedItem[];
+  // 2026-09-18 — multi-photo links: the buyer-level photo list shared by
+  // every item row of this batch (photos describe the GOODS, and a batch is
+  // one buyer's one delivery). Each row stores the same list; see
+  // db/2026-09-18-orders-multi-photo-and-capability-sync.sql.
+  photoUrls: string[];
   // 2026-08-11 additions — see db/2026-08-11-order-tax-destination-fields.sql
   vatNumber: string | null;
   eoriNumber: string | null;
@@ -189,6 +206,9 @@ export async function createOrderCore(
   input: CreateOrderInput
 ): Promise<{ error: string | null; refNo: string | null }> {
   const { storeId, orderDate, marketplaceOrderNo, buyerNameAddress, contactNo, items } = input;
+  // 2026-09-18 — batch-level photo list (see CreateOrderInput.photoUrls); the
+  // per-item lists in items[i].photoUrls are merged into it at insert time.
+  const batchPhotoUrls = input.photoUrls ?? [];
 
   if (!storeId || !orderDate) {
     return { error: "Store and order date are required.", refNo: null };
@@ -403,6 +423,15 @@ export async function createOrderCore(
       delivery_date: deliveryDate,
       marketplace_order_no: marketplaceOrderNo,
       photo_url: item.photoUrl,
+      // 2026-09-18 — full multi-photo list (per-item links first, then the
+      // batch-level list, de-duped); photo_url above stays photo #1 so every
+      // pre-existing consumer (thumbnail/print/WhatsApp) is untouched.
+      photo_urls:
+        item.photoUrls.length > 0 || batchPhotoUrls.length > 0
+          ? [...item.photoUrls, ...batchPhotoUrls].filter((u, i, a) => a.indexOf(u) === i)
+          : item.photoUrl
+            ? [item.photoUrl]
+            : [],
       sku_label: item.skuLabel,
       size_label: item.sizeLabel ?? "",
       qty: item.qty,
@@ -540,6 +569,9 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     buyerState: strOrNull(formData, "buyer_state"),
     buyerPostalCode: strOrNull(formData, "buyer_postal_code"),
     vendorPartyId: strOrNull(formData, "vendor_party_id"),
+    // 2026-09-18 — multi-photo links are entered per item block; the shared
+    // batch-level list (CreateOrderInput.photoUrls) stays empty here.
+    photoUrls: [],
   });
 
   if (result.error) {
@@ -746,6 +778,9 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       colour: cellStr(raw, byHeader, "Colour") || null,
       photoType: PHOTO_TYPES.has(photoTypeRaw) ? (photoTypeRaw as "Dispatch" | "Website") : null,
       photoUrl: cellStr(raw, byHeader, "Photo URL") || null,
+      // CSV path has one Photo URL column — the list is just that one photo
+      // wrapped; extra photos can be added on the order's Edit form later.
+      photoUrls: [],
       tasselFringes: tasselRaw === "yes" || tasselRaw === "y" || tasselRaw === "true",
       orderCurrency: currency,
       orderValueOriginal,
@@ -779,6 +814,7 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       buyerPostalCode: null,
       vendorPartyId: null, // not a CSV column — vendor is set/edited later via the Orders hub, see Gap 2 note above.
       items: [item],
+      photoUrls: item.photoUrls, // 2026-09-18 — per-item photo list from the CSV row (currently just the single Photo URL cell, wrapped).
     });
 
     results.push({ row: rowNum, refNo: result.refNo, error: result.error });

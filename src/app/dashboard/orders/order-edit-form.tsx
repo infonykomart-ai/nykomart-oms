@@ -3,6 +3,7 @@
 import { useActionState, useEffect } from "react";
 import { updateOrder, type OrderEditState } from "./actions";
 import { PhotoUrlField } from "./photo-url-field";
+import { MultiPhotoUrls } from "./multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
@@ -28,6 +29,10 @@ export type EditableOrder = {
   colour: string | null;
   photo_type: string | null;
   photo_url: string | null;
+  // 2026-09-18 — multi-photo links (db/2026-09-18-orders-multi-photo-and-
+  // capability-sync.sql): the FULL list behind photo_url. photo_url stays
+  // photo #1; extras render in the "+ Add Photo" rows.
+  photo_urls: string[] | null;
   tassel_fringes: boolean | null;
   buyer_name_address: string | null;
   contact_no: string | null;
@@ -243,6 +248,15 @@ export function OrderEditForm({
             name="photo_url"
             defaultValue={order.photo_url}
             labelClass={labelClass}
+          />
+          {/* 2026-09-18 — multi-photo links: photo_url above stays photo #1;
+              every extra photo is one plain URL row here, saved into
+              orders.photo_urls by updateOrder() (see ./actions.ts). Extras
+              default from the tail of the saved photo_urls list. */}
+          <MultiPhotoUrls
+            namePrefix="photo_extra_urls"
+            inputClass={inputClass}
+            initialUrls={(order.photo_urls ?? []).filter((u) => u && u !== order.photo_url)}
           />
         </div>
         <div className="flex items-center gap-2 pt-5">
