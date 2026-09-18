@@ -162,6 +162,17 @@ export default async function ReportsPage({
           >
             🧾 Store Expense Report
           </Link>
+          {/* 2026-09-18 (later) — "esa desboard banega P&L ka": full Finance
+              Dashboard (KPI cards, Profit & Loss/Expense Breakdown/Trend
+              charts, Shipping/Payment/Advertising/Returns transaction
+              lists), date-range + Marketplace + Country filterable. See
+              finance-dashboard/page.tsx header comment. */}
+          <Link
+            href="/dashboard/reports/finance-dashboard"
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+          >
+            💹 Finance Dashboard
+          </Link>
         </div>
       </div>
 

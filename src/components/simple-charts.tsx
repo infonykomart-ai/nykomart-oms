@@ -115,6 +115,97 @@ export function GroupedBarChart({
   );
 }
 
+// 2026-09-18 — Donut chart, added for the Finance Dashboard's "Expense
+// Breakdown" panel ("esa desboard banega P&L ka" — reference mockup has a
+// KPI-cards + bar/donut/line + transaction-lists layout; this fills the
+// donut slot). Categorical color-by-identity (never cycled/generated),
+// palette checked via the dataviz skill's validate_palette.js: 5 real hues
+// pass every check; the 6th slot (a genuine "Other/misc" bucket) is a
+// deliberately low-chroma neutral, which the skill's own rule allows ONLY
+// paired with a visible label+value — this component always renders both
+// in its legend, never color alone.
+export type DonutDatum = { label: string; value: number; color: string };
+
+export function DonutChart({
+  data,
+  size = 200,
+  thickness = 34,
+  valueFormatter = (v: number) => v.toLocaleString("en-IN"),
+  centerLabel,
+}: {
+  data: DonutDatum[];
+  size?: number;
+  thickness?: number;
+  valueFormatter?: (v: number) => string;
+  centerLabel?: { title: string; value: string };
+}) {
+  const total = data.reduce((s, d) => s + Math.max(0, d.value), 0);
+  if (total <= 0) {
+    return <p className="text-xs text-[var(--oms-text-muted)]">No data yet.</p>;
+  }
+  const r = (size - thickness) / 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  let offsetSoFar = 0;
+  return (
+    <div className="flex flex-wrap items-center gap-4">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Expense breakdown">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--oms-surface-border)" strokeWidth={thickness} />
+        {data
+          .filter((d) => d.value > 0)
+          .map((d) => {
+            const frac = d.value / total;
+            const dash = Math.max(0, frac * circumference - 1.5); // 1.5px gap between segments
+            const dashArray = `${dash} ${circumference - dash}`;
+            const dashOffset = circumference * 0.25 - offsetSoFar; // start at 12 o'clock, go clockwise
+            offsetSoFar += frac * circumference;
+            return (
+              <circle
+                key={d.label}
+                cx={cx}
+                cy={cy}
+                r={r}
+                fill="none"
+                stroke={d.color}
+                strokeWidth={thickness}
+                strokeDasharray={dashArray}
+                strokeDashoffset={dashOffset}
+                strokeLinecap="butt"
+                transform={`rotate(-90 ${cx} ${cy})`}
+              >
+                <title>{`${d.label}: ${valueFormatter(d.value)} (${(frac * 100).toFixed(1)}%)`}</title>
+              </circle>
+            );
+          })}
+        {centerLabel && (
+          <>
+            <text x={cx} y={cy - 6} textAnchor="middle" fontSize={13} fontWeight={700} fill="var(--oms-text)">
+              {centerLabel.value}
+            </text>
+            <text x={cx} y={cy + 12} textAnchor="middle" fontSize={9} fill="var(--oms-text-muted)">
+              {centerLabel.title}
+            </text>
+          </>
+        )}
+      </svg>
+      <div className="flex-1 space-y-1.5 text-[11px]">
+        {data.map((d) => (
+          <div key={d.label} className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-1.5 text-[var(--oms-text-muted)]">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: d.color }} />
+              {d.label}
+            </span>
+            <span className="whitespace-nowrap font-semibold text-[var(--oms-text)]">
+              {(total > 0 ? (d.value / total) * 100 : 0).toFixed(1)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export type LinePoint = { x: string; value: number };
 export type LineSeriesDef = { name: string; color: string; points: LinePoint[] };
 

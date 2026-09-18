@@ -888,7 +888,12 @@ export default async function CrmOverviewPage({
 
       {activeTab === "pl-marketplace" && (
         <div className="oms-card rounded-xl border p-4">
-          <h2 className="mb-1 text-sm font-semibold text-[var(--oms-text)]">P&amp;L by Marketplace (current company, all time)</h2>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-[var(--oms-text)]">P&amp;L by Marketplace (current company, all time)</h2>
+            <Link href="/dashboard/reports/finance-dashboard" className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100">
+              💹 Full Finance Dashboard (date range + charts) →
+            </Link>
+          </div>
           {!plStoreAvailable ? (
             <p className="mt-3 rounded-lg bg-[var(--oms-canvas)] p-3 text-xs text-[var(--oms-text-muted)]">
               This section needs db/2026-09-18-pl-by-marketplace-store.sql run in Supabase SQL Editor first — ask whoever runs

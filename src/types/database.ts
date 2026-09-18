@@ -8063,6 +8063,31 @@ export type Database = {
           cnt: number;
         }[];
       };
+      // 2026-09-18 (later) — Finance Dashboard page, from
+      // db/2026-09-18b-finance-dashboard-rpc.sql. Not yet run against the
+      // live DB — see the total_sale_value_usd comment above for why the
+      // types file is ahead of the actual schema here.
+      finance_dashboard_monthly: {
+        Args: {
+          p_company_id: string;
+          p_from: string;
+          p_to: string;
+          p_store_id?: string | null;
+          p_buyer_country?: string | null;
+        };
+        Returns: {
+          month: string;
+          order_count: number;
+          total_sale_value_inr: number;
+          total_sale_value_usd: number;
+          expense_courier_inr: number;
+          expense_duty_inr: number;
+          portal_fees_matched_inr: number;
+          portal_expense_effective_inr: number;
+          ad_spend_usd: number;
+          returns_inr: number;
+        }[];
+      };
       recover_employee_advance: {
         Args: {
           p_advance_id: string;
