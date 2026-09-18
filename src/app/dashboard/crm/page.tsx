@@ -322,7 +322,7 @@ export default async function CrmOverviewPage({
     finSupabase
       .from("pl_dashboard_by_store_view")
       .select(
-        "store_id, store_name, company_id, company_name, order_count, total_sale_value_inr, total_sale_value_usd, expense_courier_inr, expense_duty_inr, portal_expenses_25pct, portal_expense_effective_inr, portal_fees_matched_inr, ad_spend_usd, ad_budget_usd, net_before_overhead_inr, profit_pct_before_overhead, roas",
+        "store_id, store_name, company_id, company_name, order_count, total_sale_value_inr, total_sale_value_usd, expense_courier_inr, expense_duty_inr, portal_expenses_25pct, portal_expense_effective_inr, portal_fees_matched_inr, ad_spend_usd, ad_budget_usd, expense_purchase_inr, expense_washing_inr, net_before_overhead_inr, profit_pct_before_overhead, roas",
       )
       .eq("company_id", employee.currentCompanyId),
     query
@@ -896,33 +896,40 @@ export default async function CrmOverviewPage({
           </div>
           {!plStoreAvailable ? (
             <p className="mt-3 rounded-lg bg-[var(--oms-canvas)] p-3 text-xs text-[var(--oms-text-muted)]">
-              This section needs db/2026-09-18-pl-by-marketplace-store.sql run in Supabase SQL Editor first — ask whoever runs
-              your database migrations to apply it, then reload this page.
+              This section needs db/2026-09-18-pl-by-marketplace-store.sql AND db/2026-09-18c-pl-purchase-washing-order-linked.sql
+              run in Supabase SQL Editor first — ask whoever runs your database migrations to apply them, then reload this page.
             </p>
           ) : (
             <>
+              {/* 2026-09-18 (round 8) — owner correction: purchase_bills and
+                  washing_entries DO already carry an order_id (washing_entries
+                  even has its own store_id), so Purchase/Washing ARE now
+                  attributed here via that link — only genuinely order-
+                  independent office overhead (rent/salary/electricity — see
+                  P&L by Company/Month) is still excluded. See
+                  db/2026-09-18c-pl-purchase-washing-order-linked.sql's header. */}
               <p className="mb-3 text-xs text-[var(--oms-text-muted)]">
                 One row per store (Amazon US, Amazon UK, Etsy, Website, Wholesale, etc.). Shows Sale Value, Courier + Duty,
-                matched Portal/Marketplace Fees, Ad Spend and ROAS. This does <span className="font-semibold">not</span> include
-                purchase/production cost, washing chalans or office overhead — those are tracked per company, not per
-                marketplace, in this system, so &quot;Net (before overhead)&quot; below is profit before those costs, not the
-                full net profit — see P&amp;L by Company/Month for that.
+                matched Portal/Marketplace Fees, Purchase + Washing (attributed via each bill/entry&apos;s order link — see
+                Finance Dashboard for how much is not yet linked), Ad Spend and ROAS. &quot;Net (before overhead)&quot; below
+                still excludes office/rent/salary overhead only — that genuinely has no order to attribute to. See P&amp;L
+                by Company/Month for the complete number including that.
               </p>
               <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
-                <p className="mb-2 text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value vs Courier+Duty+Fees vs Net (before overhead), by marketplace</p>
+                <p className="mb-2 text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value vs Courier+Duty+Fees+Purchase+Washing vs Net (before office overhead), by marketplace</p>
                 <GroupedBarChart
                   groups={plStoreRows.map((r) => ({
                     label: r.store_name ?? "—",
                     values: [
                       Number(r.total_sale_value_inr ?? 0),
-                      Number(r.expense_courier_inr ?? 0) + Number(r.expense_duty_inr ?? 0) + Number(r.portal_expense_effective_inr ?? 0),
+                      Number(r.expense_courier_inr ?? 0) + Number(r.expense_duty_inr ?? 0) + Number(r.portal_expense_effective_inr ?? 0) + Number(r.expense_purchase_inr ?? 0) + Number(r.expense_washing_inr ?? 0),
                       Number(r.net_before_overhead_inr ?? 0),
                     ],
                   }))}
                   series={[
                     { name: "Sale Value (INR)", color: "#0284c7" },
-                    { name: "Courier+Duty+Fees (INR)", color: "#dc2626" },
-                    { name: "Net, before overhead (INR)", color: "#059669" },
+                    { name: "Courier+Duty+Fees+Purchase+Washing (INR)", color: "#dc2626" },
+                    { name: "Net, before office overhead (INR)", color: "#059669" },
                   ]}
                   valueFormatter={(v) => inr2(v)}
                 />
@@ -949,14 +956,16 @@ export default async function CrmOverviewPage({
                       <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Courier (INR)</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Duty (INR)</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Portal Fees (INR)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Purchase (INR)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Washing (INR)</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Ad Spend (USD)</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">ROAS</th>
-                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net (before overhead)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net (before office overhead)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--oms-surface-border)]">
                     {plStoreRows.length === 0 && (
-                      <tr><td colSpan={10} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No orders yet for this company.</td></tr>
+                      <tr><td colSpan={12} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No orders yet for this company.</td></tr>
                     )}
                     {(() => {
                       const totals = plStoreRows.reduce(
@@ -967,10 +976,12 @@ export default async function CrmOverviewPage({
                           courier: acc.courier + Number(r.expense_courier_inr ?? 0),
                           duty: acc.duty + Number(r.expense_duty_inr ?? 0),
                           fees: acc.fees + Number(r.portal_expense_effective_inr ?? 0),
+                          purchase: acc.purchase + Number(r.expense_purchase_inr ?? 0),
+                          washing: acc.washing + Number(r.expense_washing_inr ?? 0),
                           adSpend: acc.adSpend + Number(r.ad_spend_usd ?? 0),
                           net: acc.net + Number(r.net_before_overhead_inr ?? 0),
                         }),
-                        { orders: 0, saleInr: 0, saleUsd: 0, courier: 0, duty: 0, fees: 0, adSpend: 0, net: 0 },
+                        { orders: 0, saleInr: 0, saleUsd: 0, courier: 0, duty: 0, fees: 0, purchase: 0, washing: 0, adSpend: 0, net: 0 },
                       );
                       return (
                         <>
@@ -987,6 +998,12 @@ export default async function CrmOverviewPage({
                               <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(r.expense_duty_inr)}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600" title={Number(r.portal_fees_matched_inr ?? 0) > 0 ? "real, matched fees" : "25% estimate — no matched statement fees yet"}>
                                 {inr2(r.portal_expense_effective_inr)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600" title="Purchase bills linked to an order at this store (order_id) — unlinked bills aren't counted here">
+                                {inr2(r.expense_purchase_inr)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600" title="Washing entries tagged to this store">
+                                {inr2(r.expense_washing_inr)}
                               </td>
                               <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">${usd2(r.ad_spend_usd)}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">
@@ -1006,6 +1023,8 @@ export default async function CrmOverviewPage({
                               <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.courier)}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.duty)}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.fees)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.purchase)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.washing)}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">${usd2(totals.adSpend)}</td>
                               <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">
                                 {totals.adSpend > 0 ? `${(totals.saleUsd / totals.adSpend).toFixed(2)}x` : "—"}

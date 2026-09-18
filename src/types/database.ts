@@ -7940,6 +7940,11 @@ export type Database = {
       // limit (excludes company-wide overhead not tracked per store). Types
       // file updated ahead of the migration being run — standing rule, see
       // total_sale_value_usd comment above.
+      // 2026-09-18 (round 8) — expense_purchase_inr/expense_washing_inr
+      // added by db/2026-09-18c-pl-purchase-washing-order-linked.sql —
+      // purchase_bills.order_id and washing_entries.store_id already
+      // existed; this view now uses them instead of treating those costs
+      // as unattributable. Types file updated ahead of that migration.
       pl_dashboard_by_store_view: {
         Row: {
           store_id: string | null;
@@ -7956,6 +7961,8 @@ export type Database = {
           portal_fees_matched_inr: number | null;
           ad_spend_usd: number | null;
           ad_budget_usd: number | null;
+          expense_purchase_inr: number | null;
+          expense_washing_inr: number | null;
           net_before_overhead_inr: number | null;
           profit_pct_before_overhead: number | null;
           roas: number | null;
@@ -8067,6 +8074,9 @@ export type Database = {
       // db/2026-09-18b-finance-dashboard-rpc.sql. Not yet run against the
       // live DB — see the total_sale_value_usd comment above for why the
       // types file is ahead of the actual schema here.
+      // 2026-09-18 (round 8) — expense_purchase_inr/expense_washing_inr
+      // added by db/2026-09-18c-pl-purchase-washing-order-linked.sql
+      // (function DROPped+recreated, same 5 args, 2 new return columns).
       finance_dashboard_monthly: {
         Args: {
           p_company_id: string;
@@ -8086,6 +8096,26 @@ export type Database = {
           portal_expense_effective_inr: number;
           ad_spend_usd: number;
           returns_inr: number;
+          expense_purchase_inr: number;
+          expense_washing_inr: number;
+        }[];
+      };
+      // 2026-09-18 (round 8) — new, from the same migration. Company-wide
+      // (no store/country split possible for an unlinked row by
+      // definition) count+total of purchase bills/washing entries with no
+      // order_id in a date range — surfaced on the Finance Dashboard so
+      // the "not yet linked to an order" gap is visible, not silent.
+      finance_dashboard_unlinked_purchase_washing: {
+        Args: {
+          p_company_id: string;
+          p_from: string;
+          p_to: string;
+        };
+        Returns: {
+          unlinked_purchase_bill_count: number;
+          unlinked_purchase_inr: number;
+          unlinked_washing_entry_count: number;
+          unlinked_washing_inr: number;
         }[];
       };
       recover_employee_advance: {
