@@ -47,18 +47,28 @@ export default async function OrdersPage({
   const lateOnly = sp.late === "1";
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  const [{ data: companies }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: parties }] = await Promise.all([
+  const [{ data: companies }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: parties }, { data: stores }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("item_categories").select("id, name").order("name"),
     supabase.from("sizes").select("id, label").order("label"),
     supabase.from("currencies").select("code, name").order("code"),
     supabase.from("parties").select("id, name").order("name"),
+    // 2026-09-18 (round 10) — "store ke naam me to company ka naam aara
+    // kahi isse to problem nahi ho rahi": the "Store Name" column below was
+    // showing companyName.get(o.company_id) — literally the company (Nyko
+    // Mart/Rugara/CASA ARRA), same for every row — because orders.store_id
+    // was never selected/fetched on this page at all. The REAL per-order
+    // marketplace (Amazon Arts of Jaipur, Etsy Arts of Jaipur, etc. — the
+    // `stores` table) was there in the schema the whole time, just never
+    // wired into this particular table. Fetched here, passed down, and the
+    // column now looks it up by the order's own store_id.
+    supabase.from("stores").select("id, name").in("company_id", employee.companyIds).order("name"),
   ]);
 
   let query = supabase
     .from("orders")
     .select(
-      "id, ref_no, order_date, company_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, vendor_party_id, advance_tracking, final_tracking"
+      "id, ref_no, order_date, company_id, store_id, status, shipment_status, dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, vendor_party_id, advance_tracking, final_tracking"
     )
     .in("company_id", effectiveCompanyIds)
     .order("entry_timestamp", { ascending: false })
@@ -261,6 +271,7 @@ export default async function OrdersPage({
         currencies={currencies ?? []}
         parties={parties ?? []}
         companies={companies ?? []}
+        stores={stores ?? []}
         statuses={STATUSES}
         todayStr={todayStr}
         statusByOrder={statusByOrder}

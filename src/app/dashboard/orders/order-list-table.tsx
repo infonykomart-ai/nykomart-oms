@@ -15,9 +15,17 @@ import { BulkVendorAssignBar } from "./bulk-vendor-assign-bar";
 
 // company_id isn't part of EditableOrder (that type is shared with the Edit
 // form, which never needs to change an order's company) but it IS selected
-// by page.tsx's orders query and needed here for the "Store Name" column.
+// by page.tsx's orders query.
+//
+// 2026-09-18 (round 10) — store_id added the same way, for the SAME
+// "Store Name" column: it used to read companyName.get(o.company_id) —
+// literally the company, identical on every row — because store_id was
+// never selected on this page at all. Now it reads the order's real
+// marketplace/store (Amazon Arts of Jaipur, Etsy Arts of Jaipur, etc.) via
+// this field.
 type OrderRow = EditableOrder & {
   company_id: string;
+  store_id: string;
   whatsapp_sent_at: string | null;
   invoice_id: string | null;
   entry_timestamp: string;
@@ -134,6 +142,7 @@ export function OrderListTable({
   currencies,
   parties,
   companies,
+  stores,
   statuses,
   todayStr,
   statusByOrder,
@@ -148,6 +157,7 @@ export function OrderListTable({
   currencies: { code: string; name: string }[];
   parties: { id: string; name: string }[];
   companies: { id: string; name: string }[];
+  stores: { id: string; name: string }[];
   statuses: string[];
   todayStr: string;
   // Purchased-from vendor, Purchase Bill entry, delivered status, tracking
@@ -182,7 +192,7 @@ export function OrderListTable({
     }
   });
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
-  const companyName = new Map(companies.map((c) => [c.id, c.name]));
+  const storeName = new Map(stores.map((s) => [s.id, s.name]));
   const categoryOptions = Array.from(new Set(itemCategories.map((c) => c.name))).sort();
 
   function persistHidden(next: Set<string>) {
@@ -268,8 +278,12 @@ export function OrderListTable({
       label: "Store Name",
       filter: "text",
       tdClass: "whitespace-nowrap font-medium text-slate-700",
-      filterValue: (o) => companyName.get(o.company_id) ?? "",
-      cell: (o) => companyName.get(o.company_id) ?? "—",
+      // 2026-09-18 (round 10) — this used to read companyName.get(o.company_id),
+      // showing the same company name on every row regardless of marketplace.
+      // Now reads the order's real store/marketplace (Amazon Arts of Jaipur,
+      // Etsy Arts of Jaipur, etc. — see OrderRow's store_id comment above).
+      filterValue: (o) => storeName.get(o.store_id) ?? "",
+      cell: (o) => storeName.get(o.store_id) ?? "—",
     },
     {
       key: "remark",
