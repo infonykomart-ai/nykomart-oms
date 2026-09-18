@@ -147,19 +147,21 @@ export function DonutChart({
   const cx = size / 2;
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
-  let offsetSoFar = 0;
+  // Cumulative offsets computed WITHOUT a render-time reassigned accumulator
+  // (the react-compiler rule): one pass over the positive slices up front.
+  const positive = data.filter((d) => d.value > 0);
+  const offsets = positive.map((_, i) =>
+    positive.slice(0, i).reduce((s, x) => s + (x.value / total) * circumference, 0)
+  );
   return (
     <div className="flex flex-wrap items-center gap-4">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Expense breakdown">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--oms-surface-border)" strokeWidth={thickness} />
-        {data
-          .filter((d) => d.value > 0)
-          .map((d) => {
+        {positive.map((d, i) => {
             const frac = d.value / total;
             const dash = Math.max(0, frac * circumference - 1.5); // 1.5px gap between segments
             const dashArray = `${dash} ${circumference - dash}`;
-            const dashOffset = circumference * 0.25 - offsetSoFar; // start at 12 o'clock, go clockwise
-            offsetSoFar += frac * circumference;
+            const dashOffset = circumference * 0.25 - offsets[i]; // start at 12 o'clock, go clockwise
             return (
               <circle
                 key={d.label}

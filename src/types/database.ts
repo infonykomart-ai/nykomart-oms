@@ -12,6 +12,218 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      amazon_transactions: {
+        Row: {
+          id: string;
+          company_id: string;
+          txn_date: string | null;
+          transaction_status: string | null;
+          transaction_type: string | null;
+          order_id: string | null;
+          product_details: string | null;
+          total_product_charges: number | null;
+          total_promotional_rebates: number | null;
+          amazon_fees: number | null;
+          other: number | null;
+          total_amount: number | null;
+          currency: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          txn_date?: string | null;
+          transaction_status?: string | null;
+          transaction_type?: string | null;
+          order_id?: string | null;
+          product_details?: string | null;
+          total_product_charges?: number | null;
+          total_promotional_rebates?: number | null;
+          amazon_fees?: number | null;
+          other?: number | null;
+          total_amount?: number | null;
+          currency: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          txn_date?: string | null;
+          transaction_status?: string | null;
+          transaction_type?: string | null;
+          order_id?: string | null;
+          product_details?: string | null;
+          total_product_charges?: number | null;
+          total_promotional_rebates?: number | null;
+          amazon_fees?: number | null;
+          other?: number | null;
+          total_amount?: number | null;
+          currency?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "amazon_transactions_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      audit_log: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          employee_id: string | null;
+          employee_name: string;
+          action: string;
+          entity_type: string;
+          entity_id: string | null;
+          entity_label: string | null;
+          changes: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          employee_id?: string | null;
+          employee_name: string;
+          action: string;
+          entity_type: string;
+          entity_id?: string | null;
+          entity_label?: string | null;
+          changes?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          employee_id?: string | null;
+          employee_name?: string;
+          action?: string;
+          entity_type?: string;
+          entity_id?: string | null;
+          entity_label?: string | null;
+          changes?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "audit_log_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      automation_rule_logs: {
+        Row: {
+          id: string;
+          rule_id: string;
+          order_id: string | null;
+          fired_at: string;
+          result: string;
+          detail: string | null;
+        };
+        Insert: {
+          id?: string;
+          rule_id: string;
+          order_id?: string | null;
+          fired_at?: string;
+          result: string;
+          detail?: string | null;
+        };
+        Update: {
+          id?: string;
+          rule_id?: string;
+          order_id?: string | null;
+          fired_at?: string;
+          result?: string;
+          detail?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "automation_rule_logs_rule_id_fkey";
+            columns: ["rule_id"];
+            isOneToOne: false;
+            referencedRelation: "automation_rules";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "automation_rule_logs_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      automation_rules: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          name: string;
+          trigger_type: string;
+          enabled: boolean;
+          conditions: Json;
+          actions: Json;
+          created_by_employee_id: string | null;
+          created_at: string;
+          fire_count: number;
+          last_fired_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          name: string;
+          trigger_type: string;
+          enabled?: boolean;
+          conditions?: Json;
+          actions?: Json;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          fire_count?: number;
+          last_fired_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          name?: string;
+          trigger_type?: string;
+          enabled?: boolean;
+          conditions?: Json;
+          actions?: Json;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          fire_count?: number;
+          last_fired_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "automation_rules_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "automation_rules_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       bank_recon_accounts: {
         Row: {
           id: string;
@@ -32,7 +244,7 @@ export type Database = {
         Insert: {
           id?: string;
           company_id: string;
-          account_type: string;
+          account_type?: string;
           account_name: string;
           bank_name?: string | null;
           account_number?: string | null;
@@ -170,172 +382,10 @@ export type Database = {
           },
         ];
       };
-      amazon_transactions: {
-        Row: {
-          id: string;
-          company_id: string;
-          txn_date: string | null;
-          transaction_status: string | null;
-          transaction_type: string | null;
-          order_id: string | null;
-          product_details: string | null;
-          total_product_charges: number | null;
-          total_promotional_rebates: number | null;
-          amazon_fees: number | null;
-          other: number | null;
-          total_amount: number | null;
-          currency: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          txn_date?: string | null;
-          transaction_status?: string | null;
-          transaction_type?: string | null;
-          order_id?: string | null;
-          product_details?: string | null;
-          total_product_charges?: number | null;
-          total_promotional_rebates?: number | null;
-          amazon_fees?: number | null;
-          other?: number | null;
-          total_amount?: number | null;
-          currency: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          txn_date?: string | null;
-          transaction_status?: string | null;
-          transaction_type?: string | null;
-          order_id?: string | null;
-          product_details?: string | null;
-          total_product_charges?: number | null;
-          total_promotional_rebates?: number | null;
-          amazon_fees?: number | null;
-          other?: number | null;
-          total_amount?: number | null;
-          currency?: string;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "amazon_transactions_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      attendance: {
-        Row: {
-          id: string;
-          employee_id: string;
-          company_id: string;
-          store_id: string | null;
-          attendance_date: string;
-          punch_in: string | null;
-          punch_out: string | null;
-          work_hours: number | null;
-          status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-          device_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          device_punch_in: string | null;
-          device_punch_out: string | null;
-          match_flag: string | null;
-          remark: string | null;
-          entered_by_employee_id: string | null;
-          entered_on: string;
-          leave_type_id: string | null;
-          leave_unpaid: boolean;
-        };
-        Insert: {
-          id?: string;
-          employee_id: string;
-          company_id: string;
-          store_id?: string | null;
-          attendance_date: string;
-          punch_in?: string | null;
-          punch_out?: string | null;
-          work_hours?: number | null;
-          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          device_punch_in?: string | null;
-          device_punch_out?: string | null;
-          match_flag?: string | null;
-          remark?: string | null;
-          entered_by_employee_id?: string | null;
-          entered_on?: string;
-          leave_type_id?: string | null;
-          leave_unpaid?: boolean;
-        };
-        Update: {
-          id?: string;
-          employee_id?: string;
-          company_id?: string;
-          store_id?: string | null;
-          attendance_date?: string;
-          punch_in?: string | null;
-          punch_out?: string | null;
-          work_hours?: number | null;
-          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          source?: "Web Punch" | "TeamOffice Import" | "Manual Entry";
-          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          device_punch_in?: string | null;
-          device_punch_out?: string | null;
-          match_flag?: string | null;
-          remark?: string | null;
-          entered_by_employee_id?: string | null;
-          entered_on?: string;
-          leave_type_id?: string | null;
-          leave_unpaid?: boolean;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "attendance_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "attendance_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "attendance_store_id_fkey";
-            columns: ["store_id"];
-            isOneToOne: false;
-            referencedRelation: "stores";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "attendance_entered_by_employee_id_fkey";
-            columns: ["entered_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "attendance_leave_type_id_fkey";
-            columns: ["leave_type_id"];
-            isOneToOne: false;
-            referencedRelation: "leave_types";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       bank_statement_lines: {
         Row: {
           id: string;
           company_id: string;
-          recon_account_id: string | null;
           txn_no: string | null;
           txn_date: string | null;
           description: string | null;
@@ -346,23 +396,11 @@ export type Database = {
           balance: number | null;
           kims_remarks: string | null;
           status: string | null;
-          recon_status: string;
-          linked_party_id: string | null;
-          linked_store_id: string | null;
-          linked_bill_id: string | null;
-          linked_order_id: string | null;
-          linked_reference: string | null;
-          linked_at: string | null;
-          linked_by_employee_id: string | null;
-          match_method: string | null;
-          import_fingerprint: string | null;
-          imported_batch_id: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           company_id: string;
-          recon_account_id?: string | null;
           txn_no?: string | null;
           txn_date?: string | null;
           description?: string | null;
@@ -373,23 +411,11 @@ export type Database = {
           balance?: number | null;
           kims_remarks?: string | null;
           status?: string | null;
-          recon_status?: string;
-          linked_party_id?: string | null;
-          linked_store_id?: string | null;
-          linked_bill_id?: string | null;
-          linked_order_id?: string | null;
-          linked_reference?: string | null;
-          linked_at?: string | null;
-          linked_by_employee_id?: string | null;
-          match_method?: string | null;
-          import_fingerprint?: string | null;
-          imported_batch_id?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           company_id?: string;
-          recon_account_id?: string | null;
           txn_no?: string | null;
           txn_date?: string | null;
           description?: string | null;
@@ -400,17 +426,6 @@ export type Database = {
           balance?: number | null;
           kims_remarks?: string | null;
           status?: string | null;
-          recon_status?: string;
-          linked_party_id?: string | null;
-          linked_store_id?: string | null;
-          linked_bill_id?: string | null;
-          linked_order_id?: string | null;
-          linked_reference?: string | null;
-          linked_at?: string | null;
-          linked_by_employee_id?: string | null;
-          match_method?: string | null;
-          import_fingerprint?: string | null;
-          imported_batch_id?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -452,7 +467,6 @@ export type Database = {
           employee_id: string | null;
           source: string | null;
           source_id: string | null;
-          merged_into_bill_id: string | null;
           approval_status: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
           approved_l1_by: string | null;
           approved_l1_at: string | null;
@@ -462,6 +476,7 @@ export type Database = {
           rejected_at: string | null;
           rejection_reason: string | null;
           created_at: string;
+          merged_into_bill_id: string | null;
         };
         Insert: {
           id?: string;
@@ -491,7 +506,6 @@ export type Database = {
           employee_id?: string | null;
           source?: string | null;
           source_id?: string | null;
-          merged_into_bill_id?: string | null;
           approval_status?: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
           approved_l1_by?: string | null;
           approved_l1_at?: string | null;
@@ -501,6 +515,7 @@ export type Database = {
           rejected_at?: string | null;
           rejection_reason?: string | null;
           created_at?: string;
+          merged_into_bill_id?: string | null;
         };
         Update: {
           id?: string;
@@ -530,7 +545,6 @@ export type Database = {
           employee_id?: string | null;
           source?: string | null;
           source_id?: string | null;
-          merged_into_bill_id?: string | null;
           approval_status?: "Pending" | "Approved L1" | "Approved L2" | "Rejected";
           approved_l1_by?: string | null;
           approved_l1_at?: string | null;
@@ -540,6 +554,7 @@ export type Database = {
           rejected_at?: string | null;
           rejection_reason?: string | null;
           created_at?: string;
+          merged_into_bill_id?: string | null;
         };
         Relationships: [
           {
@@ -608,6 +623,75 @@ export type Database = {
           {
             foreignKeyName: "bill_pass_register_rejected_by_fkey";
             columns: ["rejected_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_merged_into_bill_id_fkey";
+            columns: ["merged_into_bill_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      bill_pass_register_adjustments: {
+        Row: {
+          id: string;
+          bill_pass_register_id: string;
+          debit_note_id: string | null;
+          credit_note_id: string | null;
+          amount: number;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          bill_pass_register_id: string;
+          debit_note_id?: string | null;
+          credit_note_id?: string | null;
+          amount: number;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          bill_pass_register_id?: string;
+          debit_note_id?: string | null;
+          credit_note_id?: string | null;
+          amount?: number;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "bill_pass_register_adjustments_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_adjustments_debit_note_id_fkey";
+            columns: ["debit_note_id"];
+            isOneToOne: false;
+            referencedRelation: "debit_notes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_adjustments_credit_note_id_fkey";
+            columns: ["credit_note_id"];
+            isOneToOne: false;
+            referencedRelation: "credit_notes";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bill_pass_register_adjustments_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -771,38 +855,265 @@ export type Database = {
           },
         ];
       };
-      courier_webhook_log: {
+      conversation_members: {
+        Row: {
+          conversation_id: string;
+          employee_id: string;
+          added_by_employee_id: string | null;
+          joined_at: string;
+          last_read_at: string | null;
+        };
+        Insert: {
+          conversation_id: string;
+          employee_id: string;
+          added_by_employee_id?: string | null;
+          joined_at?: string;
+          last_read_at?: string | null;
+        };
+        Update: {
+          conversation_id?: string;
+          employee_id?: string;
+          added_by_employee_id?: string | null;
+          joined_at?: string;
+          last_read_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversation_members_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_members_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_members_added_by_employee_id_fkey";
+            columns: ["added_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      conversation_messages: {
         Row: {
           id: string;
-          received_at: string;
-          courier_name: string;
-          awb_no: string | null;
-          raw_payload: Json;
-          processed: boolean;
-          processed_at: string | null;
-          error_message: string | null;
+          conversation_id: string;
+          sender_employee_id: string;
+          body: string | null;
+          attachment_path: string | null;
+          attachment_name: string | null;
+          attachment_mime: string | null;
+          attachment_size_bytes: number | null;
+          created_at: string;
         };
         Insert: {
           id?: string;
-          received_at?: string;
-          courier_name: string;
-          awb_no?: string | null;
-          raw_payload: Json;
-          processed?: boolean;
-          processed_at?: string | null;
-          error_message?: string | null;
+          conversation_id: string;
+          sender_employee_id: string;
+          body?: string | null;
+          attachment_path?: string | null;
+          attachment_name?: string | null;
+          attachment_mime?: string | null;
+          attachment_size_bytes?: number | null;
+          created_at?: string;
         };
         Update: {
           id?: string;
-          received_at?: string;
-          courier_name?: string;
-          awb_no?: string | null;
-          raw_payload?: Json;
-          processed?: boolean;
-          processed_at?: string | null;
-          error_message?: string | null;
+          conversation_id?: string;
+          sender_employee_id?: string;
+          body?: string | null;
+          attachment_path?: string | null;
+          attachment_name?: string | null;
+          attachment_mime?: string | null;
+          attachment_size_bytes?: number | null;
+          created_at?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "conversation_messages_conversation_id_fkey";
+            columns: ["conversation_id"];
+            isOneToOne: false;
+            referencedRelation: "conversations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "conversation_messages_sender_employee_id_fkey";
+            columns: ["sender_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      conversations: {
+        Row: {
+          id: string;
+          name: string;
+          created_by_employee_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          created_by_employee_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          created_by_employee_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "conversations_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_credentials: {
+        Row: {
+          id: string;
+          company_id: string;
+          courier: string;
+          secrets_enc: Json;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          courier: string;
+          secrets_enc?: Json;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          courier?: string;
+          secrets_enc?: Json;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_credentials_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_credentials_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_pickup_request_awbs: {
+        Row: {
+          id: string;
+          pickup_request_id: string;
+          order_shipment_id: string;
+        };
+        Insert: {
+          id?: string;
+          pickup_request_id: string;
+          order_shipment_id: string;
+        };
+        Update: {
+          id?: string;
+          pickup_request_id?: string;
+          order_shipment_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_pickup_request_awbs_pickup_request_id_fkey";
+            columns: ["pickup_request_id"];
+            isOneToOne: false;
+            referencedRelation: "courier_pickup_requests";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_pickup_request_awbs_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_pickup_requests: {
+        Row: {
+          id: string;
+          company_id: string;
+          courier: string;
+          pickup_address: string;
+          booking_date: string;
+          scheduled_pickup_date: string;
+          status: string;
+          remark: string | null;
+          request_payload: Json | null;
+          response_payload: Json | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          courier: string;
+          pickup_address: string;
+          booking_date: string;
+          scheduled_pickup_date: string;
+          status?: string;
+          remark?: string | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          courier?: string;
+          pickup_address?: string;
+          booking_date?: string;
+          scheduled_pickup_date?: string;
+          status?: string;
+          remark?: string | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_pickup_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_pickup_requests_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
         ];
       };
       courier_rate_cards: {
@@ -871,90 +1182,258 @@ export type Database = {
           },
         ];
       };
-      freight_cost_estimates: {
+      courier_shipment_ndr_attempts: {
         Row: {
           id: string;
-          company_id: string;
-          order_id: string | null;
-          courier_name: string;
-          zone_label: string;
-          weight_kg: number;
-          base_rate: number;
-          weight_charge: number;
-          fuel_surcharge_amt: number;
-          other_charges: number;
-          estimated_total: number;
-          currency: string;
-          rate_card_id: string | null;
-          remark: string | null;
-          created_by_employee_id: string | null;
+          courier_shipment_id: string;
+          attempt_no: number;
+          reason: string;
+          note: string | null;
+          attempted_at: string;
+          logged_by_employee_id: string | null;
+          logged_by_name: string;
+          created_at: string;
+          resolved_at: string | null;
+          resolved_by_employee_id: string | null;
+          resolved_by_name: string | null;
+          resolved_note: string | null;
+        };
+        Insert: {
+          id?: string;
+          courier_shipment_id: string;
+          attempt_no: number;
+          reason: string;
+          note?: string | null;
+          attempted_at?: string;
+          logged_by_employee_id?: string | null;
+          logged_by_name: string;
+          created_at?: string;
+          resolved_at?: string | null;
+          resolved_by_employee_id?: string | null;
+          resolved_by_name?: string | null;
+          resolved_note?: string | null;
+        };
+        Update: {
+          id?: string;
+          courier_shipment_id?: string;
+          attempt_no?: number;
+          reason?: string;
+          note?: string | null;
+          attempted_at?: string;
+          logged_by_employee_id?: string | null;
+          logged_by_name?: string;
+          created_at?: string;
+          resolved_at?: string | null;
+          resolved_by_employee_id?: string | null;
+          resolved_by_name?: string | null;
+          resolved_note?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_shipment_ndr_attempts_logged_by_employee_id_fkey";
+            columns: ["logged_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_shipment_ndr_attempts_resolved_by_employee_id_fkey";
+            columns: ["resolved_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_shipment_ndr_attempts_courier_shipment_id_fkey";
+            columns: ["courier_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "courier_shipments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_shipments: {
+        Row: {
+          id: string;
+          courier: string;
+          order_id: string;
+          order_shipment_id: string | null;
+          service_code: string | null;
+          ddp_ddu: string | null;
+          status: string;
+          awb_no: string | null;
+          label_url: string | null;
+          booked_amt: number | null;
+          booked_currency: string | null;
+          booked_amount_source: string | null;
+          request_payload: Json | null;
+          response_payload: Json | null;
+          error_message: string | null;
+          cancel_reason: string | null;
+          cancel_remark: string | null;
+          cancelled_at: string | null;
+          manual_courier_name: string | null;
+          created_by: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
-          company_id: string;
-          order_id?: string | null;
-          courier_name: string;
-          zone_label: string;
-          weight_kg: number;
-          base_rate: number;
-          weight_charge: number;
-          fuel_surcharge_amt: number;
-          other_charges: number;
-          estimated_total: number;
-          currency?: string;
-          rate_card_id?: string | null;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
+          courier: string;
+          order_id: string;
+          order_shipment_id?: string | null;
+          service_code?: string | null;
+          ddp_ddu?: string | null;
+          status?: string;
+          awb_no?: string | null;
+          label_url?: string | null;
+          booked_amt?: number | null;
+          booked_currency?: string | null;
+          booked_amount_source?: string | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          error_message?: string | null;
+          cancel_reason?: string | null;
+          cancel_remark?: string | null;
+          cancelled_at?: string | null;
+          manual_courier_name?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
-          company_id?: string;
-          order_id?: string | null;
-          courier_name?: string;
-          zone_label?: string;
-          weight_kg?: number;
-          base_rate?: number;
-          weight_charge?: number;
-          fuel_surcharge_amt?: number;
-          other_charges?: number;
-          estimated_total?: number;
-          currency?: string;
-          rate_card_id?: string | null;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
+          courier?: string;
+          order_id?: string;
+          order_shipment_id?: string | null;
+          service_code?: string | null;
+          ddp_ddu?: string | null;
+          status?: string;
+          awb_no?: string | null;
+          label_url?: string | null;
+          booked_amt?: number | null;
+          booked_currency?: string | null;
+          booked_amount_source?: string | null;
+          request_payload?: Json | null;
+          response_payload?: Json | null;
+          error_message?: string | null;
+          cancel_reason?: string | null;
+          cancel_remark?: string | null;
+          cancelled_at?: string | null;
+          manual_courier_name?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "freight_cost_estimates_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "freight_cost_estimates_order_id_fkey";
+            foreignKeyName: "courier_shipments_order_id_fkey";
             columns: ["order_id"];
             isOneToOne: false;
             referencedRelation: "orders";
             referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "freight_cost_estimates_rate_card_id_fkey";
-            columns: ["rate_card_id"];
+            foreignKeyName: "courier_shipments_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
             isOneToOne: false;
-            referencedRelation: "courier_rate_cards";
+            referencedRelation: "order_shipments";
             referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "freight_cost_estimates_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
+            foreignKeyName: "courier_shipments_created_by_fkey";
+            columns: ["created_by"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
           },
+        ];
+      };
+      courier_shipper_profiles: {
+        Row: {
+          company_id: string;
+          contact_name: string;
+          company_name: string;
+          phone: string;
+          email: string;
+          address1: string;
+          address2: string | null;
+          city: string;
+          state: string;
+          postcode: string;
+          country_code: string;
+          tax_id: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          company_id: string;
+          contact_name: string;
+          company_name: string;
+          phone: string;
+          email: string;
+          address1: string;
+          address2?: string | null;
+          city: string;
+          state: string;
+          postcode: string;
+          country_code?: string;
+          tax_id?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          company_id?: string;
+          contact_name?: string;
+          company_name?: string;
+          phone?: string;
+          email?: string;
+          address1?: string;
+          address2?: string | null;
+          city?: string;
+          state?: string;
+          postcode?: string;
+          country_code?: string;
+          tax_id?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "courier_shipper_profiles_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      courier_webhook_log: {
+        Row: {
+          id: string;
+          received_at: string;
+          courier_name: string;
+          awb_no: string | null;
+          raw_payload: Json;
+          processed: boolean;
+          processed_at: string | null;
+          error_message: string | null;
+        };
+        Insert: {
+          id?: string;
+          received_at?: string;
+          courier_name: string;
+          awb_no?: string | null;
+          raw_payload: Json;
+          processed?: boolean;
+          processed_at?: string | null;
+          error_message?: string | null;
+        };
+        Update: {
+          id?: string;
+          received_at?: string;
+          courier_name?: string;
+          awb_no?: string | null;
+          raw_payload?: Json;
+          processed?: boolean;
+          processed_at?: string | null;
+          error_message?: string | null;
+        };
+        Relationships: [
         ];
       };
       credit_notes: {
@@ -963,9 +1442,9 @@ export type Database = {
           company_id: string;
           store_id: string | null;
           cn_no: string | null;
+          vendor_cn_no: string | null;
           cn_kind: string | null;
           awb_no: string | null;
-          vendor_cn_no: string | null;
           gst_rate_pct: number | null;
           credit_note_date: string;
           order_id: string | null;
@@ -984,23 +1463,23 @@ export type Database = {
           checked_by_employee_id: string | null;
           refund_type: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id: string | null;
+          created_by_employee_id: string | null;
+          remark: string | null;
+          created_at: string;
           bill_pass_register_id: string | null;
           party_id: string | null;
           qty: number | null;
           po_rate: number | null;
           billed_rate: number | null;
-          created_by_employee_id: string | null;
-          remark: string | null;
-          created_at: string;
         };
         Insert: {
           id?: string;
           company_id: string;
           store_id?: string | null;
           cn_no?: string | null;
+          vendor_cn_no?: string | null;
           cn_kind?: string | null;
           awb_no?: string | null;
-          vendor_cn_no?: string | null;
           gst_rate_pct?: number | null;
           credit_note_date: string;
           order_id?: string | null;
@@ -1019,14 +1498,14 @@ export type Database = {
           checked_by_employee_id?: string | null;
           refund_type?: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id?: string | null;
+          created_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
           bill_pass_register_id?: string | null;
           party_id?: string | null;
           qty?: number | null;
           po_rate?: number | null;
           billed_rate?: number | null;
-          created_by_employee_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
         };
         Update: {
           id?: string;
@@ -1034,6 +1513,8 @@ export type Database = {
           store_id?: string | null;
           cn_no?: string | null;
           vendor_cn_no?: string | null;
+          cn_kind?: string | null;
+          awb_no?: string | null;
           gst_rate_pct?: number | null;
           credit_note_date?: string;
           order_id?: string | null;
@@ -1052,23 +1533,16 @@ export type Database = {
           checked_by_employee_id?: string | null;
           refund_type?: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX" | null;
           debit_note_id?: string | null;
+          created_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
           bill_pass_register_id?: string | null;
           party_id?: string | null;
           qty?: number | null;
           po_rate?: number | null;
           billed_rate?: number | null;
-          created_by_employee_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
         };
         Relationships: [
-          {
-            foreignKeyName: "credit_notes_party_id_fkey";
-            columns: ["party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
           {
             foreignKeyName: "credit_notes_company_id_fkey";
             columns: ["company_id"];
@@ -1118,63 +1592,11 @@ export type Database = {
             referencedRelation: "bill_pass_register";
             referencedColumns: ["id"];
           },
-        ];
-      };
-      csb_filings: {
-        Row: {
-          id: string;
-          csb_number: string;
-          exchange_rate: number | null;
-          total_taxable_value: number | null;
-          taxable_value_currency: string | null;
-          fob_value_inr: number | null;
-          filing_date: string | null;
-          egm_number: string | null;
-          egm_date: string | null;
-          hawb_number: string | null;
-          invoice_no: string | null;
-          invoice_date: string | null;
-          entry_by_employee_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          csb_number: string;
-          exchange_rate?: number | null;
-          total_taxable_value?: number | null;
-          taxable_value_currency?: string | null;
-          fob_value_inr?: number | null;
-          filing_date?: string | null;
-          egm_number?: string | null;
-          egm_date?: string | null;
-          hawb_number?: string | null;
-          invoice_no?: string | null;
-          invoice_date?: string | null;
-          entry_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          csb_number?: string;
-          exchange_rate?: number | null;
-          total_taxable_value?: number | null;
-          taxable_value_currency?: string | null;
-          fob_value_inr?: number | null;
-          filing_date?: string | null;
-          egm_number?: string | null;
-          egm_date?: string | null;
-          hawb_number?: string | null;
-          invoice_no?: string | null;
-          invoice_date?: string | null;
-          entry_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
           {
-            foreignKeyName: "csb_filings_entry_by_employee_id_fkey";
-            columns: ["entry_by_employee_id"];
+            foreignKeyName: "credit_notes_party_id_fkey";
+            columns: ["party_id"];
             isOneToOne: false;
-            referencedRelation: "employees";
+            referencedRelation: "parties";
             referencedColumns: ["id"];
           },
         ];
@@ -1315,7 +1737,6 @@ export type Database = {
           debit_note_no: string | null;
           debit_note_date: string;
           against_invoice_bill_no: string | null;
-          bill_pass_register_id: string | null;
           party_id: string;
           order_id: string | null;
           particulars: string | null;
@@ -1325,10 +1746,6 @@ export type Database = {
           qty: number | null;
           rate: number | null;
           po_amount: number | null;
-          // 2026-08-29 — rate-difference calculator reference fields, see
-          // db/2026-08-29-debit-note-rate-difference.sql. Purely
-          // informational (not generated columns); debit_amount stays the
-          // real stored amount.
           po_rate: number | null;
           billed_rate: number | null;
           debit_amount: number;
@@ -1337,6 +1754,7 @@ export type Database = {
           total_amount: number | null;
           remark: string | null;
           created_at: string;
+          bill_pass_register_id: string | null;
         };
         Insert: {
           id?: string;
@@ -1344,7 +1762,6 @@ export type Database = {
           debit_note_no?: string | null;
           debit_note_date: string;
           against_invoice_bill_no?: string | null;
-          bill_pass_register_id?: string | null;
           party_id: string;
           order_id?: string | null;
           particulars?: string | null;
@@ -1362,6 +1779,7 @@ export type Database = {
           total_amount?: number | null;
           remark?: string | null;
           created_at?: string;
+          bill_pass_register_id?: string | null;
         };
         Update: {
           id?: string;
@@ -1369,7 +1787,6 @@ export type Database = {
           debit_note_no?: string | null;
           debit_note_date?: string;
           against_invoice_bill_no?: string | null;
-          bill_pass_register_id?: string | null;
           party_id?: string;
           order_id?: string | null;
           particulars?: string | null;
@@ -1387,6 +1804,7 @@ export type Database = {
           total_amount?: number | null;
           remark?: string | null;
           created_at?: string;
+          bill_pass_register_id?: string | null;
         };
         Relationships: [
           {
@@ -1415,153 +1833,6 @@ export type Database = {
             columns: ["bill_pass_register_id"];
             isOneToOne: false;
             referencedRelation: "bill_pass_register";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      journal_vouchers: {
-        Row: {
-          id: string;
-          company_id: string;
-          jv_no: string | null;
-          jv_date: string;
-          bill_pass_register_id: string | null;
-          party_id: string | null;
-          vendor_invoice_no: string | null;
-          invoice_date: string | null;
-          debit_amount: number;
-          passed_amount: number | null;
-          item_details: string | null;
-          qty: number | null;
-          qty_unit: string | null;
-          qlty: string | null;
-          particulars: string | null;
-          remark: string | null;
-          created_by_employee_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          jv_no?: string | null;
-          jv_date?: string;
-          bill_pass_register_id?: string | null;
-          party_id?: string | null;
-          vendor_invoice_no?: string | null;
-          invoice_date?: string | null;
-          debit_amount?: number;
-          passed_amount?: number | null;
-          item_details?: string | null;
-          qty?: number | null;
-          qty_unit?: string | null;
-          qlty?: string | null;
-          particulars?: string | null;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          jv_no?: string | null;
-          jv_date?: string;
-          bill_pass_register_id?: string | null;
-          party_id?: string | null;
-          vendor_invoice_no?: string | null;
-          invoice_date?: string | null;
-          debit_amount?: number;
-          passed_amount?: number | null;
-          item_details?: string | null;
-          qty?: number | null;
-          qty_unit?: string | null;
-          qlty?: string | null;
-          particulars?: string | null;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "journal_vouchers_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "journal_vouchers_party_id_fkey";
-            columns: ["party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "journal_vouchers_bill_pass_register_id_fkey";
-            columns: ["bill_pass_register_id"];
-            isOneToOne: false;
-            referencedRelation: "bill_pass_register";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      bill_pass_register_adjustments: {
-        Row: {
-          id: string;
-          bill_pass_register_id: string;
-          debit_note_id: string | null;
-          credit_note_id: string | null;
-          amount: number;
-          remark: string | null;
-          created_by_employee_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          bill_pass_register_id: string;
-          debit_note_id?: string | null;
-          credit_note_id?: string | null;
-          amount: number;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          bill_pass_register_id?: string;
-          debit_note_id?: string | null;
-          credit_note_id?: string | null;
-          amount?: number;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "bill_pass_register_adjustments_bill_pass_register_id_fkey";
-            columns: ["bill_pass_register_id"];
-            isOneToOne: false;
-            referencedRelation: "bill_pass_register";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "bill_pass_register_adjustments_debit_note_id_fkey";
-            columns: ["debit_note_id"];
-            isOneToOne: false;
-            referencedRelation: "debit_notes";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "bill_pass_register_adjustments_credit_note_id_fkey";
-            columns: ["credit_note_id"];
-            isOneToOne: false;
-            referencedRelation: "credit_notes";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "bill_pass_register_adjustments_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
@@ -1614,196 +1885,6 @@ export type Database = {
           {
             foreignKeyName: "direct_messages_recipient_employee_id_fkey";
             columns: ["recipient_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      conversations: {
-        Row: {
-          id: string;
-          name: string;
-          created_by_employee_id: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          name: string;
-          created_by_employee_id: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          name?: string;
-          created_by_employee_id?: string;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "conversations_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      conversation_members: {
-        Row: {
-          conversation_id: string;
-          employee_id: string;
-          added_by_employee_id: string | null;
-          joined_at: string;
-          last_read_at: string | null;
-        };
-        Insert: {
-          conversation_id: string;
-          employee_id: string;
-          added_by_employee_id?: string | null;
-          joined_at?: string;
-          last_read_at?: string | null;
-        };
-        Update: {
-          conversation_id?: string;
-          employee_id?: string;
-          added_by_employee_id?: string | null;
-          joined_at?: string;
-          last_read_at?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "conversation_members_conversation_id_fkey";
-            columns: ["conversation_id"];
-            isOneToOne: false;
-            referencedRelation: "conversations";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "conversation_members_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "conversation_members_added_by_employee_id_fkey";
-            columns: ["added_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      companion_character_image: {
-        Row: {
-          id: string;
-          image_url: string;
-          prompt: string | null;
-          generated_at: string;
-          generated_by: string | null;
-        };
-        Insert: {
-          id?: string;
-          image_url: string;
-          prompt?: string | null;
-          generated_at?: string;
-          generated_by?: string | null;
-        };
-        Update: {
-          id?: string;
-          image_url?: string;
-          prompt?: string | null;
-          generated_at?: string;
-          generated_by?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "companion_character_image_generated_by_fkey";
-            columns: ["generated_by"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      companion_events: {
-        Row: {
-          id: string;
-          employee_id: string;
-          event_type: string;
-          message: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          employee_id: string;
-          event_type: string;
-          message: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          employee_id?: string;
-          event_type?: string;
-          message?: string;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "companion_events_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      conversation_messages: {
-        Row: {
-          id: string;
-          conversation_id: string;
-          sender_employee_id: string;
-          body: string | null;
-          attachment_path: string | null;
-          attachment_name: string | null;
-          attachment_mime: string | null;
-          attachment_size_bytes: number | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          conversation_id: string;
-          sender_employee_id: string;
-          body?: string | null;
-          attachment_path?: string | null;
-          attachment_name?: string | null;
-          attachment_mime?: string | null;
-          attachment_size_bytes?: number | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          conversation_id?: string;
-          sender_employee_id?: string;
-          body?: string | null;
-          attachment_path?: string | null;
-          attachment_name?: string | null;
-          attachment_mime?: string | null;
-          attachment_size_bytes?: number | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "conversation_messages_conversation_id_fkey";
-            columns: ["conversation_id"];
-            isOneToOne: false;
-            referencedRelation: "conversations";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "conversation_messages_sender_employee_id_fkey";
-            columns: ["sender_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -2018,6 +2099,13 @@ export type Database = {
             referencedRelation: "orders";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "duty_bill_awb_assignments_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
+            referencedColumns: ["id"];
+          },
         ];
       };
       duty_tax_bills: {
@@ -2035,7 +2123,6 @@ export type Database = {
           disbursement_fee: number;
           courier_duty_charges_adj: number;
           total_payable_amt: number | null;
-          vendor_party_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -2052,7 +2139,6 @@ export type Database = {
           disbursement_fee?: number;
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
-          vendor_party_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2069,17 +2155,9 @@ export type Database = {
           disbursement_fee?: number;
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
-          vendor_party_id?: string | null;
           created_at?: string;
         };
         Relationships: [
-          {
-            foreignKeyName: "duty_tax_bills_vendor_party_id_fkey";
-            columns: ["vendor_party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
         ];
       };
       ebay_financial_summary: {
@@ -2931,261 +3009,6 @@ export type Database = {
           },
         ];
       };
-      employee_salary: {
-        Row: {
-          id: string;
-          employee_id: string;
-          monthly_salary: number;
-          allowed_leaves_per_month: number;
-          effective_from: string;
-          entered_by_employee_id: string | null;
-          created_at: string;
-          ctc_annual: number | null;
-          basic_percent_of_ctc: number;
-          hra_percent_of_basic: number;
-          employer_pf_percent: number;
-          employee_pf_percent: number;
-          pf_wage_ceiling: number;
-          esi_applicable: boolean;
-          esi_employee_percent: number;
-          esi_employer_percent: number;
-          professional_tax_amount: number;
-          pt_state: string | null;
-        };
-        Insert: {
-          id?: string;
-          employee_id: string;
-          monthly_salary: number;
-          allowed_leaves_per_month?: number;
-          effective_from: string;
-          entered_by_employee_id?: string | null;
-          created_at?: string;
-          ctc_annual?: number | null;
-          basic_percent_of_ctc?: number;
-          hra_percent_of_basic?: number;
-          employer_pf_percent?: number;
-          employee_pf_percent?: number;
-          pf_wage_ceiling?: number;
-          esi_applicable?: boolean;
-          esi_employee_percent?: number;
-          esi_employer_percent?: number;
-          professional_tax_amount?: number;
-          pt_state?: string | null;
-        };
-        Update: {
-          id?: string;
-          employee_id?: string;
-          monthly_salary?: number;
-          allowed_leaves_per_month?: number;
-          effective_from?: string;
-          entered_by_employee_id?: string | null;
-          created_at?: string;
-          ctc_annual?: number | null;
-          basic_percent_of_ctc?: number;
-          hra_percent_of_basic?: number;
-          employer_pf_percent?: number;
-          employee_pf_percent?: number;
-          pf_wage_ceiling?: number;
-          esi_applicable?: boolean;
-          esi_employee_percent?: number;
-          esi_employer_percent?: number;
-          professional_tax_amount?: number;
-          pt_state?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "employee_salary_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_salary_entered_by_employee_id_fkey";
-            columns: ["entered_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      employee_settlement_line_items: {
-        Row: {
-          id: string;
-          settlement_id: string;
-          kind: "Addition" | "Deduction";
-          category: string;
-          description: string | null;
-          amount: number;
-          added_by_employee_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          settlement_id: string;
-          kind: "Addition" | "Deduction";
-          category: string;
-          description?: string | null;
-          amount: number;
-          added_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          settlement_id?: string;
-          kind?: "Addition" | "Deduction";
-          category?: string;
-          description?: string | null;
-          amount?: number;
-          added_by_employee_id?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "employee_settlement_line_items_settlement_id_fkey";
-            columns: ["settlement_id"];
-            isOneToOne: false;
-            referencedRelation: "employee_settlements";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_settlement_line_items_added_by_employee_id_fkey";
-            columns: ["added_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      employee_settlements: {
-        Row: {
-          id: string;
-          employee_id: string;
-          company_id: string;
-          separation_type: "Resignation" | "Termination";
-          resignation_date: string;
-          last_working_day: string;
-          reason: string | null;
-          notice_period_required_days: number;
-          notice_period_served_days: number;
-          status: "Draft" | "Finalized" | "Paid";
-          initiated_by_employee_id: string | null;
-          initiated_at: string;
-          finalized_by_employee_id: string | null;
-          finalized_at: string | null;
-          payment_date: string | null;
-          paid_by_employee_id: string | null;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          employee_id: string;
-          company_id: string;
-          separation_type: "Resignation" | "Termination";
-          resignation_date: string;
-          last_working_day: string;
-          reason?: string | null;
-          notice_period_required_days?: number;
-          notice_period_served_days?: number;
-          status?: "Draft" | "Finalized" | "Paid";
-          initiated_by_employee_id?: string | null;
-          initiated_at?: string;
-          finalized_by_employee_id?: string | null;
-          finalized_at?: string | null;
-          payment_date?: string | null;
-          paid_by_employee_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          employee_id?: string;
-          company_id?: string;
-          separation_type?: "Resignation" | "Termination";
-          resignation_date?: string;
-          last_working_day?: string;
-          reason?: string | null;
-          notice_period_required_days?: number;
-          notice_period_served_days?: number;
-          status?: "Draft" | "Finalized" | "Paid";
-          initiated_by_employee_id?: string | null;
-          initiated_at?: string;
-          finalized_by_employee_id?: string | null;
-          finalized_at?: string | null;
-          payment_date?: string | null;
-          paid_by_employee_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "employee_settlements_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_settlements_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_settlements_initiated_by_employee_id_fkey";
-            columns: ["initiated_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_settlements_finalized_by_employee_id_fkey";
-            columns: ["finalized_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_settlements_paid_by_employee_id_fkey";
-            columns: ["paid_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      employee_store_access: {
-        Row: {
-          employee_id: string;
-          store_id: string;
-        };
-        Insert: {
-          employee_id: string;
-          store_id: string;
-        };
-        Update: {
-          employee_id?: string;
-          store_id?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "employee_store_access_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "employee_store_access_store_id_fkey";
-            columns: ["store_id"];
-            isOneToOne: false;
-            referencedRelation: "stores";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       employee_documents: {
         Row: {
           id: string;
@@ -3296,37 +3119,257 @@ export type Database = {
           },
         ];
       };
-      onboarding_checklist_items: {
+      employee_salary: {
         Row: {
           id: string;
-          company_id: string;
-          title: string;
-          sort_order: number;
-          active: boolean;
+          employee_id: string;
+          monthly_salary: number;
+          allowed_leaves_per_month: number;
+          effective_from: string;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          ctc_annual: number | null;
+          basic_percent_of_ctc: number;
+          hra_percent_of_basic: number;
+          employer_pf_percent: number;
+          employee_pf_percent: number;
+          pf_wage_ceiling: number;
+          esi_applicable: boolean;
+          esi_employee_percent: number;
+          esi_employer_percent: number;
+          professional_tax_amount: number;
+          pt_state: string | null;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          monthly_salary: number;
+          allowed_leaves_per_month?: number;
+          effective_from: string;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          ctc_annual?: number | null;
+          basic_percent_of_ctc?: number;
+          hra_percent_of_basic?: number;
+          employer_pf_percent?: number;
+          employee_pf_percent?: number;
+          pf_wage_ceiling?: number;
+          esi_applicable?: boolean;
+          esi_employee_percent?: number;
+          esi_employer_percent?: number;
+          professional_tax_amount?: number;
+          pt_state?: string | null;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          monthly_salary?: number;
+          allowed_leaves_per_month?: number;
+          effective_from?: string;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          ctc_annual?: number | null;
+          basic_percent_of_ctc?: number;
+          hra_percent_of_basic?: number;
+          employer_pf_percent?: number;
+          employee_pf_percent?: number;
+          pf_wage_ceiling?: number;
+          esi_applicable?: boolean;
+          esi_employee_percent?: number;
+          esi_employer_percent?: number;
+          professional_tax_amount?: number;
+          pt_state?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_salary_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_salary_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      employee_settlement_line_items: {
+        Row: {
+          id: string;
+          settlement_id: string;
+          kind: string;
+          category: string;
+          description: string | null;
+          amount: number;
+          added_by_employee_id: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
-          company_id: string;
-          title: string;
-          sort_order?: number;
-          active?: boolean;
+          settlement_id: string;
+          kind: string;
+          category: string;
+          description?: string | null;
+          amount: number;
+          added_by_employee_id?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
-          company_id?: string;
-          title?: string;
-          sort_order?: number;
-          active?: boolean;
+          settlement_id?: string;
+          kind?: string;
+          category?: string;
+          description?: string | null;
+          amount?: number;
+          added_by_employee_id?: string | null;
           created_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "onboarding_checklist_items_company_id_fkey";
+            foreignKeyName: "employee_settlement_line_items_settlement_id_fkey";
+            columns: ["settlement_id"];
+            isOneToOne: false;
+            referencedRelation: "employee_settlements";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlement_line_items_added_by_employee_id_fkey";
+            columns: ["added_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      employee_settlements: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          separation_type: string;
+          resignation_date: string;
+          last_working_day: string;
+          reason: string | null;
+          notice_period_required_days: number;
+          notice_period_served_days: number;
+          status: string;
+          initiated_by_employee_id: string | null;
+          initiated_at: string;
+          finalized_by_employee_id: string | null;
+          finalized_at: string | null;
+          payment_date: string | null;
+          paid_by_employee_id: string | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          separation_type: string;
+          resignation_date: string;
+          last_working_day: string;
+          reason?: string | null;
+          notice_period_required_days?: number;
+          notice_period_served_days?: number;
+          status?: string;
+          initiated_by_employee_id?: string | null;
+          initiated_at?: string;
+          finalized_by_employee_id?: string | null;
+          finalized_at?: string | null;
+          payment_date?: string | null;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          separation_type?: string;
+          resignation_date?: string;
+          last_working_day?: string;
+          reason?: string | null;
+          notice_period_required_days?: number;
+          notice_period_served_days?: number;
+          status?: string;
+          initiated_by_employee_id?: string | null;
+          initiated_at?: string;
+          finalized_by_employee_id?: string | null;
+          finalized_at?: string | null;
+          payment_date?: string | null;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_settlements_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_company_id_fkey";
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_initiated_by_employee_id_fkey";
+            columns: ["initiated_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_finalized_by_employee_id_fkey";
+            columns: ["finalized_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_settlements_paid_by_employee_id_fkey";
+            columns: ["paid_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      employee_store_access: {
+        Row: {
+          employee_id: string;
+          store_id: string;
+        };
+        Insert: {
+          employee_id: string;
+          store_id: string;
+        };
+        Update: {
+          employee_id?: string;
+          store_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "employee_store_access_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employee_store_access_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
             referencedColumns: ["id"];
           },
         ];
@@ -3358,8 +3401,6 @@ export type Database = {
           family_contact_2_number: string | null;
           theme_id: string | null;
           custom_accent_color: string | null;
-          companion_enabled: boolean;
-          companion_name: string | null;
           pan_number: string | null;
           uan_number: string | null;
           pf_number: string | null;
@@ -3397,8 +3438,6 @@ export type Database = {
           family_contact_2_number?: string | null;
           theme_id?: string | null;
           custom_accent_color?: string | null;
-          companion_enabled?: boolean;
-          companion_name?: string | null;
           pan_number?: string | null;
           uan_number?: string | null;
           pf_number?: string | null;
@@ -3436,8 +3475,6 @@ export type Database = {
           family_contact_2_number?: string | null;
           theme_id?: string | null;
           custom_accent_color?: string | null;
-          companion_enabled?: boolean;
-          companion_name?: string | null;
           pan_number?: string | null;
           uan_number?: string | null;
           pf_number?: string | null;
@@ -3446,6 +3483,7 @@ export type Database = {
           bank_account_no?: string | null;
           bank_ifsc?: string | null;
           bank_name?: string | null;
+          reports_to_employee_id?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -3466,6 +3504,82 @@ export type Database = {
           {
             foreignKeyName: "employees_reports_to_employee_id_fkey";
             columns: ["reports_to_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      entry_errors: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          source: string;
+          status: string;
+          reason: string;
+          reference_type: string | null;
+          reference_id: string | null;
+          reference_label: string | null;
+          raised_by_employee_id: string | null;
+          raised_by_name: string;
+          created_at: string;
+          resolved_at: string | null;
+          resolved_by_employee_id: string | null;
+          resolved_by_name: string | null;
+          resolution_notes: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          source: string;
+          status?: string;
+          reason: string;
+          reference_type?: string | null;
+          reference_id?: string | null;
+          reference_label?: string | null;
+          raised_by_employee_id?: string | null;
+          raised_by_name: string;
+          created_at?: string;
+          resolved_at?: string | null;
+          resolved_by_employee_id?: string | null;
+          resolved_by_name?: string | null;
+          resolution_notes?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          source?: string;
+          status?: string;
+          reason?: string;
+          reference_type?: string | null;
+          reference_id?: string | null;
+          reference_label?: string | null;
+          raised_by_employee_id?: string | null;
+          raised_by_name?: string;
+          created_at?: string;
+          resolved_at?: string | null;
+          resolved_by_employee_id?: string | null;
+          resolved_by_name?: string | null;
+          resolution_notes?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "entry_errors_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "entry_errors_raised_by_employee_id_fkey";
+            columns: ["raised_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "entry_errors_resolved_by_employee_id_fkey";
+            columns: ["resolved_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -3843,6 +3957,13 @@ export type Database = {
             referencedRelation: "orders";
             referencedColumns: ["id"];
           },
+          {
+            foreignKeyName: "freight_bill_awb_assignments_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
+            referencedColumns: ["id"];
+          },
         ];
       };
       freight_bills: {
@@ -3860,7 +3981,6 @@ export type Database = {
           credit_note_no: string | null;
           credit_note_date: string | null;
           credit_note_amt: number;
-          vendor_party_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -3877,7 +3997,6 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
-          vendor_party_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -3894,15 +4013,93 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
-          vendor_party_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+        ];
+      };
+      freight_cost_estimates: {
+        Row: {
+          id: string;
+          company_id: string;
+          order_id: string | null;
+          courier_name: string;
+          zone_label: string;
+          weight_kg: number;
+          base_rate: number;
+          weight_charge: number;
+          fuel_surcharge_amt: number;
+          other_charges: number;
+          estimated_total: number;
+          currency: string;
+          rate_card_id: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          order_id?: string | null;
+          courier_name: string;
+          zone_label: string;
+          weight_kg: number;
+          base_rate: number;
+          weight_charge: number;
+          fuel_surcharge_amt: number;
+          other_charges: number;
+          estimated_total: number;
+          currency?: string;
+          rate_card_id?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          order_id?: string | null;
+          courier_name?: string;
+          zone_label?: string;
+          weight_kg?: number;
+          base_rate?: number;
+          weight_charge?: number;
+          fuel_surcharge_amt?: number;
+          other_charges?: number;
+          estimated_total?: number;
+          currency?: string;
+          rate_card_id?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
           created_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "freight_bills_vendor_party_id_fkey";
-            columns: ["vendor_party_id"];
+            foreignKeyName: "freight_cost_estimates_company_id_fkey";
+            columns: ["company_id"];
             isOneToOne: false;
-            referencedRelation: "parties";
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "freight_cost_estimates_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "freight_cost_estimates_rate_card_id_fkey";
+            columns: ["rate_card_id"];
+            isOneToOne: false;
+            referencedRelation: "courier_rate_cards";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "freight_cost_estimates_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
@@ -3996,19 +4193,12 @@ export type Database = {
           for_employee_id: string | null;
           for_employee_name_snapshot: string;
           for_employee_code_snapshot: string | null;
-          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
+          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
           ref_no: string | null;
           letter_date: string;
           remark: string | null;
           generated_by_employee_id: string;
           generated_on: string;
-          template_slug: string | null;
-          employee_address: string | null;
-          signatory_name: string | null;
-          signatory_designation: string | null;
-          subject_line: string | null;
-          field_values: Json;
-          body_text: string;
         };
         Insert: {
           id?: string;
@@ -4016,19 +4206,12 @@ export type Database = {
           for_employee_id?: string | null;
           for_employee_name_snapshot: string;
           for_employee_code_snapshot?: string | null;
-          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
+          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
           ref_no?: string | null;
           letter_date?: string;
           remark?: string | null;
           generated_by_employee_id: string;
           generated_on?: string;
-          template_slug?: string | null;
-          employee_address?: string | null;
-          signatory_name?: string | null;
-          signatory_designation?: string | null;
-          subject_line?: string | null;
-          field_values?: Json;
-          body_text?: string;
         };
         Update: {
           id?: string;
@@ -4036,19 +4219,12 @@ export type Database = {
           for_employee_id?: string | null;
           for_employee_name_snapshot?: string;
           for_employee_code_snapshot?: string | null;
-          letter_type?: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
+          letter_type?: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
           ref_no?: string | null;
           letter_date?: string;
           remark?: string | null;
           generated_by_employee_id?: string;
           generated_on?: string;
-          template_slug?: string | null;
-          employee_address?: string | null;
-          signatory_name?: string | null;
-          signatory_designation?: string | null;
-          subject_line?: string | null;
-          field_values?: Json;
-          body_text?: string;
         };
         Relationships: [
           {
@@ -4083,10 +4259,9 @@ export type Database = {
           amount_inr: number;
           payment_mode: string | null;
           remark: string | null;
-          recurring_debit_id: string | null;
-          recurring_month: string | null;
           created_by_employee_id: string | null;
           created_at: string;
+          recurring_month: string | null;
         };
         Insert: {
           id?: string;
@@ -4096,10 +4271,9 @@ export type Database = {
           amount_inr: number;
           payment_mode?: string | null;
           remark?: string | null;
-          recurring_debit_id?: string | null;
-          recurring_month?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
+          recurring_month?: string | null;
         };
         Update: {
           id?: string;
@@ -4109,10 +4283,9 @@ export type Database = {
           amount_inr?: number;
           payment_mode?: string | null;
           remark?: string | null;
-          recurring_debit_id?: string | null;
-          recurring_month?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
+          recurring_month?: string | null;
         };
         Relationships: [
           {
@@ -4236,6 +4409,98 @@ export type Database = {
         Relationships: [
         ];
       };
+      journal_vouchers: {
+        Row: {
+          id: string;
+          company_id: string;
+          jv_no: string | null;
+          jv_date: string;
+          bill_pass_register_id: string | null;
+          party_id: string | null;
+          vendor_invoice_no: string | null;
+          invoice_date: string | null;
+          debit_amount: number;
+          passed_amount: number | null;
+          item_details: string | null;
+          qty: number | null;
+          qty_unit: string | null;
+          qlty: string | null;
+          particulars: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          jv_no?: string | null;
+          jv_date?: string;
+          bill_pass_register_id?: string | null;
+          party_id?: string | null;
+          vendor_invoice_no?: string | null;
+          invoice_date?: string | null;
+          debit_amount?: number;
+          passed_amount?: number | null;
+          item_details?: string | null;
+          qty?: number | null;
+          qty_unit?: string | null;
+          qlty?: string | null;
+          particulars?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          jv_no?: string | null;
+          jv_date?: string;
+          bill_pass_register_id?: string | null;
+          party_id?: string | null;
+          vendor_invoice_no?: string | null;
+          invoice_date?: string | null;
+          debit_amount?: number;
+          passed_amount?: number | null;
+          item_details?: string | null;
+          qty?: number | null;
+          qty_unit?: string | null;
+          qlty?: string | null;
+          particulars?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "journal_vouchers_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "journal_vouchers_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "journal_vouchers_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "journal_vouchers_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       leave_balance_adjustments: {
         Row: {
           id: string;
@@ -4291,151 +4556,6 @@ export type Database = {
           },
         ];
       };
-      leave_coverage_assignments: {
-        Row: {
-          id: string;
-          leave_request_id: string;
-          covering_employee_id: string;
-          store_id: string;
-          from_date: string;
-          to_date: string;
-          assigned_by_employee_id: string;
-          assigned_at: string;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          leave_request_id: string;
-          covering_employee_id: string;
-          store_id: string;
-          from_date: string;
-          to_date: string;
-          assigned_by_employee_id: string;
-          assigned_at?: string;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          leave_request_id?: string;
-          covering_employee_id?: string;
-          store_id?: string;
-          from_date?: string;
-          to_date?: string;
-          assigned_by_employee_id?: string;
-          assigned_at?: string;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "leave_coverage_assignments_leave_request_id_fkey";
-            columns: ["leave_request_id"];
-            isOneToOne: false;
-            referencedRelation: "leave_requests";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_coverage_assignments_covering_employee_id_fkey";
-            columns: ["covering_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_coverage_assignments_store_id_fkey";
-            columns: ["store_id"];
-            isOneToOne: false;
-            referencedRelation: "stores";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_coverage_assignments_assigned_by_employee_id_fkey";
-            columns: ["assigned_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      leave_requests: {
-        Row: {
-          id: string;
-          employee_id: string;
-          company_id: string;
-          from_date: string;
-          to_date: string;
-          reason: string;
-          status: "Pending" | "Approved" | "Rejected";
-          requested_at: string;
-          decided_by_employee_id: string | null;
-          decided_at: string | null;
-          decision_remark: string | null;
-          created_at: string;
-          leave_type_id: string | null;
-        };
-        Insert: {
-          id?: string;
-          employee_id: string;
-          company_id: string;
-          from_date: string;
-          to_date: string;
-          reason: string;
-          status?: "Pending" | "Approved" | "Rejected";
-          requested_at?: string;
-          decided_by_employee_id?: string | null;
-          decided_at?: string | null;
-          decision_remark?: string | null;
-          created_at?: string;
-          leave_type_id?: string | null;
-        };
-        Update: {
-          id?: string;
-          employee_id?: string;
-          company_id?: string;
-          from_date?: string;
-          to_date?: string;
-          reason?: string;
-          status?: "Pending" | "Approved" | "Rejected";
-          requested_at?: string;
-          decided_by_employee_id?: string | null;
-          decided_at?: string | null;
-          decision_remark?: string | null;
-          created_at?: string;
-          leave_type_id?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "leave_requests_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_requests_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_requests_decided_by_employee_id_fkey";
-            columns: ["decided_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_requests_leave_type_id_fkey";
-            columns: ["leave_type_id"];
-            isOneToOne: false;
-            referencedRelation: "leave_types";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       leave_types: {
         Row: {
           id: string;
@@ -4444,7 +4564,7 @@ export type Database = {
           code: string | null;
           paid: boolean;
           annual_accrual_days: number;
-          accrual_frequency: "Monthly" | "Upfront";
+          accrual_frequency: string;
           carry_forward_cap: number | null;
           active: boolean;
           created_at: string;
@@ -4456,7 +4576,7 @@ export type Database = {
           code?: string | null;
           paid?: boolean;
           annual_accrual_days?: number;
-          accrual_frequency?: "Monthly" | "Upfront";
+          accrual_frequency?: string;
           carry_forward_cap?: number | null;
           active?: boolean;
           created_at?: string;
@@ -4468,7 +4588,7 @@ export type Database = {
           code?: string | null;
           paid?: boolean;
           annual_accrual_days?: number;
-          accrual_frequency?: "Monthly" | "Upfront";
+          accrual_frequency?: string;
           carry_forward_cap?: number | null;
           active?: boolean;
           created_at?: string;
@@ -4581,6 +4701,92 @@ export type Database = {
           },
         ];
       };
+      material_out_chalans: {
+        Row: {
+          id: string;
+          company_id: string;
+          party_id: string;
+          chalan_no: string | null;
+          chalan_date: string;
+          through: string | null;
+          no_of_packages: number | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          party_id: string;
+          chalan_no?: string | null;
+          chalan_date: string;
+          through?: string | null;
+          no_of_packages?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          party_id?: string;
+          chalan_no?: string | null;
+          chalan_date?: string;
+          through?: string | null;
+          no_of_packages?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "material_out_chalans_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "material_out_chalans_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      onboarding_checklist_items: {
+        Row: {
+          id: string;
+          company_id: string;
+          title: string;
+          sort_order: number;
+          active: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          title: string;
+          sort_order?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          title?: string;
+          sort_order?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "onboarding_checklist_items_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       order_packages: {
         Row: {
           id: string;
@@ -4638,13 +4844,13 @@ export type Database = {
           reason: string | null;
           credit_note_id: string | null;
           entry_by_employee_id: string;
-          created_at: string;
           refund_basis_percent: number | null;
           order_value_refund_amount: number;
           shipping_refund_amount: number;
           duty_refund_amount: number;
           refund_amount_inr: number | null;
           refund_amount_usd: number | null;
+          created_at: string;
         };
         Insert: {
           id?: string;
@@ -4655,13 +4861,13 @@ export type Database = {
           reason?: string | null;
           credit_note_id?: string | null;
           entry_by_employee_id: string;
-          created_at?: string;
           refund_basis_percent?: number | null;
           order_value_refund_amount?: number;
           shipping_refund_amount?: number;
           duty_refund_amount?: number;
           refund_amount_inr?: number | null;
           refund_amount_usd?: number | null;
+          created_at?: string;
         };
         Update: {
           id?: string;
@@ -4672,13 +4878,13 @@ export type Database = {
           reason?: string | null;
           credit_note_id?: string | null;
           entry_by_employee_id?: string;
-          created_at?: string;
           refund_basis_percent?: number | null;
           order_value_refund_amount?: number;
           shipping_refund_amount?: number;
           duty_refund_amount?: number;
           refund_amount_inr?: number | null;
           refund_amount_usd?: number | null;
+          created_at?: string;
         };
         Relationships: [
           {
@@ -4711,235 +4917,6 @@ export type Database = {
           },
         ];
       };
-      audit_log: {
-        Row: {
-          id: string;
-          company_id: string | null;
-          employee_id: string | null;
-          employee_name: string;
-          action: string;
-          entity_type: string;
-          entity_id: string | null;
-          entity_label: string | null;
-          changes: Json | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id?: string | null;
-          employee_id?: string | null;
-          employee_name: string;
-          action: string;
-          entity_type: string;
-          entity_id?: string | null;
-          entity_label?: string | null;
-          changes?: Json | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string | null;
-          employee_id?: string | null;
-          employee_name?: string;
-          action?: string;
-          entity_type?: string;
-          entity_id?: string | null;
-          entity_label?: string | null;
-          changes?: Json | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "audit_log_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "audit_log_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      entry_errors: {
-        Row: {
-          id: string;
-          company_id: string | null;
-          source: string;
-          status: string;
-          reason: string;
-          reference_type: string | null;
-          reference_id: string | null;
-          reference_label: string | null;
-          raised_by_employee_id: string | null;
-          raised_by_name: string;
-          created_at: string;
-          resolved_at: string | null;
-          resolved_by_employee_id: string | null;
-          resolved_by_name: string | null;
-          resolution_notes: string | null;
-        };
-        Insert: {
-          id?: string;
-          company_id?: string | null;
-          source: string;
-          status?: string;
-          reason: string;
-          reference_type?: string | null;
-          reference_id?: string | null;
-          reference_label?: string | null;
-          raised_by_employee_id?: string | null;
-          raised_by_name: string;
-          created_at?: string;
-          resolved_at?: string | null;
-          resolved_by_employee_id?: string | null;
-          resolved_by_name?: string | null;
-          resolution_notes?: string | null;
-        };
-        Update: {
-          id?: string;
-          company_id?: string | null;
-          source?: string;
-          status?: string;
-          reason?: string;
-          reference_type?: string | null;
-          reference_id?: string | null;
-          reference_label?: string | null;
-          raised_by_employee_id?: string | null;
-          raised_by_name?: string;
-          created_at?: string;
-          resolved_at?: string | null;
-          resolved_by_employee_id?: string | null;
-          resolved_by_name?: string | null;
-          resolution_notes?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "entry_errors_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "entry_errors_raised_by_employee_id_fkey";
-            columns: ["raised_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "entry_errors_resolved_by_employee_id_fkey";
-            columns: ["resolved_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      automation_rules: {
-        Row: {
-          id: string;
-          company_id: string | null;
-          name: string;
-          trigger_type: string;
-          enabled: boolean;
-          conditions: Json;
-          actions: Json;
-          created_by_employee_id: string | null;
-          created_at: string;
-          fire_count: number;
-          last_fired_at: string | null;
-        };
-        Insert: {
-          id?: string;
-          company_id?: string | null;
-          name: string;
-          trigger_type: string;
-          enabled?: boolean;
-          conditions?: Json;
-          actions?: Json;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-          fire_count?: number;
-          last_fired_at?: string | null;
-        };
-        Update: {
-          id?: string;
-          company_id?: string | null;
-          name?: string;
-          trigger_type?: string;
-          enabled?: boolean;
-          conditions?: Json;
-          actions?: Json;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-          fire_count?: number;
-          last_fired_at?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "automation_rules_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "automation_rules_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      automation_rule_logs: {
-        Row: {
-          id: string;
-          rule_id: string;
-          order_id: string | null;
-          fired_at: string;
-          result: string;
-          detail: string | null;
-        };
-        Insert: {
-          id?: string;
-          rule_id: string;
-          order_id?: string | null;
-          fired_at?: string;
-          result: string;
-          detail?: string | null;
-        };
-        Update: {
-          id?: string;
-          rule_id?: string;
-          order_id?: string | null;
-          fired_at?: string;
-          result?: string;
-          detail?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "automation_rule_logs_rule_id_fkey";
-            columns: ["rule_id"];
-            isOneToOne: false;
-            referencedRelation: "automation_rules";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "automation_rule_logs_order_id_fkey";
-            columns: ["order_id"];
-            isOneToOne: false;
-            referencedRelation: "orders";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       order_shipments: {
         Row: {
           id: string;
@@ -4955,7 +4932,7 @@ export type Database = {
           created_at: string;
           booked_freight_amt: number | null;
           booked_currency: string | null;
-          booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
+          booked_amount_source: string | null;
         };
         Insert: {
           id?: string;
@@ -4971,7 +4948,7 @@ export type Database = {
           created_at?: string;
           booked_freight_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
+          booked_amount_source?: string | null;
         };
         Update: {
           id?: string;
@@ -4987,7 +4964,7 @@ export type Database = {
           created_at?: string;
           booked_freight_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
+          booked_amount_source?: string | null;
         };
         Relationships: [
           {
@@ -4999,67 +4976,6 @@ export type Database = {
           },
           {
             foreignKeyName: "order_shipments_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      order_vendor_assignments: {
-        Row: {
-          id: string;
-          order_id: string;
-          cycle_no: number;
-          party_id: string;
-          assigned_date: string;
-          received_date: string | null;
-          remark: string | null;
-          created_by_employee_id: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          order_id: string;
-          cycle_no: number;
-          party_id: string;
-          assigned_date: string;
-          received_date?: string | null;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          order_id?: string;
-          cycle_no?: number;
-          party_id?: string;
-          assigned_date?: string;
-          received_date?: string | null;
-          remark?: string | null;
-          created_by_employee_id?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "order_vendor_assignments_order_id_fkey";
-            columns: ["order_id"];
-            isOneToOne: false;
-            referencedRelation: "orders";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "order_vendor_assignments_party_id_fkey";
-            columns: ["party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "order_vendor_assignments_created_by_employee_id_fkey";
             columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
@@ -5083,6 +4999,7 @@ export type Database = {
           status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date: string | null;
           photo_url: string | null;
+          photo_urls: unknown[] | null;
           sku_id: string | null;
           sku_label: string | null;
           size_id: string | null;
@@ -5095,12 +5012,6 @@ export type Database = {
           estimated_dispatch_date: string | null;
           late_order: boolean;
           buyer_name_address: string | null;
-          buyer_address1: string | null;
-          buyer_address2: string | null;
-          buyer_address3: string | null;
-          buyer_city: string | null;
-          buyer_state: string | null;
-          buyer_postal_code: string | null;
           contact_no: string | null;
           email_id: string | null;
           tax_id: string | null;
@@ -5108,12 +5019,8 @@ export type Database = {
           eori_number: string | null;
           ioss_number: string | null;
           destination_country: string | null;
-          buyer_country: string | null;
           address_type: "Residential" | "Commercial";
           photo_type: "Dispatch" | "Website" | null;
-          // 2026-09-18 - multi-photo links (db/2026-09-18-orders-multi-
-          // photo-and-capability-sync.sql). photo_url stays photo #1.
-          photo_urls: string[] | null;
           colour: string | null;
           entry_by_employee_id: string;
           advance_tracking: string | null;
@@ -5149,6 +5056,7 @@ export type Database = {
           status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
+          photo_urls?: unknown[] | null;
           sku_id?: string | null;
           sku_label?: string | null;
           size_id?: string | null;
@@ -5161,12 +5069,6 @@ export type Database = {
           estimated_dispatch_date?: string | null;
           late_order?: boolean;
           buyer_name_address?: string | null;
-          buyer_address1?: string | null;
-          buyer_address2?: string | null;
-          buyer_address3?: string | null;
-          buyer_city?: string | null;
-          buyer_state?: string | null;
-          buyer_postal_code?: string | null;
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
@@ -5174,10 +5076,8 @@ export type Database = {
           eori_number?: string | null;
           ioss_number?: string | null;
           destination_country?: string | null;
-          buyer_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
-          photo_urls?: string[] | null;
           colour?: string | null;
           entry_by_employee_id: string;
           advance_tracking?: string | null;
@@ -5213,6 +5113,7 @@ export type Database = {
           status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
+          photo_urls?: unknown[] | null;
           sku_id?: string | null;
           sku_label?: string | null;
           size_id?: string | null;
@@ -5225,12 +5126,6 @@ export type Database = {
           estimated_dispatch_date?: string | null;
           late_order?: boolean;
           buyer_name_address?: string | null;
-          buyer_address1?: string | null;
-          buyer_address2?: string | null;
-          buyer_address3?: string | null;
-          buyer_city?: string | null;
-          buyer_state?: string | null;
-          buyer_postal_code?: string | null;
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
@@ -5238,10 +5133,8 @@ export type Database = {
           eori_number?: string | null;
           ioss_number?: string | null;
           destination_country?: string | null;
-          buyer_country?: string | null;
           address_type?: "Residential" | "Commercial";
           photo_type?: "Dispatch" | "Website" | null;
-          photo_urls?: string[] | null;
           colour?: string | null;
           entry_by_employee_id?: string;
           advance_tracking?: string | null;
@@ -5431,13 +5324,6 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: "party_wallet_txns_bill_pass_register_id_fkey";
-            columns: ["bill_pass_register_id"];
-            isOneToOne: false;
-            referencedRelation: "bill_pass_register";
-            referencedColumns: ["id"];
-          },
-          {
             foreignKeyName: "party_wallet_txns_company_id_fkey";
             columns: ["company_id"];
             isOneToOne: false;
@@ -5445,17 +5331,24 @@ export type Database = {
             referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "party_wallet_txns_entered_by_fkey";
-            columns: ["entered_by"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
             foreignKeyName: "party_wallet_txns_party_id_fkey";
             columns: ["party_id"];
             isOneToOne: false;
             referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "party_wallet_txns_bill_pass_register_id_fkey";
+            columns: ["bill_pass_register_id"];
+            isOneToOne: false;
+            referencedRelation: "bill_pass_register";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "party_wallet_txns_entered_by_fkey";
+            columns: ["entered_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
@@ -5595,11 +5488,11 @@ export type Database = {
           unit_rate: number;
           order_id: string | null;
           company_id: string | null;
-          total_sq_feet: number | null;
-          total_amount: number | null;
           gst_rate_pct: number | null;
           gst_type: string | null;
           round_off_amt: number;
+          total_sq_feet: number | null;
+          total_amount: number | null;
           g_total_plus_gst: number | null;
           created_at: string;
         };
@@ -5615,11 +5508,11 @@ export type Database = {
           unit_rate?: number;
           order_id?: string | null;
           company_id?: string | null;
-          total_sq_feet?: number | null;
-          total_amount?: number | null;
           gst_rate_pct?: number | null;
           gst_type?: string | null;
           round_off_amt?: number;
+          total_sq_feet?: number | null;
+          total_amount?: number | null;
           g_total_plus_gst?: number | null;
           created_at?: string;
         };
@@ -5635,11 +5528,11 @@ export type Database = {
           unit_rate?: number;
           order_id?: string | null;
           company_id?: string | null;
-          total_sq_feet?: number | null;
-          total_amount?: number | null;
           gst_rate_pct?: number | null;
           gst_type?: string | null;
           round_off_amt?: number;
+          total_sq_feet?: number | null;
+          total_amount?: number | null;
           g_total_plus_gst?: number | null;
           created_at?: string;
         };
@@ -5667,62 +5560,110 @@ export type Database = {
           },
         ];
       };
-      recurring_card_debits: {
+      received_chalan_items: {
+        Row: {
+          id: string;
+          chalan_id: string;
+          description: string;
+          qty: number;
+          qty_unit: string;
+          rate: number | null;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          chalan_id: string;
+          description: string;
+          qty: number;
+          qty_unit?: string;
+          rate?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          chalan_id?: string;
+          description?: string;
+          qty?: number;
+          qty_unit?: string;
+          rate?: number | null;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "received_chalan_items_chalan_id_fkey";
+            columns: ["chalan_id"];
+            isOneToOne: false;
+            referencedRelation: "received_chalans";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      received_chalans: {
         Row: {
           id: string;
           company_id: string;
-          vendor_name: string;
-          category: string;
-          amount: number | null;
-          card_label: string | null;
-          day_of_month: number;
-          active: boolean;
-          last_logged_month: string | null;
+          party_id: string;
+          chalan_no: string | null;
+          chalan_date: string;
+          order_id: string | null;
+          through: string | null;
+          no_of_packages: number | null;
+          source: string | null;
+          source_id: string | null;
           remark: string | null;
-          created_by_employee_id: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           company_id: string;
-          vendor_name: string;
-          category?: string;
-          amount?: number | null;
-          card_label?: string | null;
-          day_of_month: number;
-          active?: boolean;
-          last_logged_month?: string | null;
+          party_id: string;
+          chalan_no?: string | null;
+          chalan_date: string;
+          order_id?: string | null;
+          through?: string | null;
+          no_of_packages?: number | null;
+          source?: string | null;
+          source_id?: string | null;
           remark?: string | null;
-          created_by_employee_id?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           company_id?: string;
-          vendor_name?: string;
-          category?: string;
-          amount?: number | null;
-          card_label?: string | null;
-          day_of_month?: number;
-          active?: boolean;
-          last_logged_month?: string | null;
+          party_id?: string;
+          chalan_no?: string | null;
+          chalan_date?: string;
+          order_id?: string | null;
+          through?: string | null;
+          no_of_packages?: number | null;
+          source?: string | null;
+          source_id?: string | null;
           remark?: string | null;
-          created_by_employee_id?: string | null;
           created_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "recurring_card_debits_company_id_fkey";
+            foreignKeyName: "received_chalans_company_id_fkey";
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
             referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "recurring_card_debits_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
+            foreignKeyName: "received_chalans_party_id_fkey";
+            columns: ["party_id"];
             isOneToOne: false;
-            referencedRelation: "employees";
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "received_chalans_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
             referencedColumns: ["id"];
           },
         ];
@@ -5868,11 +5809,6 @@ export type Database = {
           attendance_deduction_amount: number;
           advance_deduction_amount: number;
           advance_id: string | null;
-          net_paid_amount: number | null;
-          payment_date: string;
-          paid_by_employee_id: string | null;
-          remark: string | null;
-          created_at: string;
           basic_amount: number | null;
           hra_amount: number | null;
           special_allowance_amount: number | null;
@@ -5881,6 +5817,11 @@ export type Database = {
           employee_esi_amount: number;
           employer_esi_amount: number;
           professional_tax_amount: number;
+          net_paid_amount: number | null;
+          payment_date: string;
+          paid_by_employee_id: string | null;
+          remark: string | null;
+          created_at: string;
         };
         Insert: {
           id?: string;
@@ -5891,11 +5832,6 @@ export type Database = {
           attendance_deduction_amount?: number;
           advance_deduction_amount?: number;
           advance_id?: string | null;
-          net_paid_amount?: number | null;
-          payment_date: string;
-          paid_by_employee_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
           basic_amount?: number | null;
           hra_amount?: number | null;
           special_allowance_amount?: number | null;
@@ -5904,6 +5840,11 @@ export type Database = {
           employee_esi_amount?: number;
           employer_esi_amount?: number;
           professional_tax_amount?: number;
+          net_paid_amount?: number | null;
+          payment_date: string;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
         };
         Update: {
           id?: string;
@@ -5914,11 +5855,6 @@ export type Database = {
           attendance_deduction_amount?: number;
           advance_deduction_amount?: number;
           advance_id?: string | null;
-          net_paid_amount?: number | null;
-          payment_date?: string;
-          paid_by_employee_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
           basic_amount?: number | null;
           hra_amount?: number | null;
           special_allowance_amount?: number | null;
@@ -5927,6 +5863,11 @@ export type Database = {
           employee_esi_amount?: number;
           employer_esi_amount?: number;
           professional_tax_amount?: number;
+          net_paid_amount?: number | null;
+          payment_date?: string;
+          paid_by_employee_id?: string | null;
+          remark?: string | null;
+          created_at?: string;
         };
         Relationships: [
           {
@@ -6479,357 +6420,86 @@ export type Database = {
           },
         ];
       };
-      courier_shipper_profiles: {
-        Row: {
-          company_id: string;
-          contact_name: string;
-          company_name: string;
-          phone: string;
-          email: string;
-          address1: string;
-          address2: string | null;
-          city: string;
-          state: string;
-          postcode: string;
-          country_code: string;
-          tax_id: string | null;
-          updated_at: string;
-        };
-        Insert: {
-          company_id: string;
-          contact_name: string;
-          company_name: string;
-          phone: string;
-          email: string;
-          address1: string;
-          address2?: string | null;
-          city: string;
-          state: string;
-          postcode: string;
-          country_code?: string;
-          tax_id?: string | null;
-          updated_at?: string;
-        };
-        Update: {
-          company_id?: string;
-          contact_name?: string;
-          company_name?: string;
-          phone?: string;
-          email?: string;
-          address1?: string;
-          address2?: string | null;
-          city?: string;
-          state?: string;
-          postcode?: string;
-          country_code?: string;
-          tax_id?: string | null;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "courier_shipper_profiles_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: true;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      courier_shipments: {
+      shipment_handover_chalan_lines: {
         Row: {
           id: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
+          chalan_id: string;
           order_id: string;
-          order_shipment_id: string | null;
-          service_code: string | null;
-          ddp_ddu: "DDP" | "DDU" | null;
-          status: "pending" | "created" | "failed" | "cancelled";
-          awb_no: string | null;
-          label_url: string | null;
-          booked_amt: number | null;
-          booked_currency: string | null;
-          booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
-          request_payload: Json | null;
-          response_payload: Json | null;
-          error_message: string | null;
-          cancel_reason: string | null;
-          cancel_remark: string | null;
-          cancelled_at: string | null;
-          manual_courier_name: string | null;
-          created_by: string | null;
+          remark: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
+          chalan_id: string;
           order_id: string;
-          order_shipment_id?: string | null;
-          service_code?: string | null;
-          ddp_ddu?: "DDP" | "DDU" | null;
-          status?: "pending" | "created" | "failed" | "cancelled";
-          awb_no?: string | null;
-          label_url?: string | null;
-          booked_amt?: number | null;
-          booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
-          request_payload?: Json | null;
-          response_payload?: Json | null;
-          error_message?: string | null;
-          cancel_reason?: string | null;
-          cancel_remark?: string | null;
-          cancelled_at?: string | null;
-          manual_courier_name?: string | null;
-          created_by?: string | null;
+          remark?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
-          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
+          chalan_id?: string;
           order_id?: string;
-          order_shipment_id?: string | null;
-          service_code?: string | null;
-          ddp_ddu?: "DDP" | "DDU" | null;
-          status?: "pending" | "created" | "failed" | "cancelled";
-          awb_no?: string | null;
-          label_url?: string | null;
-          booked_amt?: number | null;
-          booked_currency?: string | null;
-          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
-          request_payload?: Json | null;
-          response_payload?: Json | null;
-          error_message?: string | null;
-          cancel_reason?: string | null;
-          cancel_remark?: string | null;
-          cancelled_at?: string | null;
-          manual_courier_name?: string | null;
-          created_by?: string | null;
+          remark?: string | null;
           created_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "courier_shipments_order_id_fkey";
+            foreignKeyName: "shipment_handover_chalan_lines_chalan_id_fkey";
+            columns: ["chalan_id"];
+            isOneToOne: false;
+            referencedRelation: "shipment_handover_chalans";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipment_handover_chalan_lines_order_id_fkey";
             columns: ["order_id"];
             isOneToOne: false;
             referencedRelation: "orders";
             referencedColumns: ["id"];
           },
-          {
-            foreignKeyName: "courier_shipments_order_shipment_id_fkey";
-            columns: ["order_shipment_id"];
-            isOneToOne: false;
-            referencedRelation: "order_shipments";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "courier_shipments_created_by_fkey";
-            columns: ["created_by"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
         ];
       };
-      courier_shipment_ndr_attempts: {
-        Row: {
-          id: string;
-          courier_shipment_id: string;
-          attempt_no: number;
-          reason: "Address Issue" | "Customer Unavailable" | "Refused" | "Weather/Force Majeure" | "Other";
-          note: string | null;
-          attempted_at: string;
-          logged_by_employee_id: string | null;
-          logged_by_name: string;
-          created_at: string;
-          resolved_at: string | null;
-          resolved_by_employee_id: string | null;
-          resolved_by_name: string | null;
-          resolved_note: string | null;
-        };
-        Insert: {
-          id?: string;
-          courier_shipment_id: string;
-          attempt_no: number;
-          reason: "Address Issue" | "Customer Unavailable" | "Refused" | "Weather/Force Majeure" | "Other";
-          note?: string | null;
-          attempted_at?: string;
-          logged_by_employee_id?: string | null;
-          logged_by_name: string;
-          created_at?: string;
-          resolved_at?: string | null;
-          resolved_by_employee_id?: string | null;
-          resolved_by_name?: string | null;
-          resolved_note?: string | null;
-        };
-        Update: {
-          id?: string;
-          courier_shipment_id?: string;
-          attempt_no?: number;
-          reason?: "Address Issue" | "Customer Unavailable" | "Refused" | "Weather/Force Majeure" | "Other";
-          note?: string | null;
-          attempted_at?: string;
-          logged_by_employee_id?: string | null;
-          logged_by_name?: string;
-          created_at?: string;
-          resolved_at?: string | null;
-          resolved_by_employee_id?: string | null;
-          resolved_by_name?: string | null;
-          resolved_note?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "courier_shipment_ndr_attempts_courier_shipment_id_fkey";
-            columns: ["courier_shipment_id"];
-            isOneToOne: false;
-            referencedRelation: "courier_shipments";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "courier_shipment_ndr_attempts_logged_by_employee_id_fkey";
-            columns: ["logged_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "courier_shipment_ndr_attempts_resolved_by_employee_id_fkey";
-            columns: ["resolved_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      courier_credentials: {
+      shipment_handover_chalans: {
         Row: {
           id: string;
           company_id: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
-          secrets_enc: Json;
-          updated_at: string;
-          updated_by: string | null;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
-          secrets_enc?: Json;
-          updated_at?: string;
-          updated_by?: string | null;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
-          secrets_enc?: Json;
-          updated_at?: string;
-          updated_by?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "courier_credentials_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "courier_credentials_updated_by_fkey";
-            columns: ["updated_by"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      courier_pickup_requests: {
-        Row: {
-          id: string;
-          company_id: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
-          pickup_address: string;
-          booking_date: string;
-          scheduled_pickup_date: string;
-          status: "requested" | "confirmed" | "cancelled";
+          courier_party_id: string;
+          chalan_no: string | null;
+          chalan_date: string;
           remark: string | null;
-          request_payload: Json | null;
-          response_payload: Json | null;
-          created_by_employee_id: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           company_id: string;
-          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
-          pickup_address: string;
-          booking_date: string;
-          scheduled_pickup_date: string;
-          status?: "requested" | "confirmed" | "cancelled";
+          courier_party_id: string;
+          chalan_no?: string | null;
+          chalan_date: string;
           remark?: string | null;
-          request_payload?: Json | null;
-          response_payload?: Json | null;
-          created_by_employee_id?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           company_id?: string;
-          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
-          pickup_address?: string;
-          booking_date?: string;
-          scheduled_pickup_date?: string;
-          status?: "requested" | "confirmed" | "cancelled";
+          courier_party_id?: string;
+          chalan_no?: string | null;
+          chalan_date?: string;
           remark?: string | null;
-          request_payload?: Json | null;
-          response_payload?: Json | null;
-          created_by_employee_id?: string | null;
           created_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "courier_pickup_requests_company_id_fkey";
+            foreignKeyName: "shipment_handover_chalans_company_id_fkey";
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
             referencedColumns: ["id"];
           },
           {
-            foreignKeyName: "courier_pickup_requests_created_by_employee_id_fkey";
-            columns: ["created_by_employee_id"];
+            foreignKeyName: "shipment_handover_chalans_courier_party_id_fkey";
+            columns: ["courier_party_id"];
             isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      courier_pickup_request_awbs: {
-        Row: {
-          id: string;
-          pickup_request_id: string;
-          order_shipment_id: string;
-        };
-        Insert: {
-          id?: string;
-          pickup_request_id: string;
-          order_shipment_id: string;
-        };
-        Update: {
-          id?: string;
-          pickup_request_id?: string;
-          order_shipment_id?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "courier_pickup_request_awbs_pickup_request_id_fkey";
-            columns: ["pickup_request_id"];
-            isOneToOne: false;
-            referencedRelation: "courier_pickup_requests";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "courier_pickup_request_awbs_order_shipment_id_fkey";
-            columns: ["order_shipment_id"];
-            isOneToOne: false;
-            referencedRelation: "order_shipments";
+            referencedRelation: "parties";
             referencedColumns: ["id"];
           },
         ];
@@ -7026,11 +6696,11 @@ export type Database = {
           sku_code: string;
           product_name: string | null;
           chalan_no: string | null;
-          chalan_id: string | null;
           out_date: string | null;
           quantity_out: number;
           remark: string | null;
           created_at: string;
+          chalan_id: string | null;
         };
         Insert: {
           id?: string;
@@ -7038,11 +6708,11 @@ export type Database = {
           sku_code: string;
           product_name?: string | null;
           chalan_no?: string | null;
-          chalan_id?: string | null;
           out_date?: string | null;
           quantity_out: number;
           remark?: string | null;
           created_at?: string;
+          chalan_id?: string | null;
         };
         Update: {
           id?: string;
@@ -7050,11 +6720,11 @@ export type Database = {
           sku_code?: string;
           product_name?: string | null;
           chalan_no?: string | null;
-          chalan_id?: string | null;
           out_date?: string | null;
           quantity_out?: number;
           remark?: string | null;
           created_at?: string;
+          chalan_id?: string | null;
         };
         Relationships: [
           {
@@ -7069,295 +6739,6 @@ export type Database = {
             columns: ["chalan_id"];
             isOneToOne: false;
             referencedRelation: "material_out_chalans";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      material_out_chalans: {
-        Row: {
-          id: string;
-          company_id: string;
-          party_id: string;
-          chalan_no: string | null;
-          chalan_date: string;
-          // 2026-08-29 (evening, Received Chalan round) — optional
-          // print-reference fields matching the physical NYKO MART chalan
-          // pad, see db/2026-08-29-received-chalan-and-moc-fields.sql.
-          through: string | null;
-          no_of_packages: number | null;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          party_id: string;
-          chalan_no?: string | null;
-          chalan_date: string;
-          through?: string | null;
-          no_of_packages?: number | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          party_id?: string;
-          chalan_no?: string | null;
-          chalan_date?: string;
-          through?: string | null;
-          no_of_packages?: number | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "material_out_chalans_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "material_out_chalans_party_id_fkey";
-            columns: ["party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      // 2026-08-29 (evening, follow-up round) — Received Chalan: the
-      // "party -> company" counterpart to material_out_chalans, but
-      // deliberately NOT wired to stock_in (paperwork/proof-of-receipt
-      // document only — see db/2026-08-29-received-chalan-and-moc-fields.sql's
-      // header comment for why). source/source_id let a chalan be traced
-      // back to the Purchase Bill invoice group that auto-generated it,
-      // same "source" discriminator pattern as bill_pass_register.
-      received_chalans: {
-        Row: {
-          id: string;
-          company_id: string;
-          party_id: string;
-          chalan_no: string | null;
-          chalan_date: string;
-          order_id: string | null;
-          through: string | null;
-          no_of_packages: number | null;
-          source: "manual" | "purchase_bill" | null;
-          source_id: string | null;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          party_id: string;
-          chalan_no?: string | null;
-          chalan_date: string;
-          order_id?: string | null;
-          through?: string | null;
-          no_of_packages?: number | null;
-          source?: "manual" | "purchase_bill" | null;
-          source_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          party_id?: string;
-          chalan_no?: string | null;
-          chalan_date?: string;
-          order_id?: string | null;
-          through?: string | null;
-          no_of_packages?: number | null;
-          source?: "manual" | "purchase_bill" | null;
-          source_id?: string | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "received_chalans_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "received_chalans_party_id_fkey";
-            columns: ["party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "received_chalans_order_id_fkey";
-            columns: ["order_id"];
-            isOneToOne: false;
-            referencedRelation: "orders";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      received_chalan_items: {
-        Row: {
-          id: string;
-          chalan_id: string;
-          description: string;
-          qty: number;
-          qty_unit: string;
-          rate: number | null;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          chalan_id: string;
-          description: string;
-          qty: number;
-          qty_unit?: string;
-          rate?: number | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          chalan_id?: string;
-          description?: string;
-          qty?: number;
-          qty_unit?: string;
-          rate?: number | null;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "received_chalan_items_chalan_id_fkey";
-            columns: ["chalan_id"];
-            isOneToOne: false;
-            referencedRelation: "received_chalans";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      shipment_handover_chalans: {
-        Row: {
-          id: string;
-          company_id: string;
-          courier_party_id: string;
-          chalan_no: string | null;
-          chalan_date: string;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          courier_party_id: string;
-          chalan_no?: string | null;
-          chalan_date: string;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          courier_party_id?: string;
-          chalan_no?: string | null;
-          chalan_date?: string;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "shipment_handover_chalans_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "shipment_handover_chalans_courier_party_id_fkey";
-            columns: ["courier_party_id"];
-            isOneToOne: false;
-            referencedRelation: "parties";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      shipment_handover_chalan_lines: {
-        Row: {
-          id: string;
-          chalan_id: string;
-          order_id: string;
-          remark: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          chalan_id: string;
-          order_id: string;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          chalan_id?: string;
-          order_id?: string;
-          remark?: string | null;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "shipment_handover_chalan_lines_chalan_id_fkey";
-            columns: ["chalan_id"];
-            isOneToOne: false;
-            referencedRelation: "shipment_handover_chalans";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "shipment_handover_chalan_lines_order_id_fkey";
-            columns: ["order_id"];
-            isOneToOne: false;
-            referencedRelation: "orders";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      stock_out_order_links: {
-        Row: {
-          id: string;
-          stock_out_id: string;
-          order_id: string;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          stock_out_id: string;
-          order_id: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          stock_out_id?: string;
-          order_id?: string;
-          created_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "stock_out_order_links_stock_out_id_fkey";
-            columns: ["stock_out_id"];
-            isOneToOne: false;
-            referencedRelation: "stock_out";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "stock_out_order_links_order_id_fkey";
-            columns: ["order_id"];
-            isOneToOne: false;
-            referencedRelation: "orders";
             referencedColumns: ["id"];
           },
         ];
@@ -7439,6 +6820,38 @@ export type Database = {
           },
         ];
       };
+      task_daily_time_log: {
+        Row: {
+          id: string;
+          task_id: string;
+          log_date: string;
+          seconds_spent: number;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          task_id: string;
+          log_date: string;
+          seconds_spent?: number;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          task_id?: string;
+          log_date?: string;
+          seconds_spent?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "task_daily_time_log_task_id_fkey";
+            columns: ["task_id"];
+            isOneToOne: false;
+            referencedRelation: "tasks";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       tasks: {
         Row: {
           id: string;
@@ -7514,38 +6927,6 @@ export type Database = {
             columns: ["assigned_to_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-      task_daily_time_log: {
-        Row: {
-          id: string;
-          task_id: string;
-          log_date: string;
-          seconds_spent: number;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          task_id: string;
-          log_date: string;
-          seconds_spent?: number;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          task_id?: string;
-          log_date?: string;
-          seconds_spent?: number;
-          updated_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "task_daily_time_log_task_id_fkey";
-            columns: ["task_id"];
-            isOneToOne: false;
-            referencedRelation: "tasks";
             referencedColumns: ["id"];
           },
         ];
@@ -7729,6 +7110,19 @@ export type Database = {
         };
         Relationships: [];
       };
+      duty_awb_net_view: {
+        Row: {
+          assignment_id: string | null;
+          duty_tax_bill_id: string | null;
+          order_id: string | null;
+          order_shipment_id: string | null;
+          awb_no: string | null;
+          gross_duty_amt: number | null;
+          cn_allocated_inr: number | null;
+          net_duty_amt: number | null;
+        };
+        Relationships: [];
+      };
       duty_reconciliation_view: {
         Row: {
           assignment_id: string | null;
@@ -7801,6 +7195,19 @@ export type Database = {
         };
         Relationships: [];
       };
+      freight_awb_net_view: {
+        Row: {
+          assignment_id: string | null;
+          freight_bill_id: string | null;
+          order_id: string | null;
+          order_shipment_id: string | null;
+          awb_no: string | null;
+          gross_shipping_amt: number | null;
+          cn_allocated_inr: number | null;
+          net_shipping_amt: number | null;
+        };
+        Relationships: [];
+      };
       freight_bill_variance_view: {
         Row: {
           freight_bill_id: string | null;
@@ -7848,135 +7255,14 @@ export type Database = {
         };
         Relationships: [];
       };
-      pl_dashboard_by_company_view: {
+      order_courier_duty_expense_view: {
         Row: {
+          order_id: string | null;
           company_id: string | null;
-          company_name: string | null;
-          total_sale_value_inr: number | null;
-          total_expenses_inr: number | null;
-          net_total_value: number | null;
-          portal_expenses_25pct: number | null;
-          portal_expense_effective_inr: number | null;
-          net_earn: number | null;
-          profit_pct: number | null;
-          total_internal_expenses_inr: number | null;
-          net_earn_after_overhead: number | null;
-          expense_courier_inr: number | null;
-          expense_duty_inr: number | null;
-          expense_purchase_inr: number | null;
-          expense_purchase_adjustments_inr: number | null;
-          expense_historical_inr: number | null;
-          expense_washing_inr: number | null;
-          portal_fees_matched_inr: number | null;
-          bank_inflow_inr: number | null;
-          // 2026-09-17 (evening) — added by
-          // db/2026-09-17b-pl-usd-and-company-month.sql (CREATE OR REPLACE,
-          // appended last). Types file updated ahead of that migration
-          // actually being run in Supabase — see this repo's standing rule
-          // (never execute DB-altering SQL directly; delivered as a .sql
-          // file for the user to run) — so the app builds/type-checks today
-          // even though the column doesn't exist in the live DB yet.
-          total_sale_value_usd: number | null;
-        };
-        Relationships: [];
-      };
-      pl_dashboard_by_month_view: {
-        Row: {
-          // 2026-09-18 - per-COMPANY month rows
-          // (db/2026-09-18-pl-month-per-company.sql rebuilds the view with
-          // company_id/company_name on every CTE - "p&l by month sabhi
-          // company ka ek sath aara hai... alag company ke hisab se aayega").
-          company_id: string | null;
-          company_name: string | null;
-          month: string | null;
-          total_sale_value_inr: number | null;
-          total_expenses_inr: number | null;
-          portal_expenses_25pct: number | null;
-          portal_expense_effective_inr: number | null;
-          net_earn: number | null;
-          profit_pct: number | null;
-          total_internal_expenses_inr: number | null;
-          net_earn_after_overhead: number | null;
-          expense_courier_inr: number | null;
-          expense_duty_inr: number | null;
-          expense_purchase_inr: number | null;
-          expense_purchase_adjustments_inr: number | null;
-          expense_historical_inr: number | null;
-          expense_washing_inr: number | null;
-          portal_fees_matched_inr: number | null;
-          bank_inflow_inr: number | null;
-          // 2026-09-17 (evening) — same as pl_dashboard_by_company_view above.
-          total_sale_value_usd: number | null;
-        };
-        Relationships: [];
-      };
-      // 2026-09-17 (evening) — new view, one row per (company, month), from
-      // db/2026-09-17b-pl-usd-and-company-month.sql — lets the CRM page's
-      // "P&L by Company" FY selector sum an FY's months per company. See
-      // that migration's own header comment for the full column derivation
-      // (mirrors pl_dashboard_by_month_view with company_id/company_name
-      // added to every CTE). Not yet run against the live DB — see the
-      // total_sale_value_usd comment above for why the types file is ahead
-      // of the actual schema here.
-      pl_dashboard_by_company_month_view: {
-        Row: {
-          company_id: string | null;
-          company_name: string | null;
-          month: string | null;
-          total_sale_value_inr: number | null;
-          total_sale_value_usd: number | null;
-          total_expenses_inr: number | null;
-          portal_expenses_25pct: number | null;
-          portal_expense_effective_inr: number | null;
-          net_earn: number | null;
-          profit_pct: number | null;
-          total_internal_expenses_inr: number | null;
-          net_earn_after_overhead: number | null;
-          expense_courier_inr: number | null;
-          expense_duty_inr: number | null;
-          expense_purchase_inr: number | null;
-          expense_purchase_adjustments_inr: number | null;
-          expense_historical_inr: number | null;
-          expense_washing_inr: number | null;
-          portal_fees_matched_inr: number | null;
-          bank_inflow_inr: number | null;
-        };
-        Relationships: [];
-      };
-      // 2026-09-18 — "P&L by Marketplace" CRM tab, from
-      // db/2026-09-18-pl-by-marketplace-store.sql. One row per store (=
-      // marketplace/channel). See that migration's header comment for why
-      // this exists instead of the uploaded pL.md blueprint's separate
-      // Node.js/Express + new-schema rebuild, and for the deliberate scope
-      // limit (excludes company-wide overhead not tracked per store). Types
-      // file updated ahead of the migration being run — standing rule, see
-      // total_sale_value_usd comment above.
-      // 2026-09-18 (round 8) — expense_purchase_inr/expense_washing_inr
-      // added by db/2026-09-18c-pl-purchase-washing-order-linked.sql —
-      // purchase_bills.order_id and washing_entries.store_id already
-      // existed; this view now uses them instead of treating those costs
-      // as unattributable. Types file updated ahead of that migration.
-      pl_dashboard_by_store_view: {
-        Row: {
-          store_id: string | null;
-          store_name: string | null;
-          company_id: string | null;
-          company_name: string | null;
-          order_count: number | null;
-          total_sale_value_inr: number | null;
-          total_sale_value_usd: number | null;
-          expense_courier_inr: number | null;
-          expense_duty_inr: number | null;
-          portal_expenses_25pct: number | null;
-          portal_expense_effective_inr: number | null;
-          portal_fees_matched_inr: number | null;
-          ad_spend_usd: number | null;
-          ad_budget_usd: number | null;
-          expense_purchase_inr: number | null;
-          expense_washing_inr: number | null;
-          net_before_overhead_inr: number | null;
-          profit_pct_before_overhead: number | null;
-          roas: number | null;
+          order_date: string | null;
+          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned" | null;
+          courier_expense_inr: number | null;
+          duty_expense_inr: number | null;
         };
         Relationships: [];
       };
@@ -7990,32 +7276,6 @@ export type Database = {
         };
         Relationships: [];
       };
-      freight_awb_net_view: {
-        Row: {
-          assignment_id: string | null;
-          freight_bill_id: string | null;
-          order_id: string | null;
-          order_shipment_id: string | null;
-          awb_no: string | null;
-          gross_shipping_amt: number | null;
-          cn_allocated_inr: number | null;
-          net_shipping_amt: number | null;
-        };
-        Relationships: [];
-      };
-      duty_awb_net_view: {
-        Row: {
-          assignment_id: string | null;
-          duty_tax_bill_id: string | null;
-          order_id: string | null;
-          order_shipment_id: string | null;
-          awb_no: string | null;
-          gross_duty_amt: number | null;
-          cn_allocated_inr: number | null;
-          net_duty_amt: number | null;
-        };
-        Relationships: [];
-      };
     };
     Functions: {
       add_task_daily_time: {
@@ -8024,7 +7284,7 @@ export type Database = {
           p_log_date: string;
           p_seconds: number;
         };
-        Returns: undefined;
+        Returns: unknown;
       };
       format_document_no: {
         Args: {
@@ -8066,68 +7326,20 @@ export type Database = {
           effective_from: string | null;
         }[];
       };
-      get_unread_group_message_count: {
-        Args: {
-          p_employee_id: string;
-        };
-        Returns: number;
-      };
       get_order_status_counts: {
         Args: {
           p_company_id: string;
         };
         Returns: {
-          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
-          cnt: number;
+          status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned" | null;
+          cnt: number | null;
         }[];
       };
-      // 2026-09-18 (later) — Finance Dashboard page, from
-      // db/2026-09-18b-finance-dashboard-rpc.sql. Not yet run against the
-      // live DB — see the total_sale_value_usd comment above for why the
-      // types file is ahead of the actual schema here.
-      // 2026-09-18 (round 8) — expense_purchase_inr/expense_washing_inr
-      // added by db/2026-09-18c-pl-purchase-washing-order-linked.sql
-      // (function DROPped+recreated, same 5 args, 2 new return columns).
-      finance_dashboard_monthly: {
+      get_unread_group_message_count: {
         Args: {
-          p_company_id: string;
-          p_from: string;
-          p_to: string;
-          p_store_id?: string | null;
-          p_buyer_country?: string | null;
+          p_employee_id: string;
         };
-        Returns: {
-          month: string;
-          order_count: number;
-          total_sale_value_inr: number;
-          total_sale_value_usd: number;
-          expense_courier_inr: number;
-          expense_duty_inr: number;
-          portal_fees_matched_inr: number;
-          portal_expense_effective_inr: number;
-          ad_spend_usd: number;
-          returns_inr: number;
-          expense_purchase_inr: number;
-          expense_washing_inr: number;
-        }[];
-      };
-      // 2026-09-18 (round 8) — new, from the same migration. Company-wide
-      // (no store/country split possible for an unlinked row by
-      // definition) count+total of purchase bills/washing entries with no
-      // order_id in a date range — surfaced on the Finance Dashboard so
-      // the "not yet linked to an order" gap is visible, not silent.
-      finance_dashboard_unlinked_purchase_washing: {
-        Args: {
-          p_company_id: string;
-          p_from: string;
-          p_to: string;
-        };
-        Returns: {
-          unlinked_purchase_bill_count: number;
-          unlinked_purchase_inr: number;
-          unlinked_washing_entry_count: number;
-          unlinked_washing_inr: number;
-        }[];
+        Returns: number;
       };
       recover_employee_advance: {
         Args: {
@@ -8145,13 +7357,10 @@ export type Database = {
         };
         Returns: number;
       };
-      // 2026-09-18: capability auto-sync RPC (db/2026-09-18-orders-multi-
-      // photo-and-capability-sync.sql). Mirrors the generated type that
-      // scripts/gen-types.mjs will emit after the migration runs.
       sync_capabilities: {
         Args: {
-          p_codes?: string[] | null;
-          p_descriptions?: string[] | null;
+          p_codes: unknown[];
+          p_descriptions: unknown[];
         };
         Returns: number;
       };
@@ -8168,7 +7377,7 @@ export type Database = {
       employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
       leave_request_status: "Pending" | "Approved" | "Rejected";
-      letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
+      letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
       order_status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
