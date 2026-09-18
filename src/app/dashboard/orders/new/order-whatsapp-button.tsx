@@ -37,6 +37,9 @@ export function OrderWhatsAppButton({
     buyer_name_address: string | null;
     contact_no: string | null;
     photo_url: string | null;
+    // 2026-09-19 — full saved photo list (Main + Closeups); up to the first
+    // two extras ride along in the shared composite image.
+    photo_urls: string[] | null;
     item_category_name: string | null;
     size_label: string | null;
     qty: number;
@@ -118,10 +121,18 @@ export function OrderWhatsAppButton({
   //    SECOND message.
   //  • If the composite can't be fetched at all: fall back to the old
   //    wa.me text link so the message still goes.
+  // 2026-09-19 — "whatsaap par bhi jayegi ... close photo first & second,
+  // agar single hai to uske hisabse": the composite now carries Main + up
+  // to 2 closeup photos in ONE image (the route bakes Main Photo / Closeup
+  // 1 / Closeup 2 label strips between them). Single-photo orders keep the
+  // exact old look — no strips, no change. photo_url is always Main, so
+  // dedupe against it just in case an entry duplicated the same link.
+  const closeupUrls = (order.photo_urls ?? []).filter((u) => u && u !== order.photo_url).slice(0, 2);
+
   async function fetchComposite(): Promise<Blob | null> {
     if (!order.photo_url) return null;
     const imageParams = new URLSearchParams({
-      url: order.photo_url,
+      url1: order.photo_url,
       ref_no: order.ref_no,
       qty: String(order.qty),
       size: order.size_label || "-",
@@ -134,6 +145,8 @@ export function OrderWhatsAppButton({
       note: order.remark || "-",
       is_amazon: order.is_amazon ? "1" : "0",
     });
+    if (closeupUrls[0]) imageParams.set("url2", closeupUrls[0]);
+    if (closeupUrls[1]) imageParams.set("url3", closeupUrls[1]);
     const res = await fetch(`/api/order-whatsapp-image?${imageParams.toString()}`);
     return res.ok ? res.blob() : null;
   }

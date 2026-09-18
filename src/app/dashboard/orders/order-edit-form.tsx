@@ -247,6 +247,7 @@ export function OrderEditForm({
             id={`photo_url-${order.id}`}
             name="photo_url"
             defaultValue={order.photo_url}
+            label="Main Photo (order photo)"
             labelClass={labelClass}
           />
           {/* 2026-09-18 — multi-photo links: photo_url above stays photo #1;

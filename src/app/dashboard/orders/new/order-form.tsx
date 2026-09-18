@@ -117,7 +117,7 @@ function ItemBlock({
           </select>
         </div>
         <div className="sm:col-span-2">
-          <PhotoUrlField id={id("photo_url")} name={id("photo_url")} labelClass={labelClass} />
+          <PhotoUrlField id={id("photo_url")} name={id("photo_url")} label="Main Photo (order photo)" labelClass={labelClass} />
           {/* 2026-09-18 — "order me agar ek se jyada photo or dalni pade to
               kese manage hoyegi link se dalegi": extra photo links per item,
               added with "+ Add Photo". The first PhotoUrlField above is
