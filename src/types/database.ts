@@ -7932,6 +7932,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      // 2026-09-18 — "P&L by Marketplace" CRM tab, from
+      // db/2026-09-18-pl-by-marketplace-store.sql. One row per store (=
+      // marketplace/channel). See that migration's header comment for why
+      // this exists instead of the uploaded pL.md blueprint's separate
+      // Node.js/Express + new-schema rebuild, and for the deliberate scope
+      // limit (excludes company-wide overhead not tracked per store). Types
+      // file updated ahead of the migration being run — standing rule, see
+      // total_sale_value_usd comment above.
+      pl_dashboard_by_store_view: {
+        Row: {
+          store_id: string | null;
+          store_name: string | null;
+          company_id: string | null;
+          company_name: string | null;
+          order_count: number | null;
+          total_sale_value_inr: number | null;
+          total_sale_value_usd: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          ad_spend_usd: number | null;
+          ad_budget_usd: number | null;
+          net_before_overhead_inr: number | null;
+          profit_pct_before_overhead: number | null;
+          roas: number | null;
+        };
+        Relationships: [];
+      };
       stock_current_view: {
         Row: {
           stock_item_id: string | null;

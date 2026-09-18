@@ -22,6 +22,15 @@ const CRM_TABS = [
   { key: "alerts", label: "Data Quality Alerts" },
   { key: "pl-company", label: "P&L by Company" },
   { key: "pl-month", label: "P&L by Month" },
+  // 2026-09-18 — "P&L by Marketplace", added in response to the uploaded
+  // pL.md blueprint doc's "Marketplace Profitability" idea (Sales/Fees/Ad
+  // Spend/ROAS/Shipping/Profit per channel). Built on the EXISTING schema
+  // (stores = the document's "marketplaces" concept, already one row per
+  // Amazon US/Amazon UK/Etsy/Website/Wholesale etc. per company) via
+  // db/2026-09-18-pl-by-marketplace-store.sql — see that file's header for
+  // why the document's separate Node.js/Express + new-schema rebuild
+  // wasn't the right move here.
+  { key: "pl-marketplace", label: "P&L by Marketplace" },
 ] as const;
 type CrmTabKey = (typeof CRM_TABS)[number]["key"];
 function isCrmTabKey(v: string | undefined): v is CrmTabKey {
@@ -272,6 +281,7 @@ export default async function CrmOverviewPage({
     { data: plByCompany, error: plByCompanyErr },
     { data: plByMonth, error: plByMonthErr },
     { data: plByCompanyMonth, error: plByCompanyMonthErr },
+    { data: plByStore, error: plByStoreErr },
     quickFindResult,
     { data: buyerOrderRows },
   ] = await Promise.all([
@@ -299,6 +309,22 @@ export default async function CrmOverviewPage({
         "company_id, company_name, month, total_sale_value_inr, total_sale_value_usd, total_expenses_inr, total_internal_expenses_inr, expense_courier_inr, expense_duty_inr, expense_purchase_inr, expense_purchase_adjustments_inr, expense_washing_inr, expense_historical_inr, portal_fees_matched_inr, bank_inflow_inr",
       )
       .in("company_id", employee.companyIds),
+    // 2026-09-18 — pl_dashboard_by_store_view (see db/2026-09-18-pl-by-
+    // marketplace-store.sql). Feature-detected exactly like plByCompanyMonth
+    // above: if that migration hasn't been run yet on the DB, this query
+    // errors, plByStore stays undefined, and the "P&L by Marketplace" tab
+    // shows a not-yet-available message instead of breaking the page.
+    // Scoped to the currently selected company only (not employee.companyIds)
+    // — unlike "P&L by Company" this is a per-store DETAIL table, not a
+    // company-comparison table, and a login with access to several
+    // companies would otherwise see every store across all of them mixed
+    // into one list.
+    finSupabase
+      .from("pl_dashboard_by_store_view")
+      .select(
+        "store_id, store_name, company_id, company_name, order_count, total_sale_value_inr, total_sale_value_usd, expense_courier_inr, expense_duty_inr, portal_expenses_25pct, portal_expense_effective_inr, portal_fees_matched_inr, ad_spend_usd, ad_budget_usd, net_before_overhead_inr, profit_pct_before_overhead, roas",
+      )
+      .eq("company_id", employee.currentCompanyId),
     query
       ? supabase
           .from("orders")
@@ -472,6 +498,12 @@ export default async function CrmOverviewPage({
   const fycOptionsAvailable = !plByCompanyMonthErr && (plByCompanyMonth ?? []).length > 0;
   const plCompanyRowsFiltered =
     fycSelected && plByCompanyMonth ? aggregateCompanyForFy(plByCompanyMonth, fycSelected) : (plCompanyRows ?? []);
+
+  // 2026-09-18 — "P&L by Marketplace" rows. Same feature-detection pattern:
+  // if the migration hasn't run yet, plByStoreErr is set and the tab shows
+  // a friendly "not set up yet" message instead of an empty/broken table.
+  const plStoreAvailable = !plByStoreErr;
+  const plStoreRows = (plByStore ?? []).filter((r) => Number(r.total_sale_value_inr ?? 0) !== 0 || Number(r.order_count ?? 0) > 0);
 
   const orderStatusCounts = new Map<string, number>();
   for (const row of orderStatusCountRows ?? []) {
@@ -851,6 +883,139 @@ export default async function CrmOverviewPage({
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {activeTab === "pl-marketplace" && (
+        <div className="oms-card rounded-xl border p-4">
+          <h2 className="mb-1 text-sm font-semibold text-[var(--oms-text)]">P&amp;L by Marketplace (current company, all time)</h2>
+          {!plStoreAvailable ? (
+            <p className="mt-3 rounded-lg bg-[var(--oms-canvas)] p-3 text-xs text-[var(--oms-text-muted)]">
+              This section needs db/2026-09-18-pl-by-marketplace-store.sql run in Supabase SQL Editor first — ask whoever runs
+              your database migrations to apply it, then reload this page.
+            </p>
+          ) : (
+            <>
+              <p className="mb-3 text-xs text-[var(--oms-text-muted)]">
+                One row per store (Amazon US, Amazon UK, Etsy, Website, Wholesale, etc.). Shows Sale Value, Courier + Duty,
+                matched Portal/Marketplace Fees, Ad Spend and ROAS. This does <span className="font-semibold">not</span> include
+                purchase/production cost, washing chalans or office overhead — those are tracked per company, not per
+                marketplace, in this system, so &quot;Net (before overhead)&quot; below is profit before those costs, not the
+                full net profit — see P&amp;L by Company/Month for that.
+              </p>
+              <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+                <p className="mb-2 text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value vs Courier+Duty+Fees vs Net (before overhead), by marketplace</p>
+                <GroupedBarChart
+                  groups={plStoreRows.map((r) => ({
+                    label: r.store_name ?? "—",
+                    values: [
+                      Number(r.total_sale_value_inr ?? 0),
+                      Number(r.expense_courier_inr ?? 0) + Number(r.expense_duty_inr ?? 0) + Number(r.portal_expense_effective_inr ?? 0),
+                      Number(r.net_before_overhead_inr ?? 0),
+                    ],
+                  }))}
+                  series={[
+                    { name: "Sale Value (INR)", color: "#0284c7" },
+                    { name: "Courier+Duty+Fees (INR)", color: "#dc2626" },
+                    { name: "Net, before overhead (INR)", color: "#059669" },
+                  ]}
+                  valueFormatter={(v) => inr2(v)}
+                />
+              </div>
+              {plStoreRows.some((r) => Number(r.ad_spend_usd ?? 0) > 0) && (
+                <div className="mb-4 rounded-lg bg-[var(--oms-canvas)] p-3">
+                  <p className="mb-2 text-xs font-semibold text-[var(--oms-text-muted)]">ROAS (Sale Value USD ÷ Ad Spend USD) — marketplaces with ad spend entered</p>
+                  <BarChart
+                    data={plStoreRows
+                      .filter((r) => Number(r.ad_spend_usd ?? 0) > 0)
+                      .map((r) => ({ label: r.store_name ?? "—", value: Number(r.roas ?? 0), color: "#7c3aed" }))}
+                    valueFormatter={(v) => `${v.toFixed(2)}x`}
+                  />
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-[var(--oms-surface-border)] text-sm">
+                  <thead className="bg-[var(--oms-canvas)]">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--oms-text-muted)]">Marketplace / Store</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Orders</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (INR)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Sale Value (USD)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Courier (INR)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Duty (INR)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Portal Fees (INR)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Ad Spend (USD)</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">ROAS</th>
+                      <th className="px-3 py-2 text-right text-xs font-semibold text-[var(--oms-text-muted)]">Net (before overhead)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--oms-surface-border)]">
+                    {plStoreRows.length === 0 && (
+                      <tr><td colSpan={10} className="px-3 py-6 text-center text-[var(--oms-text-muted)]">No orders yet for this company.</td></tr>
+                    )}
+                    {(() => {
+                      const totals = plStoreRows.reduce(
+                        (acc, r) => ({
+                          orders: acc.orders + Number(r.order_count ?? 0),
+                          saleInr: acc.saleInr + Number(r.total_sale_value_inr ?? 0),
+                          saleUsd: acc.saleUsd + Number(r.total_sale_value_usd ?? 0),
+                          courier: acc.courier + Number(r.expense_courier_inr ?? 0),
+                          duty: acc.duty + Number(r.expense_duty_inr ?? 0),
+                          fees: acc.fees + Number(r.portal_expense_effective_inr ?? 0),
+                          adSpend: acc.adSpend + Number(r.ad_spend_usd ?? 0),
+                          net: acc.net + Number(r.net_before_overhead_inr ?? 0),
+                        }),
+                        { orders: 0, saleInr: 0, saleUsd: 0, courier: 0, duty: 0, fees: 0, adSpend: 0, net: 0 },
+                      );
+                      return (
+                        <>
+                          {plStoreRows.map((r) => (
+                            <tr key={r.store_id}>
+                              <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--oms-text)]">
+                                {r.store_name}
+                                <span className="ml-1.5 text-[10px] font-normal text-[var(--oms-text-muted)]">{r.company_name}</span>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{r.order_count ?? 0}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">{inr2(r.total_sale_value_inr)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-in font-semibold text-sky-700">${usd2(r.total_sale_value_usd)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(r.expense_courier_inr)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(r.expense_duty_inr)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600" title={Number(r.portal_fees_matched_inr ?? 0) > 0 ? "real, matched fees" : "25% estimate — no matched statement fees yet"}>
+                                {inr2(r.portal_expense_effective_inr)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">${usd2(r.ad_spend_usd)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">
+                                {r.roas !== null && r.roas !== undefined ? `${Number(r.roas).toFixed(2)}x` : "—"}
+                              </td>
+                              <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${Number(r.net_before_overhead_inr ?? 0) >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>
+                                {inr2(r.net_before_overhead_inr)}
+                              </td>
+                            </tr>
+                          ))}
+                          {plStoreRows.length > 0 && (
+                            <tr className="bg-[var(--oms-canvas)] font-semibold">
+                              <td className="whitespace-nowrap px-3 py-2 text-[var(--oms-text)]">Total ({plStoreRows.length} marketplaces)</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">{totals.orders}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-in text-sky-700">{inr2(totals.saleInr)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-in text-sky-700">${usd2(totals.saleUsd)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.courier)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.duty)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right pl-out text-rose-600">{inr2(totals.fees)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">${usd2(totals.adSpend)}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right text-[var(--oms-text)]">
+                                {totals.adSpend > 0 ? `${(totals.saleUsd / totals.adSpend).toFixed(2)}x` : "—"}
+                              </td>
+                              <td className={`whitespace-nowrap px-3 py-2 text-right ${totals.net >= 0 ? "pl-profit text-emerald-700" : "pl-loss text-rose-700"}`}>{inr2(totals.net)}</td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
