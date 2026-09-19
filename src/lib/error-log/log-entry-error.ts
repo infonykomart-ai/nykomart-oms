@@ -14,7 +14,13 @@ import type { createServiceRoleClient } from "@/lib/supabase/server";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
-export type EntryErrorSource = "validation" | "courier_api" | "manual";
+// 2026-09-19 (audit fix, item C5) — added 'system': a background/automatic
+// process failed on its own (no form submission, no API call, no employee
+// action to attribute it to) — e.g. tasks/actions.ts's daily-time-log sync
+// or auto-created daily_work_logs row failing silently. Previously these
+// were only console.error'd, invisible to anyone but someone reading server
+// logs; now they land here like every other "something went wrong" case.
+export type EntryErrorSource = "validation" | "courier_api" | "manual" | "system";
 
 export type LogEntryErrorParams = {
   companyId?: string | null;

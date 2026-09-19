@@ -26,10 +26,17 @@
 // itself (server actions) is unchanged — components importing it just
 // moved.
 import { revalidatePath } from "next/cache";
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, splitIntervalByISTDay } from "@/lib/attendance/ist-date";
 import { notifyCompanion } from "@/lib/companion/notify";
+// 2026-09-19 (audit fix, item C5) — recordDailySegmentsAndGetToday and
+// markTaskDone's daily_work_logs insert both silently swallowed a failure
+// (console.error only) and still reported success to the caller. Neither
+// becomes blocking because of this fix — see recordDailySegmentsAndGetToday's
+// own comment on why a logging failure must never undo the timer/task
+// action that already committed — it just also lands somewhere visible.
+import { logEntryError } from "@/lib/error-log/log-entry-error";
 
 /**
  * 2026-09-09 — commits a stopped timer interval into task_daily_time_log,
@@ -48,6 +55,7 @@ import { notifyCompanion } from "@/lib/companion/notify";
  */
 async function recordDailySegmentsAndGetToday(
   supabase: ReturnType<typeof createServiceRoleClient>,
+  employee: AuthedEmployee,
   taskId: string,
   startIso: string,
   endIso: string
@@ -60,10 +68,33 @@ async function recordDailySegmentsAndGetToday(
         p_log_date: seg.logDate,
         p_seconds: seg.seconds,
       });
-      if (error) console.error("recordDailySegmentsAndGetToday: add_task_daily_time failed", seg, error);
+      if (error) {
+        console.error("recordDailySegmentsAndGetToday: add_task_daily_time failed", seg, error);
+        // 2026-09-19 (audit fix, item C5) — previously console.error only,
+        // invisible outside server logs. Still non-blocking (return below
+        // still runs regardless), just also visible on /dashboard/error-log.
+        await logEntryError(supabase, {
+          companyId: employee.currentCompanyId,
+          source: "system",
+          reason: `Task daily-time sync failed for ${seg.logDate} (${seg.seconds}s): ${error.message}`,
+          referenceType: "task",
+          referenceId: taskId,
+          raisedByEmployeeId: employee.id,
+          raisedByName: employee.name,
+        });
+      }
     }
   } catch (e) {
     console.error("recordDailySegmentsAndGetToday: failed to split/record interval", e);
+    await logEntryError(supabase, {
+      companyId: employee.currentCompanyId,
+      source: "system",
+      reason: `Task daily-time interval split/record failed: ${e instanceof Error ? e.message : String(e)}`,
+      referenceType: "task",
+      referenceId: taskId,
+      raisedByEmployeeId: employee.id,
+      raisedByName: employee.name,
+    });
   }
   const { data } = await supabase
     .from("task_daily_time_log")
@@ -215,7 +246,7 @@ export async function pauseTaskTimer(id: string): Promise<TimerActionResult> {
   // the task itself is still incomplete (only Done previously synced
   // anything visible day-by-day — see this file's header comment on the
   // new table for the full "why").
-  const todaySeconds = await recordDailySegmentsAndGetToday(supabase, id, startedAtIso, nowIso);
+  const todaySeconds = await recordDailySegmentsAndGetToday(supabase, employee, id, startedAtIso, nowIso);
   revalidatePath("/dashboard/attendance");
   revalidatePath("/dashboard/attendance/admin");
   return { error: null, timerStartedAt: data.timer_started_at, timeSpentSeconds: data.time_spent_seconds, firstStartedAt: data.first_started_at, lastPausedAt: data.last_paused_at, status: data.status, todaySeconds };
@@ -265,7 +296,7 @@ export async function markTaskDone(id: string): Promise<TimerActionResult & { su
   // timer was actually running at the moment of Done (mirrors the
   // conditional timerPatch above).
   const todaySeconds = wasRunningSince
-    ? await recordDailySegmentsAndGetToday(supabase, id, wasRunningSince, nowIso)
+    ? await recordDailySegmentsAndGetToday(supabase, employee, id, wasRunningSince, nowIso)
     : (await supabase.from("task_daily_time_log").select("seconds_spent").eq("task_id", id).eq("log_date", todayIST()).maybeSingle()).data?.seconds_spent ?? 0;
 
   // Best-effort: a failure here shouldn't undo the task being marked
@@ -273,7 +304,7 @@ export async function markTaskDone(id: string): Promise<TimerActionResult & { su
   // move on, same "never let a secondary effect block the real action"
   // principle as punchOutOnLogout elsewhere in this codebase.
   try {
-    await supabase.from("daily_work_logs").insert({
+    const { error: dwlError } = await supabase.from("daily_work_logs").insert({
       employee_id: employee.id,
       company_id: existing.company_id,
       log_date: todayIST(),
@@ -285,8 +316,24 @@ export async function markTaskDone(id: string): Promise<TimerActionResult & { su
       last_paused_at: nowIso,
       submitted_at: nowIso,
     });
+    if (dwlError) throw dwlError;
   } catch (e) {
     console.error("markTaskDone: failed to auto-create daily_work_logs row", e);
+    // 2026-09-19 (audit fix, item C5) — previously console.error only: the
+    // task showed "Done" while this row silently never got created, a
+    // payroll/attendance data gap invisible to the employee. Still
+    // non-blocking (markTaskDone still returns success below), just also
+    // now visible on /dashboard/error-log so it can actually get fixed.
+    await logEntryError(supabase, {
+      companyId: existing.company_id,
+      source: "system",
+      reason: `Task marked Done but its Daily Work Log row failed to auto-create: ${e instanceof Error ? e.message : String(e)}`,
+      referenceType: "task",
+      referenceId: id,
+      referenceLabel: existing.description,
+      raisedByEmployeeId: employee.id,
+      raisedByName: employee.name,
+    });
   }
 
   revalidatePath("/dashboard/attendance");

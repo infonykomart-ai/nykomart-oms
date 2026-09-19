@@ -95,37 +95,45 @@ export async function computeCurrencyConversion(
 
   // Any other currency: its own official/live rate to INR first, then
   // INR -> USD via USD's own official/live rate.
-  let inr: number | null = null;
+  // 2026-09-19 (audit fix, item C2) — inrRaw below is kept UNROUNDED and is
+  // what USD is derived from; only the returned `inr` is rounded for
+  // display/storage. Previously USD was derived from the already-rounded
+  // `inr`, compounding a sub-paisa rounding difference on top of the one
+  // `usd` itself picks up from its own round2() — cosmetic only (confirmed
+  // separately: missing/zero exchange rates are handled correctly, never
+  // default to 1:1), but there's no reason to compound it when the raw
+  // intermediate value is right here.
+  let inrRaw: number | null = null;
   const sourceParts: string[] = [];
 
   const ownOfficial = await officialRate(supabase, currency, orderDate);
   if (ownOfficial) {
-    inr = round2(originalValue * ownOfficial.rateToInr);
+    inrRaw = originalValue * ownOfficial.rateToInr;
     sourceParts.push(`${currency}→INR official rate as of ${ownOfficial.effectiveFrom}`);
   } else {
     const ownToInr = await liveRate(currency, "INR");
     if (ownToInr != null) {
-      inr = round2(originalValue * ownToInr);
+      inrRaw = originalValue * ownToInr;
       sourceParts.push(`${currency}→INR live market estimate`);
     }
   }
 
-  if (inr == null) {
+  if (inrRaw == null) {
     return { usd: null, inr: null, source: "Conversion unavailable — add an Exchange Rate Master entry for this date" };
   }
 
   const usdOfficial = await officialRate(supabase, "USD", orderDate);
   let usd: number | null = null;
   if (usdOfficial) {
-    usd = round2(inr / usdOfficial.rateToInr);
+    usd = round2(inrRaw / usdOfficial.rateToInr);
     sourceParts.push(`INR→USD official rate as of ${usdOfficial.effectiveFrom}`);
   } else {
     const usdToInr = await liveRate("USD", "INR");
     if (usdToInr != null) {
-      usd = round2(inr / usdToInr);
+      usd = round2(inrRaw / usdToInr);
       sourceParts.push("INR→USD live market estimate");
     }
   }
 
-  return { usd, inr, source: sourceParts.join("; ") || "Conversion unavailable" };
+  return { usd, inr: round2(inrRaw), source: sourceParts.join("; ") || "Conversion unavailable" };
 }

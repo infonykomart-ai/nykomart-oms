@@ -9,7 +9,7 @@ import { ErrorRowActions } from "./error-row-actions";
 // — deliberately its own screen rather than folded into Audit Log, since
 // this has a resolved/pending lifecycle Audit Log doesn't.
 //
-// Unifies 3 sources, all written via src/lib/error-log/log-entry-error.ts:
+// Unifies 4 sources, all written via src/lib/error-log/log-entry-error.ts:
 //   - validation:   a form submission was rejected (order entry, courier
 //                    booking) before it could save.
 //   - courier_api:  a real courier booking API call failed — a sibling to
@@ -17,6 +17,10 @@ import { ErrorRowActions } from "./error-row-actions";
 //                    it shows up in one place alongside the other 2.
 //   - manual:       an employee explicitly flagged something wrong (see
 //                    the "🚩 Flag as Error" button on the order detail page).
+//   - system:       2026-09-19 (audit fix, item C5) — a background/
+//                    automatic process failed on its own, no employee
+//                    action involved (e.g. Task Management's daily-time-log
+//                    sync). Previously only console.error'd.
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500";
 
@@ -24,6 +28,7 @@ const SOURCES = [
   { value: "validation", label: "Validation" },
   { value: "courier_api", label: "Courier/API" },
   { value: "manual", label: "Manual flag" },
+  { value: "system", label: "System" },
 ];
 
 export default async function ErrorLogPage({
