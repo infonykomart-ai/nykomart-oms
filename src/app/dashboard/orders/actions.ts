@@ -139,20 +139,6 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       colour: strOrNull(formData, "colour"),
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
       photo_url: strOrNull(formData, "photo_url"),
-      // 2026-09-18 — multi-photo links: merge photo #1 (the PhotoUrlField)
-      // with the "+ Add Photo" extra rows into the canonical photo_urls
-      // list; photo_url stays the first element so every pre-existing
-      // consumer (thumbnail/print/WhatsApp) is untouched. De-duped, blanks
-      // dropped. Empty array (not null) when no photos, matching the
-      // insert path in new/actions.ts.
-      photo_urls: (() => {
-        const extras = formData
-          .getAll("photo_extra_urls")
-          .map((v) => String(v ?? "").trim())
-          .filter(Boolean);
-        const first = strOrNull(formData, "photo_url");
-        return Array.from(new Set([first, ...extras].filter((u): u is string => !!u)));
-      })(),
       tassel_fringes: formData.get("tassel_fringes") === "on",
       buyer_name_address: buyerNameAddress,
       buyer_country: buyerCountry,
@@ -395,20 +381,20 @@ export async function saveOrderRefundCore(
     return { error: "This order was not found, or you don't have access to this company.", success: null };
   }
 
+  const conversion = await computeCurrencyConversion(supabase, refundCurrency, refundDate, refundAmount);
+
   // Refund cap — the total refunded against this order must never exceed
-  // the order's own value, compared strictly in the order's OWN currency
-  // (order_currency/order_value_original) — never cross-currency (e.g.
-  // never comparing a USD order against an INR-converted refund total).
+  // the order's own value. Primary check, compared strictly in the order's
+  // OWN currency (order_currency/order_value_original) — never cross-
+  // currency for THIS check (e.g. never comparing a USD order against an
+  // INR-converted refund total), per the owner's own explicit decision.
   // Only refund rows already entered in that same currency are summed on
-  // either side of the check; a refund entered in a different currency
-  // than the order can't be compared without a conversion, so — per that
-  // "never cross-currency" rule — it's left out of this cap entirely
-  // rather than approximated.
+  // either side.
+  const { data: existingRefunds } = await supabase
+    .from("order_refunds")
+    .select("refund_amount, refund_currency, refund_amount_inr")
+    .eq("order_id", order.id);
   if (refundCurrency === order.order_currency) {
-    const { data: existingRefunds } = await supabase
-      .from("order_refunds")
-      .select("refund_amount, refund_currency")
-      .eq("order_id", order.id);
     const existingSameCurrencyTotal = (existingRefunds ?? [])
       .filter((r) => r.refund_currency === order.order_currency)
       .reduce((sum, r) => sum + Number(r.refund_amount), 0);
@@ -423,7 +409,32 @@ export async function saveOrderRefundCore(
     }
   }
 
-  const conversion = await computeCurrencyConversion(supabase, refundCurrency, refundDate, refundAmount);
+  // 2026-09-19 (audit fix) — INR safety-net cap, SECOND and independent of
+  // the same-currency check above (both must pass; this never replaces
+  // it). The owner's decision above was specifically to never
+  // cross-convert for the PRIMARY cap, to avoid comparing an approximated
+  // number — but that left a refund entered in a DIFFERENT currency than
+  // the order with NO cap at all, not even a rough one: nothing stopped an
+  // arbitrarily large refund once its currency didn't match the order's.
+  // Every refund row already stores a real INR conversion
+  // (refund_amount_inr, via this same computeCurrencyConversion() call —
+  // the one helper every INR figure in this app is built from), and every
+  // order already has its own order_value_inr — so this reuses numbers the
+  // system is already computing and storing anyway, not a new
+  // approximation invented for this check. A ₹1 epsilon (vs. same-currency
+  // check's ₹0.01) allows for the small rounding noise that legitimately
+  // compounds when several refunds, each separately converted at their own
+  // refund-date rate, are summed together.
+  if (order.order_value_inr != null && conversion.inr != null) {
+    const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
+    const prospectiveInrTotal = existingInrTotal + conversion.inr;
+    if (prospectiveInrTotal > Number(order.order_value_inr) + 1) {
+      return {
+        error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${Number(order.order_value_inr).toFixed(2)}.`,
+        success: null,
+      };
+    }
+  }
 
   let creditNoteId: string | null = null;
   let creditNoteNo: string | null = null;
@@ -444,7 +455,25 @@ export async function saveOrderRefundCore(
         refund_amount: refundAmount,
         refund_amt_usd: refundCurrency === "USD" ? refundAmount : null,
         refund_amt_inr: refundCurrency === "INR" ? refundAmount : null,
-        refund_type: refundAmount >= Number(order.order_value_original) ? "FULL REFUND" : "PARTIAL REFUND",
+        // 2026-09-19 (audit fix) — this used to compare the raw entered
+        // refundAmount against order_value_original with NO currency check
+        // at all, so a refund entered in a different currency than the
+        // order could be mislabeled FULL/PARTIAL (e.g. a small refund in a
+        // strong currency looking "FULL" against a large order value in a
+        // weak one, or vice versa). Both sides are now compared in INR —
+        // conversion.inr/order.order_value_inr are always in the same unit
+        // regardless of which currency the refund/order were entered in —
+        // falling back to the original same-currency-only comparison only
+        // when an INR conversion genuinely isn't available (never silently
+        // guessing a 1:1 rate).
+        refund_type:
+          conversion.inr != null && order.order_value_inr != null
+            ? conversion.inr >= Number(order.order_value_inr)
+              ? "FULL REFUND"
+              : "PARTIAL REFUND"
+            : refundAmount >= Number(order.order_value_original)
+              ? "FULL REFUND"
+              : "PARTIAL REFUND",
         created_by_employee_id: employee.id,
         remark: reason,
       })

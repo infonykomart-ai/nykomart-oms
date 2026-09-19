@@ -32,7 +32,7 @@
 // companies, so the bill header itself isn't company-scoped; only the
 // AWB lookup re-checks employee.companyIds (via the order it resolves to).
 
-import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
+import { requireCapability, requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
@@ -467,6 +467,15 @@ export type RelatedNote = {
 };
 
 export async function listRelatedNotesForBills(billPassRegisterIds: string[]): Promise<RelatedNote[]> {
+  // 2026-09-19 (audit fix) — this had no auth check at all. Both current
+  // callers (documents/page.tsx, bill-payment/page.tsx) are already
+  // capability-gated Server Components, so this was not yet a real leak —
+  // but it's exactly the same "service-role client, no requireAnyCapability
+  // call, arbitrary ids in" shape as the getGroupMembers bug fixed the same
+  // day, one careless future client-component import away from becoming one
+  // (this returns credit/debit-note amounts and doc numbers across every
+  // company). Fixed defensively rather than waiting for that to happen.
+  await requireAnyCapability("bill_payment", "doc_entry");
   const ids = Array.from(new Set(billPassRegisterIds.filter(Boolean)));
   if (ids.length === 0) return [];
   const supabase = createServiceRoleClient();

@@ -86,6 +86,38 @@ function resolveCombinedOrderIds(formData: FormData, primaryOrderId: string): st
   return [primaryOrderId, ...siblingIds];
 }
 
+// 2026-09-19 (audit fix) — every create*Booking action below reads order_id
+// (and, for a combined shipment, combined_order_ids) straight out of the
+// submitted formData and, until this fix, never checked it belonged to a
+// company the signed-in employee actually has access to. Only the SEPARATE
+// lookupOrderForCourierBooking action scoped its query by
+// employee.companyIds — nothing stopped a direct submit of the create
+// action with a different order_id, which would book a real shipment
+// (spending that company's real courier account/money) against another
+// company's order and overwrite its shipment status/rows. Every
+// create*Booking action now calls this right after validating orderId is
+// present, before doing any courier-credential lookup or API call.
+async function assertOrdersInEmployeeCompanies(
+  supabase: ServiceClient,
+  orderIds: string[],
+  companyIds: string[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ids = Array.from(new Set(orderIds.filter(Boolean)));
+  if (ids.length === 0) return { ok: false, error: "Missing order — look it up again." };
+  const { data: rows, error } = await supabase.from("orders").select("id, company_id").in("id", ids);
+  if (error) return { ok: false, error: `Order lookup failed: ${error.message}` };
+  const foundIds = new Set((rows ?? []).map((r) => r.id));
+  for (const id of ids) {
+    if (!foundIds.has(id)) return { ok: false, error: "Order not found — look it up again." };
+  }
+  for (const r of rows ?? []) {
+    if (!companyIds.includes(r.company_id)) {
+      return { ok: false, error: "One of these orders belongs to a company you don't have access to — booking blocked." };
+    }
+  }
+  return { ok: true };
+}
+
 // 2026-09-08: root-caused a real FedEx 400 ("Recipient state and postal
 // code mismatch") back to this field. The "Country Code * (2-letter)"
 // input on the shared booking form defaults from orders.destination_country,
@@ -1336,6 +1368,8 @@ export async function createFedexBooking(_prev: CourierBookingCreateState, formD
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
+  const companyCheckFedex = await assertOrdersInEmployeeCompanies(supabase, resolveCombinedOrderIds(formData, orderId), employee.companyIds);
+  if (!companyCheckFedex.ok) return { ...CREATE_INITIAL, error: companyCheckFedex.error };
   // 2026-09-17 — "dropdown se company select karte hi automatically sabhi
   // cheezein company profile ke hisab se ho jaye": the account number is
   // the company's OWN saved value (Account Setup), with the form field as
@@ -1600,6 +1634,8 @@ export async function createUpsBooking(_prev: CourierBookingCreateState, formDat
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
+  const companyCheckUps = await assertOrdersInEmployeeCompanies(supabase, resolveCombinedOrderIds(formData, orderId), employee.companyIds);
+  if (!companyCheckUps.ok) return { ...CREATE_INITIAL, error: companyCheckUps.error };
   const savedUps = await resolveCourierCredentials(supabase, employee.currentCompanyId, "ups");
   const shipperNumber = str(formData, "ups_shipper_number").trim() || (savedUps.shipper_number ?? "");
   if (!shipperNumber) return { ...CREATE_INITIAL, error: "UPS Shipper Number is required — save it once in Courier Ops → Account Setup → UPS and it will fill automatically hereafter." };
@@ -1778,6 +1814,8 @@ export async function createAramexBooking(_prev: CourierBookingCreateState, form
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
+  const companyCheckAramex = await assertOrdersInEmployeeCompanies(supabase, resolveCombinedOrderIds(formData, orderId), employee.companyIds);
+  if (!companyCheckAramex.ok) return { ...CREATE_INITIAL, error: companyCheckAramex.error };
   const savedAramex = await resolveCourierCredentials(supabase, employee.currentCompanyId, "aramex");
   const accountNumber = str(formData, "aramex_account_number").trim() || (savedAramex.account_number ?? "");
   if (!accountNumber) return { ...CREATE_INITIAL, error: "Aramex Account Number is required — save it once in Courier Ops → Account Setup → Aramex and it will fill automatically hereafter." };
@@ -1960,6 +1998,8 @@ export async function createDelhiveryBooking(_prev: CourierBookingCreateState, f
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
+  const companyCheckDelhivery = await assertOrdersInEmployeeCompanies(supabase, resolveCombinedOrderIds(formData, orderId), employee.companyIds);
+  if (!companyCheckDelhivery.ok) return { ...CREATE_INITIAL, error: companyCheckDelhivery.error };
   const pickupLocationName = str(formData, "pickup_location_name");
   if (!pickupLocationName) return { ...CREATE_INITIAL, error: "Delhivery Pickup Location Name is required (must match a location registered on the Delhivery dashboard)." };
 
@@ -2094,6 +2134,8 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
+  const companyCheckShiprocket = await assertOrdersInEmployeeCompanies(supabase, resolveCombinedOrderIds(formData, orderId), employee.companyIds);
+  if (!companyCheckShiprocket.ok) return { ...CREATE_INITIAL, error: companyCheckShiprocket.error };
   const pickupLocationName = str(formData, "pickup_location_name");
   if (!pickupLocationName) return { ...CREATE_INITIAL, error: "Shiprocket Pickup Location Name is required (must match a location registered on the Shiprocket dashboard)." };
 
@@ -2248,6 +2290,8 @@ export async function createDhlBooking(_prev: CourierBookingCreateState, formDat
 
   const orderId = str(formData, "order_id");
   if (!orderId) return { ...CREATE_INITIAL, error: "Missing order — look it up again." };
+  const companyCheckDhl = await assertOrdersInEmployeeCompanies(supabase, resolveCombinedOrderIds(formData, orderId), employee.companyIds);
+  if (!companyCheckDhl.ok) return { ...CREATE_INITIAL, error: companyCheckDhl.error };
   const savedDhl = await resolveCourierCredentials(supabase, employee.currentCompanyId, "dhl");
   const accountNumber = str(formData, "dhl_account_number").trim() || (savedDhl.account_number ?? "");
   if (!accountNumber) return { ...CREATE_INITIAL, error: "DHL Express Account Number is required — save it once in Courier Ops → Account Setup → DHL and it will fill automatically hereafter." };

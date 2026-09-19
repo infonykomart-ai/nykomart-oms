@@ -150,7 +150,18 @@ export async function getUnreadCounts(): Promise<{ direct: number; group: number
 export type GroupMemberInfo = { employeeId: string; name: string };
 
 export async function getGroupMembers(conversationId: string): Promise<GroupMemberInfo[]> {
+  // 2026-09-19 (audit fix) — this had NO auth check at all: any signed-in
+  // (or even unauthenticated Server Action) caller could pass an arbitrary
+  // conversationId and get back every member's name via the service-role
+  // client, regardless of whether they belonged to that conversation.
+  // Fixed to match getGroupThreadMessages' own established pattern just
+  // above: require a real signed-in employee, then confirm THEY are a
+  // member of this conversation before returning anything about it.
+  const employee = await getAuthedEmployee();
   const supabase = createServiceRoleClient();
+  const { data: membership } = await supabase.from("conversation_members").select("employee_id").eq("conversation_id", conversationId).eq("employee_id", employee.id).maybeSingle();
+  if (!membership) return []; // not a member — nothing to show, same convention as getGroupThreadMessages
+
   const { data: members } = await supabase.from("conversation_members").select("employee_id").eq("conversation_id", conversationId);
   const ids = (members ?? []).map((m) => m.employee_id);
   if (ids.length === 0) return [];
