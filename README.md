@@ -1,138 +1,134 @@
-# Audit Phase 3 — Cleanup (LOW severity) — 2026-09-19
+# Audit Phase 4 — Supabase Hardening + Old Reconciliation Check — 2026-09-19
 
-Yeh Phase 3 hai — audit ke LOW severity items (C1 se C6). Pichle Phase 1 (Security+Money)
-aur Phase 2 (Data Integrity) already deliver ho chuke hain. Neeche har item ka detail hai —
-kya tha, kya fix kiya, kaunse files change hue.
+Yeh Phase 4 hai — audit ka aakhri phase. Isme 2 items original audit se ZYADA serious nikle
+(jo pehle "harmless cleanup" bola gaya tha) — dono ka DB fix **already live apply ho chuka hai**
+aapki permission se. Neeche sab detail hai.
 
----
-
-## C1 — Credit Note Rate Difference Calculator mein GST missing tha
-
-**Important: original audit finding thoda galat tha, yahan diagnosis correct kiya gaya hai.**
-
-Pehle laga tha ki **Debit Note's** Rate Difference Calculator mein GST missing hai. Deep check
-karne par pata chala ki Debit Note ka calculator already sahi hai by design — `debit_notes`
-table mein `cgst_2_5pct`, `sgst_2_5pct`, `total_amount` GENERATED columns hain jo automatically
-5% GST add kar dete hain. Yeh exactly waisa hi kaam karta hai jaisa uske apne worked example
-mein documented hai (Qty 20, Debit Amount 200, CGST/SGST 5-5, Total 210). Isse chheda nahi gaya.
-
-Asli bug **Credit Note's** parallel calculator mein mila — uske sibling flow (Bill Payment
-panel ka apna CN dialog) mein pehle se hi `gst_rate_pct` field hai, lekin `documents` page ka
-Rate Difference Calculator flow mein GST field tha hi nahi. Ab fix kar diya:
-
-- Credit Note form mein GST % dropdown add kiya (No GST / 2.5% / 3% / 4% / 6% / 9% — same
-  options jo Bill Payment panel already use karta hai).
-- Base amount + GST breakdown preview mein dikhta hai ab ("Base ₹X + GST Y% = ₹Z").
-- `credit_notes.gst_rate_pct` column (already exists, pehle se hi Bill Payment flow use karta
-  tha) ab is flow se bhi set ho sakta hai. GST blank chhodne par pehle jaisa hi behavior (no
-  GST) rehta hai — koi existing data ya flow break nahi hota.
-
-Files: `src/app/dashboard/documents/actions.ts`, `src/app/dashboard/documents/credit-note-form.tsx`
+**Important: is zip mein saare DB migrations documentation ke liye hain — woh sab pehle se hi
+live Supabase par apply ho chuke hain is session mein. Sirf 3 code files (.tsx) hain jo aapko
+apne repo mein deploy karni hain.**
 
 ---
 
-## C2 — Currency conversion mein rounding double ho raha tha
+## D1 — Group Messaging RLS asli security bug (HIGH, already applied live)
 
-`src/lib/orders/currency.ts` mein jab koi order INR ke alawa kisi aur currency mein hota tha,
-to USD equivalent nikalne ke liye pehle INR ko round kiya jaata tha, phir us rounded value ko
-exchange rate se divide karke USD nikalta tha — isse chhota sa rounding error accumulate ho
-sakta tha. Ab USD seedha unrounded INR se derive hota hai, aur final INR value alag se round
-hoti hai. Numbers ab zyada accurate hain, especially bulk/summary reports mein jahan yeh farak
-add up ho sakta tha.
+Original audit mein yeh "10 duplicate RLS policies, harmless" bola gaya tha — galat tha. Asli
+mein `conversations`, `conversation_members`, `conversation_messages`, `companion_events`,
+`companion_character_image`, `help_articles`, `direct_messages` — in saari tables par ek
+blanket policy (`allow_authenticated_all`) thi jo har logged-in employee ko full access deti
+thi, jiski wajah se in tables ki "sahi" scoped policies (jaise "sirf apne conversation ke
+messages dikhao") kaam hi nahi kar rahi thi.
 
-Files: `src/lib/orders/currency.ts`
+**Confirm kiya ki yeh live exploit ho raha tha**: app ka apna "unread message badge" feature
+(`messenger-popup.tsx`) bina kisi filter ke har naya group message live subscribe karta hai,
+aur developer ka apna comment kehta hai ki yeh sirf RLS policy par depend karta hai — jo tab
+tak kaam nahi kar rahi thi. Matlab har employee, apne hi login se, company ke SAARE group
+conversations ka live data dekh sakta tha, chahe woh member ho ya na ho.
 
----
-
-## C3 — Dead code delete kiya
-
-`src/app/dashboard/companion-preview/companion.tsx` aur `companion-config.ts` — yeh do files
-kisi bhi jagah use nahi ho rahi thi. Companion feature already `src/components/companion/`
-wali files use karta hai (`companion-character.tsx` / `companion-config.ts`) —
-`companion-preview-client.tsx` unhi ko import karta hai. Confirm karne ke baad dono purani
-files delete kar di gayi.
-
-**Note:** Zip file mein deleted files "change" ke roop mein nahi dikhengi (zip sirf jo files
-hain unhe hi rakhta hai) — is README mein explicitly note kiya ja raha hai taaki deploy karte
-waqt yeh 2 files bhi manually delete ki jaayein: apne repo se
-`src/app/dashboard/companion-preview/companion.tsx` aur
-`src/app/dashboard/companion-preview/companion-config.ts` remove kar dena.
+**Fix**: blanket policy hata di gayi, sahi scoped policies wapas rakh di gayi (perf bhi thodi
+better ki gayi). Migration: `db/2026-09-19-messaging-companion-rls-scope-fix.sql` — **already
+live apply ho chuka hai**, sirf record ke liye zip mein hai.
 
 ---
 
-## C4 — Documents page slow load ho rahi thi (sequential queries)
+## D2 — 16 Financial/Report Views bhi seedha REST se accessible the (HIGH, already applied live)
 
-`src/app/dashboard/documents/page.tsx` mein 4 alag-alag database queries ek ke baad ek
-(sequentially) await ho rahi thi, jabki unmein koi dependency nahi thi — sab independent
-queries thi. Ab sab `Promise.all([...])` mein parallel chalti hain. Page load speed better
-hogi, especially jab bahut saare documents/bills honge.
+Isi jaisa gap, financial reports ke liye. 16 views (`pl_dashboard_by_company_view`,
+`stock_current_view`, `freight_reconciliation_view` etc.) "SECURITY DEFINER" hain — matlab
+inki apni permission se chalti hain, caller ki RLS ko bypass karke. Confirm kiya (view ki SQL
+khud padhkar): `pl_dashboard_by_company_view` mein koi company-filter hi nahi hai — saari
+companies ka data ek saath return hota hai. Page ka apna capability-check (jaise
+"reports"/"crm_dashboard") sirf app ke andar hai, database mein nahi — to koi bhi logged-in
+employee, page bypass karke seedha REST call se, **saari companies ka poora P&L / stock /
+freight-duty data** dekh sakta tha, chahe uske paas woh capability ho ya na ho.
 
-Files: `src/app/dashboard/documents/page.tsx`
+Aapne "saari 16 views fix karo" confirm kiya tha.
 
----
+**Fix**: in 16 views ka SELECT access `anon`/`authenticated` roles se hata diya gaya
+(REVOKE) — sirf server-side service-role access rehta hai. Har page ka apna capability-gate hi
+ab access control hai (jaisa poore app mein already hai), bas ab REST bypass se access nahi
+milega. Migration: `db/2026-09-19-security-definer-views-revoke-authenticated.sql` —
+**already live apply ho chuka hai**.
 
-## C5 — Task Management ke background failures kahin dikhte nahi the
+**3 code files change hui hain** (REVOKE ke baad in pages ka normal query client permission-denied
+deta, isliye service-role client par switch kiya gaya — CRM aur Sale-Profit pages pehle se hi
+yeh pattern use karte the):
+- `src/app/dashboard/stock/page.tsx` (stock_current_view)
+- `src/app/dashboard/reports/freight-duty/page.tsx` (freight_reconciliation_view, duty_reconciliation_view)
+- `src/app/dashboard/statements/page.tsx` (ebay_financial_summary_computed_view)
 
-`src/app/dashboard/tasks/actions.ts` mein 2 jagah aisi thi jahan koi background/automatic
-process fail ho sakta tha but usko sirf server console mein `console.error` kiya jaata tha —
-koi bhi employee ya admin ko kabhi pata nahi chalta:
-
-1. Task timer pause/complete karte waqt agar daily-time-log RPC call fail ho jaaye.
-2. Task "Done" mark karte waqt agar `daily_work_logs` row create na ho paaye — is case mein
-   task UI mein "Done" dikh jaata tha, lekin uska attendance/payroll record silently miss ho
-   jaata tha (yeh sabse risky wala gap tha, kyunki payroll data ka gap invisible tha).
-
-Dono jagah ab **Error Log tab** (Admin/MD, `/dashboard/error-log`) par dikhengi, ek naya
-source "System" ke through. Existing 3 sources (Validation, Courier/API, Manual flag) mein
-ab 4th source "System" add hua hai. Background action khud block/undo nahi hoga (jaisa pehle
-tha) — sirf ab admin ko visibility milegi ki kuch fail hua.
-
-Iske alawa ek chhota real bug bhi mila aur fix hua: `daily_work_logs` insert try/catch mein
-tha, lekin Supabase query fail hone par exception throw nahi karta (sirf `{ error }` return
-karta hai) — isliye woh try/catch us error ko kabhi catch hi nahi karta tha. Ab explicitly
-error check karke throw kiya jaata hai, taaki catch block (aur naya Error Log entry) dono
-kaam karein.
-
-DB migration (`entry_errors.source` CHECK constraint mein 'system' add karna) **already live
-apply ho chuki hai** (aapki permission se, isी session mein) — isliye yeh sirf documentation
-ke liye zip mein hai, dobara run karne ki zaroorat nahi.
-
-Files: `src/lib/error-log/log-entry-error.ts`, `src/app/dashboard/error-log/page.tsx`,
-`src/app/dashboard/tasks/actions.ts`, `db/2026-09-19-entry-errors-system-source.sql`
+**Yeh 3 files aapko deploy karni hain** — baaki sab DB-side already live hai.
 
 ---
 
-## C6 — `db/schema.sql` outdated tha (documentation gap)
+## D3 — 23 functions mein mutable search_path (already applied live)
 
-Live Supabase database mein 5 aise objects the jo `db/schema.sql` (jo poore schema ka
-documentation/reference file hai) mein missing the:
+Standard Postgres hardening — har function ka `search_path` fix karke `public` par pin kar
+diya, taaki koi future search_path override function ko galat table/type par redirect na kar
+sake. Koi behavior change nahi, pure hardening. Migration:
+`db/2026-09-19-function-search-path-hardening.sql` — **already live apply ho chuka hai**.
 
-- `pl_dashboard_by_company_month_view`
-- `pl_dashboard_by_store_view` (Phase 2's B3 fix ke saath — purchase CN/DN netting included)
-- `finance_dashboard_monthly()`
-- `finance_dashboard_unlinked_purchase_washing()`
-- `current_employee_id()`
+## D4 — current_employee_id() ka anon/authenticated access — check kiya, safe hai
 
-Sab ab `schema.sql` mein add kar diye gaye hain, aur dependency order ka dhyan rakha gaya hai
-(jaise ki agar koi is file ko top-se-bottom run kare, to koi bhi object apne referenced table
-se pehle na aaye). Yeh sirf documentation update hai — koi live database change nahi (woh sab
-migrations already apply ho chuki thi pichle phases mein).
+Yeh function sirf caller ka apna employee id return karta hai (ya anon ke liye kuch nahi) —
+koi data leak nahi. Koi change nahi ki.
 
-Files: `db/schema.sql`
+## D5 — citext extension public schema mein — naya mila, is round mein touch nahi kiya
+
+Advisor ke fresh scan mein mila, original list mein nahi tha. Iska schema change karna risky
+hai (poore codebase mein `citext` type references break ho sakte hain) — flag kar diya, future
+round ke liye.
+
+## D6 — 122 unindexed foreign keys, 42 unused indexes — jaisa tha waisa hi chhoda
+
+Yeh dono INFO level hain (WARN/ERROR nahi), performance hygiene hai, urgent nahi — jaisa original
+audit mein bola gaya tha, isi round mein touch nahi kiya.
+
+---
+
+## E1 — Company Switcher Round 6 fix — code checkout mein confirm hai, live status pata nahi
+
+Fix (`window.location.reload()` + naya `error.tsx` error boundary) current checkout mein present
+hai. Live production site par actually kaam kar raha hai ya nahi — yeh check nahi kiya (isme
+production site par login karke click-through karna padta, jo is round mein nahi kiya).
+
+## E2 — Purane vendor-ledger reconciliation gaps — live check kiya, 3/5 fix ho chuke, 2 abhi bhi open hain
+
+Directly Supabase mein check kiya:
+- **Aramex RJ2425004810 double-payment** — ✅ THEEK HO GAYA. Ab `total_paid = total_amt`,
+  balance zero hai.
+- **UPS 5 payments** — ✅ THEEK HO GAYE. Saari 5 invoices ab fully paid hain DB mein.
+- **Prachi Rugs 3 invoices** (P/26-27/36, 37, 38) — ✅ THEEK HO GAYE. Saari 3 fully paid hain.
+- **FedEx 7 missing invoices** — ⚠️ ABHI BHI 3 BAAKI HAIN. 4 entry ho chuki hain, lekin yeh 3
+  abhi bhi `bill_pass_register` mein missing hain: **276432162 (₹1,80,668.20)**,
+  **276433820 (₹13,846.80)**, **276434395 (₹11,782.80)** — total **₹2,06,297.80** ek mahine se
+  entry nahi hui.
+- **New KR Printer ₹5,600 gap** — ❌ ABHI BHI OPEN HAI. Sirf ek bill (J-222, ₹7,150, paid) file
+  mein hai — bank ledger ka doosra "AGAINST BILL" row (jo total ₹12,750 banata hai) abhi tak
+  entry nahi hua.
+
+**Yeh 2 gaps koi code bug nahi hain** — yeh real missing bill entries hain jinke liye poori
+bill details (invoice date, GST split, etc.) chahiye jo sirf invoice_no + amount se nahi pata
+chalti. Jab bhi yeh bills mil jayein (ya aap confirm kar dein ki chhodna hai), enter kar denge.
+
+## E3 — FedEx production certification — koi change nahi, yeh aapka apna business step hai (code nahi)
 
 ---
 
 ## Verification kiya gaya
 
-- `db/schema.sql` ka balanced `$$` check (48/48, even) — koi syntax corruption nahi.
 - `npx tsc --noEmit` — clean.
-- `npx eslint` (saari 7 changed TS/TSX files par) — clean.
-- `npm run build` (2 baar) — successful, saare 86 pages generate hue, koi error nahi.
+- `npx eslint` (3 changed files par) — clean.
+- `npm run build` — successful, saare pages generate hue, koi error nahi.
+- Har DB migration apply karne ke baad Supabase advisors dobara check kiye:
+  `security_definer_view` (16 → 0), `function_search_path_mutable` (23 → 0),
+  `auth_rls_initplan` (5 → 0), `multiple_permissive_policies` (10 → 0).
 
 ## Deploy karte waqt yaad rakhna
 
-1. Is zip ki saari files apne repo mein same relative path par copy kar dena.
-2. **C3 ke 2 files manually delete karna** (upar dekhein) — zip mein nahi hain.
-3. `db/2026-09-19-entry-errors-system-source.sql` migration **already live apply ho chuki
-   hai** — dobara run karne ki zaroorat nahi, sirf record ke liye zip mein hai.
-4. `db/schema.sql` ka poora fresh copy le lena (bahut saare changes hain isme).
+1. Saari DB migrations **already live hain** — dobara run karne ki zaroorat nahi.
+2. **3 .tsx files** apne repo mein same relative path par copy kar dena — zaroori hai, warna
+   Stock / Freight-Duty Report / Statements pages error dene lagengi (kyunki unka purana
+   database access DB-side revoke ho chuka hai).
+3. FedEx ke 3 missing bills (₹2.06L) aur New KR Printer ka ₹5,600 gap — jab bill details mil
+   jayein to batayein, entry kar denge.

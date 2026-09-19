@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { FreightReportTable, DutyReportTable, type FreightReportRow, type DutyReportRow } from "./freight-duty-report-tables";
 
 // Freight/Duty Bill report (2026-08-22) — one of the 3 new report pages,
@@ -28,6 +28,17 @@ export default async function FreightDutyReportPage({
 }) {
   const employee = await requireCapability("reports");
   const supabase = await createClient();
+  // 2026-09-19 (audit fix, Phase 4 / D) — freight_reconciliation_view and
+  // duty_reconciliation_view are 2 of the 16 SECURITY DEFINER views whose
+  // anon/authenticated REST grant was revoked
+  // (db/2026-09-19-security-definer-views-revoke-authenticated.sql), since
+  // SECURITY DEFINER bypasses RLS entirely — any authenticated employee
+  // could otherwise query them directly via REST and see every company's
+  // freight/duty reconciliation, not just what this page's own
+  // "reports"-capability gate + company scoping (below) allows. Same
+  // finSupabase pattern already used by crm/page.tsx and
+  // reports/sale-profit/page.tsx for their own SECURITY DEFINER view reads.
+  const finSupabase = createServiceRoleClient();
   const sp = await searchParams;
 
   const companyId = typeof sp.company === "string" && sp.company ? sp.company : "";
@@ -58,7 +69,7 @@ export default async function FreightDutyReportPage({
   const freightBillIds = (freightBills ?? []).map((b) => b.id);
   const freightBillById = new Map((freightBills ?? []).map((b) => [b.id, b]));
   const { data: freightViewRows } = freightBillIds.length
-    ? await supabase.from("freight_reconciliation_view").select("*").in("freight_bill_id", freightBillIds)
+    ? await finSupabase.from("freight_reconciliation_view").select("*").in("freight_bill_id", freightBillIds)
     : { data: [] as never[] };
 
   // ---- Duty ----
@@ -75,7 +86,7 @@ export default async function FreightDutyReportPage({
   const dutyBillIds = (dutyBills ?? []).map((b) => b.id);
   const dutyBillById = new Map((dutyBills ?? []).map((b) => [b.id, b]));
   const { data: dutyViewRows } = dutyBillIds.length
-    ? await supabase.from("duty_reconciliation_view").select("*").in("duty_tax_bill_id", dutyBillIds)
+    ? await finSupabase.from("duty_reconciliation_view").select("*").in("duty_tax_bill_id", dutyBillIds)
     : { data: [] as never[] };
 
   // ---- Company scoping: resolve every referenced order_id -> company_id

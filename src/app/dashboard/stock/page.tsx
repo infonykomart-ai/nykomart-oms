@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { StockTabs } from "./stock-tabs";
 
 // Stock module (raw material) — 2026-08-10. See actions.ts header comment
@@ -40,6 +40,15 @@ export default async function StockPage({
 }) {
   await requireCapability("stock_entry");
   const supabase = await createClient();
+  // 2026-09-19 (audit fix, Phase 4 / D) — stock_current_view is one of the
+  // 16 SECURITY DEFINER views whose anon/authenticated REST grant was
+  // revoked (db/2026-09-19-security-definer-views-revoke-authenticated.sql)
+  // because it bypasses RLS entirely — any authenticated employee could
+  // otherwise query it directly via REST, not just through this
+  // capability-gated page. Same finSupabase pattern already used by
+  // crm/page.tsx and reports/sale-profit/page.tsx for their own
+  // SECURITY DEFINER view reads.
+  const finSupabase = createServiceRoleClient();
   const sp = await searchParams;
 
   const partyFilter = typeof sp.party === "string" ? sp.party : "";
@@ -74,7 +83,7 @@ export default async function StockPage({
     supabase.from("parties").select("id, name").order("name"),
     stockInQuery,
     stockOutQuery,
-    supabase
+    finSupabase
       .from("stock_current_view")
       .select("source_party_id, sku_code, product_name, current_stock")
       .order("sku_code"),

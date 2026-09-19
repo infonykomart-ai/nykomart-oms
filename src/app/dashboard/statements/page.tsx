@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { StatementEntryForms } from "./statement-entry-forms";
 
 // Statement Entry (round 11) — see actions.ts header comment.
@@ -17,6 +17,17 @@ import { StatementEntryForms } from "./statement-entry-forms";
 export default async function StatementsPage() {
   const employee = await requireCapability("statement_entry");
   const supabase = await createClient();
+  // 2026-09-19 (audit fix, Phase 4 / D) — ebay_financial_summary_computed_view
+  // is one of the 16 SECURITY DEFINER views whose anon/authenticated REST
+  // grant was revoked
+  // (db/2026-09-19-security-definer-views-revoke-authenticated.sql), since
+  // SECURITY DEFINER bypasses RLS entirely — any authenticated employee
+  // could otherwise query it directly via REST and see every company's
+  // eBay financial summary, not just the one this page's own
+  // "statement_entry"-capability gate + .eq("company_id", ...) filter below
+  // intends. Same finSupabase pattern already used by crm/page.tsx and
+  // reports/sale-profit/page.tsx for their own SECURITY DEFINER view reads.
+  const finSupabase = createServiceRoleClient();
 
   const [
     { data: companies },
@@ -34,7 +45,7 @@ export default async function StatementsPage() {
       .eq("company_id", employee.currentCompanyId)
       .order("invoice_date", { ascending: false })
       .limit(20),
-    supabase
+    finSupabase
       .from("ebay_financial_summary_computed_view")
       .select("id, company_id, period_from, period_to, net_cash_movement_check")
       .eq("company_id", employee.currentCompanyId)
@@ -53,7 +64,7 @@ export default async function StatementsPage() {
     // queries (cheap — one numeric column each) so the "Total" line under
     // each list is accurate regardless of the cap.
     supabase.from("etsy_monthly_tax_invoices").select("total_inr").eq("company_id", employee.currentCompanyId),
-    supabase.from("ebay_financial_summary_computed_view").select("net_cash_movement_check").eq("company_id", employee.currentCompanyId),
+    finSupabase.from("ebay_financial_summary_computed_view").select("net_cash_movement_check").eq("company_id", employee.currentCompanyId),
     supabase.from("ebay_monthly_financial_statement").select("closing_funds_stated").eq("company_id", employee.currentCompanyId),
   ]);
 
