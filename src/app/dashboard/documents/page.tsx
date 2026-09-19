@@ -524,7 +524,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
                   billed_freight_amt: a.billed_freight_amt != null ? Number(a.billed_freight_amt) : null,
                   booked_freight_amt: booked?.booked_freight_amt != null ? Number(booked.booked_freight_amt) : null,
                   booked_currency: booked?.booked_currency ?? null,
-                  booked_amount_source: booked?.booked_amount_source ?? null,
+                  // booked_amount_source is a plain `text` column (no DB-level
+                  // enum), so database.ts types it as bare `string`; cast to
+                  // FreightBillAssignment's own literal union.
+                  booked_amount_source: (booked?.booked_amount_source ?? null) as "api" | "rate_card_estimate" | "manual" | null,
                   credit_note_no: a.credit_note_no,
                   credit_note_date: a.credit_note_date,
                   credit_note_amt: a.credit_note_amt != null ? Number(a.credit_note_amt) : null,

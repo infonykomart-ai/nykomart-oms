@@ -85,7 +85,7 @@ export default async function PartiesPage({
             <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
               Filter
             </button>
-            <a href="/dashboard/parties" className="text-xs text-slate-400 underline">Clear</a>
+            <Link href="/dashboard/parties" className="text-xs text-slate-400 underline">Clear</Link>
           </form>
 
           <PartyList parties={parties ?? []} />

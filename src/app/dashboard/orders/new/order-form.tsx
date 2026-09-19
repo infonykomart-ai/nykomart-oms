@@ -49,6 +49,28 @@ function ItemBlock({
   // see handleSubmit below — matching that same pattern rather than lifting
   // everything into state just for this).
   const [stockQty, setStockQty] = useState<number | null>(null);
+
+  // 2026-09-19 — "Closeup Photo" section: "order me ek to main photo ka
+  // section hai dusra ab or banana hai jisme Closup photo ka option ho ek
+  // se jyada photo url dal sake" — one or more EXTRA photo links per item,
+  // separate from the main Photo URL field above (which stays photo #1,
+  // unchanged, feeding the list thumbnail/print sheet/WhatsApp exactly as
+  // before — see db/2026-09-18-orders-multi-photo-and-capability-sync.sql).
+  // Same lightweight "Add/Remove" key-list pattern as itemKeys in
+  // OrderForm below, just scoped to this one item block. Each row's input
+  // is named `photo_url_extra_${itemKey}_${closeupKey}` — handleSubmit
+  // below finds them all by that name prefix and folds them into this
+  // item's `photoUrls` array (actions.ts already merges photoUrl + these
+  // into orders.photo_urls; nothing server-side needed).
+  const [closeupKeys, setCloseupKeys] = useState<number[]>([]);
+  const nextCloseupKeyRef = useRef(1);
+  function addCloseup() {
+    setCloseupKeys((prev) => [...prev, nextCloseupKeyRef.current++]);
+  }
+  function removeCloseup(k: number) {
+    setCloseupKeys((prev) => prev.filter((x) => x !== k));
+  }
+
   async function checkStock() {
     const categoryId = (document.getElementById(id("item_category_id")) as HTMLSelectElement | null)?.value ?? "";
     const sku = (document.getElementById(id("sku_label")) as HTMLInputElement | null)?.value ?? "";
@@ -117,6 +139,35 @@ function ItemBlock({
         </div>
         <div className="sm:col-span-2">
           <PhotoUrlField id={id("photo_url")} name={id("photo_url")} labelClass={labelClass} />
+        </div>
+        <div className="sm:col-span-2 space-y-2">
+          <span className={labelClass}>Closeup Photos (optional — extra links)</span>
+          {closeupKeys.map((ck) => (
+            <div key={ck} className="flex items-start gap-2">
+              <div className="flex-1">
+                <PhotoUrlField
+                  id={`photo_url_extra_${itemKey}_${ck}`}
+                  name={`photo_url_extra_${itemKey}_${ck}`}
+                  label=""
+                  labelClass="sr-only"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => removeCloseup(ck)}
+                className="mt-2 shrink-0 text-xs font-normal text-red-500 underline"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addCloseup}
+            className="rounded-lg border border-dashed border-amber-400 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50"
+          >
+            + Add Closeup Photo
+          </button>
         </div>
         <div className="flex items-center gap-2 pt-6">
           <input id={id("tassel_fringes")} name={id("tassel_fringes")} type="checkbox" className="h-4 w-4 rounded border-slate-300" />
@@ -191,6 +242,15 @@ export function OrderForm({
     const form = e.currentTarget;
     const val = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.value ?? "";
     const checked = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | null)?.checked ?? false;
+    // 2026-09-19 — Closeup Photos: a dynamic, per-item list (Add/Remove),
+    // so unlike the fixed-name fields above these can't be read via
+    // form.elements.namedItem(exactName) — queried by name PREFIX instead.
+    // name^= is safe here since itemKey/closeupKey are both plain numbers,
+    // never user-controlled text.
+    const extraPhotoUrls = (key: number) =>
+      Array.from(form.querySelectorAll<HTMLInputElement>(`input[name^="photo_url_extra_${key}_"]`))
+        .map((el) => el.value.trim())
+        .filter(Boolean);
 
     const items = itemKeys.map((key) => ({
       itemCategoryId: val(`item_category_id_${key}`),
@@ -200,6 +260,7 @@ export function OrderForm({
       colour: val(`colour_${key}`),
       photoType: val(`photo_type_${key}`),
       photoUrl: val(`photo_url_${key}`),
+      photoUrls: extraPhotoUrls(key),
       tasselFringes: checked(`tassel_fringes_${key}`),
       orderCurrency: val(`order_currency_${key}`) || "USD",
       orderValueOriginal: Number(val(`order_value_original_${key}`)),

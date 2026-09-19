@@ -51,7 +51,14 @@ export default async function LeaveAdminPage({
       .order("name"),
   ]);
 
-  const leaveTypes = leaveTypesRaw ?? [];
+  // accrual_frequency is a plain `text` column (no DB-level enum), so
+  // database.ts types it as bare `string`; cast once here to the app's
+  // narrower "Monthly" | "Upfront" union so every consumer below
+  // (leaveTypeName, paidLeaveTypes, LeaveTypesPanel) gets the right type.
+  const leaveTypes = (leaveTypesRaw ?? []).map((t) => ({
+    ...t,
+    accrual_frequency: t.accrual_frequency as "Monthly" | "Upfront",
+  }));
   const leaveTypeName = new Map(leaveTypes.map((t) => [t.id, t.code ? `${t.name} (${t.code})` : t.name]));
 
   // Team leave-balance table — one row per active employee, one column per
