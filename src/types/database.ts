@@ -5086,6 +5086,7 @@ export type Database = {
           status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date: string | null;
           photo_url: string | null;
+          photo_urls: string | null;
           sku_id: string | null;
           sku_label: string | null;
           size_id: string | null;
@@ -5149,6 +5150,7 @@ export type Database = {
           status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
+          photo_urls?: string | null;
           sku_id?: string | null;
           sku_label?: string | null;
           size_id?: string | null;
@@ -5212,6 +5214,7 @@ export type Database = {
           status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
+          photo_urls?: string | null;
           sku_id?: string | null;
           sku_label?: string | null;
           size_id?: string | null;

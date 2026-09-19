@@ -1,94 +1,47 @@
-# Statement Entry — Edit/Update + Company Default — 2026-09-19
+# Build Fix — src/types/database.ts — 2026-09-19
 
-Aapne bheje the 2 screenshots (Recent Etsy Monthly Tax Invoices — 52 invoices, sab "Nyko Mart" ke
-neeche) aur poocha tha: "company transfer karna ho ya order ke according apne aap company chose ho
-jaye. edit modify ka option ho... update change ka option ho."
+## Kya toota tha
 
-Do cheezein maine confirm ki thi aapse:
-1. Edit scope — **teeno type** (Etsy Invoice + eBay Summary + eBay Statement). ✅ done.
-2. "Order ke according auto company-select" ka matlab — **"jis company me order dala hai usi
-   company me chala jaye"**. Neeche D mein explain kiya hai ki isko literally kyun nahi kiya, aur
-   uske bajaye kya kiya.
+Pichhli deploy mein maine `database.ts` ki jo copy di thi, woh mere is session ke local checkout se
+thi — aur woh checkout aapke live repo se **purani** nikli. Usmein kuch fields missing thi jo
+aapke live code use kar raha tha, isliye build fail hua.
 
----
+## Is zip mein kya hai (sirf 1 file)
 
-## A — Ab teeno statement type edit/update ho sakte hain
+`src/types/database.ts` — maine seedha aapke **live Supabase database** se check karke 2 cheezein
+add ki hain:
 
-Pehle (round 11) sirf **insert-only** tha — ek baar statement save ho gaya (uski Company sahit), to
-usko theek karne ka koi tareeka nahi tha, delete karke dobara type karne ke alawa. Isi wajah se
-aapki saari 52 Etsy invoices ek hi company ke neeche dikh rahi thi — kisi ne galat company select
-kar di hogi kabhi, aur fix karne ka koi option hi nahi tha.
+1. `etsy_monthly_tax_invoices.account_opening_fee` — statement-entry update ke liye (yeh pehle hi
+   sahi tha, is zip mein bhi hai).
+2. `orders.photo_urls` — yeh column live Postgres mein hai (text, nullable) lekin types file mein
+   missing tha. Isse `orders/[id]/page.tsx`, `orders/page.tsx`, `orders/print/page.tsx`, aur
+   `orders/new/actions.ts` ke errors clear ho jaayenge.
 
-**Fix**: `parties/party-form.tsx` + `parties/actions.ts` mein already jo pattern use ho raha hai
-(hidden `*_id` field decide karta hai insert vs update) — wahi teeno statement forms mein add kiya:
+## Jo is zip mein THEEK NAHI hua — aapko batana zaroori hai
 
-- Har "Recent ..." list ke har row par ab ek **Edit** button hai.
-- Click karne par, woh row apni jagah pe hi ek pre-filled form mein badal jaata hai (naya page ya
-  popup nahi — party list jaisa hi inline behavior).
-- Sab kuch edit ho sakta hai, **Company bhi** — yahi seedha "company transfer" wala fix hai.
-- Save karne par "Update ..." button, aur ek **Cancel** button bhi hai agar edit cancel karna ho.
+Build log mein 2 aur error groups the:
 
-Teeno type: Etsy Monthly Tax Invoice, eBay Financial Summary, eBay Financial Statement (Monthly).
+1. **`crm/page.tsx`** — `pl_dashboard_by_month_view` se `company_id` select ho raha hai, jabki
+   maine live database check kiya to us view mein `company_id` column hai hi nahi (woh view sirf
+   month-wise hai; `company_id` wali alag view `pl_dashboard_by_company_month_view` hai). Yeh types
+   ka issue nahi hai — yeh `crm/page.tsx` ke andar ka asli code bug lagta hai (galat view use ho
+   rahi hai, ya dono views mix ho gayi hain).
+2. **`capability-sync.ts`** — `sync_capabilities` naam ka ek Postgres function call karta hai jo
+   maine live database mein check kiya to exist hi nahi karta.
 
-## B — Etsy form mein ek missing field bhi mil gaya aur add kar diya
+**Yeh dono is session ke mere kaam se pehle ke hain — meri is session ke local copy mein yeh file
+hi maujood nahi hai (`capability-sync.ts`), aur `crm/page.tsx` ka jo version mere paas hai woh
+aapke live wale se kaafi chhota/purana hai.** Inhe blind guess karke "fix" karna risky hai — galat
+ho sakta hai. In dono ko theek se fix karne ke liye mujhe yeh 2 files ka asli/live content chahiye
+(GitHub web editor se copy-paste kar sakte hain, jaise database.ts kiya tha):
 
-Database mein `account_opening_fee` naam ka column pehle se tha (invoice ke Subtotal/GST/Total ke
-calculation mein use hota hai), lekin form mein iske liye koi input hi nahi tha — matlab yeh hamesha
-chupchap 0 maan liya jaata tha. Ab form mein "Account Opening Fee" field add kar diya (jahan bhi yeh
-value non-zero ho asli invoice mein).
+- `src/app/dashboard/crm/page.tsx`
+- `src/lib/capability-sync.ts`
 
-Yeh gap ek dusri jagah bhi mila: is column ke liye TypeScript types file (`src/types/database.ts`)
-mein bhi entry missing thi — wahan bhi add kar di, warna build hi fail ho jaata.
+Yeh mil jaaye to turant patch de dunga.
 
-## C — 1 chhoti si Etsy list mismatch bhi fix ho gayi
+## Deploy karte waqt
 
-List "Total" line pehle ₹ (rupee) dikha rahi thi lekin agar count singular/plural handling check
-karein to koi dikkat nahi thi asal mein — yeh sirf naye edit-in-place UI ke saath dobara likha gaya,
-koi number galat nahi tha pehle.
-
-## D — "Order ke according auto company-select" — literally kyun nahi kiya, kya kiya
-
-Yeh 3 statement types (Etsy Monthly Tax Invoice, eBay Financial Summary, eBay Financial Statement)
-**ek pura mahina/period ka combined total** hote hain — ek marketplace account ki, kai saari orders
-milakar. Inmein koi ek "yeh order" wala column hai hi nahi (na ho sakta hai) — isliye "jis company
-me order dala hai" wala rule literally apply nahi ho sakta, kyunki ek statement mein ek saath kai
-companies ke orders ho sakte hain agar ek hi Etsy/eBay account se multiple companies operate hoti
-hain.
-
-**Isliye practical fix jo kiya**: naya statement enter karte waqt, Company dropdown ab **blank nahi
-hota** — apne aap **wahi company select hoti hai jo top-nav mein currently selected hai** (jaisa
-poore app mein har jagah "current company" ka matlab hota hai). Dropdown pura editable rehta hai —
-agar koi aur company select karni ho to kar sakte hain, bas ab default se galti kam hogi.
-
-Agar aapke paas kisi Etsy/eBay account ka ek fixed 1:1 mapping ho kisi ek company se (jaise "yeh Etsy
-shop hamesha X company ki hai"), to woh batayein — us case mein aur zyada smart auto-detect bhi add
-ho sakta hai (jaise shop name se automatically match). Filhaal jo kiya woh sabse safe aur samajhne
-mein aasan interpretation hai.
-
----
-
-## Files changed (4)
-
-- `src/app/dashboard/statements/actions.ts` — 3 save actions insert-only se insert-or-update kiye
-  (hidden id field decide karta hai), `account_opening_fee` field add kiya.
-- `src/app/dashboard/statements/statement-entry-forms.tsx` — sabhi 3 forms mein edit mode
-  (record/onDone props, hidden id, pre-filled defaults, Update/Cancel buttons); `account_opening_fee`
-  field UI mein add; Company dropdown ka naya `defaultCompanyId` behavior; naye 3 list components
-  (Edit button + inline expand) jo pehle page.tsx mein plain read-only the.
-- `src/app/dashboard/statements/page.tsx` — recent lists ab full row fetch karte hain (edit ke liye
-  chahiye), top-nav ki current company Statement Entry form ko pass hoti hai, list rendering naye
-  components use karti hai.
-- `src/types/database.ts` — `etsy_monthly_tax_invoices` table ke liye missing `account_opening_fee`
-  column type add kiya (yeh Supabase se generate hui file thi, is column ke bina stale thi).
-
-## Verification kiya gaya
-
-- `npx tsc --noEmit` — clean.
-- `npx eslint` (saari 4 changed files par) — clean.
-- `npm run build` — successful, saare 86 pages generate hue, koi error nahi.
-- Koi bhi DB migration is round mein nahi chalaayi — yeh sab pure code-side changes hain (schema
-  mein `account_opening_fee` column already tha, sirf TypeScript types file usse miss kar rahi thi).
-
-## Deploy karte waqt yaad rakhna
-
-Saari 4 files apne repo mein same relative path par copy kar dena. Koi DB step nahi hai is baar.
+Sirf `src/types/database.ts` copy kar dein apne repo mein — isse `orders`/`photo_urls` wale sab
+errors clear ho jaayenge. Baaki 2 error groups (`crm/page.tsx`, `capability-sync.ts`) tab tak
+red rahenge jab tak un files ka content na mile.
