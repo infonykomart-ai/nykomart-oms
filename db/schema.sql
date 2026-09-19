@@ -679,11 +679,6 @@ CREATE TABLE orders (
   dispatch_date            date,
 
   photo_url                text,      -- old =IMAGE(url) formula; raw URL only, thumbnailing is a UI concern now
-  -- 2026-09-18: ALL photo links for the order (multi-photo support). See
-  -- db/2026-09-18-orders-multi-photo-and-capability-sync.sql — photo_url
-  -- above stays the canonical FIRST photo (thumbnail/print/WhatsApp);
-  -- photo_urls = [photo_url, extra2, ...], nulls/empties trimmed.
-  photo_urls               text[],
 
   sku_id                   uuid REFERENCES skus(id),
   sku_label                text,      -- raw fallback (see design decision #7's sibling reasoning for SKU)
@@ -1816,7 +1811,10 @@ CREATE TABLE sales_invoices (
   created_by_employee_id                                 uuid NOT NULL REFERENCES employees(id),
   created_at                                               timestamptz NOT NULL DEFAULT now(),
 
-  UNIQUE (company_id, invoice_no)
+  UNIQUE (company_id, invoice_no),
+  -- 2026-09-19 (audit fix, item B2) — master_invoice_no had no uniqueness
+  -- guard at all; see db/2026-09-19-sales-invoices-master-invoice-no-unique.sql
+  UNIQUE (company_id, master_invoice_no)
 );
 CREATE INDEX idx_sales_invoices_company ON sales_invoices(company_id);
 
@@ -4945,74 +4943,6 @@ INSERT INTO capabilities (code, description) VALUES
   -- audit_log_view — raising a manual flag needs no capability at all (any
   -- signed-in employee).
   ('error_log_view', 'View and resolve the Error Tab — validation failures, failed courier bookings, and staff-flagged wrong entries — Admin/MD only');
-
--- 2026-09-18: capabilities that shipped in the app after this seed was
--- written but never landed in the table (fresh databases only - live
--- databases get the same rows via sync_capabilities() from the app's
--- registry, see db/2026-09-18-orders-multi-photo-and-capability-sync.sql
--- and src/lib/capability-sync.ts). leave_management/leave_admin ship with
--- no seed grant by design - MD/Admin grant them via the matrix.
-INSERT INTO capabilities (code, description) VALUES
-  ('leave_management', 'Apply for leave with an application, and track its approval status'),
-  ('leave_admin',      'Approve/reject leave requests and assign who covers the absent employee''s store work'),
-  ('bank_recon',       'Add every bank account and credit card, upload their statements (any format auto-maps), and auto-match UTR / reference / invoice / party / store payouts - old payments are never modified'),
-  ('companion_admin',  'Turn the live AI companion on/off for specific employees - a per-person switch, not a role permission'),
-  ('hr_letter_admin',  'Placeholder description for the help-center article-admin capability code used by older builds');
-
--- (Descriptions above are refreshed from the app''s live CAPABILITY_INFO
--- registry by sync_capabilities() on every Roles & Permissions page load,
--- so wording here is a bootstrap default only.)
-
-
--- ============================================================================
--- 2026-09-18: sync_capabilities - capability auto-sync from the app registry
--- ============================================================================
--- The Roles & Permissions page calls this with the app's live CAPABILITY_INFO
--- registry (src/lib/capability-info.ts) on every page load, so a new app
--- section appears in the matrix automatically after a deploy - no manual SQL.
--- Upserts codes + refreshes descriptions; NEVER touches role_capabilities
--- grants. Zero-arg call is a no-op (db/schema.sql's INSERT above stays the
--- fresh-database bootstrap). See
--- db/2026-09-18-orders-multi-photo-and-capability-sync.sql.
-CREATE OR REPLACE FUNCTION sync_capabilities(
-  p_codes        text[] DEFAULT NULL,
-  p_descriptions text[] DEFAULT NULL
-) RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $func$
-DECLARE
-  v_processed integer := 0;
-  v_code      text;
-  v_desc      text;
-  i           int;
-BEGIN
-  IF p_codes IS NULL THEN
-    RETURN 0;
-  END IF;
-  FOR i IN 1 .. array_length(p_codes, 1) LOOP
-    v_code := btrim(coalesce(p_codes[i], ''));
-    CONTINUE WHEN v_code = '';
-    v_desc := NULL;
-    IF p_descriptions IS NOT NULL AND i <= coalesce(array_length(p_descriptions, 1), 0) THEN
-      v_desc := NULLIF(btrim(coalesce(p_descriptions[i], '')), '');
-    END IF;
-    INSERT INTO capabilities (code, description)
-    VALUES (v_code, v_desc)
-    ON CONFLICT (code) DO UPDATE
-      SET description = COALESCE(EXCLUDED.description, capabilities.description);
-    v_processed := v_processed + 1;
-  END LOOP;
-  RETURN v_processed;
-END;
-$func$;
-
-COMMENT ON FUNCTION sync_capabilities(text[], text[]) IS
-  '2026-09-18: upserts the app''s live CAPABILITY_INFO registry (src/lib/capability-info.ts) '
-  'into capabilities with current descriptions, so new app sections appear in the '
-  'Roles & Permissions matrix automatically after a deploy. Grants in role_capabilities '
-  'are never touched. Zero-arg call is a no-op.';
 
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
