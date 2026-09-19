@@ -8,11 +8,23 @@
 // totals (subtotal/GST/total for Etsy; the *_net roll-ups + sanity-check
 // net_cash_movement_check for eBay, via ebay_financial_summary_computed_view)
 // already existed in the schema — this just adds the entry forms.
+//
+// 2026-09-19 — round 12: every one of the 3 save actions below was
+// insert-only — once a statement was entered (including its Company),
+// there was no way to fix a typo or a wrong Company without deleting and
+// re-typing the whole thing from the PDF again. Refactored to the same
+// "one action, id decides insert vs update" pattern already used by
+// src/app/dashboard/parties/actions.ts's savePartyCore — a hidden
+// `*_id` field, present only when editing, switches the action from
+// .insert() to .update().eq("id", ...). This is also what makes
+// "transfer this entry to a different Company" possible: the Company
+// field is just another editable column once update exists.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
 export type SimpleFormState = { error: string | null; success: boolean };
+type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -30,15 +42,18 @@ function intOrZero(formData: FormData, key: string): number {
   return Number.isFinite(v) ? v : 0;
 }
 
-export async function saveEtsyMonthlyTaxInvoice(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
-  await requireCapability("statement_entry");
-  const supabase = createServiceRoleClient();
+// ---- Etsy Monthly Tax Invoice ----------------------------------------
 
+async function saveEtsyMonthlyTaxInvoiceCore(
+  supabase: ServiceClient,
+  invoiceId: string | null,
+  formData: FormData
+): Promise<SimpleFormState> {
   const companyId = str(formData, "company_id");
   const invoiceNo = str(formData, "invoice_no");
   if (!companyId || !invoiceNo) return { error: "Company and Invoice No. are required.", success: false };
 
-  const { error } = await supabase.from("etsy_monthly_tax_invoices").insert({
+  const payload = {
     company_id: companyId,
     invoice_no: invoiceNo,
     invoice_date: strOrNull(formData, "invoice_date"),
@@ -62,10 +77,28 @@ export async function saveEtsyMonthlyTaxInvoice(_prev: SimpleFormState, formData
     offsite_ads_fees: num(formData, "offsite_ads_fees"),
     regulatory_operating_fees: num(formData, "regulatory_operating_fees"),
     promotional_discount: num(formData, "promotional_discount"),
+    // 2026-09-19 — account_opening_fee existed on the table (part of the
+    // subtotal/GST/total generated-column formula in db/schema.sql) but
+    // had no input on this form at all, so it was always silently 0.
+    // Added here and in the form.
+    account_opening_fee: num(formData, "account_opening_fee"),
     gst_pct: num(formData, "gst_pct"),
     total_eur: strOrNull(formData, "total_eur") ? num(formData, "total_eur") : null,
-  });
+  };
 
+  if (invoiceId) {
+    const { error } = await supabase.from("etsy_monthly_tax_invoices").update(payload).eq("id", invoiceId);
+    if (error) {
+      if (error.message.toLowerCase().includes("duplicate key")) {
+        return { error: "This Invoice No. is already entered for this company.", success: false };
+      }
+      return { error: error.message, success: false };
+    }
+    revalidatePath("/dashboard/statements");
+    return { error: null, success: true };
+  }
+
+  const { error } = await supabase.from("etsy_monthly_tax_invoices").insert(payload);
   if (error) {
     if (error.message.toLowerCase().includes("duplicate key")) {
       return { error: "This Invoice No. is already entered for this company.", success: false };
@@ -77,14 +110,23 @@ export async function saveEtsyMonthlyTaxInvoice(_prev: SimpleFormState, formData
   return { error: null, success: true };
 }
 
+export async function saveEtsyMonthlyTaxInvoice(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
+  await requireCapability("statement_entry");
+  const supabase = createServiceRoleClient();
+  return saveEtsyMonthlyTaxInvoiceCore(supabase, strOrNull(formData, "etsy_invoice_id"), formData);
+}
+
+// ---- eBay "Financial statement" (monthly running-balance PDF) --------
 // 2026-08-13 — real eBay "Financial statement" PDF (eBay Commerce Inc.
 // letterhead), a different/simpler monthly running-balance report from
 // eBay Financial Summary Report above. See db/schema.sql's comment on
 // ebay_monthly_financial_statement for the verification detail.
-export async function saveEbayMonthlyFinancialStatement(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
-  await requireCapability("statement_entry");
-  const supabase = createServiceRoleClient();
 
+async function saveEbayMonthlyFinancialStatementCore(
+  supabase: ServiceClient,
+  statementId: string | null,
+  formData: FormData
+): Promise<SimpleFormState> {
   const companyId = str(formData, "company_id");
   const periodFrom = str(formData, "period_from");
   const periodTo = str(formData, "period_to");
@@ -92,7 +134,7 @@ export async function saveEbayMonthlyFinancialStatement(_prev: SimpleFormState, 
     return { error: "Company, Period From, and Period To are required.", success: false };
   }
 
-  const { error } = await supabase.from("ebay_monthly_financial_statement").insert({
+  const payload = {
     company_id: companyId,
     statement_number: strOrNull(formData, "statement_number"),
     period_from: periodFrom,
@@ -110,8 +152,21 @@ export async function saveEbayMonthlyFinancialStatement(_prev: SimpleFormState, 
     charges: num(formData, "charges"),
     payouts: num(formData, "payouts"),
     closing_funds_stated: num(formData, "closing_funds_stated"),
-  });
+  };
 
+  if (statementId) {
+    const { error } = await supabase.from("ebay_monthly_financial_statement").update(payload).eq("id", statementId);
+    if (error) {
+      if (error.message.toLowerCase().includes("duplicate key")) {
+        return { error: "A Financial Statement for this company and period already exists.", success: false };
+      }
+      return { error: error.message, success: false };
+    }
+    revalidatePath("/dashboard/statements");
+    return { error: null, success: true };
+  }
+
+  const { error } = await supabase.from("ebay_monthly_financial_statement").insert(payload);
   if (error) {
     if (error.message.toLowerCase().includes("duplicate key")) {
       return { error: "A Financial Statement for this company and period already exists.", success: false };
@@ -123,10 +178,19 @@ export async function saveEbayMonthlyFinancialStatement(_prev: SimpleFormState, 
   return { error: null, success: true };
 }
 
-export async function saveEbayFinancialSummary(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
+export async function saveEbayMonthlyFinancialStatement(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
   await requireCapability("statement_entry");
   const supabase = createServiceRoleClient();
+  return saveEbayMonthlyFinancialStatementCore(supabase, strOrNull(formData, "ebay_statement_id"), formData);
+}
 
+// ---- eBay "Financial Summary Report" ----------------------------------
+
+async function saveEbayFinancialSummaryCore(
+  supabase: ServiceClient,
+  summaryId: string | null,
+  formData: FormData
+): Promise<SimpleFormState> {
   const companyId = str(formData, "company_id");
   const periodFrom = str(formData, "period_from");
   const periodTo = str(formData, "period_to");
@@ -134,7 +198,7 @@ export async function saveEbayFinancialSummary(_prev: SimpleFormState, formData:
     return { error: "Company, Period From, and Period To are required.", success: false };
   }
 
-  const { error } = await supabase.from("ebay_financial_summary").insert({
+  const payload = {
     company_id: companyId,
     period_from: periodFrom,
     period_to: periodTo,
@@ -156,8 +220,21 @@ export async function saveEbayFinancialSummary(_prev: SimpleFormState, formData:
     net_transfers_payouts: num(formData, "net_transfers_payouts"),
     adjustments_debit: num(formData, "adjustments_debit"),
     adjustments_credit: num(formData, "adjustments_credit"),
-  });
+  };
 
+  if (summaryId) {
+    const { error } = await supabase.from("ebay_financial_summary").update(payload).eq("id", summaryId);
+    if (error) {
+      if (error.message.toLowerCase().includes("duplicate key")) {
+        return { error: "A Financial Summary for this company and period already exists.", success: false };
+      }
+      return { error: error.message, success: false };
+    }
+    revalidatePath("/dashboard/statements");
+    return { error: null, success: true };
+  }
+
+  const { error } = await supabase.from("ebay_financial_summary").insert(payload);
   if (error) {
     if (error.message.toLowerCase().includes("duplicate key")) {
       return { error: "A Financial Summary for this company and period already exists.", success: false };
@@ -167,4 +244,10 @@ export async function saveEbayFinancialSummary(_prev: SimpleFormState, formData:
 
   revalidatePath("/dashboard/statements");
   return { error: null, success: true };
+}
+
+export async function saveEbayFinancialSummary(_prev: SimpleFormState, formData: FormData): Promise<SimpleFormState> {
+  await requireCapability("statement_entry");
+  const supabase = createServiceRoleClient();
+  return saveEbayFinancialSummaryCore(supabase, strOrNull(formData, "ebay_summary_id"), formData);
 }
