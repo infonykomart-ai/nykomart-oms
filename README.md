@@ -1,54 +1,77 @@
-# Order Save + Orders List + Attendance Holiday Fix — 2026-09-19
+# Doc Statement Dialog — Credit Note / CSB Filing / Refund / Order Refund
 
-## 1. "Order save nahi ho raha" (New Order + Order Edit)
-Save click karne par kuch hota hi nahi tha — no error, no response.
+**Date:** 2026-09-19
 
-**Root cause**: `Photo URL` field (`type="url"`) aur `Email` field (`type="email"`)
-— dono jagah browser ka apna strict format-check lagta hai, chahe field required
-na ho. Usme koi aisi value ho jo "perfect" URL/email na lage (WhatsApp/Google
-Photos se paste kiya link jisme `https://` missing ho, ya Email me koi purana
-messy/typo text) — to **poora form silently submit hi nahi hota**, browser save
-se pehle hi rok deta hai. Sabse risky: **Order Edit** — kisi bhi purane order ka
-Email field agar pehle se messy hai, to sirf "Save Changes" click karne se bhi
-kuch nahi hoga, bina kuch type kiye bhi.
+## Ye kya hai
 
-**Fix — 3 files**:
-1. `src/app/dashboard/orders/photo-url-field.tsx` — `type="url"` → `type="text"`
-2. `src/app/dashboard/orders/new/order-form.tsx` — Email: `type="email"` → `type="text"`
-3. `src/app/dashboard/orders/order-edit-form.tsx` — Email: `type="email"` → `type="text"`
+Aapne jo pehle "Bill Statement" dialog box banaya tha (Purchase/Courier/Duty bills ke liye — A4
+jaisa dialog box, jisme View / Print / WhatsApp / Telegram / Email / Save PDF sab options the),
+wahi ab **4 aur document types** ke liye bhi kaam karta hai:
 
-## 2. "Orders list me kuch dikh hi nahi raha" (0 orders) — ALREADY LIVE-PATCHED
-Live Supabase logs check kiye to pata chala: live site ka deployed code
-`orders` table se `photo_urls` (plural) column mangta hai — jo database me
-kabhi bana hi nahi, sirf `photo_url` (singular) hai. Isse har GET (Orders list)
-aur har POST (Save) 400 error de raha tha — data delete nahi hua tha, sirf query
-hi fail ho rahi thi.
+1. **Credit Note** — Documents → Credit Note Register (CN No. par click karo)
+2. **CSB Filing** — Documents tab → CSB Filing list (CSB No. ke saamne 📄 View button)
+3. **Refund (Historical Marketplace Refund)** — Returns page → Historical Marketplace Refunds
+   table (last column me 📄 View)
+4. **Order Refund** — Returns page → Order Refunds table (last column me 📄 View)
 
-**Turant unblock kar diya gaya hai**: database me ek `photo_urls` compatibility
-column add kar diya (already applied, kuch karne ki zarurat nahi) — Orders list
-aur Save dono ab live kaam kar rahe honge. Is checkout ke current code me
-`photo_urls` kahi bhi use nahi hota (sirf sahi `photo_url` hai), matlab live
-site abhi bhi is checkout se **purana** code chala raha hai — jab bhi agla
-deploy karoge, ye apne aap bhi consistent ho jayega.
+Button dabate hi ek A4-size dialog box khulta hai jisme us document ki poori detail read-only
+dikhti hai, aur upar ek Actions bar hota hai:
 
-## 3. Naya mila: Attendance page — Holidays galat/missing (September jaisa month)
-Live logs me ek aur repeated error mila: Attendance page (`/dashboard/attendance`,
-har employee ka apna daily page) har load par ek invalid query bhej raha tha —
-`holiday_date <= "2026-09-31"`. September me 31 tareek hoti hi nahi (30 din ka
-mahina), isliye Postgres ne is query ko reject kar diya — matlab **is poore
-month ke liye Holiday category kabhi sahi se load hi nahi ho rahi thi**
-(silently, koi error screen nahi dikhta, bas Holiday wale din galat category
-me dikhte — jaise "Absent" ya khali).
+- 🖨 Print / Save PDF
+- 📱 WhatsApp pe PDF bhejo
+- ✈️ Telegram pe PDF bhejo
+- 📧 Email pe PDF bhejo
+- 📋 Summary copy karo
 
-Same bug class already fix ho chuka tha Salary aur Attendance-Admin pages me
-(`daysInMonth()` helper use karke) — bas ye ek employee-facing Attendance page
-reh gaya tha jahan purana hardcoded `-31` tha. Ab fix kar diya, same helper use
-karke — Apr/Jun/Sep/Nov (30-din months) aur Feb (28/29-din) sabhi ab sahi date
-bhejenge.
+Bilkul wahi pattern jo Bill Statement dialog me already tha — koi naya UI pattern nahi seekhna
+padega, sabko already pata hai ye kaise use karna hai.
 
-**Fix — 1 file**:
-4. `src/app/dashboard/attendance/page.tsx`
+## Structure — "duplicate nahi kiya"
 
-## Deploy
-In 4 files ko apne live repo me same path par replace karke deploy kar do.
-`npx tsc --noEmit` aur `npx eslint` dono in charo files par clean hain.
+Jaisa bola gaya tha ("bs duplicate nahi ho stracture dekh lena"), maine 4 alag dialog boxes nahi
+banaye — ek hi generic system banaya hai jo `type` parameter se decide karta hai kaunsa document
+dikhana hai:
+
+- `src/lib/doc-statement.ts` — ek hi jagah se sabhi 4 types ka data load hota hai (access-check
+  ke saath — jis company ka access nahi hai uska document nahi khulega)
+- `src/app/api/doc-statement/[type]/[id]/route.ts` — ek hi API route, sabhi 4 types ke liye
+- `src/components/doc-statement-dialog.tsx` — ek hi dialog box component
+- `src/components/doc-statement-document.tsx` — ek hi read-only document renderer (screen pe)
+- `src/lib/doc-statement-pdf.tsx` — ek hi PDF generator (sabhi 4 types ke liye)
+- `src/lib/pdf/render.ts` — PDF banane ka shared helper (Bill Statement wala bhi isi ko use karta
+  hai ab)
+- `src/lib/share-pdf.ts` — WhatsApp/Telegram/Email pe PDF bhejne ka shared helper
+- `src/components/doc-statement-actions.tsx` — Actions bar (Print/WhatsApp/Telegram/Email/PDF)
+
+Baaki 3 files sirf existing pages me naya button jodte hain:
+
+- `src/app/dashboard/credit-notes-register/page.tsx` — Credit Note Register me CN No. click karne
+  se dialog khulta hai
+- `src/app/dashboard/documents/document-entry-tabs.tsx` — Documents tab me Credit Note aur CSB
+  Filing dono list me 📄 View button
+- `src/app/dashboard/returns/returns-report-tables.tsx` — Returns page ke dono tables (Order
+  Refunds + Historical Refunds) me 📄 View button
+
+## Verification kiya
+
+- `npx tsc --noEmit` — poora project, clean (koi bhi TypeScript error nahi)
+- `npx eslint` — sabhi naye/badle hue files pe, clean
+- `npm run build` — poora production build successfully complete hua, `/api/doc-statement/[type]/[id]`
+  route bhi list me hai
+
+## Deploy kaise karein
+
+1. Is zip ko apne repo me extract karo (`src/` folder ke andar files apni jagah replace/add ho
+   jayengi — koi conflict nahi hai kyunki ye saare naye files hain, sirf 3 existing files me
+   chhota sa button add kiya hai)
+2. `npm run build` (ya jo bhi aapka deploy pipeline hai) chalao
+3. Deploy kar do (jaise Vercel)
+
+Pichli baar jo `photo_urls` waala issue mila tha (Orders "0 dikh rahe" wala) — uska matlab tha ki
+live site is checkout se different/purani code chala rahi hai. Isliye ye naya feature bhi tabhi
+dikhega jab aap ise deploy karenge — sirf zip bhej dene se live site pe apne aap nahi aa jayega.
+
+## Note
+
+Chartered Accountant persona wala full financial/structural audit abhi baaki hai — jab bologe tab
+shuru karta hun.
