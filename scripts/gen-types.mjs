@@ -38,7 +38,19 @@ function tsTypeFromUdt(udtName, enums) {
   return PG_TO_TS[udtName] || (udtName?.startsWith("_") ? "unknown[]" : "unknown");
 }
 
-function tsType(col, enums) {
+function tsType(col, enums, checkUnions, tableName) {
+  // 1) Text columns constrained by a single-column CHECK (col IN ('a','b',...))
+  //    become string-literal unions — mirrors what the old hand-maintained
+  //    types file expressed, now derived from the live schema.
+  const key = `${tableName}.${col.column_name}`;
+  const union = checkUnions instanceof Map && checkUnions.get(key);
+  if (union && col.udt_name === "text") return union;
+  // 2) Array columns type as element-type[] using the same inference rules
+  //    (Postgres stores these as udt_name starting with "_").
+  if (col.udt_name?.startsWith("_")) {
+    const elem = PG_TO_TS[col.udt_name.slice(1)];
+    return `${elem ?? "unknown"}[]`;
+  }
   return tsTypeFromUdt(col.udt_name, enums);
 }
 
@@ -63,9 +75,7 @@ async function main() {
     enums.get(row.enum_name).push(key);
   }
   const enumTsMap = new Map();
-  for (const [name, values] of enums) enumTsMap.set(name, values.join(" | "));
-
-  const tableRows = (
+  for (const [name, values] of enums) enumTsMap.set(name, values.join(" | "));  const tableRows = (
     await client.query(`
     select c.table_name, c.column_name, c.udt_name, c.is_nullable,
            c.column_default,
@@ -76,7 +86,36 @@ async function main() {
     where c.table_schema = 'public'
     order by c.table_name, c.ordinal_position
   `)
-  ).rows;
+).rows;
+
+  // String-literal unions for text columns guarded by a single-column
+  // CHECK (col = ANY (ARRAY['a'::text, ...])) — the canonical form Postgres
+  // stores for CHECK (col IN ('a', ...)) written against a text column.
+  // This restores the richer per-column types (courier/status/kind/etc.) the
+  // old hand-maintained types file carried, without keeping that file
+  // hand-maintained. CHECKs on enum-typed columns are skipped (the enum's
+  // own union is already resolved through enums map above).
+  const checkRows = (
+    await client.query(`
+    select conrelid::regclass::text as table_name, pg_get_constraintdef(oid, true) as def
+    from pg_constraint
+    where contype = 'c' and connamespace = 'public'::regnamespace
+  `)
+).rows;
+  const checkUnions = new Map();
+  for (const row of checkRows) {
+    const def = row.def;
+    const m =
+      def.match(/\(?([\w]+)\)? = ANY \(ARRAY\[((?:'[^']*'::text(?:, )?)+)\]\)/i) ||
+      def.match(/\(?([\w]+)\)? IN \(([^)]+)\)/i);
+    if (!m) continue;
+    const quoted = m[2].includes("::text") ? m[2].matchAll(/'([^']*)'::text/g) : m[2].matchAll(/'([^']*)'/g);
+    const vals = [...quoted].map((x) => x[1]);
+    if (vals.length) {
+      const key = `${row.table_name}.${m[1]}`;
+      if (!checkUnions.has(key)) checkUnions.set(key, vals.map((v) => JSON.stringify(v)).join(" | "));
+    }
+  }
 
   // Real FK relationships — needed both for documentation and so the
   // Supabase JS client's `GenericTable.Relationships` field is populated
@@ -177,12 +216,30 @@ async function main() {
     const inParams = params.filter((p) => p.parameter_mode === "IN");
     const outParams = params.filter((p) => p.parameter_mode === "OUT" || p.parameter_mode === "INOUT");
     const isSet = retsetByName.get(routine.routine_name) === true;
+    // Args with DEFAULT values are optional for the caller. Postgres stores
+    // the count in pronargdefaults; those are the LAST pronargdefaults
+    // input args. Mark them optional (`?:`) so callers can omit them —
+    // matches how the RPCs are actually called (filters omitted = no
+    // filter) and mirrors the hand-maintained types' `p_store_id?:`.
+    let defaultsCount = 0;
+    try {
+      const dres = await client.query(`
+        select pronargdefaults from pg_proc
+        where oid = $1::regproc::oid and pronamespace = 'public'::regnamespace
+      `, [routine.routine_name]);
+      defaultsCount = Number(dres.rows[0]?.pronargdefaults ?? 0);
+    } catch {
+      defaultsCount = 0;
+    }
+    const inCount = inParams.length;
+    const firstOptionalIdx = inCount - defaultsCount; // index into inParams where optional args start
     functions.push({
       name: routine.routine_name,
       inParams,
       outParams,
       isSet,
       scalarUdtName: routine.type_udt_name,
+      firstOptionalIdx,
     });
   }
 
@@ -207,18 +264,18 @@ export type Database = {
     out += `      ${tableName}: {\n        Row: {\n`;
     for (const col of columns) {
       const nullable = col.is_nullable === "YES";
-      out += `          ${col.column_name}: ${tsType(col, enumTsMap)}${nullable ? " | null" : ""};\n`;
+      out += `          ${col.column_name}: ${tsType(col, enumTsMap, checkUnions, tableName)}${nullable ? " | null" : ""};\n`;
     }
     out += `        };\n        Insert: {\n`;
     for (const col of columns) {
       const nullable = col.is_nullable === "YES";
       const hasDefault = col.column_default !== null;
       const optional = nullable || hasDefault;
-      out += `          ${col.column_name}${optional ? "?" : ""}: ${tsType(col, enumTsMap)}${nullable ? " | null" : ""};\n`;
+      out += `          ${col.column_name}${optional ? "?" : ""}: ${tsType(col, enumTsMap, checkUnions, tableName)}${nullable ? " | null" : ""};\n`;
     }
     out += `        };\n        Update: {\n`;
     for (const col of columns) {
-      out += `          ${col.column_name}?: ${tsType(col, enumTsMap)}${col.is_nullable === "YES" ? " | null" : ""};\n`;
+      out += `          ${col.column_name}?: ${tsType(col, enumTsMap, checkUnions, tableName)}${col.is_nullable === "YES" ? " | null" : ""};\n`;
     }
     out += `        };\n        Relationships: [\n`;
     for (const fk of fksByTable.get(tableName) || []) {
@@ -232,16 +289,17 @@ export type Database = {
     if (!isView) continue;
     out += `      ${tableName}: {\n        Row: {\n`;
     for (const col of columns) {
-      out += `          ${col.column_name}: ${tsType(col, enumTsMap)} | null;\n`;
+      out += `          ${col.column_name}: ${tsType(col, enumTsMap, checkUnions, tableName)} | null;\n`;
     }
     out += `        };\n        Relationships: [];\n      };\n`;
   }
   out += `    };\n    Functions: {\n`;
   for (const fn of functions) {
     out += `      ${fn.name}: {\n        Args: {\n`;
-    for (const p of fn.inParams) {
-      out += `          ${p.parameter_name}: ${tsTypeFromUdt(p.udt_name, enumTsMap)};\n`;
-    }
+    fn.inParams.forEach((p, idx) => {
+      const optional = idx >= fn.firstOptionalIdx;
+      out += `          ${p.parameter_name}${optional ? "?" : ""}: ${tsTypeFromUdt(p.udt_name, enumTsMap)}${optional ? " | null" : ""};\n`;
+    });
     out += `        };\n        Returns: `;
     if (fn.outParams.length > 0) {
       out += `{\n`;

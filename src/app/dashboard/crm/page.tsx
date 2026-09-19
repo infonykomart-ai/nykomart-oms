@@ -530,7 +530,7 @@ export default async function CrmOverviewPage({
 
   const orderStatusCounts = new Map<string, number>();
   for (const row of orderStatusCountRows ?? []) {
-    orderStatusCounts.set(row.status, Number(row.cnt));
+    if (row.status) orderStatusCounts.set(row.status, Number(row.cnt));
   }
   const ORDER_STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
 

@@ -71,6 +71,108 @@ export type Database = {
           },
         ];
       };
+      attendance: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          store_id: string | null;
+          attendance_date: string;
+          punch_in: string | null;
+          punch_out: string | null;
+          work_hours: number | null;
+          status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
+          source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+          device_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
+          device_punch_in: string | null;
+          device_punch_out: string | null;
+          match_flag: string | null;
+          remark: string | null;
+          entered_by_employee_id: string | null;
+          entered_on: string;
+          leave_type_id: string | null;
+          leave_unpaid: boolean;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          store_id?: string | null;
+          attendance_date: string;
+          punch_in?: string | null;
+          punch_out?: string | null;
+          work_hours?: number | null;
+          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
+          source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
+          device_punch_in?: string | null;
+          device_punch_out?: string | null;
+          match_flag?: string | null;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          entered_on?: string;
+          leave_type_id?: string | null;
+          leave_unpaid?: boolean;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          store_id?: string | null;
+          attendance_date?: string;
+          punch_in?: string | null;
+          punch_out?: string | null;
+          work_hours?: number | null;
+          status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
+          source?: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+          device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
+          device_punch_in?: string | null;
+          device_punch_out?: string | null;
+          match_flag?: string | null;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          entered_on?: string;
+          leave_type_id?: string | null;
+          leave_unpaid?: boolean;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "attendance_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attendance_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attendance_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attendance_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attendance_leave_type_id_fkey";
+            columns: ["leave_type_id"];
+            isOneToOne: false;
+            referencedRelation: "leave_types";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       audit_log: {
         Row: {
           id: string;
@@ -228,7 +330,7 @@ export type Database = {
         Row: {
           id: string;
           company_id: string;
-          account_type: string;
+          account_type: "bank" | "card";
           account_name: string;
           bank_name: string | null;
           account_number: string | null;
@@ -244,7 +346,7 @@ export type Database = {
         Insert: {
           id?: string;
           company_id: string;
-          account_type?: string;
+          account_type?: "bank" | "card";
           account_name: string;
           bank_name?: string | null;
           account_number?: string | null;
@@ -260,7 +362,7 @@ export type Database = {
         Update: {
           id?: string;
           company_id?: string;
-          account_type?: string;
+          account_type?: "bank" | "card";
           account_name?: string;
           bank_name?: string | null;
           account_number?: string | null;
@@ -294,7 +396,7 @@ export type Database = {
         Row: {
           id: string;
           statement_line_id: string;
-          target_type: string;
+          target_type: "bill_payment" | "salary_payment" | "card_expense" | "order_sale" | "expense" | "unmatched";
           target_id: string;
           target_label: string;
           target_company_id: string | null;
@@ -308,7 +410,7 @@ export type Database = {
         Insert: {
           id?: string;
           statement_line_id: string;
-          target_type: string;
+          target_type: "bill_payment" | "salary_payment" | "card_expense" | "order_sale" | "expense" | "unmatched";
           target_id: string;
           target_label: string;
           target_company_id?: string | null;
@@ -322,7 +424,7 @@ export type Database = {
         Update: {
           id?: string;
           statement_line_id?: string;
-          target_type?: string;
+          target_type?: "bill_payment" | "salary_payment" | "card_expense" | "order_sale" | "expense" | "unmatched";
           target_id?: string;
           target_label?: string;
           target_company_id?: string | null;
@@ -355,21 +457,21 @@ export type Database = {
           id: string;
           account_id: string;
           file_header: string;
-          maps_to: string;
+          maps_to: "txn_date" | "description" | "ref_no" | "withdrawal" | "deposit" | "balance" | "cheque_no";
           created_at: string;
         };
         Insert: {
           id?: string;
           account_id: string;
           file_header: string;
-          maps_to: string;
+          maps_to: "txn_date" | "description" | "ref_no" | "withdrawal" | "deposit" | "balance" | "cheque_no";
           created_at?: string;
         };
         Update: {
           id?: string;
           account_id?: string;
           file_header?: string;
-          maps_to?: string;
+          maps_to?: "txn_date" | "description" | "ref_no" | "withdrawal" | "deposit" | "balance" | "cheque_no";
           created_at?: string;
         };
         Relationships: [
@@ -397,6 +499,18 @@ export type Database = {
           kims_remarks: string | null;
           status: string | null;
           created_at: string;
+          recon_account_id: string | null;
+          recon_status: string;
+          linked_party_id: string | null;
+          linked_store_id: string | null;
+          linked_bill_id: string | null;
+          linked_order_id: string | null;
+          linked_reference: string | null;
+          linked_at: string | null;
+          linked_by_employee_id: string | null;
+          match_method: string | null;
+          import_fingerprint: string | null;
+          imported_batch_id: string | null;
         };
         Insert: {
           id?: string;
@@ -412,6 +526,18 @@ export type Database = {
           kims_remarks?: string | null;
           status?: string | null;
           created_at?: string;
+          recon_account_id?: string | null;
+          recon_status?: string;
+          linked_party_id?: string | null;
+          linked_store_id?: string | null;
+          linked_bill_id?: string | null;
+          linked_order_id?: string | null;
+          linked_reference?: string | null;
+          linked_at?: string | null;
+          linked_by_employee_id?: string | null;
+          match_method?: string | null;
+          import_fingerprint?: string | null;
+          imported_batch_id?: string | null;
         };
         Update: {
           id?: string;
@@ -427,6 +553,18 @@ export type Database = {
           kims_remarks?: string | null;
           status?: string | null;
           created_at?: string;
+          recon_account_id?: string | null;
+          recon_status?: string;
+          linked_party_id?: string | null;
+          linked_store_id?: string | null;
+          linked_bill_id?: string | null;
+          linked_order_id?: string | null;
+          linked_reference?: string | null;
+          linked_at?: string | null;
+          linked_by_employee_id?: string | null;
+          match_method?: string | null;
+          import_fingerprint?: string | null;
+          imported_batch_id?: string | null;
         };
         Relationships: [
           {
@@ -434,6 +572,41 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_statement_lines_recon_account_id_fkey";
+            columns: ["recon_account_id"];
+            isOneToOne: false;
+            referencedRelation: "bank_recon_accounts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_statement_lines_linked_party_id_fkey";
+            columns: ["linked_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_statement_lines_linked_store_id_fkey";
+            columns: ["linked_store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_statement_lines_linked_order_id_fkey";
+            columns: ["linked_order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "bank_statement_lines_linked_by_employee_id_fkey";
+            columns: ["linked_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
@@ -774,7 +947,7 @@ export type Database = {
           active: boolean;
           logo_url: string | null;
           master_invoice_prefix: string | null;
-          weekly_off_days: unknown[];
+          weekly_off_days: number[];
           created_at: string;
         };
         Insert: {
@@ -785,7 +958,7 @@ export type Database = {
           active?: boolean;
           logo_url?: string | null;
           master_invoice_prefix?: string | null;
-          weekly_off_days?: unknown[];
+          weekly_off_days?: number[];
           created_at?: string;
         };
         Update: {
@@ -796,10 +969,74 @@ export type Database = {
           active?: boolean;
           logo_url?: string | null;
           master_invoice_prefix?: string | null;
-          weekly_off_days?: unknown[];
+          weekly_off_days?: number[];
           created_at?: string;
         };
         Relationships: [
+        ];
+      };
+      companion_character_image: {
+        Row: {
+          id: string;
+          image_url: string;
+          prompt: string | null;
+          generated_at: string;
+          generated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          image_url: string;
+          prompt?: string | null;
+          generated_at?: string;
+          generated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          image_url?: string;
+          prompt?: string | null;
+          generated_at?: string;
+          generated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "companion_character_image_generated_by_fkey";
+            columns: ["generated_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      companion_events: {
+        Row: {
+          id: string;
+          employee_id: string;
+          event_type: string;
+          message: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          event_type: string;
+          message: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          event_type?: string;
+          message?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "companion_events_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
         ];
       };
       company_profiles: {
@@ -985,7 +1222,7 @@ export type Database = {
         Row: {
           id: string;
           company_id: string;
-          courier: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
           secrets_enc: Json;
           updated_at: string;
           updated_by: string | null;
@@ -993,7 +1230,7 @@ export type Database = {
         Insert: {
           id?: string;
           company_id: string;
-          courier: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
           secrets_enc?: Json;
           updated_at?: string;
           updated_by?: string | null;
@@ -1001,7 +1238,7 @@ export type Database = {
         Update: {
           id?: string;
           company_id?: string;
-          courier?: string;
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
           secrets_enc?: Json;
           updated_at?: string;
           updated_by?: string | null;
@@ -1060,11 +1297,11 @@ export type Database = {
         Row: {
           id: string;
           company_id: string;
-          courier: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
           pickup_address: string;
           booking_date: string;
           scheduled_pickup_date: string;
-          status: string;
+          status: "requested" | "confirmed" | "cancelled";
           remark: string | null;
           request_payload: Json | null;
           response_payload: Json | null;
@@ -1074,11 +1311,11 @@ export type Database = {
         Insert: {
           id?: string;
           company_id: string;
-          courier: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
           pickup_address: string;
           booking_date: string;
           scheduled_pickup_date: string;
-          status?: string;
+          status?: "requested" | "confirmed" | "cancelled";
           remark?: string | null;
           request_payload?: Json | null;
           response_payload?: Json | null;
@@ -1088,11 +1325,11 @@ export type Database = {
         Update: {
           id?: string;
           company_id?: string;
-          courier?: string;
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl";
           pickup_address?: string;
           booking_date?: string;
           scheduled_pickup_date?: string;
-          status?: string;
+          status?: "requested" | "confirmed" | "cancelled";
           remark?: string | null;
           request_payload?: Json | null;
           response_payload?: Json | null;
@@ -1101,17 +1338,17 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: "courier_pickup_requests_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
             foreignKeyName: "courier_pickup_requests_created_by_employee_id_fkey";
             columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "courier_pickup_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
             referencedColumns: ["id"];
           },
         ];
@@ -1187,7 +1424,7 @@ export type Database = {
           id: string;
           courier_shipment_id: string;
           attempt_no: number;
-          reason: string;
+          reason: "Address Issue" | "Customer Unavailable" | "Refused" | "Weather/Force Majeure" | "Other";
           note: string | null;
           attempted_at: string;
           logged_by_employee_id: string | null;
@@ -1202,7 +1439,7 @@ export type Database = {
           id?: string;
           courier_shipment_id: string;
           attempt_no: number;
-          reason: string;
+          reason: "Address Issue" | "Customer Unavailable" | "Refused" | "Weather/Force Majeure" | "Other";
           note?: string | null;
           attempted_at?: string;
           logged_by_employee_id?: string | null;
@@ -1217,7 +1454,7 @@ export type Database = {
           id?: string;
           courier_shipment_id?: string;
           attempt_no?: number;
-          reason?: string;
+          reason?: "Address Issue" | "Customer Unavailable" | "Refused" | "Weather/Force Majeure" | "Other";
           note?: string | null;
           attempted_at?: string;
           logged_by_employee_id?: string | null;
@@ -1229,6 +1466,13 @@ export type Database = {
           resolved_note?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "courier_shipment_ndr_attempts_courier_shipment_id_fkey";
+            columns: ["courier_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "courier_shipments";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "courier_shipment_ndr_attempts_logged_by_employee_id_fkey";
             columns: ["logged_by_employee_id"];
@@ -1243,29 +1487,22 @@ export type Database = {
             referencedRelation: "employees";
             referencedColumns: ["id"];
           },
-          {
-            foreignKeyName: "courier_shipment_ndr_attempts_courier_shipment_id_fkey";
-            columns: ["courier_shipment_id"];
-            isOneToOne: false;
-            referencedRelation: "courier_shipments";
-            referencedColumns: ["id"];
-          },
         ];
       };
       courier_shipments: {
         Row: {
           id: string;
-          courier: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
           order_id: string;
           order_shipment_id: string | null;
           service_code: string | null;
-          ddp_ddu: string | null;
-          status: string;
+          ddp_ddu: "DDP" | "DDU" | null;
+          status: "pending" | "created" | "failed" | "cancelled";
           awb_no: string | null;
           label_url: string | null;
           booked_amt: number | null;
           booked_currency: string | null;
-          booked_amount_source: string | null;
+          booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
           request_payload: Json | null;
           response_payload: Json | null;
           error_message: string | null;
@@ -1278,17 +1515,17 @@ export type Database = {
         };
         Insert: {
           id?: string;
-          courier: string;
+          courier: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
           order_id: string;
           order_shipment_id?: string | null;
           service_code?: string | null;
-          ddp_ddu?: string | null;
-          status?: string;
+          ddp_ddu?: "DDP" | "DDU" | null;
+          status?: "pending" | "created" | "failed" | "cancelled";
           awb_no?: string | null;
           label_url?: string | null;
           booked_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
           request_payload?: Json | null;
           response_payload?: Json | null;
           error_message?: string | null;
@@ -1301,17 +1538,17 @@ export type Database = {
         };
         Update: {
           id?: string;
-          courier?: string;
+          courier?: "fedex" | "ups" | "aramex" | "delhivery" | "shiprocket" | "dhl" | "other";
           order_id?: string;
           order_shipment_id?: string | null;
           service_code?: string | null;
-          ddp_ddu?: string | null;
-          status?: string;
+          ddp_ddu?: "DDP" | "DDU" | null;
+          status?: "pending" | "created" | "failed" | "cancelled";
           awb_no?: string | null;
           label_url?: string | null;
           booked_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
           request_payload?: Json | null;
           response_payload?: Json | null;
           error_message?: string | null;
@@ -1443,7 +1680,7 @@ export type Database = {
           store_id: string | null;
           cn_no: string | null;
           vendor_cn_no: string | null;
-          cn_kind: string | null;
+          cn_kind: "buyer_refund" | "supplier" | null;
           awb_no: string | null;
           gst_rate_pct: number | null;
           credit_note_date: string;
@@ -1478,7 +1715,7 @@ export type Database = {
           store_id?: string | null;
           cn_no?: string | null;
           vendor_cn_no?: string | null;
-          cn_kind?: string | null;
+          cn_kind?: "buyer_refund" | "supplier" | null;
           awb_no?: string | null;
           gst_rate_pct?: number | null;
           credit_note_date: string;
@@ -1513,7 +1750,7 @@ export type Database = {
           store_id?: string | null;
           cn_no?: string | null;
           vendor_cn_no?: string | null;
-          cn_kind?: string | null;
+          cn_kind?: "buyer_refund" | "supplier" | null;
           awb_no?: string | null;
           gst_rate_pct?: number | null;
           credit_note_date?: string;
@@ -1597,6 +1834,65 @@ export type Database = {
             columns: ["party_id"];
             isOneToOne: false;
             referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      csb_filings: {
+        Row: {
+          id: string;
+          csb_number: string;
+          exchange_rate: number | null;
+          total_taxable_value: number | null;
+          taxable_value_currency: string | null;
+          fob_value_inr: number | null;
+          filing_date: string | null;
+          egm_number: string | null;
+          egm_date: string | null;
+          hawb_number: string | null;
+          invoice_no: string | null;
+          invoice_date: string | null;
+          entry_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          csb_number: string;
+          exchange_rate?: number | null;
+          total_taxable_value?: number | null;
+          taxable_value_currency?: string | null;
+          fob_value_inr?: number | null;
+          filing_date?: string | null;
+          egm_number?: string | null;
+          egm_date?: string | null;
+          hawb_number?: string | null;
+          invoice_no?: string | null;
+          invoice_date?: string | null;
+          entry_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          csb_number?: string;
+          exchange_rate?: number | null;
+          total_taxable_value?: number | null;
+          taxable_value_currency?: string | null;
+          fob_value_inr?: number | null;
+          filing_date?: string | null;
+          egm_number?: string | null;
+          egm_date?: string | null;
+          hawb_number?: string | null;
+          invoice_no?: string | null;
+          invoice_date?: string | null;
+          entry_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "csb_filings_entry_by_employee_id_fkey";
+            columns: ["entry_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
@@ -2124,6 +2420,7 @@ export type Database = {
           courier_duty_charges_adj: number;
           total_payable_amt: number | null;
           created_at: string;
+          vendor_party_id: string | null;
         };
         Insert: {
           id?: string;
@@ -2140,6 +2437,7 @@ export type Database = {
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
           created_at?: string;
+          vendor_party_id?: string | null;
         };
         Update: {
           id?: string;
@@ -2156,8 +2454,16 @@ export type Database = {
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
           created_at?: string;
+          vendor_party_id?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "duty_tax_bills_vendor_party_id_fkey";
+            columns: ["vendor_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
         ];
       };
       ebay_financial_summary: {
@@ -3201,7 +3507,7 @@ export type Database = {
         Row: {
           id: string;
           settlement_id: string;
-          kind: string;
+          kind: "Addition" | "Deduction";
           category: string;
           description: string | null;
           amount: number;
@@ -3211,7 +3517,7 @@ export type Database = {
         Insert: {
           id?: string;
           settlement_id: string;
-          kind: string;
+          kind: "Addition" | "Deduction";
           category: string;
           description?: string | null;
           amount: number;
@@ -3221,7 +3527,7 @@ export type Database = {
         Update: {
           id?: string;
           settlement_id?: string;
-          kind?: string;
+          kind?: "Addition" | "Deduction";
           category?: string;
           description?: string | null;
           amount?: number;
@@ -3250,13 +3556,13 @@ export type Database = {
           id: string;
           employee_id: string;
           company_id: string;
-          separation_type: string;
+          separation_type: "Resignation" | "Termination";
           resignation_date: string;
           last_working_day: string;
           reason: string | null;
           notice_period_required_days: number;
           notice_period_served_days: number;
-          status: string;
+          status: "Draft" | "Finalized" | "Paid";
           initiated_by_employee_id: string | null;
           initiated_at: string;
           finalized_by_employee_id: string | null;
@@ -3270,13 +3576,13 @@ export type Database = {
           id?: string;
           employee_id: string;
           company_id: string;
-          separation_type: string;
+          separation_type: "Resignation" | "Termination";
           resignation_date: string;
           last_working_day: string;
           reason?: string | null;
           notice_period_required_days?: number;
           notice_period_served_days?: number;
-          status?: string;
+          status?: "Draft" | "Finalized" | "Paid";
           initiated_by_employee_id?: string | null;
           initiated_at?: string;
           finalized_by_employee_id?: string | null;
@@ -3290,13 +3596,13 @@ export type Database = {
           id?: string;
           employee_id?: string;
           company_id?: string;
-          separation_type?: string;
+          separation_type?: "Resignation" | "Termination";
           resignation_date?: string;
           last_working_day?: string;
           reason?: string | null;
           notice_period_required_days?: number;
           notice_period_served_days?: number;
-          status?: string;
+          status?: "Draft" | "Finalized" | "Paid";
           initiated_by_employee_id?: string | null;
           initiated_at?: string;
           finalized_by_employee_id?: string | null;
@@ -3399,7 +3705,7 @@ export type Database = {
           family_contact_2_name: string | null;
           family_contact_2_relation: string | null;
           family_contact_2_number: string | null;
-          theme_id: string | null;
+          theme_id: "navy-gold" | "day" | "eye-comfort" | "night" | "ocean" | "nova" | "clay" | null;
           custom_accent_color: string | null;
           pan_number: string | null;
           uan_number: string | null;
@@ -3411,6 +3717,8 @@ export type Database = {
           bank_name: string | null;
           reports_to_employee_id: string | null;
           created_at: string;
+          companion_enabled: boolean;
+          companion_name: string | null;
         };
         Insert: {
           id?: string;
@@ -3436,7 +3744,7 @@ export type Database = {
           family_contact_2_name?: string | null;
           family_contact_2_relation?: string | null;
           family_contact_2_number?: string | null;
-          theme_id?: string | null;
+          theme_id?: "navy-gold" | "day" | "eye-comfort" | "night" | "ocean" | "nova" | "clay" | null;
           custom_accent_color?: string | null;
           pan_number?: string | null;
           uan_number?: string | null;
@@ -3448,6 +3756,8 @@ export type Database = {
           bank_name?: string | null;
           reports_to_employee_id?: string | null;
           created_at?: string;
+          companion_enabled?: boolean;
+          companion_name?: string | null;
         };
         Update: {
           id?: string;
@@ -3473,7 +3783,7 @@ export type Database = {
           family_contact_2_name?: string | null;
           family_contact_2_relation?: string | null;
           family_contact_2_number?: string | null;
-          theme_id?: string | null;
+          theme_id?: "navy-gold" | "day" | "eye-comfort" | "night" | "ocean" | "nova" | "clay" | null;
           custom_accent_color?: string | null;
           pan_number?: string | null;
           uan_number?: string | null;
@@ -3485,6 +3795,8 @@ export type Database = {
           bank_name?: string | null;
           reports_to_employee_id?: string | null;
           created_at?: string;
+          companion_enabled?: boolean;
+          companion_name?: string | null;
         };
         Relationships: [
           {
@@ -3514,8 +3826,8 @@ export type Database = {
         Row: {
           id: string;
           company_id: string | null;
-          source: string;
-          status: string;
+          source: "validation" | "courier_api" | "manual";
+          status: "pending" | "resolved";
           reason: string;
           reference_type: string | null;
           reference_id: string | null;
@@ -3531,8 +3843,8 @@ export type Database = {
         Insert: {
           id?: string;
           company_id?: string | null;
-          source: string;
-          status?: string;
+          source: "validation" | "courier_api" | "manual";
+          status?: "pending" | "resolved";
           reason: string;
           reference_type?: string | null;
           reference_id?: string | null;
@@ -3548,8 +3860,8 @@ export type Database = {
         Update: {
           id?: string;
           company_id?: string | null;
-          source?: string;
-          status?: string;
+          source?: "validation" | "courier_api" | "manual";
+          status?: "pending" | "resolved";
           reason?: string;
           reference_type?: string | null;
           reference_id?: string | null;
@@ -3982,6 +4294,7 @@ export type Database = {
           credit_note_date: string | null;
           credit_note_amt: number;
           created_at: string;
+          vendor_party_id: string | null;
         };
         Insert: {
           id?: string;
@@ -3998,6 +4311,7 @@ export type Database = {
           credit_note_date?: string | null;
           credit_note_amt?: number;
           created_at?: string;
+          vendor_party_id?: string | null;
         };
         Update: {
           id?: string;
@@ -4014,8 +4328,16 @@ export type Database = {
           credit_note_date?: string | null;
           credit_note_amt?: number;
           created_at?: string;
+          vendor_party_id?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "freight_bills_vendor_party_id_fkey";
+            columns: ["vendor_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
         ];
       };
       freight_cost_estimates: {
@@ -4109,7 +4431,7 @@ export type Database = {
           id: string;
           category: string;
           title: string;
-          keywords: unknown[];
+          keywords: string[];
           answer: string;
           action_href: string | null;
           action_label: string | null;
@@ -4121,7 +4443,7 @@ export type Database = {
           id?: string;
           category: string;
           title: string;
-          keywords?: unknown[];
+          keywords?: string[];
           answer: string;
           action_href?: string | null;
           action_label?: string | null;
@@ -4133,7 +4455,7 @@ export type Database = {
           id?: string;
           category?: string;
           title?: string;
-          keywords?: unknown[];
+          keywords?: string[];
           answer?: string;
           action_href?: string | null;
           action_label?: string | null;
@@ -4193,12 +4515,19 @@ export type Database = {
           for_employee_id: string | null;
           for_employee_name_snapshot: string;
           for_employee_code_snapshot: string | null;
-          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
           ref_no: string | null;
           letter_date: string;
           remark: string | null;
           generated_by_employee_id: string;
           generated_on: string;
+          template_slug: string | null;
+          employee_address: string | null;
+          signatory_name: string | null;
+          signatory_designation: string | null;
+          subject_line: string | null;
+          field_values: Json;
+          body_text: string;
         };
         Insert: {
           id?: string;
@@ -4206,12 +4535,19 @@ export type Database = {
           for_employee_id?: string | null;
           for_employee_name_snapshot: string;
           for_employee_code_snapshot?: string | null;
-          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+          letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
           ref_no?: string | null;
           letter_date?: string;
           remark?: string | null;
           generated_by_employee_id: string;
           generated_on?: string;
+          template_slug?: string | null;
+          employee_address?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
+          subject_line?: string | null;
+          field_values?: Json;
+          body_text?: string;
         };
         Update: {
           id?: string;
@@ -4219,12 +4555,19 @@ export type Database = {
           for_employee_id?: string | null;
           for_employee_name_snapshot?: string;
           for_employee_code_snapshot?: string | null;
-          letter_type?: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+          letter_type?: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
           ref_no?: string | null;
           letter_date?: string;
           remark?: string | null;
           generated_by_employee_id?: string;
           generated_on?: string;
+          template_slug?: string | null;
+          employee_address?: string | null;
+          signatory_name?: string | null;
+          signatory_designation?: string | null;
+          subject_line?: string | null;
+          field_values?: Json;
+          body_text?: string;
         };
         Relationships: [
           {
@@ -4261,6 +4604,7 @@ export type Database = {
           remark: string | null;
           created_by_employee_id: string | null;
           created_at: string;
+          recurring_debit_id: string | null;
           recurring_month: string | null;
         };
         Insert: {
@@ -4273,6 +4617,7 @@ export type Database = {
           remark?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
+          recurring_debit_id?: string | null;
           recurring_month?: string | null;
         };
         Update: {
@@ -4285,6 +4630,7 @@ export type Database = {
           remark?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
+          recurring_debit_id?: string | null;
           recurring_month?: string | null;
         };
         Relationships: [
@@ -4300,6 +4646,13 @@ export type Database = {
             columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "internal_expenses_recurring_debit_id_fkey";
+            columns: ["recurring_debit_id"];
+            isOneToOne: false;
+            referencedRelation: "recurring_card_debits";
             referencedColumns: ["id"];
           },
         ];
@@ -4556,6 +4909,151 @@ export type Database = {
           },
         ];
       };
+      leave_coverage_assignments: {
+        Row: {
+          id: string;
+          leave_request_id: string;
+          covering_employee_id: string;
+          store_id: string;
+          from_date: string;
+          to_date: string;
+          assigned_by_employee_id: string;
+          assigned_at: string;
+          remark: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          leave_request_id: string;
+          covering_employee_id: string;
+          store_id: string;
+          from_date: string;
+          to_date: string;
+          assigned_by_employee_id: string;
+          assigned_at?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          leave_request_id?: string;
+          covering_employee_id?: string;
+          store_id?: string;
+          from_date?: string;
+          to_date?: string;
+          assigned_by_employee_id?: string;
+          assigned_at?: string;
+          remark?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_coverage_assignments_leave_request_id_fkey";
+            columns: ["leave_request_id"];
+            isOneToOne: false;
+            referencedRelation: "leave_requests";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_coverage_assignments_covering_employee_id_fkey";
+            columns: ["covering_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_coverage_assignments_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_coverage_assignments_assigned_by_employee_id_fkey";
+            columns: ["assigned_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      leave_requests: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          from_date: string;
+          to_date: string;
+          reason: string;
+          status: "Pending" | "Approved" | "Rejected";
+          requested_at: string;
+          decided_by_employee_id: string | null;
+          decided_at: string | null;
+          decision_remark: string | null;
+          created_at: string;
+          leave_type_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          from_date: string;
+          to_date: string;
+          reason: string;
+          status?: "Pending" | "Approved" | "Rejected";
+          requested_at?: string;
+          decided_by_employee_id?: string | null;
+          decided_at?: string | null;
+          decision_remark?: string | null;
+          created_at?: string;
+          leave_type_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          from_date?: string;
+          to_date?: string;
+          reason?: string;
+          status?: "Pending" | "Approved" | "Rejected";
+          requested_at?: string;
+          decided_by_employee_id?: string | null;
+          decided_at?: string | null;
+          decision_remark?: string | null;
+          created_at?: string;
+          leave_type_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_requests_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_decided_by_employee_id_fkey";
+            columns: ["decided_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_leave_type_id_fkey";
+            columns: ["leave_type_id"];
+            isOneToOne: false;
+            referencedRelation: "leave_types";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       leave_types: {
         Row: {
           id: string;
@@ -4564,7 +5062,7 @@ export type Database = {
           code: string | null;
           paid: boolean;
           annual_accrual_days: number;
-          accrual_frequency: string;
+          accrual_frequency: "Monthly" | "Upfront";
           carry_forward_cap: number | null;
           active: boolean;
           created_at: string;
@@ -4576,7 +5074,7 @@ export type Database = {
           code?: string | null;
           paid?: boolean;
           annual_accrual_days?: number;
-          accrual_frequency?: string;
+          accrual_frequency?: "Monthly" | "Upfront";
           carry_forward_cap?: number | null;
           active?: boolean;
           created_at?: string;
@@ -4588,7 +5086,7 @@ export type Database = {
           code?: string | null;
           paid?: boolean;
           annual_accrual_days?: number;
-          accrual_frequency?: string;
+          accrual_frequency?: "Monthly" | "Upfront";
           carry_forward_cap?: number | null;
           active?: boolean;
           created_at?: string;
@@ -4666,7 +5164,7 @@ export type Database = {
           orders_fetched: number;
           orders_created: number;
           orders_skipped_dup: number;
-          status: string;
+          status: "RUNNING" | "SUCCESS" | "FAILED";
           error_message: string | null;
         };
         Insert: {
@@ -4677,7 +5175,7 @@ export type Database = {
           orders_fetched?: number;
           orders_created?: number;
           orders_skipped_dup?: number;
-          status?: string;
+          status?: "RUNNING" | "SUCCESS" | "FAILED";
           error_message?: string | null;
         };
         Update: {
@@ -4688,7 +5186,7 @@ export type Database = {
           orders_fetched?: number;
           orders_created?: number;
           orders_skipped_dup?: number;
-          status?: string;
+          status?: "RUNNING" | "SUCCESS" | "FAILED";
           error_message?: string | null;
         };
         Relationships: [
@@ -4932,7 +5430,7 @@ export type Database = {
           created_at: string;
           booked_freight_amt: number | null;
           booked_currency: string | null;
-          booked_amount_source: string | null;
+          booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
         };
         Insert: {
           id?: string;
@@ -4948,7 +5446,7 @@ export type Database = {
           created_at?: string;
           booked_freight_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
         };
         Update: {
           id?: string;
@@ -4964,7 +5462,7 @@ export type Database = {
           created_at?: string;
           booked_freight_amt?: number | null;
           booked_currency?: string | null;
-          booked_amount_source?: string | null;
+          booked_amount_source?: "api" | "rate_card_estimate" | "manual" | null;
         };
         Relationships: [
           {
@@ -4976,6 +5474,67 @@ export type Database = {
           },
           {
             foreignKeyName: "order_shipments_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      order_vendor_assignments: {
+        Row: {
+          id: string;
+          order_id: string;
+          cycle_no: number;
+          party_id: string;
+          assigned_date: string;
+          received_date: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          order_id: string;
+          cycle_no: number;
+          party_id: string;
+          assigned_date: string;
+          received_date?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          cycle_no?: number;
+          party_id?: string;
+          assigned_date?: string;
+          received_date?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "order_vendor_assignments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_vendor_assignments_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_vendor_assignments_created_by_employee_id_fkey";
             columns: ["created_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
@@ -4999,7 +5558,7 @@ export type Database = {
           status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date: string | null;
           photo_url: string | null;
-          photo_urls: unknown[] | null;
+          photo_urls: string[] | null;
           sku_id: string | null;
           sku_label: string | null;
           size_id: string | null;
@@ -5012,6 +5571,13 @@ export type Database = {
           estimated_dispatch_date: string | null;
           late_order: boolean;
           buyer_name_address: string | null;
+          buyer_country: string | null;
+          buyer_address1: string | null;
+          buyer_address2: string | null;
+          buyer_address3: string | null;
+          buyer_city: string | null;
+          buyer_state: string | null;
+          buyer_postal_code: string | null;
           contact_no: string | null;
           email_id: string | null;
           tax_id: string | null;
@@ -5056,7 +5622,7 @@ export type Database = {
           status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
-          photo_urls?: unknown[] | null;
+          photo_urls?: string[] | null;
           sku_id?: string | null;
           sku_label?: string | null;
           size_id?: string | null;
@@ -5069,6 +5635,13 @@ export type Database = {
           estimated_dispatch_date?: string | null;
           late_order?: boolean;
           buyer_name_address?: string | null;
+          buyer_country?: string | null;
+          buyer_address1?: string | null;
+          buyer_address2?: string | null;
+          buyer_address3?: string | null;
+          buyer_city?: string | null;
+          buyer_state?: string | null;
+          buyer_postal_code?: string | null;
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
@@ -5113,7 +5686,7 @@ export type Database = {
           status?: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";
           dispatch_date?: string | null;
           photo_url?: string | null;
-          photo_urls?: unknown[] | null;
+          photo_urls?: string[] | null;
           sku_id?: string | null;
           sku_label?: string | null;
           size_id?: string | null;
@@ -5126,6 +5699,13 @@ export type Database = {
           estimated_dispatch_date?: string | null;
           late_order?: boolean;
           buyer_name_address?: string | null;
+          buyer_country?: string | null;
+          buyer_address1?: string | null;
+          buyer_address2?: string | null;
+          buyer_address3?: string | null;
+          buyer_city?: string | null;
+          buyer_state?: string | null;
+          buyer_postal_code?: string | null;
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
@@ -5281,8 +5861,8 @@ export type Database = {
           id: string;
           company_id: string;
           party_id: string;
-          txn_type: string;
-          direction: string;
+          txn_type: "recharge" | "consume" | "refund";
+          direction: "in" | "out";
           amount: number;
           txn_date: string;
           payment_mode: string | null;
@@ -5296,8 +5876,8 @@ export type Database = {
           id?: string;
           company_id: string;
           party_id: string;
-          txn_type: string;
-          direction: string;
+          txn_type: "recharge" | "consume" | "refund";
+          direction: "in" | "out";
           amount: number;
           txn_date: string;
           payment_mode?: string | null;
@@ -5311,8 +5891,8 @@ export type Database = {
           id?: string;
           company_id?: string;
           party_id?: string;
-          txn_type?: string;
-          direction?: string;
+          txn_type?: "recharge" | "consume" | "refund";
+          direction?: "in" | "out";
           amount?: number;
           txn_date?: string;
           payment_mode?: string | null;
@@ -5483,13 +6063,13 @@ export type Database = {
           vendor_invoice_date: string | null;
           qty: number;
           sq_feet: number;
-          qty_unit: string;
+          qty_unit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
           work_description: string | null;
           unit_rate: number;
           order_id: string | null;
           company_id: string | null;
           gst_rate_pct: number | null;
-          gst_type: string | null;
+          gst_type: "CGST_SGST" | "IGST" | null;
           round_off_amt: number;
           total_sq_feet: number | null;
           total_amount: number | null;
@@ -5503,13 +6083,13 @@ export type Database = {
           vendor_invoice_date?: string | null;
           qty?: number;
           sq_feet?: number;
-          qty_unit?: string;
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
           work_description?: string | null;
           unit_rate?: number;
           order_id?: string | null;
           company_id?: string | null;
           gst_rate_pct?: number | null;
-          gst_type?: string | null;
+          gst_type?: "CGST_SGST" | "IGST" | null;
           round_off_amt?: number;
           total_sq_feet?: number | null;
           total_amount?: number | null;
@@ -5523,13 +6103,13 @@ export type Database = {
           vendor_invoice_date?: string | null;
           qty?: number;
           sq_feet?: number;
-          qty_unit?: string;
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
           work_description?: string | null;
           unit_rate?: number;
           order_id?: string | null;
           company_id?: string | null;
           gst_rate_pct?: number | null;
-          gst_type?: string | null;
+          gst_type?: "CGST_SGST" | "IGST" | null;
           round_off_amt?: number;
           total_sq_feet?: number | null;
           total_amount?: number | null;
@@ -5566,7 +6146,7 @@ export type Database = {
           chalan_id: string;
           description: string;
           qty: number;
-          qty_unit: string;
+          qty_unit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
           rate: number | null;
           remark: string | null;
           created_at: string;
@@ -5576,7 +6156,7 @@ export type Database = {
           chalan_id: string;
           description: string;
           qty: number;
-          qty_unit?: string;
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
           rate?: number | null;
           remark?: string | null;
           created_at?: string;
@@ -5586,7 +6166,7 @@ export type Database = {
           chalan_id?: string;
           description?: string;
           qty?: number;
-          qty_unit?: string;
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
           rate?: number | null;
           remark?: string | null;
           created_at?: string;
@@ -5611,7 +6191,7 @@ export type Database = {
           order_id: string | null;
           through: string | null;
           no_of_packages: number | null;
-          source: string | null;
+          source: "manual" | "purchase_bill" | null;
           source_id: string | null;
           remark: string | null;
           created_at: string;
@@ -5625,7 +6205,7 @@ export type Database = {
           order_id?: string | null;
           through?: string | null;
           no_of_packages?: number | null;
-          source?: string | null;
+          source?: "manual" | "purchase_bill" | null;
           source_id?: string | null;
           remark?: string | null;
           created_at?: string;
@@ -5639,7 +6219,7 @@ export type Database = {
           order_id?: string | null;
           through?: string | null;
           no_of_packages?: number | null;
-          source?: string | null;
+          source?: "manual" | "purchase_bill" | null;
           source_id?: string | null;
           remark?: string | null;
           created_at?: string;
@@ -5664,6 +6244,66 @@ export type Database = {
             columns: ["order_id"];
             isOneToOne: false;
             referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      recurring_card_debits: {
+        Row: {
+          id: string;
+          company_id: string;
+          vendor_name: string;
+          category: string;
+          amount: number | null;
+          card_label: string | null;
+          day_of_month: number;
+          active: boolean;
+          last_logged_month: string | null;
+          remark: string | null;
+          created_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          vendor_name: string;
+          category?: string;
+          amount?: number | null;
+          card_label?: string | null;
+          day_of_month: number;
+          active?: boolean;
+          last_logged_month?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          vendor_name?: string;
+          category?: string;
+          amount?: number | null;
+          card_label?: string | null;
+          day_of_month?: number;
+          active?: boolean;
+          last_logged_month?: string | null;
+          remark?: string | null;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "recurring_card_debits_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "recurring_card_debits_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];
@@ -6016,7 +6656,7 @@ export type Database = {
           master_invoice_no: string;
           invoice_date: string;
           shipment_term: string;
-          csb_type: string;
+          csb_type: "CSB-V" | "CSB-IV";
           courier_company: string;
           department_reference_no: string | null;
           destination_country: string | null;
@@ -6049,7 +6689,7 @@ export type Database = {
           broker_name: string | null;
           broker_tel: string | null;
           broker_contact: string | null;
-          duty_payable_by: string | null;
+          duty_payable_by: "Exporter" | "Consignee" | "Other" | null;
           duty_payable_other_specify: string | null;
           created_by_employee_id: string;
           created_at: string;
@@ -6062,7 +6702,7 @@ export type Database = {
           master_invoice_no: string;
           invoice_date?: string;
           shipment_term: string;
-          csb_type: string;
+          csb_type: "CSB-V" | "CSB-IV";
           courier_company: string;
           department_reference_no?: string | null;
           destination_country?: string | null;
@@ -6095,7 +6735,7 @@ export type Database = {
           broker_name?: string | null;
           broker_tel?: string | null;
           broker_contact?: string | null;
-          duty_payable_by?: string | null;
+          duty_payable_by?: "Exporter" | "Consignee" | "Other" | null;
           duty_payable_other_specify?: string | null;
           created_by_employee_id: string;
           created_at?: string;
@@ -6108,7 +6748,7 @@ export type Database = {
           master_invoice_no?: string;
           invoice_date?: string;
           shipment_term?: string;
-          csb_type?: string;
+          csb_type?: "CSB-V" | "CSB-IV";
           courier_company?: string;
           department_reference_no?: string | null;
           destination_country?: string | null;
@@ -6141,7 +6781,7 @@ export type Database = {
           broker_name?: string | null;
           broker_tel?: string | null;
           broker_contact?: string | null;
-          duty_payable_by?: string | null;
+          duty_payable_by?: "Exporter" | "Consignee" | "Other" | null;
           duty_payable_other_specify?: string | null;
           created_by_employee_id?: string;
           created_at?: string;
@@ -6304,7 +6944,7 @@ export type Database = {
           mail_class: string | null;
           delivery_confirmation: string | null;
           manifest_code: string | null;
-          status: string;
+          status: "pending" | "created" | "manifested" | "failed";
           shipglobal_order_number: string | null;
           shipglobal_waybill_number: string | null;
           tracking_no: string | null;
@@ -6348,7 +6988,7 @@ export type Database = {
           mail_class?: string | null;
           delivery_confirmation?: string | null;
           manifest_code?: string | null;
-          status?: string;
+          status?: "pending" | "created" | "manifested" | "failed";
           shipglobal_order_number?: string | null;
           shipglobal_waybill_number?: string | null;
           tracking_no?: string | null;
@@ -6392,7 +7032,7 @@ export type Database = {
           mail_class?: string | null;
           delivery_confirmation?: string | null;
           manifest_code?: string | null;
-          status?: string;
+          status?: "pending" | "created" | "manifested" | "failed";
           shipglobal_order_number?: string | null;
           shipglobal_waybill_number?: string | null;
           tracking_no?: string | null;
@@ -6743,6 +7383,42 @@ export type Database = {
           },
         ];
       };
+      stock_out_order_links: {
+        Row: {
+          id: string;
+          stock_out_id: string;
+          order_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          stock_out_id: string;
+          order_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          stock_out_id?: string;
+          order_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "stock_out_order_links_stock_out_id_fkey";
+            columns: ["stock_out_id"];
+            isOneToOne: false;
+            referencedRelation: "stock_out";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "stock_out_order_links_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       store_ad_spend: {
         Row: {
           id: string;
@@ -7025,7 +7701,7 @@ export type Database = {
         Row: {
           id: string;
           company_id: string;
-          scope: string;
+          scope: "role" | "employee";
           role_name: string | null;
           employee_id: string | null;
           category: string | null;
@@ -7040,7 +7716,7 @@ export type Database = {
         Insert: {
           id?: string;
           company_id: string;
-          scope: string;
+          scope: "role" | "employee";
           role_name?: string | null;
           employee_id?: string | null;
           category?: string | null;
@@ -7055,7 +7731,7 @@ export type Database = {
         Update: {
           id?: string;
           company_id?: string;
-          scope?: string;
+          scope?: "role" | "employee";
           role_name?: string | null;
           employee_id?: string | null;
           category?: string | null;
@@ -7100,6 +7776,27 @@ export type Database = {
       };
     };
     Views: {
+      courier_cn_audit_view: {
+        Row: {
+          bill_pass_register_id: string | null;
+          company_id: string | null;
+          party_id: string | null;
+          vendor_invoice_no: string | null;
+          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          source: string | null;
+          source_id: string | null;
+          ledger_total_amt: number | null;
+          source_gross_amt: number | null;
+          source_cn_amt: number | null;
+          cn_in_total: number | null;
+          cn_adjusted: number | null;
+          manual_cn_amt: number | null;
+          total_paid: number | null;
+          balance_due: number | null;
+          double_applied_flag: boolean | null;
+        };
+        Relationships: [];
+      };
       data_quality_alerts_view: {
         Row: {
           order_id: string | null;
@@ -7266,6 +7963,105 @@ export type Database = {
         };
         Relationships: [];
       };
+      pl_dashboard_by_company_month_view: {
+        Row: {
+          company_id: string | null;
+          company_name: string | null;
+          month: string | null;
+          total_sale_value_inr: number | null;
+          total_sale_value_usd: number | null;
+          total_expenses_inr: number | null;
+          portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
+          net_earn: number | null;
+          profit_pct: number | null;
+          total_internal_expenses_inr: number | null;
+          net_earn_after_overhead: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_purchase_adjustments_inr: number | null;
+          expense_washing_inr: number | null;
+          expense_historical_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          bank_inflow_inr: number | null;
+        };
+        Relationships: [];
+      };
+      pl_dashboard_by_company_view: {
+        Row: {
+          company_id: string | null;
+          company_name: string | null;
+          total_sale_value_inr: number | null;
+          total_expenses_inr: number | null;
+          net_total_value: number | null;
+          portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
+          net_earn: number | null;
+          profit_pct: number | null;
+          total_internal_expenses_inr: number | null;
+          net_earn_after_overhead: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_purchase_adjustments_inr: number | null;
+          expense_washing_inr: number | null;
+          expense_historical_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          bank_inflow_inr: number | null;
+          total_sale_value_usd: number | null;
+        };
+        Relationships: [];
+      };
+      pl_dashboard_by_month_view: {
+        Row: {
+          company_id: string | null;
+          company_name: string | null;
+          month: string | null;
+          total_sale_value_inr: number | null;
+          total_sale_value_usd: number | null;
+          total_expenses_inr: number | null;
+          portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
+          net_earn: number | null;
+          profit_pct: number | null;
+          total_internal_expenses_inr: number | null;
+          net_earn_after_overhead: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_purchase_adjustments_inr: number | null;
+          expense_washing_inr: number | null;
+          expense_historical_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          bank_inflow_inr: number | null;
+        };
+        Relationships: [];
+      };
+      pl_dashboard_by_store_view: {
+        Row: {
+          store_id: string | null;
+          store_name: string | null;
+          company_id: string | null;
+          company_name: string | null;
+          order_count: number | null;
+          total_sale_value_inr: number | null;
+          total_sale_value_usd: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          portal_expenses_25pct: number | null;
+          portal_expense_effective_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          ad_spend_usd: number | null;
+          ad_budget_usd: number | null;
+          expense_purchase_inr: number | null;
+          expense_washing_inr: number | null;
+          net_before_overhead_inr: number | null;
+          profit_pct_before_overhead: number | null;
+          roas: number | null;
+        };
+        Relationships: [];
+      };
       stock_current_view: {
         Row: {
           stock_item_id: string | null;
@@ -7285,6 +8081,42 @@ export type Database = {
           p_seconds: number;
         };
         Returns: unknown;
+      };
+      finance_dashboard_monthly: {
+        Args: {
+          p_company_id: string;
+          p_from: string;
+          p_to: string;
+          p_store_id?: string | null;
+          p_buyer_country?: string | null;
+        };
+        Returns: {
+          month: string | null;
+          order_count: number | null;
+          total_sale_value_inr: number | null;
+          total_sale_value_usd: number | null;
+          expense_courier_inr: number | null;
+          expense_duty_inr: number | null;
+          portal_fees_matched_inr: number | null;
+          portal_expense_effective_inr: number | null;
+          ad_spend_usd: number | null;
+          returns_inr: number | null;
+          expense_purchase_inr: number | null;
+          expense_washing_inr: number | null;
+        }[];
+      };
+      finance_dashboard_unlinked_purchase_washing: {
+        Args: {
+          p_company_id: string;
+          p_from: string;
+          p_to: string;
+        };
+        Returns: {
+          unlinked_purchase_bill_count: number | null;
+          unlinked_purchase_inr: number | null;
+          unlinked_washing_entry_count: number | null;
+          unlinked_washing_inr: number | null;
+        }[];
       };
       format_document_no: {
         Args: {
@@ -7353,14 +8185,14 @@ export type Database = {
           p_company_id: string;
           p_scope: string;
           p_use_fy: boolean;
-          p_as_of_date: string;
+          p_as_of_date?: string | null;
         };
         Returns: number;
       };
       sync_capabilities: {
         Args: {
-          p_codes: unknown[];
-          p_descriptions: unknown[];
+          p_codes?: unknown[] | null;
+          p_descriptions?: unknown[] | null;
         };
         Returns: number;
       };
@@ -7377,7 +8209,7 @@ export type Database = {
       employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
       leave_request_status: "Pending" | "Approved" | "Rejected";
-      letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Custom / Other Letter";
+      letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
       order_status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned";

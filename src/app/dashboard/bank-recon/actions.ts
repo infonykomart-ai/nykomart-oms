@@ -58,7 +58,9 @@ export async function saveReconAccount(_prev: AccountFormState, formData: FormDa
 
   const id = str(formData, "id"); // present = edit
   const companyId = str(formData, "company_id");
-  const accountType = str(formData, "account_type") === "card" ? "card" : "bank";
+  // Narrowed to the column's CHECK union (bank_recon_accounts.account_type) so
+  // the generated insert/update types accept it.
+  const accountType: "bank" | "card" = str(formData, "account_type") === "card" ? "card" : "bank";
   const accountName = str(formData, "account_name");
   if (!companyId || !accountName) {
     return { error: "Company and Account Name are required.", success: false };
