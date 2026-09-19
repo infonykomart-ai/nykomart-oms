@@ -3,7 +3,6 @@
 import { useActionState, useRef, useEffect, useState, type FormEvent } from "react";
 import { createOrder, checkFinishedStockAction, type OrderFormState } from "./actions";
 import { PhotoUrlField } from "../photo-url-field";
-import { MultiPhotoUrls } from "../multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
@@ -118,14 +117,6 @@ function ItemBlock({
         </div>
         <div className="sm:col-span-2">
           <PhotoUrlField id={id("photo_url")} name={id("photo_url")} labelClass={labelClass} />
-          {/* 2026-09-18 — "order me agar ek se jyada photo or dalni pade to
-              kese manage hoyegi link se dalegi": extra photo links per item,
-              added with "+ Add Photo". The first PhotoUrlField above is
-              always photo #1 (it feeds the thumbnail/print/WhatsApp as
-              before); each extra row below is a plain URL field serialized
-              into items_json.photoUrls on submit — see new/actions.ts's
-              parseItems(). */}
-          <MultiPhotoUrls namePrefix={id("photo_extra_url")} inputClass={inputClass} />
         </div>
         <div className="flex items-center gap-2 pt-6">
           <input id={id("tassel_fringes")} name={id("tassel_fringes")} type="checkbox" className="h-4 w-4 rounded border-slate-300" />
@@ -201,34 +192,18 @@ export function OrderForm({
     const val = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.value ?? "";
     const checked = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | null)?.checked ?? false;
 
-    const items = itemKeys.map((key) => {
-      // 2026-09-18 — extra photo links from this item block's "Add Photo"
-      // rows (multi-photo-urls.tsx). All rows share ONE name, and
-      // namedItem() returns a RadioNodeList when several inputs share a
-      // name — read every entry, in row order, so blanks/de-dupes stay the
-      // server action's job (parseItems()). (ItemBlock's `id()` helper is
-      // per-itemKey, but the same `field_key` convention applies here.)
-      const extrasRaw = form.elements.namedItem(`photo_extra_url_${key}`);
-      const extraUrls =
-        extrasRaw instanceof RadioNodeList
-          ? Array.from(extrasRaw, (el) => (el as HTMLInputElement).value ?? "")
-          : extrasRaw instanceof HTMLInputElement
-            ? [extrasRaw.value]
-            : [];
-      return {
-        itemCategoryId: val(`item_category_id_${key}`),
-        skuLabel: val(`sku_label_${key}`),
-        sizeLabel: val(`size_label_${key}`),
-        qty: Number(val(`qty_${key}`)),
-        colour: val(`colour_${key}`),
-        photoType: val(`photo_type_${key}`),
-        photoUrl: val(`photo_url_${key}`),
-        photoUrls: extraUrls.map((u) => u.trim()).filter(Boolean),
-        tasselFringes: checked(`tassel_fringes_${key}`),
-        orderCurrency: val(`order_currency_${key}`) || "USD",
-        orderValueOriginal: Number(val(`order_value_original_${key}`)),
-      };
-    });
+    const items = itemKeys.map((key) => ({
+      itemCategoryId: val(`item_category_id_${key}`),
+      skuLabel: val(`sku_label_${key}`),
+      sizeLabel: val(`size_label_${key}`),
+      qty: Number(val(`qty_${key}`)),
+      colour: val(`colour_${key}`),
+      photoType: val(`photo_type_${key}`),
+      photoUrl: val(`photo_url_${key}`),
+      tasselFringes: checked(`tassel_fringes_${key}`),
+      orderCurrency: val(`order_currency_${key}`) || "USD",
+      orderValueOriginal: Number(val(`order_value_original_${key}`)),
+    }));
 
     if (itemsJsonRef.current) itemsJsonRef.current.value = JSON.stringify(items);
   }
@@ -438,7 +413,13 @@ export function OrderForm({
           </div>
           <div>
             <label className={labelClass} htmlFor="email_id">Email</label>
-            <input id="email_id" name="email_id" type="email" className={inputClass} />
+            {/* 2026-09-19 — was type="email": same silent-submit-block class
+                of bug fixed on the Photo URL field above (see that field's
+                comment). An optional field with strict native format
+                validation is a trap the moment someone types anything
+                not-quite-email-shaped (or a stray space) — the whole form
+                then refuses to submit with no visible error. */}
+            <input id="email_id" name="email_id" type="text" className={inputClass} />
           </div>
           <div>
             <label className={labelClass} htmlFor="address_type">Address Type</label>

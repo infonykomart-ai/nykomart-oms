@@ -3,7 +3,6 @@
 import { useActionState, useEffect } from "react";
 import { updateOrder, type OrderEditState } from "./actions";
 import { PhotoUrlField } from "./photo-url-field";
-import { MultiPhotoUrls } from "./multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
@@ -29,10 +28,6 @@ export type EditableOrder = {
   colour: string | null;
   photo_type: string | null;
   photo_url: string | null;
-  // 2026-09-18 — multi-photo links (db/2026-09-18-orders-multi-photo-and-
-  // capability-sync.sql): the FULL list behind photo_url. photo_url stays
-  // photo #1; extras render in the "+ Add Photo" rows.
-  photo_urls: string[] | null;
   tassel_fringes: boolean | null;
   buyer_name_address: string | null;
   contact_no: string | null;
@@ -249,15 +244,6 @@ export function OrderEditForm({
             defaultValue={order.photo_url}
             labelClass={labelClass}
           />
-          {/* 2026-09-18 — multi-photo links: photo_url above stays photo #1;
-              every extra photo is one plain URL row here, saved into
-              orders.photo_urls by updateOrder() (see ./actions.ts). Extras
-              default from the tail of the saved photo_urls list. */}
-          <MultiPhotoUrls
-            namePrefix="photo_extra_urls"
-            inputClass={inputClass}
-            initialUrls={(order.photo_urls ?? []).filter((u) => u && u !== order.photo_url)}
-          />
         </div>
         <div className="flex items-center gap-2 pt-5">
           <input id={`tassel_fringes-${order.id}`} name="tassel_fringes" type="checkbox" defaultChecked={!!order.tassel_fringes} className="h-4 w-4 rounded border-slate-300" />
@@ -281,7 +267,13 @@ export function OrderEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`email_id-${order.id}`}>Email</label>
-          <input id={`email_id-${order.id}`} name="email_id" type="email" defaultValue={order.email_id ?? ""} className={inputClass} />
+          {/* 2026-09-19 — was type="email", same silent-submit-block bug as
+              the Photo URL field / New Order form's Email field (see those
+              comments) — an existing order's email_id can already hold
+              messy legacy text (old imports, manual typos), which would
+              have blocked "Save Changes" on THIS order forever with no
+              visible error the moment it was opened for any other edit. */}
+          <input id={`email_id-${order.id}`} name="email_id" type="text" defaultValue={order.email_id ?? ""} className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor={`address_type-${order.id}`}>Address Type</label>

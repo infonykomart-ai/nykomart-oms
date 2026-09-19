@@ -80,7 +80,24 @@ export function PhotoUrlField({
         <input
           id={id}
           name={name}
-          type="url"
+          // 2026-09-19 — was type="url". A bare <input type="url"> silently
+          // blocks the WHOLE form's submit via native HTML5 constraint
+          // validation the instant this field is non-empty AND not a
+          // well-formed absolute URL (e.g. a pasted Google Photos/WhatsApp
+          // share snippet, a link missing "https://", stray whitespace) —
+          // no error text, no server round-trip, no entry in entry_errors
+          // (the click never reaches handleSubmit/the server action at
+          // all). That's the exact "Save button click karo, kuch hota hi
+          // nahi" symptom reported for Order Entry/Edit, and it explains
+          // why entry_errors shows nothing for it — the browser eats the
+          // submit before any of our own code runs. This field already has
+          // its own broken-link detection (the <img onError> above) and
+          // uploads go through uploadOrderPhoto() regardless of what's
+          // typed here, so native URL-format policing added nothing but a
+          // silent trap. type="text" removes that native gate; a genuinely
+          // broken link still surfaces via the existing "link se photo load
+          // nahi ho rahi" message.
+          type="text"
           value={url}
           onChange={(e) => {
             setUrl(e.target.value);
