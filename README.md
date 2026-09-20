@@ -1,50 +1,71 @@
-# Fix: "Cannot find module './actions'" build error — 2026-09-20
+# Fix round 2 — remaining build errors — 2026-09-20
 
-## Kya hua
-
-Vercel build 3 baar fail hui, hamesha yahi error:
+Naya error aaya:
 
 ```
-order-whatsapp-button.tsx(4,39): error TS2307: Cannot find module './actions'
+order-form.tsx(5,31): error TS2307: Cannot find module '../photo-url-field'
+telegram-send-order-route.ts(105,18): error TS2339: Property 'telegram_chat_id' does not exist...
+whapi-send-order-route.ts(130,18): error TS2339: Property 'whapi_group_id' does not exist...
 ```
 
-Iska matlab: aapke GitHub repo ke is folder me —
-`src/app/dashboard/orders/new/` — se **`actions.ts` file gayab ho gayi hai**
-(shayad `order-form.tsx` bhi). Yeh file maine kabhi touch nahi ki thi —
-lagta hai jab aapne meri di hui 2 files (`order-whatsapp-button.tsx` aur
-`page.tsx`) us folder me upload ki, to GitHub ne (ya jo bhi tareeka use
-kiya) us folder ki PURANI files (`actions.ts`, `order-form.tsx`) delete kar
-di, sirf nayi 2 files reh gayi.
+Teen alag-alag cheezein hain. **Har file ka EXACT path niche diya hai — bilkul wahi path use karna, warna phir se error aayega.**
 
-## Fix
+## 1. `photo-url-field.tsx` — ek aur missing file
 
-Is zip me wahi 2 files hain jo missing ho gayi thi — inhe wapas usi folder
-me daal do:
+Yeh bhi wahi wali problem hai (upload ke time delete ho gayi thi), bas yeh
+`orders/new/` folder me nahi, ek folder UPAR `orders/` me hai:
 
-- `actions.ts` → `src/app/dashboard/orders/new/actions.ts`
-- `order-form.tsx` → `src/app/dashboard/orders/new/order-form.tsx`
+**Is zip ki `photo-url-field.tsx` ko yahan daalo:**
+```
+src/app/dashboard/orders/photo-url-field.tsx
+```
+⚠️ `orders/new/` ke ANDAR NAHI — `orders/` me seedha, `new` folder se
+bahar.
 
-(Yeh dono files maine kabhi edit nahi ki — bilkul wahi content hai jo
-pehle se hona chahiye tha.)
+## 2. `database.types.ts` — pichhle zip se already diya tha, lagta hai abhi tak nahi laga
 
-Ab us folder me total **4 files** honi chahiye:
-- `actions.ts` (is zip se)
-- `order-form.tsx` (is zip se)
-- `order-whatsapp-button.tsx` (pehle wale zip se — already daal chuke ho)
-- `page.tsx` (pehle wale zip se — already daal chuke ho)
+`telegram_chat_id does not exist` / `whapi_group_id does not exist` — yeh
+error tabhi aata hai jab TypeScript ka types file purana hai. Iska fix:
 
-## Aage se aisa na ho, iske liye
+**Is zip ki `database.types.ts` ko yahan daalo (file ka NAAM badal ke):**
+```
+src/types/database.ts
+```
+(Naam `database.ts` hona chahiye, `database.types.ts` nahi — file ke andar
+ka content chahiye, naam sirf isliye alag rakha hai taaki aap yahan se
+confuse na ho ki kaunsi file kis liye hai.)
 
-Jab bhi main koi zip doon jisme sirf CHUNE HUE files hon (poora folder
-nahi), to un files ko **ek-ek karke** upload/replace karna — GitHub ke
-"Add file → Upload files" wale screen par agar poora folder drag-drop
-karoge to sirf wahi files rahengi jo aap daal rahe ho, baaki purani files
-(jo upload me shamil nahi thi) delete ho sakti hain. Har file ko uske apne
-path par jaake, uske "pencil/edit" icon se edit karna sabse safe tareeka
-hai.
+## 3. API route files — pichhli baar shayad galat jagah/naam se gayi thi
 
-## Verify
+Yeh do files **bilkul route.ts naam se, apne alag folder ke andar** honi
+chahiye — agar inhe "whapi-send-order-route.ts" naam se hi kahin daal diya
+tha (jaisa zip me tha), to Next.js unhe API route hi nahi maanega, aur
+button kaam nahi karega (chahe build pass ho jaaye).
 
-Dono files upload karne ke baad Vercel apne aap ek naya build try karega
-(ya "Redeploy" dabana pad sakta hai). Is baar `Cannot find module
-'./actions'` error nahi aana chahiye.
+**`whapi-send-order-route.ts` ko:**
+1. Naya folder banao: `src/app/api/whapi-send-order/`
+2. Us folder ke andar file ka naam rakho: `route.ts` (na ki
+   `whapi-send-order-route.ts`)
+3. Poora path: `src/app/api/whapi-send-order/route.ts`
+
+**`telegram-send-order-route.ts` ko:**
+1. Naya folder banao: `src/app/api/telegram-send-order/`
+2. Us folder ke andar file ka naam rakho: `route.ts`
+3. Poora path: `src/app/api/telegram-send-order/route.ts`
+
+Agar pehle se kahin `whapi-send-order-route.ts` ya
+`telegram-send-order-route.ts` naam ki koi file repo me pada hai (kisi bhi
+folder me), usko **delete** kar dena — sirf `route.ts` naam wali hi
+rehni chahiye, apne apne sahi folder me.
+
+## Summary — is zip ke baad total files check list
+
+| Is zip ki file | Kahan jaani hai |
+|---|---|
+| `photo-url-field.tsx` | `src/app/dashboard/orders/photo-url-field.tsx` |
+| `database.types.ts` | `src/types/database.ts` (naam badal ke) |
+| `whapi-send-order-route.ts` | `src/app/api/whapi-send-order/route.ts` (naam badal ke) |
+| `telegram-send-order-route.ts` | `src/app/api/telegram-send-order/route.ts` (naam badal ke) |
+
+Sab daalne ke baad Vercel naya build try karega. Agar phir bhi koi error
+aaye, poora build log paste kar dena — turant dekh lunga.
