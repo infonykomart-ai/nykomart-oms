@@ -1,71 +1,56 @@
-# Fix round 2 — remaining build errors — 2026-09-20
+# Final fix — folder structure ke sath — 2026-09-20
 
-Naya error aaya:
+Is zip ke andar **`src` folder hai, bilkul waise hi jaise aapke repo me
+hona chahiye** — koi path khud nahi sochna padega.
+
+## Kaise use karein
+
+1. Is zip ko apne computer par **extract/unzip** karo. Andar ek `src`
+   naam ka folder milega.
+2. GitHub par apne repo (`nykomart-oms`) ke root me jaao (jaha se `src`
+   folder dikhta hai).
+3. **"Add file" → "Upload files"** dabao.
+4. Us `src` folder ko (poore ka poora, andar se files nikal kar nahi —
+   `src` folder ko hi) upload screen par **drag-and-drop** kar do.
+   GitHub is se andar ki saari sub-folders (types, app/api/..., app/
+   dashboard/orders/...) apne aap sahi jagah par rakh dega, kyunki yeh
+   zip ke andar already sahi structure me hai.
+5. Commit message likh ke commit kar do.
+
+Agar drag-and-drop se folder upload ka option na dikhe (kabhi kabhi
+browser is par depend karta hai), to yeh tareeka try karo:
+- GitHub Desktop app use karo (agar installed hai): repo clone karo, is
+  `src` folder ko apne local repo ke `src` folder ke UPAR copy-paste kar
+  do (merge ho jayega, replace confirm maang sakta hai — "Yes/Replace"
+  bolna), phir commit + push kar do.
+
+## Is zip me kya hai (8 files, sahi path par already)
 
 ```
-order-form.tsx(5,31): error TS2307: Cannot find module '../photo-url-field'
-telegram-send-order-route.ts(105,18): error TS2339: Property 'telegram_chat_id' does not exist...
-whapi-send-order-route.ts(130,18): error TS2339: Property 'whapi_group_id' does not exist...
+src/
+├── types/
+│   └── database.ts
+└── app/
+    ├── api/
+    │   ├── whapi-send-order/
+    │   │   └── route.ts
+    │   └── telegram-send-order/
+    │       └── route.ts
+    └── dashboard/orders/
+        ├── photo-url-field.tsx
+        └── new/
+            ├── actions.ts
+            ├── order-form.tsx
+            ├── order-whatsapp-button.tsx
+            └── page.tsx
 ```
 
-Teen alag-alag cheezein hain. **Har file ka EXACT path niche diya hai — bilkul wahi path use karna, warna phir se error aayega.**
+Yeh sab is session me jo bhi problem aayi (missing files, galat folder,
+galat naam) — sabka final, sahi version hai. Isko upload karne ke baad
+`npx tsc --noEmit` yahan clean chal chuka hai (0 errors) — matlab agar
+yeh sahi jagah chala gaya, Vercel build bhi pass hona chahiye.
 
-## 1. `photo-url-field.tsx` — ek aur missing file
+## Uske baad
 
-Yeh bhi wahi wali problem hai (upload ke time delete ho gayi thi), bas yeh
-`orders/new/` folder me nahi, ek folder UPAR `orders/` me hai:
-
-**Is zip ki `photo-url-field.tsx` ko yahan daalo:**
-```
-src/app/dashboard/orders/photo-url-field.tsx
-```
-⚠️ `orders/new/` ke ANDAR NAHI — `orders/` me seedha, `new` folder se
-bahar.
-
-## 2. `database.types.ts` — pichhle zip se already diya tha, lagta hai abhi tak nahi laga
-
-`telegram_chat_id does not exist` / `whapi_group_id does not exist` — yeh
-error tabhi aata hai jab TypeScript ka types file purana hai. Iska fix:
-
-**Is zip ki `database.types.ts` ko yahan daalo (file ka NAAM badal ke):**
-```
-src/types/database.ts
-```
-(Naam `database.ts` hona chahiye, `database.types.ts` nahi — file ke andar
-ka content chahiye, naam sirf isliye alag rakha hai taaki aap yahan se
-confuse na ho ki kaunsi file kis liye hai.)
-
-## 3. API route files — pichhli baar shayad galat jagah/naam se gayi thi
-
-Yeh do files **bilkul route.ts naam se, apne alag folder ke andar** honi
-chahiye — agar inhe "whapi-send-order-route.ts" naam se hi kahin daal diya
-tha (jaisa zip me tha), to Next.js unhe API route hi nahi maanega, aur
-button kaam nahi karega (chahe build pass ho jaaye).
-
-**`whapi-send-order-route.ts` ko:**
-1. Naya folder banao: `src/app/api/whapi-send-order/`
-2. Us folder ke andar file ka naam rakho: `route.ts` (na ki
-   `whapi-send-order-route.ts`)
-3. Poora path: `src/app/api/whapi-send-order/route.ts`
-
-**`telegram-send-order-route.ts` ko:**
-1. Naya folder banao: `src/app/api/telegram-send-order/`
-2. Us folder ke andar file ka naam rakho: `route.ts`
-3. Poora path: `src/app/api/telegram-send-order/route.ts`
-
-Agar pehle se kahin `whapi-send-order-route.ts` ya
-`telegram-send-order-route.ts` naam ki koi file repo me pada hai (kisi bhi
-folder me), usko **delete** kar dena — sirf `route.ts` naam wali hi
-rehni chahiye, apne apne sahi folder me.
-
-## Summary — is zip ke baad total files check list
-
-| Is zip ki file | Kahan jaani hai |
-|---|---|
-| `photo-url-field.tsx` | `src/app/dashboard/orders/photo-url-field.tsx` |
-| `database.types.ts` | `src/types/database.ts` (naam badal ke) |
-| `whapi-send-order-route.ts` | `src/app/api/whapi-send-order/route.ts` (naam badal ke) |
-| `telegram-send-order-route.ts` | `src/app/api/telegram-send-order/route.ts` (naam badal ke) |
-
-Sab daalne ke baad Vercel naya build try karega. Agar phir bhi koi error
-aaye, poora build log paste kar dena — turant dekh lunga.
+Build phir se try karega Vercel (ya "Redeploy" dabana pad sakta hai). Jo
+bhi log aaye, paste kar dena.

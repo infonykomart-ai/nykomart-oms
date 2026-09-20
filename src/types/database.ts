@@ -1059,7 +1059,9 @@ export type Database = {
           name: string
           ref_prefix: string
           short_code: string
+          telegram_chat_id: string | null
           weekly_off_days: number[]
+          whapi_group_id: string | null
         }
         Insert: {
           active?: boolean
@@ -1070,7 +1072,9 @@ export type Database = {
           name: string
           ref_prefix: string
           short_code: string
+          telegram_chat_id?: string | null
           weekly_off_days?: number[]
+          whapi_group_id?: string | null
         }
         Update: {
           active?: boolean
@@ -1081,7 +1085,9 @@ export type Database = {
           name?: string
           ref_prefix?: string
           short_code?: string
+          telegram_chat_id?: string | null
           weekly_off_days?: number[]
+          whapi_group_id?: string | null
         }
         Relationships: []
       }

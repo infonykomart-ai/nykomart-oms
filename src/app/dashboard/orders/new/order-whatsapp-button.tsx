@@ -44,6 +44,19 @@ import { markOrderWhatsAppSent } from "./actions";
  * /api/telegram-send-order, which calls Telegram's Bot API server-side.
  * No download, no clipboard, no manual attach-and-paste.
  *
+ * WhatsApp AUTO flow (sendWhapiAuto) — added 2026-09-20, same day, after the
+ * user asked "ESA HI WHATSAAP PAR NHI HO SAKTA HAI KYA" (same one-click
+ * automation on WhatsApp too). Official WhatsApp Cloud API can't post to
+ * Groups at all; every unofficial route needs a persistent server the
+ * user's hosting can't run — so the user signed up for Whapi.Cloud (a
+ * hosted WhatsApp-Web-session API) themselves and chose it explicitly. This
+ * button POSTs to /api/whapi-send-order, which calls Whapi's API
+ * server-side — photo + caption, one message, no manual step. It sits
+ * ALONGSIDE the original manual "📱 Send on WhatsApp" button (not replacing
+ * it): Whapi's free tier is a rate-limited Sandbox (150 msg/day) and the
+ * user may not always have WHAPI_TOKEN/WHAPI_GROUP_ID configured, so the
+ * manual share flow stays as a zero-dependency fallback that always works.
+ *
  * ── Older history (kept for context only — NOT current behavior) ──
  * 2026-08-07: first version, wa.me text-only, no image at all.
  * 2026-08-08 → 2026-09-15: repeated flip-flopping between a baked-pixel
@@ -79,6 +92,12 @@ export function OrderWhatsAppButton({
     photo_type: string | null;
     remark: string | null;
     is_amazon: boolean;
+    // 2026-09-20b — which company (Nyko Mart / Rugara / CASA ARRA) this
+    // order belongs to, so the Telegram/WhatsApp auto-send routes can pick
+    // THAT company's own group instead of a single hardcoded one — see
+    // whapi-send-order/route.ts and telegram-send-order/route.ts header
+    // comments. null is fine (routes fall back to the global env var).
+    company_id: string | null;
   };
 }) {
   const [sentAt, setSentAt] = useState(order.whatsapp_sent_at);
@@ -87,6 +106,7 @@ export function OrderWhatsAppButton({
   const [isPending, startTransition] = useTransition();
   const [copied, setCopied] = useState(false);
   const [telegramSending, setTelegramSending] = useState(false);
+  const [whapiSending, setWhapiSending] = useState(false);
 
   function flashNotice(msg: string) {
     setNotice(msg);
@@ -231,7 +251,7 @@ export function OrderWhatsAppButton({
       const res = await fetch("/api/telegram-send-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(false) }),
+        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(false), companyId: order.company_id }),
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) {
@@ -244,6 +264,37 @@ export function OrderWhatsAppButton({
       setError("Telegram par bhej nahi paye — internet check karke dobara try karein.");
     } finally {
       setTelegramSending(false);
+    }
+  }
+
+  // Real automation: one call to our own server route, which calls
+  // Whapi.Cloud's API server-side (photo + caption together, one message,
+  // to the "Nyko Mart order" WhatsApp group). No download, no clipboard, no
+  // manual attach step. Uses buildMessage(true) (bold=true, the default) —
+  // unlike Telegram, real WhatsApp DOES render `*text*` as bold once the
+  // message actually arrives via the WhatsApp network, so this keeps the
+  // same bold labels the manual share flow already used.
+  async function sendWhapiAuto() {
+    setError(null);
+    setNotice(null);
+    setWhapiSending(true);
+    try {
+      const res = await fetch("/api/whapi-send-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(), companyId: order.company_id }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "WhatsApp (auto) par bhej nahi paye — dobara try karein.");
+        return;
+      }
+      flashNotice("🚀 WhatsApp group par bhej diya — photo aur caption ek hi message me chale gaye.");
+      markSent();
+    } catch {
+      setError("WhatsApp (auto) par bhej nahi paye — internet check karke dobara try karein.");
+    } finally {
+      setWhapiSending(false);
     }
   }
 
@@ -294,6 +345,19 @@ export function OrderWhatsAppButton({
           }`}
         >
           {sentAt ? "✓ Sent — Send Again" : "📱 Send on WhatsApp"}
+        </button>
+        {/* 2026-09-20 — real Whapi.Cloud automation (see header comment):
+            one click, one automated message, no manual step. Sits beside the
+            manual button above as a fallback-safe addition, not a
+            replacement — Whapi's free tier is rate-limited and may not
+            always be configured. */}
+        <button
+          type="button"
+          disabled={isPending || whapiSending}
+          onClick={sendWhapiAuto}
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+        >
+          {whapiSending ? "🚀 Sending…" : "🚀 Send on WhatsApp (Auto)"}
         </button>
         {/* 2026-09-20 — real Telegram Bot API automation (see header
             comment): one click, one automated message, no manual step. */}

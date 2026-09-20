@@ -1,5 +1,6 @@
 import { requireCapability, UnauthorizedError, ForbiddenError } from "@/lib/auth/require-capability";
 import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 
 // dns.lookup (used by safeExternalFetch's SSRF guard) needs the Node
 // runtime, not Edge — same reason order-photo-proxy/route.ts sets this.
@@ -33,9 +34,20 @@ export const runtime = "nodejs";
 // throw a hard 400 on unbalanced special characters (a stray `_` or `<` in
 // a note would otherwise silently break every send). Plain text always
 // sends, which matters far more here than bold labels.
+//
+// 2026-09-20b — "agar casa aara ke order huye to": this app is
+// multi-company (Nyko Mart / Rugara / CASA ARRA). A single global
+// TELEGRAM_ORDER_CHAT_ID would put every company's orders in the SAME
+// Telegram group. This route now takes the order's `companyId`, looks up
+// that company's own `companies.telegram_chat_id` column
+// (db/2026-09-20-company-order-notify-channels.sql), and only falls back
+// to the global TELEGRAM_ORDER_CHAT_ID env var when that column is NULL —
+// so Nyko Mart keeps working exactly as before even before every company's
+// column is filled in. The bot TOKEN stays global/shared (the same bot can
+// be a member of every company's group; only the destination chat differs).
 const TELEGRAM_CAPTION_LIMIT = 1024; // Telegram's own cap on a photo's caption
 
-type SendBody = { photoUrl: string | null; caption: string };
+type SendBody = { photoUrl: string | null; caption: string; companyId: string | null };
 
 async function callTelegram(token: string, method: "sendPhoto" | "sendMessage", form: FormData | URLSearchParams) {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -50,8 +62,9 @@ async function callTelegram(token: string, method: "sendPhoto" | "sendMessage", 
 }
 
 export async function POST(request: Request) {
+  let employee;
   try {
-    await requireCapability("order_entry");
+    employee = await requireCapability("order_entry");
   } catch (err) {
     if (err instanceof UnauthorizedError) return Response.json({ ok: false, error: "Not signed in." }, { status: 401 });
     if (err instanceof ForbiddenError) return Response.json({ ok: false, error: "Forbidden." }, { status: 403 });
@@ -59,13 +72,11 @@ export async function POST(request: Request) {
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_ORDER_CHAT_ID;
-  if (!token || !chatId) {
+  if (!token) {
     return Response.json(
       {
         ok: false,
-        error:
-          "Telegram bot abhi configure nahi hai — TELEGRAM_BOT_TOKEN aur TELEGRAM_ORDER_CHAT_ID set karne honge (.env.example dekhein).",
+        error: "Telegram bot abhi configure nahi hai — TELEGRAM_BOT_TOKEN set karna hoga (.env.example dekhein).",
       },
       { status: 500 }
     );
@@ -79,6 +90,29 @@ export async function POST(request: Request) {
   }
   const caption = (body.caption || "").slice(0, TELEGRAM_CAPTION_LIMIT);
   const photoUrl = body.photoUrl || null;
+
+  // Per-company chat id (see header comment) — only trust a companyId the
+  // requesting employee actually has access to (same guard the WhatsApp/
+  // Whapi route and employee-document/[id]/route.ts use).
+  let chatId: string | null = process.env.TELEGRAM_ORDER_CHAT_ID ?? null;
+  if (body.companyId && employee.companyIds.includes(body.companyId)) {
+    const supabase = createServiceRoleClient();
+    const { data: company } = await supabase
+      .from("companies")
+      .select("telegram_chat_id")
+      .eq("id", body.companyId)
+      .maybeSingle();
+    if (company?.telegram_chat_id) chatId = company.telegram_chat_id;
+  }
+  if (!chatId) {
+    return Response.json(
+      {
+        ok: false,
+        error: "Is company ke liye Telegram group set nahi hai — companies.telegram_chat_id ya TELEGRAM_ORDER_CHAT_ID set karna hoga.",
+      },
+      { status: 500 }
+    );
+  }
 
   try {
     if (photoUrl) {
