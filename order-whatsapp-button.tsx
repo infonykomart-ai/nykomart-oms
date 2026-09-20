@@ -92,6 +92,12 @@ export function OrderWhatsAppButton({
     photo_type: string | null;
     remark: string | null;
     is_amazon: boolean;
+    // 2026-09-20b — which company (Nyko Mart / Rugara / CASA ARRA) this
+    // order belongs to, so the Telegram/WhatsApp auto-send routes can pick
+    // THAT company's own group instead of a single hardcoded one — see
+    // whapi-send-order/route.ts and telegram-send-order/route.ts header
+    // comments. null is fine (routes fall back to the global env var).
+    company_id: string | null;
   };
 }) {
   const [sentAt, setSentAt] = useState(order.whatsapp_sent_at);
@@ -245,7 +251,7 @@ export function OrderWhatsAppButton({
       const res = await fetch("/api/telegram-send-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(false) }),
+        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(false), companyId: order.company_id }),
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) {
@@ -276,7 +282,7 @@ export function OrderWhatsAppButton({
       const res = await fetch("/api/whapi-send-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage() }),
+        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(), companyId: order.company_id }),
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) {

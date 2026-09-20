@@ -1,5 +1,6 @@
 import { requireCapability, UnauthorizedError, ForbiddenError } from "@/lib/auth/require-capability";
 import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 
 // dns.lookup (used by safeExternalFetch's SSRF guard) needs the Node
 // runtime, not Edge — same reason telegram-send-order/route.ts sets this.
@@ -28,18 +29,29 @@ export const runtime = "nodejs";
 // Setup (see .env.example for the full walkthrough):
 //   1. panel.whapi.cloud → your channel → copy the API token into
 //      WHAPI_TOKEN.
-//   2. Find the "Nyko Mart order" group's chat ID: on the same channel page,
-//      open the API docs / "Try it" console for GET /groups (or
+//   2. Find the order group's chat ID: on the same channel page, open the
+//      API docs / "Try it" console for GET /groups (or
 //      https://whapi.readme.io/reference/getgroups), run it, and find the
 //      group in the results — its "id" field looks like
 //      "120363194050948049@g.us". That whole string (WITH the @g.us suffix)
 //      is WHAPI_GROUP_ID.
 // Until both are set, this route returns a clear "not configured" error
 // instead of a confusing 500 — the button surfaces that message as-is.
+//
+// 2026-09-20b — "agar casa aara ke order huye to": this app is
+// multi-company (Nyko Mart / Rugara / CASA ARRA), and each company has its
+// OWN order-packing WhatsApp group (confirmed: "NYKO Orders ALL" and "CASA
+// ARRA All Orders" are two different @g.us groups). A single global
+// WHAPI_GROUP_ID would put every company's orders in the same group. This
+// route now takes the order's `companyId`, looks up that company's own
+// `companies.whapi_group_id` column (db/2026-09-20-company-order-notify-
+// channels.sql), and only falls back to the global WHAPI_GROUP_ID env var
+// when that column is NULL (unconfigured) — so Nyko Mart keeps working
+// exactly as before even before every company's column is filled in.
 const WHAPI_BASE_URL = "https://gate.whapi.cloud";
 const WHAPI_CAPTION_LIMIT = 1024; // matches WhatsApp's own image-caption cap
 
-type SendBody = { photoUrl: string | null; caption: string };
+type SendBody = { photoUrl: string | null; caption: string; companyId: string | null };
 
 type WhapiResult = { ok: true } | { ok: false; error: string };
 
@@ -74,8 +86,9 @@ async function callWhapi(token: string, path: string, body: Record<string, unkno
 }
 
 export async function POST(request: Request) {
+  let employee;
   try {
-    await requireCapability("order_entry");
+    employee = await requireCapability("order_entry");
   } catch (err) {
     if (err instanceof UnauthorizedError) return Response.json({ ok: false, error: "Not signed in." }, { status: 401 });
     if (err instanceof ForbiddenError) return Response.json({ ok: false, error: "Forbidden." }, { status: 403 });
@@ -83,12 +96,11 @@ export async function POST(request: Request) {
   }
 
   const token = process.env.WHAPI_TOKEN;
-  const groupId = process.env.WHAPI_GROUP_ID;
-  if (!token || !groupId) {
+  if (!token) {
     return Response.json(
       {
         ok: false,
-        error: "WhatsApp automation abhi configure nahi hai — WHAPI_TOKEN aur WHAPI_GROUP_ID set karne honge (.env.example dekhein).",
+        error: "WhatsApp automation abhi configure nahi hai — WHAPI_TOKEN set karna hoga (.env.example dekhein).",
       },
       { status: 500 }
     );
@@ -102,6 +114,30 @@ export async function POST(request: Request) {
   }
   const caption = (body.caption || "").slice(0, WHAPI_CAPTION_LIMIT);
   const photoUrl = body.photoUrl || null;
+
+  // Per-company group id (see header comment) — only trust a companyId the
+  // requesting employee actually has access to, same check
+  // employee-document/[id]/route.ts uses, so this can't be pointed at a
+  // company's group the caller shouldn't even know about.
+  let groupId: string | null = process.env.WHAPI_GROUP_ID ?? null;
+  if (body.companyId && employee.companyIds.includes(body.companyId)) {
+    const supabase = createServiceRoleClient();
+    const { data: company } = await supabase
+      .from("companies")
+      .select("whapi_group_id")
+      .eq("id", body.companyId)
+      .maybeSingle();
+    if (company?.whapi_group_id) groupId = company.whapi_group_id;
+  }
+  if (!groupId) {
+    return Response.json(
+      {
+        ok: false,
+        error: "Is company ke liye WhatsApp group set nahi hai — companies.whapi_group_id ya WHAPI_GROUP_ID set karna hoga.",
+      },
+      { status: 500 }
+    );
+  }
 
   try {
     if (photoUrl) {
