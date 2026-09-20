@@ -1,119 +1,108 @@
-# WhatsApp/Telegram Order-Sharing Fix — 2026-09-20
+# WhatsApp Auto-Send (Whapi.Cloud) — 2026-09-20
 
-Aapne jo complaint bheji thi (PO-A783/PO-A784 ke screenshots ke sath) — "photo ke
-upar caption likh diya, aur caption alag msg me jata hai" — usko fix kar diya
-hai. Neeche poora detail hai.
+Aapne pucha tha — "ESA HI WHATSAAP PAR NHI HO SAKTA HAI KYA" (jo Telegram par
+one-click automation ho gaya, wahi WhatsApp par bhi). Poori jaanch ke baad
+(official WhatsApp API groups support nahi karta, aur baaki saare options
+ko ek hamesha-on server chahiye jo aapke hosting par nahi chal sakta), aapne
+khud **Whapi.Cloud** choose kiya — usme aapka number pehle se connect ho
+chuka hai. Yeh us integration ka code hai.
 
-## Aapne jo confirm kiya tha (2 decisions)
+## Kya naya hai
 
-1. **Caption ab kabhi bhi photo ke pixels me bake nahi hoga** — Amazon "TOP
-   PRIORITY" orders ke liye bhi nahi. Ab hamesha **asli, bina-chhedi photo**
-   jaati hai, aur caption sirf **real text** ke roop me jaata hai (copy/edit/
-   search ho sake).
-2. **Telegram ab pakka automate ho gaya hai** — "Send on Telegram" button
-   dabate hi ek hi click me photo + caption ek hi message me chala jaata hai,
-   koi manual download/attach/paste nahi karna. **WhatsApp** aapke pehle wale
-   decision ke hisaab se manual/share wale tareeke par hi hai (Business API
-   nahi use ki) — bas ab usme bhi asli photo jaati hai, composite image nahi.
+Ab order ke button row me **teen** buttons hain:
 
-## Kya badla — technical summary
+1. **📱 Send on WhatsApp** — pehla wala, manual/share flow (koi naya config
+   nahi chahiye, hamesha kaam karega). Isko **hataya nahi hai**.
+2. **🚀 Send on WhatsApp (Auto)** — **NAYA**. Ek click me photo + caption ek
+   hi WhatsApp message me, "Nyko Mart order" group me, Whapi.Cloud ke through
+   automatically chala jaata hai. Koi download/attach/paste nahi.
+3. **☁️ Send on Telegram** — pehle se maujood (already deployed).
 
-### 1. WhatsApp — ab asli photo, kabhi bhi baked overlay nahi
+Auto button jaan-boojh kar manual button ko **replace nahi karta** — Whapi
+ka free plan rate-limited hai (150 messages/day), isliye manual flow ek
+hamesha-kaam-karne-wala fallback ke roop me rehta hai.
 
-`order-whatsapp-button.tsx` pehle `/api/order-whatsapp-image` route call karta
-tha, jo ek **composite image** banata tha — details table + "TOP PRIORITY"
-banner + photo, sab ek hi flat image me bake karke. Ab yeh route bilkul call
-nahi hota. Iski jagah `/api/order-photo-proxy` (jo pehle se code me tha lekin
-kahin use nahi ho raha tha) use hota hai — yeh sirf order ki **asli photo**
-server ke through fetch karke deta hai (CORS issues se bachne ke liye), koi
-text ya overlay add nahi karta.
+## Aapko jo karna hai (isko chalane ke liye)
 
-- **Mobile** (jaha Web Share API kaam karta hai): asli photo + real text
-  caption dono ek sath `navigator.share()` se jaate hain — ek hi WhatsApp
-  message banta hai, jisme photo ke sath ka caption search bhi ho sakta hai.
-- **Desktop** (jaha yeh API reliable nahi hai): asli photo download hoti hai
-  (koi baked text nahi) aur caption clipboard me copy ho jaata hai — aapko
-  WhatsApp me photo attach karke caption paste (Ctrl+V) karna hai, phir send.
-  Same jaisa pehle tha, bas ab photo par koi text baked nahi hai.
-- Agar photo fetch hi nahi ho paayi to purana text-only wa.me link fallback
-  hai, taki message phir bhi chala jaaye.
+### 1. Group ID nikalo (agar abhi tak nahi nikali)
 
-### 2. Telegram — asli Bot API automation (naya)
+1. `https://panel.whapi.cloud` par apne channel (NEBULA-X8SK6) ka page kholo.
+2. Wahan API docs ka link milega — ya seedha yeh kholo:
+   `https://whapi.readme.io/reference/getgroups`
+3. Us page par apna channel select karke **"Try It!"** dabao (yeh
+   `GET /groups` call karega, aapke token se authenticated).
+4. Response me apna **"Nyko Mart order"** group dhundo. Uske `"id"` field me
+   kuch aisa dikhega: `"120363194050948049@g.us"`.
+5. Yeh **poora string** (`@g.us` ke saath) copy kar lo — yeh
+   `WHAPI_GROUP_ID` hai.
 
-Ab ek naya server route hai: **`/api/telegram-send-order`**. "Send on
-Telegram" button dabate hi:
+### 2. Vercel me env vars set karo
 
-1. Yeh route order ki asli photo server-side fetch karta hai (same SSRF-safe
-   tareeke se jo baaki app me photo fetch karne ke liye use hota hai).
-2. Phir Telegram ka apna **Bot API** (`sendPhoto`) call karta hai — photo aur
-   caption dono ek hi API call me, ek hi message ban ke aapke Telegram group
-   me chala jaata hai.
-3. Koi download nahi, koi clipboard nahi, koi manual attach/paste nahi —
-   bilkul automatic, ek click.
+Settings → Environment Variables me:
 
-**Isko chalane ke liye aapko 2 cheezein set karni hongi** (yeh sirf ek baar
-karna hai):
+- `WHAPI_TOKEN` = aapka Whapi channel ka token (jo screenshot me dikha tha:
+  `MIFRo6aUgpfbnBFcBspaNeLxTmcXSblb` — agar wahi abhi bhi valid hai, wahi
+  daal do; agar naya generate kiya hai to naya wala).
+- `WHAPI_GROUP_ID` = step 1 se mila poora string.
 
-1. Telegram par **@BotFather** ko message karo, `/newbot` bhejo, jo naam/
-   username maange wo de do — wo aapko ek **token** dega (kuch aisa dikhega:
-   `123456789:AAExampleTokenTextGoesHere`). Yeh **`TELEGRAM_BOT_TOKEN`** hai.
-2. Us bot ko apne target group me add karo (jaise "NYKO Orders ALL" — jaisa
-   screenshot me tha), bilkul waise jaise kisi member ko add karte hain.
-3. Us group me koi bhi ek message bhejo, phir apne browser me yeh URL kholo
-   (`<token>` ki jagah apna asli token daal ke):
-   ```
-   https://api.telegram.org/bot<token>/getUpdates
-   ```
-   Jo JSON aayega usme `"chat":{"id": -1001234567890, ...}` jaisa kuch
-   dikhega — wo poora number (minus sign ke sath) **`TELEGRAM_ORDER_CHAT_ID`**
-   hai.
-4. Yeh dono values apne Vercel project ke **Settings → Environment
-   Variables** me daal do (`.env.example` file me poora detail hai).
+Poora detail `.env.example` file me bhi hai (dono naye env vars neeche
+`# Whapi.Cloud (added 2026-09-20)` section me).
 
-**Jab tak yeh 2 values set nahi hongi**, "Send on Telegram" button ek saaf
-error dikhayega ("Telegram bot abhi configure nahi hai...") — silently fail
-nahi hoga, aapko pata chal jayega ki kya karna hai.
+### 3. Files copy karo apne repo me
 
-### Robustness note (Telegram caption)
+- `whapi-send-order-route.ts` → apne repo me copy karo path par:
+  `src/app/api/whapi-send-order/route.ts` (**naya folder banana hoga**:
+  `whapi-send-order`)
+- `order-whatsapp-button.tsx` → same path par replace karo:
+  `src/app/dashboard/orders/new/order-whatsapp-button.tsx`
+- `.env.example` → apne repo ke root me replace karo.
 
-Telegram ka apna "bold text" formatting (Markdown/HTML) tab tool todta hai
-jab kisi field (jaise SKU ya Note) me special characters (`_`, `<`, waghera)
-ho — is wajah se hamne Telegram ke caption ko **plain text** rakha hai (bina
-bold ke), taki koi bhi order ka data ho, message kabhi fail na ho. WhatsApp
-wala caption pehle jaisa hi bold rehta hai (wahan asterisks WhatsApp khud hi
-bold me render karta hai jab paste karte ho).
+### 4. Push/deploy
 
-### Purani composite-image route ka kya hua?
+Koi SQL/database change nahi hai. Push karo, Vercel deploy karega.
 
-`/api/order-whatsapp-image` (jo composite image banata tha) **delete nahi
-kiya** — bas ab kahin se call nahi hota. Iske upar ek comment daal diya hai
-jisme 2026-09-20 ka yeh decision likha hai, taki future me koi confusion na
-ho. Agar kabhi zaroorat pade to wapas mil jayegi.
+**Jab tak `WHAPI_TOKEN`/`WHAPI_GROUP_ID` set nahi honge**, naya "🚀 Send on
+WhatsApp (Auto)" button ek saaf error dikhayega ("WhatsApp automation abhi
+configure nahi hai...") — baaki dono buttons (manual WhatsApp, Telegram)
+turant kaam karenge, unko koi asar nahi.
 
-## Files (4) — apne repo mein copy karein
+## Cost/continuity — already confirmed by aapne khud
 
-- `src/app/api/telegram-send-order/route.ts` — **NAYA FILE**, Telegram Bot
-  API automation.
-- `src/app/dashboard/orders/new/order-whatsapp-button.tsx` — WhatsApp/
-  Telegram dono buttons ka poora naya logic.
-- `src/app/api/order-whatsapp-image/route.ts` — sirf ek deprecation comment
-  add kiya, code same hai (ab use nahi hota).
-- `.env.example` — `TELEGRAM_BOT_TOKEN` aur `TELEGRAM_ORDER_CHAT_ID` ka
-  documentation add kiya.
+Whapi support ne khud bataya (aapne paste kiya tha): trial khatam hone par
+koi automatic charge nahi hota. Aap channel page ke button se **free
+Sandbox plan** (same 150 msg/day limit, koi time-limit nahi) par switch kar
+sakte ho, ya chaho to paid plan (~$29/month) le sakte ho unlimited ke liye.
+Free Sandbox aapke office-hours (9:30–7pm) ke order-volume ke liye kaafi
+hona chahiye.
+
+## Pehla test kaise karein
+
+1. Env vars set karne ke baad, kisi ek order par "🚀 Send on WhatsApp
+   (Auto)" dabao.
+2. Agar group me message aa jaaye — ho gaya, kaam kar raha hai.
+3. Agar error aaye ("WhatsApp ne message reject kar diya: ..."), wahi error
+   text mujhe bhej dena — Whapi ka exact response schema unke docs me poori
+   tarah likha nahi tha, isliye pehli live call ka exact error message
+   dekh kar agar field names adjust karne padein to turant kar dunga.
+
+## Files (3) is zip me
+
+- `whapi-send-order-route.ts` — naya API route, Telegram wale route jaisa
+  hi pattern: order ki asli photo server-side fetch karta hai, phir Whapi
+  ke `POST /messages/image` (ya photo na ho to `POST /messages/text`) ko
+  call karta hai.
+- `order-whatsapp-button.tsx` — naya "🚀 Send on WhatsApp (Auto)" button add
+  kiya gaya hai, purane dono buttons (manual WhatsApp + Telegram) same hain.
+- `.env.example` — `WHAPI_TOKEN` aur `WHAPI_GROUP_ID` ka poora documentation.
 
 ## Verification
 
 - `npx tsc --noEmit` — clean, 0 errors.
 - `npx eslint` (changed files) — 0 errors/warnings.
-- `npm run build` — saari pages successfully generate hui, koi error nahi,
-  naya `/api/telegram-send-order` route bhi build me register hua.
-
-## Deploy karte waqt
-
-1. Upar di gayi 4 files apne repo mein same path par copy kar dein.
-2. `TELEGRAM_BOT_TOKEN` aur `TELEGRAM_ORDER_CHAT_ID` Vercel me set kar dein
-   (upar wale steps follow karke) — iske bina Telegram button error dega,
-   lekin WhatsApp wala button turant kaam karega (usko koi naya config nahi
-   chahiye).
-3. Push/deploy kar dein — database side kuch nahi badla, koi SQL nahi
-   chalani.
+- `npm run build` — saari pages successfully generate hui, naya
+  `/api/whapi-send-order` route bhi build me register hua.
+- Live send abhi test nahi hui hai (group ID pehle chahiye) — Whapi ka exact
+  success/error response schema unke docs me publicly nahi likha tha, is
+  liye route generic hai (koi bhi 2xx = success maanta hai, error message
+  jo bhi field me mile usko dikhata hai). Pehli live send ke baad agar kuch
+  adjust karna pade to bata dena.
