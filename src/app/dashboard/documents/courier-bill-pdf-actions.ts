@@ -40,6 +40,13 @@ export type ParsedShipmentReview = {
   amount: number | null;
   dutyAmt: number | null;
   otherAmt: number | null;
+  // 2026-09-21: per-AWB charge breakup as parsed off the bill (null where
+  // the template doesn't print it) — see
+  // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+  baseAmt: number | null;
+  fuelAmt: number | null;
+  remoteAmt: number | null;
+  gstAmt: number | null;
   orderId: string | null;
   orderShipmentId: string | null;
   orderRefNo: string | null;
@@ -132,6 +139,10 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
       amount: s.amount,
       dutyAmt: s.dutyAmt,
       otherAmt: s.otherAmt,
+      baseAmt: s.baseAmt,
+      fuelAmt: s.fuelAmt,
+      remoteAmt: s.remoteAmt,
+      gstAmt: s.gstAmt,
       orderId: match.orderId,
       orderShipmentId: match.orderShipmentId,
       orderRefNo: match.orderRefNo,
@@ -173,8 +184,15 @@ export type CommitShipmentInput = {
   orderId: string | null; // null = skip this row (unmatched or user chose not to fix it)
   orderShipmentId: string | null; // the specific AWB/shipment this row's tracking no. resolved to
   weightKg: number | null;
-  amount: number | null; // duty bills: duty_tax_amt_inr for this shipment
+  amount: number | null; // duty bills: duty_tax_amt_inr for this shipment; freight bills: this AWB's TOTAL pre-GST billed charge
   otherAmt: number | null; // duty bills: other_charge for this shipment
+  // 2026-09-21: per-AWB charge breakup — persisted to the new billed_*_amt
+  // columns so the Courier Bill Report can show Total (pre-GST) / GST /
+  // Gross per AWB straight off the bill instead of zeroes.
+  baseAmt: number | null;
+  fuelAmt: number | null;
+  remoteAmt: number | null;
+  gstAmt: number | null;
 };
 
 export type CommitCourierBillInput = {
@@ -242,6 +260,13 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
         // parsed already but silently dropped before this round, see
         // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
         billed_freight_amt: s.amount,
+        // 2026-09-21: per-AWB charge breakup (base/fuel/remote/other/gst)
+        // — see db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+        billed_base_amt: s.baseAmt,
+        billed_fuel_amt: s.fuelAmt,
+        billed_remote_amt: s.remoteAmt,
+        billed_other_amt: s.otherAmt,
+        billed_gst_amt: s.gstAmt,
         remark: `Auto-extracted from PDF (tracking ${s.trackingNo})`,
       });
       if (aErr) skipped++;

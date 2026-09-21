@@ -136,6 +136,7 @@ async function main() {
     join information_schema.constraint_column_usage ccu
       on tc.constraint_name = ccu.constraint_name and tc.table_schema = ccu.table_schema
     where tc.constraint_type = 'FOREIGN KEY' and tc.table_schema = 'public'
+    order by tc.constraint_name  -- deterministic: regenerate-and-diff must match byte-for-byte across environments
   `)
   ).rows;
   const fksByTable = new Map();

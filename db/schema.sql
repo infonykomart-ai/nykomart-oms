@@ -1300,6 +1300,21 @@ CREATE TABLE freight_bill_awb_assignments (
   -- "recheck" variance — see db/2026-09-01-multi-courier-booking-and-
   -- freight-recon.sql.
   billed_freight_amt         numeric(14,2),
+  -- 2026-09-21: per-AWB charge BREAKUP as printed on the courier bill
+  -- (db/2026-09-21-freight-awb-billed-charge-breakup.sql) —
+  -- "total shipping amt = per awb charges jisme fuel+remote+other hote hai
+  -- phir GST alag aata hai phir gross shipping ammount". billed_base_amt =
+  -- line-haul base, billed_fuel_amt = fuel surcharge, billed_remote_amt =
+  -- remote/delivery-area surcharge, billed_other_amt = everything else,
+  -- billed_gst_amt = GST actually charged on this AWB (header GST prorated
+  -- across AWBs by pre-tax charge share when the bill doesn't break it per
+  -- line). billed_freight_amt above stays the TOTAL pre-GST charge; report
+  -- gross = billed_freight_amt + billed_gst_amt.
+  billed_base_amt   numeric(14,2),
+  billed_fuel_amt   numeric(14,2),
+  billed_remote_amt numeric(14,2),
+  billed_other_amt  numeric(14,2),
+  billed_gst_amt    numeric(14,2),
   UNIQUE (order_shipment_id)   -- one AWB is billed under exactly one freight invoice (Gap 1, 2026-08-20 — was UNIQUE(order_id))
 );
 CREATE INDEX idx_freight_awb_assign_bill ON freight_bill_awb_assignments(freight_bill_id);

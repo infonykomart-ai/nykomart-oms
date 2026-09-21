@@ -547,13 +547,17 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
           <p>
             <strong className="text-slate-900">{lookup.order.ref_no}</strong>
           </p>
-          {lookup.dispatch ? (
+          {lookup.dispatch || lookup.shipmentAwbNo ? (
             <p>
-              AWB: {lookup.dispatch.awb_no ?? "—"} · {lookup.dispatch.courier_name ?? "—"} · {lookup.dispatch.buyer_country ?? "—"} ·{" "}
-              {lookup.dispatch.shipping_weight_kg ?? "—"} kg
+              AWB: {lookup.shipmentAwbNo ?? lookup.dispatch?.awb_no ?? "—"} · {lookup.dispatch?.courier_name ?? "—"} ·{" "}
+              {lookup.dispatch?.buyer_country ?? "—"} · Booked wt {lookup.bookedWeightKg ?? "—"} kg
+              {lookup.volumetricWeightKg != null && ` · Dim wt ${lookup.volumetricWeightKg} kg`}
             </p>
           ) : (
             <p className="text-slate-400">No dispatch record found for this order yet.</p>
+          )}
+          {lookup.orderValueInr != null && lookup.orderValueInr > 0 && (
+            <p className="text-slate-500">Order sale value: ₹{lookup.orderValueInr.toFixed(2)}</p>
           )}
           {lookup.alreadyAssigned && <p className="text-amber-600">⚠ Already assigned to a Courier Bill.</p>}
           {lookup.bookedFreightAmt != null && (
@@ -575,17 +579,27 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className={labelClass}>Bill Weight (kg)</label>
+              {/* 2026-09-21: prefill from what we actually booked on this
+                  shipment (falls back to the order-level dispatch summary). */}
               <input
                 name="bill_weight_kg"
                 type="number"
                 step="0.01"
-                defaultValue={lookup.dispatch?.shipping_weight_kg ?? ""}
+                defaultValue={lookup.bookedWeightKg ?? lookup.dispatch?.shipping_weight_kg ?? ""}
                 className={inputClass}
               />
             </div>
             <div>
               <label className={labelClass}>Dimensional Weight (kg)</label>
-              <input name="dimensional_weight_kg" type="number" step="0.01" className={inputClass} />
+              {/* 2026-09-21: prefill from the booked volumetric weight
+                  (L×W×H/5000) instead of forcing manual entry. */}
+              <input
+                name="dimensional_weight_kg"
+                type="number"
+                step="0.01"
+                defaultValue={lookup.volumetricWeightKg ?? ""}
+                className={inputClass}
+              />
             </div>
           </div>
           <div>
@@ -598,6 +612,28 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
                 captured booking cost is found. */}
             <label className={labelClass}>Billed Amt (this AWB)</label>
             <input name="billed_freight_amt" type="number" step="0.01" className={inputClass} />
+          </div>
+          {/* 2026-09-21: per-AWB charge breakup off the courier bill —
+              "total shipping amt = per awb charges jisme fuel+remote+other
+              hote hai phir GST alag aata hai". The report reads these
+              straight into its Total Shipping / GST / Gross columns. */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div>
+              <label className={labelClass}>Base Charge</label>
+              <input name="billed_base_amt" type="number" step="0.01" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Fuel Charge</label>
+              <input name="billed_fuel_amt" type="number" step="0.01" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Remote / Other</label>
+              <input name="billed_remote_amt" type="number" step="0.01" className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>GST on this AWB</label>
+              <input name="billed_gst_amt" type="number" step="0.01" className={inputClass} />
+            </div>
           </div>
           <div>
             <label className={labelClass}>Remark</label>
@@ -627,7 +663,18 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
 function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
   const [raw, setRaw] = useState("");
   const [rows, setRows] = useState<
-    { query: string; billWeightKg: string; dimensionalWeightKg: string; differenceAmt: string; remark: string }[]
+    {
+      query: string;
+      billWeightKg: string;
+      dimensionalWeightKg: string;
+      differenceAmt: string;
+      remark: string;
+      billedFreightAmt: string;
+      billedBaseAmt: string;
+      billedFuelAmt: string;
+      billedRemoteAmt: string;
+      billedGstAmt: string;
+    }[]
   >([]);
   const [results, setResults] = useState<BulkAwbResult[] | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -637,7 +684,20 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
       .split(/\r?\n|,/)
       .map((s) => s.trim())
       .filter(Boolean);
-    setRows(queries.map((q) => ({ query: q, billWeightKg: "", dimensionalWeightKg: "", differenceAmt: "", remark: "" })));
+    setRows(
+      queries.map((q) => ({
+        query: q,
+        billWeightKg: "",
+        dimensionalWeightKg: "",
+        differenceAmt: "",
+        remark: "",
+        billedFreightAmt: "",
+        billedBaseAmt: "",
+        billedFuelAmt: "",
+        billedRemoteAmt: "",
+        billedGstAmt: "",
+      }))
+    );
     setResults(null);
   }
 
@@ -655,6 +715,11 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
           dimensionalWeightKg: r.dimensionalWeightKg ? Number(r.dimensionalWeightKg) : null,
           differenceAmt: r.differenceAmt ? Number(r.differenceAmt) : null,
           remark: r.remark || null,
+          billedFreightAmt: r.billedFreightAmt ? Number(r.billedFreightAmt) : null,
+          billedBaseAmt: r.billedBaseAmt ? Number(r.billedBaseAmt) : null,
+          billedFuelAmt: r.billedFuelAmt ? Number(r.billedFuelAmt) : null,
+          billedRemoteAmt: r.billedRemoteAmt ? Number(r.billedRemoteAmt) : null,
+          billedGstAmt: r.billedGstAmt ? Number(r.billedGstAmt) : null,
         }))
       );
       setResults(r.results);
@@ -692,7 +757,8 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
       {rows.length > 0 && (
         <div className="mt-3 space-y-2">
           {rows.map((r, i) => (
-            <div key={r.query + i} className="grid grid-cols-5 items-end gap-1.5 rounded border border-slate-200 bg-white p-1.5">
+            <div key={r.query + i} className="rounded border border-slate-200 bg-white p-1.5">
+            <div className="grid grid-cols-5 items-end gap-1.5">
               <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
               <input
                 value={r.billWeightKg}
@@ -713,6 +779,41 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
                 className={inputClass}
               />
               <input value={r.remark} onChange={(e) => updateRow(i, { remark: e.target.value })} placeholder="Remark" className={inputClass} />
+            </div>
+            {/* 2026-09-21: per-AWB billed charge breakup — see
+                db/2026-09-21-freight-awb-billed-charge-breakup.sql. */}
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
+              <input
+                value={r.billedFreightAmt}
+                onChange={(e) => updateRow(i, { billedFreightAmt: e.target.value })}
+                placeholder="Billed ₹"
+                className={inputClass}
+              />
+              <input
+                value={r.billedBaseAmt}
+                onChange={(e) => updateRow(i, { billedBaseAmt: e.target.value })}
+                placeholder="Base ₹"
+                className={inputClass}
+              />
+              <input
+                value={r.billedFuelAmt}
+                onChange={(e) => updateRow(i, { billedFuelAmt: e.target.value })}
+                placeholder="Fuel ₹"
+                className={inputClass}
+              />
+              <input
+                value={r.billedRemoteAmt}
+                onChange={(e) => updateRow(i, { billedRemoteAmt: e.target.value })}
+                placeholder="Remote ₹"
+                className={inputClass}
+              />
+              <input
+                value={r.billedGstAmt}
+                onChange={(e) => updateRow(i, { billedGstAmt: e.target.value })}
+                placeholder="GST ₹"
+                className={inputClass}
+              />
+            </div>
             </div>
           ))}
           <button

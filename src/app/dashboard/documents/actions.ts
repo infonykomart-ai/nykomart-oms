@@ -1756,6 +1756,14 @@ export type ReconciliationLookup = {
     buyer_country: string | null;
     shipping_weight_kg: number | null;
   } | null;
+  // 2026-09-21: prefill/context data — the shipment's real AWB + booked
+  // package weights (actual + volumetric L×W×H/5000) so the form can
+  // prefill Bill/Dim weight from what we booked, and the order's sale
+  // value for the shipping-% cross-check.
+  shipmentAwbNo: string | null;
+  bookedWeightKg: number | null;
+  volumetricWeightKg: number | null;
+  orderValueInr: number | null;
   alreadyAssigned: boolean;
   // 2026-09-01: what this shipment was booked for (any real courier
   // booking flow) — freight bills only (see the reconciliation migration's
@@ -1771,6 +1779,10 @@ const EMPTY_RECON: ReconciliationLookup = {
   order: null,
   orderShipmentId: null,
   dispatch: null,
+  shipmentAwbNo: null,
+  bookedWeightKg: null,
+  volumetricWeightKg: null,
+  orderValueInr: null,
   alreadyAssigned: false,
   bookedFreightAmt: null,
   bookedCurrency: null,
@@ -1840,6 +1852,22 @@ export async function lookupOrderForReconciliation(
     return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
   }
 
+  // 2026-09-21: the shipment's own AWB + its packages' booked weights —
+  // the AWB column on the bill belongs to THIS row (order-level
+  // dispatch_invoices.awb_no is a stale order-level summary), and Bill/Dim
+  // weight prefill comes from what we actually booked.
+  const { data: shipmentRow } = await supabase
+    .from("order_shipments")
+    .select("awb_no")
+    .eq("id", orderShipmentId)
+    .maybeSingle();
+  const { data: shipmentPackages } = await supabase
+    .from("order_packages")
+    .select("weight_kg, volumetric_weight")
+    .eq("order_shipment_id", orderShipmentId);
+  const bookedWeightKg = (shipmentPackages ?? []).reduce((sum, p) => sum + (p.weight_kg != null ? Number(p.weight_kg) : 0), 0) || null;
+  const volumetricWeightKg = (shipmentPackages ?? []).reduce((sum, p) => sum + (p.volumetric_weight != null ? Number(p.volumetric_weight) : 0), 0) || null;
+
   const { data: dispatch } = await supabase
     .from("dispatch_invoices")
     .select("awb_no, courier_name, buyer_country, shipping_weight_kg")
@@ -1870,6 +1898,10 @@ export async function lookupOrderForReconciliation(
     order,
     orderShipmentId,
     dispatch: dispatch ?? null,
+    shipmentAwbNo: shipmentRow?.awb_no ?? null,
+    bookedWeightKg,
+    volumetricWeightKg,
+    orderValueInr: order.order_value_inr != null ? Number(order.order_value_inr) : null,
     alreadyAssigned: !!existing,
     bookedFreightAmt,
     bookedCurrency,
@@ -2145,6 +2177,13 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
       // 2026-09-01: booking-cost-vs-billed-cost recheck — see
       // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
       billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
+      // 2026-09-21: per-AWB charge breakup — see
+      // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+      billed_base_amt: numOrNull(formData, "billed_base_amt"),
+      billed_fuel_amt: numOrNull(formData, "billed_fuel_amt"),
+      billed_remote_amt: numOrNull(formData, "billed_remote_amt"),
+      billed_other_amt: numOrNull(formData, "billed_other_amt"),
+      billed_gst_amt: numOrNull(formData, "billed_gst_amt"),
       remark: strOrNull(formData, "remark"),
     })
     .select("id")
@@ -2195,6 +2234,13 @@ export type BulkAwbRow = {
   dimensionalWeightKg: number | null;
   differenceAmt: number | null;
   remark: string | null;
+  // 2026-09-21: per-AWB billed charge breakup — see
+  // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+  billedFreightAmt: number | null;
+  billedBaseAmt: number | null;
+  billedFuelAmt: number | null;
+  billedRemoteAmt: number | null;
+  billedGstAmt: number | null;
 };
 export type BulkAwbResult = { query: string; ok: boolean; refNo: string | null; error: string | null };
 
@@ -2221,6 +2267,13 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       bill_weight_kg: row.billWeightKg,
       dimensional_weight_kg: row.dimensionalWeightKg,
       difference_amt: row.differenceAmt,
+      // 2026-09-21: per-AWB charge breakup — see
+      // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+      billed_freight_amt: row.billedFreightAmt,
+      billed_base_amt: row.billedBaseAmt,
+      billed_fuel_amt: row.billedFuelAmt,
+      billed_remote_amt: row.billedRemoteAmt,
+      billed_gst_amt: row.billedGstAmt,
       remark: row.remark,
     });
     if (error) {

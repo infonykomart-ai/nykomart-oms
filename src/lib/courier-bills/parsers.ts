@@ -120,7 +120,7 @@ function parseUpsShipmentBlocks(text: string, mode: "duty-a1" | "duty-a3" | "fre
     const totalChargesAmt = parseAmt(block.match(/Total Charges(?: for Shipment)?\s+\S+\s+RS\s+([\d,]+\.\d{2})/)?.[1]);
     const amount = totalChargesAmt ?? dutyAmt ?? otherAmt ?? null;
 
-    shipments.push({ trackingNo, courierRefNo, shipDate: null, weightKg, dims, consignee, amount, dutyAmt, otherAmt });
+    shipments.push({ trackingNo, courierRefNo, shipDate: null, weightKg, dims, consignee, amount, dutyAmt, otherAmt, baseAmt: null, fuelAmt: null, remoteAmt: null, gstAmt: null });
   }
   return shipments;
 }
@@ -209,6 +209,14 @@ function parseFedexFreight(text: string): ParsedBill {
   while ((m = re.exec(text))) {
     const trackingNo = m[1];
     const shipDate = fedexDateToIso(m[2]);
+    // 2026-09-21: the regex captures THREE amount columns after the
+    // billed weight — m[6] (previously silently dropped, the base/freight
+    // charge), m[7] (other charges), m[8] (row total). FedEx-India folds
+    // the fuel surcharge into these rather than printing a separate
+    // per-shipment fuel column, so fuelAmt stays null here and the
+    // epilogue's header-split inference fills it when the bill header
+    // carries a fuel figure.
+    const baseAmt = parseAmt(m[6]);
     const other = parseAmt(m[7]);
     const total = parseAmt(m[8]);
     const tail = text.slice(m.index, m.index + 400);
@@ -224,6 +232,10 @@ function parseFedexFreight(text: string): ParsedBill {
       amount: total,
       dutyAmt: null,
       otherAmt: other,
+      baseAmt,
+      fuelAmt: null,
+      remoteAmt: null,
+      gstAmt: null,
     });
   }
 
@@ -277,6 +289,10 @@ function parseFedexDuty(text: string): ParsedBill {
       amount: total,
       dutyAmt: importDuty + importTax,
       otherAmt: otherTaxable + otherNonTaxable,
+      baseAmt: null,
+      fuelAmt: null,
+      remoteAmt: null,
+      gstAmt: otherTaxable,
     });
   }
 
@@ -322,6 +338,41 @@ export function parseCourierBill(text: string): CourierBillParseResult {
     case "fedex-duty":
       bill = parseFedexDuty(text);
       break;
+  }
+
+  // 2026-09-21: some templates (UPS freight) print GST once for the whole
+  // invoice rather than per shipment — prorate bill.gstAmt across the
+  // bill's shipments by each one's share of the pre-tax total, and also
+  // infer base/fuel/remote from the header split when the bill only gives
+  // per-AWB totals. Anything left unknown stays null and remains
+  // user-editable on the review screen.
+  if (bill.billCategory === "freight" && bill.shipments.length > 0) {
+    const preTaxTotals = bill.shipments.map((x) => x.amount ?? 0);
+    const preTaxSum = preTaxTotals.reduce((a, b) => a + b, 0);
+    const perAwbGstPrinted = bill.shipments.every((x) => x.gstAmt != null);
+    if (!perAwbGstPrinted && bill.gstAmt != null && bill.gstAmt > 0 && preTaxSum > 0) {
+      let allocated = 0;
+      bill.shipments.forEach((x, i) => {
+        if (i === bill.shipments.length - 1) {
+          x.gstAmt = Math.round((bill.gstAmt! - allocated) * 100) / 100; // last row absorbs rounding
+        } else {
+          const share = Math.round(((preTaxTotals[i] / preTaxSum) * bill.gstAmt!) * 100) / 100;
+          x.gstAmt = share;
+          allocated += share;
+        }
+      });
+    }
+    const compSum = (bill.freightAmt ?? 0) + (bill.fuelAmt ?? 0) + (bill.otherCharges ?? 0);
+    const awbSum = preTaxSum;
+    if (compSum > 0 && awbSum > 0 && Math.abs(compSum - awbSum) < Math.max(1, compSum * 0.02)) {
+      for (const x of bill.shipments) {
+        const t = x.amount ?? 0;
+        if (t <= 0) continue;
+        if (x.baseAmt == null && (bill.freightAmt ?? 0) > 0) x.baseAmt = Math.round((t * (bill.freightAmt! / compSum)) * 100) / 100;
+        if (x.fuelAmt == null && (bill.fuelAmt ?? 0) > 0) x.fuelAmt = Math.round((t * (bill.fuelAmt! / compSum)) * 100) / 100;
+        if (x.remoteAmt == null && (bill.otherCharges ?? 0) > 0) x.remoteAmt = Math.round((t * (bill.otherCharges! / compSum)) * 100) / 100;
+      }
+    }
   }
 
   if (!bill.invoiceNo) {
