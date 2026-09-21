@@ -210,7 +210,16 @@ export type CommitCourierBillInput = {
 
 export type CommitCourierBillResult = {
   error: string | null;
-  success: { docNo: string; assignedCount: number; skippedCount: number } | null;
+  success: {
+    docNo: string;
+    assignedCount: number;
+    skippedCount: number;
+    // 2026-09-21: actual insert-failure messages (first 5) — the bill still
+    // saves, but the review screen shows WHY rows didn't assign instead of
+    // a bare count. Usually "column ... does not exist" = the latest
+    // db/2026-*.sql migration hasn't been run on the Supabase project yet.
+    rowErrors: string[];
+  } | null;
 };
 
 export async function commitCourierBillPdfAction(input: CommitCourierBillInput): Promise<CommitCourierBillResult> {
@@ -241,6 +250,13 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
 
     let assigned = 0;
     let skipped = 0;
+    // 2026-09-21 (verify round): insert failures were silently counted as
+    // "skipped" — a live bill where EVERY row failed (e.g. the
+    // 2026-09-21 billed_* breakup columns not yet applied to the Supabase
+    // project → PostgREST 42703 on every insert) produced a bill with ZERO
+    // assignments and only a vague "skipped" count. Collect the actual
+    // per-row error message and surface it to the review screen.
+    const rowErrors: string[] = [];
     for (const s of input.shipments) {
       if (!s.orderId || !s.orderShipmentId) {
         skipped++;
@@ -269,12 +285,14 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
         billed_gst_amt: s.gstAmt,
         remark: `Auto-extracted from PDF (tracking ${s.trackingNo})`,
       });
-      if (aErr) skipped++;
-      else assigned++;
+      if (aErr) {
+        skipped++;
+        if (rowErrors.length < 5) rowErrors.push(`${s.trackingNo}: ${aErr.message}`);
+      } else assigned++;
     }
 
     revalidatePath("/dashboard/documents");
-    return { error: null, success: { docNo: bill.invoice_no, assignedCount: assigned, skippedCount: skipped } };
+    return { error: null, success: { docNo: bill.invoice_no, assignedCount: assigned, skippedCount: skipped, rowErrors } };
   }
 
   const { data: bill, error } = await supabase
@@ -319,5 +337,5 @@ export async function commitCourierBillPdfAction(input: CommitCourierBillInput):
   }
 
   revalidatePath("/dashboard/documents");
-  return { error: null, success: { docNo: bill.invoice_no, assignedCount: assigned, skippedCount: skipped } };
+  return { error: null, success: { docNo: bill.invoice_no, assignedCount: assigned, skippedCount: skipped, rowErrors: [] } };
 }

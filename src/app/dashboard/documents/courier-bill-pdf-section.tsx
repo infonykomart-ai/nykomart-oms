@@ -52,7 +52,7 @@ export function CourierBillPdfSection() {
 
   const [isSaving, startSave] = useTransition();
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState<{ docNo: string; assignedCount: number; skippedCount: number } | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<{ docNo: string; assignedCount: number; skippedCount: number; rowErrors?: string[] } | null>(null);
 
   function reset() {
     setMeta(null);
@@ -173,11 +173,28 @@ export function CourierBillPdfSection() {
           </div>
 
           {saveSuccess ? (
-            <p className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">
-              Saved — <strong>{saveSuccess.docNo}</strong>. {saveSuccess.assignedCount} shipment(s) assigned
-              {saveSuccess.skippedCount > 0 ? `, ${saveSuccess.skippedCount} skipped (no confirmed match).` : "."} View it under the{" "}
-              {meta.billCategory === "freight" ? '"Courier Bill"' : '"Duty & Tax Bill"'} tab.
-            </p>
+            <div className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">
+              <p>
+                Saved — <strong>{saveSuccess.docNo}</strong>. {saveSuccess.assignedCount} shipment(s) assigned
+                {saveSuccess.skippedCount > 0 ? `, ${saveSuccess.skippedCount} skipped (no confirmed match).` : "."}{" "}
+                {meta.billCategory === "freight" ? '"Courier Bill"' : '"Duty & Tax Bill"'} tab.
+              </p>
+              {saveSuccess.rowErrors && saveSuccess.rowErrors.length > 0 && (
+                <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-amber-900">
+                  <p className="font-semibold">{saveSuccess.rowErrors.length === 5 ? "First 5" : "All"} assignment error(s) — rows were NOT saved:</p>
+                  <ul className="mt-1 list-inside list-disc">
+                    {saveSuccess.rowErrors.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                  {saveSuccess.rowErrors.some((e) => e.includes("does not exist")) && (
+                    <p className="mt-1 font-medium">
+                      “column … does not exist” = the latest db/2026-*.sql migration hasn&apos;t been run on the Supabase project yet — run it in Supabase SQL Editor, then delete this bill and re-import the PDF.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           ) : (
             <>
               {saveError && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{saveError}</p>}
