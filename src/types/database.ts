@@ -947,6 +947,8 @@ export type Database = {
           ref_prefix: string;
           active: boolean;
           logo_url: string | null;
+          whapi_group_id: string | null;
+          telegram_chat_id: string | null;
           master_invoice_prefix: string | null;
           weekly_off_days: number[];
           created_at: string;
@@ -958,6 +960,8 @@ export type Database = {
           ref_prefix: string;
           active?: boolean;
           logo_url?: string | null;
+          whapi_group_id?: string | null;
+          telegram_chat_id?: string | null;
           master_invoice_prefix?: string | null;
           weekly_off_days?: number[];
           created_at?: string;
@@ -969,6 +973,8 @@ export type Database = {
           ref_prefix?: string;
           active?: boolean;
           logo_url?: string | null;
+          whapi_group_id?: string | null;
+          telegram_chat_id?: string | null;
           master_invoice_prefix?: string | null;
           weekly_off_days?: number[];
           created_at?: string;

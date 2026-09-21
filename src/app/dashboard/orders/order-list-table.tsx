@@ -366,6 +366,22 @@ export function OrderListTable({
       filterValue: (o) => o.dispatch_date ?? "",
       cell: (o) => o.dispatch_date || "—",
     },
+    // 2026-09-21 — "order page me ek option jodna hai estimate dispatch
+    // date jo whatsaap par jati hai": this is the field the 2026-08-26
+    // comment above flagged as missing from the schema ("Estimated
+    // Dispatch Date" was left out of the spreadsheet-mirror column list
+    // because `orders` had no matching column yet). It exists now
+    // (estimated_dispatch_date, editable via the row's Edit form) and
+    // rides into the packing WhatsApp/Telegram/Whapi message — see
+    // order-whatsapp-button.tsx's buildMessage().
+    {
+      key: "estimatedDispatchDate",
+      label: "Estimated Dispatch Date",
+      filter: "text",
+      tdClass: "whitespace-nowrap",
+      filterValue: (o) => o.estimated_dispatch_date ?? "",
+      cell: (o) => o.estimated_dispatch_date || "—",
+    },
     {
       key: "photo",
       label: "Photo",
@@ -638,6 +654,7 @@ export function OrderListTable({
     order_value_original: number;
     order_currency: string;
     dispatch_date: string | null;
+    estimated_dispatch_date: string | null;
     purchased_from: string;
     pb_entry: string;
     delivered: string;
@@ -658,6 +675,7 @@ export function OrderListTable({
       order_value_original: o.order_value_original,
       order_currency: o.order_currency,
       dispatch_date: o.dispatch_date,
+      estimated_dispatch_date: o.estimated_dispatch_date,
       purchased_from: purchasedFromText(o),
       pb_entry: s && s.purchaseBillCount > 0 ? s.purchaseBillLabel ?? "Yes" : "No PB yet",
       delivered: s?.deliveredStatus ?? "Unknown",
@@ -677,6 +695,7 @@ export function OrderListTable({
     { key: "order_value_original", label: "Value", value: (r) => r.order_value_original },
     { key: "order_currency", label: "Currency", value: (r) => r.order_currency },
     { key: "dispatch_date", label: "Dispatch Date", value: (r) => r.dispatch_date },
+    { key: "estimated_dispatch_date", label: "Estimated Dispatch Date", value: (r) => r.estimated_dispatch_date },
     { key: "purchased_from", label: "Purchased From", value: (r) => r.purchased_from },
     { key: "pb_entry", label: "PB Entry", value: (r) => r.pb_entry },
     { key: "delivered", label: "Delivered", value: (r) => r.delivered },

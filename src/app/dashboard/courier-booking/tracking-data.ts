@@ -85,12 +85,16 @@ export async function getTrackedShipments(
       id: s.id,
       courier: s.courier as CourierKey | "other",
       manualCourierName: s.manual_courier_name,
-      status: s.status,
+      // 2026-09-19 — status/booked_amount_source are plain `text` columns in
+      // Postgres (no DB-level enum), so database.ts types them as bare
+      // `string`; cast to the app's own narrower literal union here, same
+      // convention as the `courier` cast just above.
+      status: s.status as TrackedShipment["status"],
       awbNo: s.awb_no,
       labelUrl: s.label_url,
       bookedAmt: s.booked_amt,
       bookedCurrency: s.booked_currency,
-      bookedAmountSource: s.booked_amount_source,
+      bookedAmountSource: s.booked_amount_source as TrackedShipment["bookedAmountSource"],
       createdAt: s.created_at,
       orderId: s.order_id,
       refNo: order.ref_no,

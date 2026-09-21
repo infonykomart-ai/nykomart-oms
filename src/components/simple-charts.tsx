@@ -147,21 +147,33 @@ export function DonutChart({
   const cx = size / 2;
   const cy = size / 2;
   const circumference = 2 * Math.PI * r;
-  // Cumulative offsets computed WITHOUT a render-time reassigned accumulator
-  // (the react-compiler rule): one pass over the positive slices up front.
-  const positive = data.filter((d) => d.value > 0);
-  const offsets = positive.map((_, i) =>
-    positive.slice(0, i).reduce((s, x) => s + (x.value / total) * circumference, 0)
+  // 2026-09-19 — precompute each segment's cumulative offset in a plain
+  // reduce PASS, outside the JSX map, instead of mutating a `let` while
+  // rendering (flagged by react-hooks/immutability: reassigning a variable
+  // after render has started can produce inconsistent output across
+  // re-renders). Same running-offset math, just computed up front.
+  const { segments } = data.filter((d) => d.value > 0).reduce<{
+    segments: { d: DonutDatum; frac: number; dashArray: string; dashOffset: number }[];
+    offsetSoFar: number;
+  }>(
+    (acc, d) => {
+      const frac = d.value / total;
+      const dash = Math.max(0, frac * circumference - 1.5); // 1.5px gap between segments
+      const dashArray = `${dash} ${circumference - dash}`;
+      const dashOffset = circumference * 0.25 - acc.offsetSoFar; // start at 12 o'clock, go clockwise
+      return {
+        segments: [...acc.segments, { d, frac, dashArray, dashOffset }],
+        offsetSoFar: acc.offsetSoFar + frac * circumference,
+      };
+    },
+    { segments: [], offsetSoFar: 0 }
   );
   return (
     <div className="flex flex-wrap items-center gap-4">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Expense breakdown">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--oms-surface-border)" strokeWidth={thickness} />
-        {positive.map((d, i) => {
-            const frac = d.value / total;
-            const dash = Math.max(0, frac * circumference - 1.5); // 1.5px gap between segments
-            const dashArray = `${dash} ${circumference - dash}`;
-            const dashOffset = circumference * 0.25 - offsets[i]; // start at 12 o'clock, go clockwise
+        {segments
+          .map(({ d, frac, dashArray, dashOffset }) => {
             return (
               <circle
                 key={d.label}

@@ -245,19 +245,25 @@ export default async function FinanceDashboardPage({
     // rpc.sql + db/2026-09-18c-pl-purchase-washing-order-linked.sql.
     // Feature-detected: if neither migration has run yet, monthlyErr is
     // set and the page shows a "run this migration first" message.
+    // 2026-09-19 — p_store_id/p_buyer_country are DEFAULT NULL Postgres
+    // params, so the generated RPC arg type is `string | undefined` (an
+    // omitted key), not `string | null`; storeId/country above are
+    // `string | null` (the "all" sentinel resolves to null). `?? undefined`
+    // is a type-only conversion — an omitted key still hits the same
+    // DEFAULT NULL on the Postgres side, so behavior is unchanged.
     finSupabase.rpc("finance_dashboard_monthly", {
       p_company_id: employee.currentCompanyId,
       p_from: from,
       p_to: to,
-      p_store_id: storeId,
-      p_buyer_country: country,
+      p_store_id: storeId ?? undefined,
+      p_buyer_country: country ?? undefined,
     }),
     finSupabase.rpc("finance_dashboard_monthly", {
       p_company_id: employee.currentCompanyId,
       p_from: prevFrom,
       p_to: prevTo,
-      p_store_id: storeId,
-      p_buyer_country: country,
+      p_store_id: storeId ?? undefined,
+      p_buyer_country: country ?? undefined,
     }),
     finSupabase.rpc("get_official_rate_as_of", { p_currency_code: "USD", p_as_of: to }),
     // Recent-orders pool for the Shipping/Returns transaction-detail lists

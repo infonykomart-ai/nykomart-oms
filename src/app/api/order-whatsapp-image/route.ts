@@ -4,6 +4,18 @@ import path from "node:path";
 import { requireCapability, UnauthorizedError, ForbiddenError } from "@/lib/auth/require-capability";
 import { safeExternalFetch } from "@/lib/security/safe-external-fetch";
 
+// ⚠️ 2026-09-20 — UNUSED as of this date. Per explicit user decision, the
+// caption is NEVER baked into photo pixels anymore for any order,
+// including Amazon "TOP PRIORITY" ones — order-whatsapp-button.tsx now
+// shares/sends the real, unmodified order.photo_url image (via
+// /api/order-photo-proxy) with the caption travelling only as real text.
+// This route is left in place (not deleted) only because the flip-flop
+// history below shows this exact approach has been reverted to and from
+// multiple times already — if that ever happens again, this is where to
+// look. Do not wire this back up without a fresh, explicit user decision;
+// see order-whatsapp-button.tsx's own header comment for the current,
+// confirmed design.
+//
 // 2026-09-15 — "jo order send karte hai new order to whatsaap or telegram
 // par ek hi msg me product ki photo or sath me msg jo program me decide kar
 // rakha hai vo nhi jara" — the details caption is BAKED INTO THE IMAGE

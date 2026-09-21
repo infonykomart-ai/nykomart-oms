@@ -218,6 +218,12 @@ CREATE TABLE companies (
   -- fixed prefix per company (NYM/RA/CASA), separate from ref_prefix
   -- (PO/RF/RG, which is per-ORDER not per-invoice) and from
   -- stores.invoice_ref_prefix (which is per-STORE/marketplace, not company).
+  -- 2026-09-20: per-company order-notify destinations (see
+  -- db/2026-09-20-company-order-notify-channels.sql). NULL falls back to
+  -- the global env var, so existing behavior is unchanged until each
+  -- company's group/chat id is confirmed and filled in.
+  whapi_group_id text,
+  telegram_chat_id text,
   master_invoice_prefix text,
   -- 2026-08-11: recurring weekly-off day(s) for attendance/payroll, e.g.
   -- every Sunday off. 0=Sunday..6=Saturday (matches both JS Date.getDay()

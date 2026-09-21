@@ -120,6 +120,10 @@ type CreateOrderInput = {
   manualRefNo: string | null;
   poDate: string | null;
   deliveryDate: string | null;
+  // 2026-09-21 — rough/planned dispatch date, settable at entry time; see
+  // order-form.tsx's field comment and order-whatsapp-button.tsx's
+  // buildMessage(), which is where it actually reaches the staff/customer.
+  estimatedDispatchDate: string | null;
   emailId: string | null;
   taxId: string | null;
   addressType: "Residential" | "Commercial";
@@ -224,6 +228,7 @@ export async function createOrderCore(
     { value: orderDate, label: "Order date" },
     { value: input.poDate, label: "PO date" },
     { value: input.deliveryDate, label: "Delivery date" },
+    { value: input.estimatedDispatchDate, label: "Estimated dispatch date" },
   ]);
   if (dateError) return { error: dateError, refNo: null };
 
@@ -357,6 +362,7 @@ export async function createOrderCore(
   const {
     poDate,
     deliveryDate,
+    estimatedDispatchDate,
     emailId,
     taxId,
     addressType,
@@ -421,6 +427,7 @@ export async function createOrderCore(
       ref_no: provisionalRefNo,
       po_date: poDate,
       delivery_date: deliveryDate,
+      estimated_dispatch_date: estimatedDispatchDate,
       marketplace_order_no: marketplaceOrderNo,
       photo_url: item.photoUrl,
       // 2026-09-18 — full multi-photo list (per-item links first, then the
@@ -553,6 +560,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     manualRefNo,
     poDate: strOrNull(formData, "po_date"),
     deliveryDate: strOrNull(formData, "delivery_date"),
+    estimatedDispatchDate: strOrNull(formData, "estimated_dispatch_date"),
     emailId: strOrNull(formData, "email_id"),
     taxId: strOrNull(formData, "tax_id"),
     addressType: (str(formData, "address_type") || "Residential") as "Residential" | "Commercial",
@@ -795,6 +803,7 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       manualRefNo: cellStr(raw, byHeader, "Manual Ref No") || null,
       poDate: cellStr(raw, byHeader, "PO Date") || null,
       deliveryDate: cellStr(raw, byHeader, "Delivery Date") || null,
+      estimatedDispatchDate: cellStr(raw, byHeader, "Estimated Dispatch Date") || null,
       emailId: cellStr(raw, byHeader, "Email") || null,
       taxId: cellStr(raw, byHeader, "Tax ID") || null,
       addressType: ADDRESS_TYPES.has(addressTypeRaw) ? (addressTypeRaw as "Residential" | "Commercial") : "Residential",

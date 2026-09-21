@@ -116,7 +116,9 @@ export async function parseCourierBillPdfAction(formData: FormData): Promise<Par
         .maybeSingle();
       bookedFreightAmt = shipmentRow?.booked_freight_amt ?? null;
       bookedCurrency = shipmentRow?.booked_currency ?? null;
-      bookedAmountSource = shipmentRow?.booked_amount_source ?? null;
+      // booked_amount_source is a plain `text` column (no DB-level enum), so
+      // database.ts types it as bare `string`; cast to the local literal union.
+      bookedAmountSource = (shipmentRow?.booked_amount_source ?? null) as "api" | "rate_card_estimate" | "manual" | null;
     }
     const varianceAmt = bookedFreightAmt != null && s.amount != null ? Math.round((s.amount - bookedFreightAmt) * 100) / 100 : null;
 

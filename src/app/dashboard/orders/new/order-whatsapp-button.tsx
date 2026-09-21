@@ -4,29 +4,71 @@ import { useState, useTransition } from "react";
 import { markOrderWhatsAppSent } from "./actions";
 
 /**
- * "Send on WhatsApp" for one order — item 4 + 5. Deliberately does NOT use
- * a WhatsApp Business API (user chose the simpler route: "khud ka whatsaap
- * use karna hai... share ka option ho"). Instead:
+ * "Send on WhatsApp" / "Send on Telegram" for one order — item 4 + 5.
  *
- *  1. If the browser supports the Web Share API with files (most mobile
- *     browsers, and desktop Chrome/Edge on Windows/macOS), this shares the
- *     product photo as an actual attached image — not a link — plus the
- *     order details as text, to whichever app the user picks from the OS
- *     share sheet (WhatsApp being the obvious choice). This is the ONLY
- *     way to get a real image (not a link) into WhatsApp without a
- *     Business API.
- *  2. Otherwise, falls back to a wa.me "click to chat" link pre-filled
- *     with the order details as text (opens WhatsApp Web/Desktop/App) —
- *     the photo itself can't be pre-attached this way, so the text
- *     includes the photo URL as a fallback so nothing is lost.
+ * 2026-09-20 — FINAL, per explicit user confirmation after the old flow
+ * broke on desktop (PO-A783/PO-A784: a composite image with a baked "TOP
+ * PRIORITY" banner + details table + photo flattened into ONE image, and
+ * desktop still needed a manual download+attach+paste that kept landing as
+ * TWO separate WhatsApp/Telegram messages instead of one). Two decisions
+ * were asked and confirmed directly:
  *
- * Either way, sending is a manual last step inside WhatsApp itself — this
- * button cannot (and does not claim to) guarantee delivery, only that the
- * employee was hands-off for building the message.
+ *   1. NEVER bake the caption into the photo's pixels again, for ANY order
+ *      — including Amazon "TOP PRIORITY" ones. The photo sent/shared is
+ *      always the real, unmodified `order.photo_url` image (fetched
+ *      through /api/order-photo-proxy so CORS/hotlinking on vendor image
+ *      hosts never breaks it). The caption travels ONLY as real,
+ *      copyable/editable/searchable text — never painted onto the image.
+ *   2. Telegram gets REAL one-click automation via the Telegram Bot API
+ *      (/api/telegram-send-order — server-side `sendPhoto`, one call, one
+ *      message, zero manual steps). WhatsApp stays on the no-Business-API
+ *      manual/share approach chosen earlier (BRAIN.md §9 /
+ *      customer-whatsapp-button.tsx's header comment) — just fixed to use
+ *      the real photo instead of a composite.
  *
- * A separate "📋 Copy caption" button next to it copies the same details
- * as plain text to the clipboard — see the 2026-09-03 note below on why
- * that exists alongside the image-only send.
+ * WhatsApp flow (shareWhatsApp):
+ *  1. Mobile (Web Share API with files): shares the real photo + the real
+ *     caption as `text` in one call — the OS share sheet keeps files+text
+ *     together as ONE message, with the text as the photo's native
+ *     caption.
+ *  2. Desktop (no reliable file Share API): the real photo downloads and
+ *     the caption auto-copies to the clipboard; the employee attaches the
+ *     downloaded photo in WhatsApp and pastes (Ctrl+V) the caption into
+ *     that SAME caption box, then sends — one message, a real searchable
+ *     caption, nothing baked into the image.
+ *  3. If the photo can't be fetched at all: falls back to a text-only
+ *     wa.me link with the photo's URL included in the text, so the message
+ *     still goes out rather than silently failing.
+ *
+ * Telegram flow (sendTelegram): one click, fully automated — POSTs to
+ * /api/telegram-send-order, which calls Telegram's Bot API server-side.
+ * No download, no clipboard, no manual attach-and-paste.
+ *
+ * WhatsApp AUTO flow (sendWhapiAuto) — added 2026-09-20, same day, after the
+ * user asked "ESA HI WHATSAAP PAR NHI HO SAKTA HAI KYA" (same one-click
+ * automation on WhatsApp too). Official WhatsApp Cloud API can't post to
+ * Groups at all; every unofficial route needs a persistent server the
+ * user's hosting can't run — so the user signed up for Whapi.Cloud (a
+ * hosted WhatsApp-Web-session API) themselves and chose it explicitly. This
+ * button POSTs to /api/whapi-send-order, which calls Whapi's API
+ * server-side — photo + caption, one message, no manual step. It sits
+ * ALONGSIDE the original manual "📱 Send on WhatsApp" button (not replacing
+ * it): Whapi's free tier is a rate-limited Sandbox (150 msg/day) and the
+ * user may not always have WHAPI_TOKEN/WHAPI_GROUP_ID configured, so the
+ * manual share flow stays as a zero-dependency fallback that always works.
+ *
+ * ── Older history (kept for context only — NOT current behavior) ──
+ * 2026-08-07: first version, wa.me text-only, no image at all.
+ * 2026-08-08 → 2026-09-15: repeated flip-flopping between a baked-pixel
+ * composite and a real text caption, chasing platform-specific
+ * message-splitting bugs on different devices — see the (now-unused)
+ * order-whatsapp-image/route.ts header comment for the full blow-by-blow.
+ * That composite route is left in the codebase but is no longer called
+ * from here as of 2026-09-20.
+ *
+ * A separate "📋 Copy caption" button next to these copies the same
+ * caption text to the clipboard on its own — useful any time the caption
+ * needs to be pasted again without re-sending.
  */
 export function OrderWhatsAppButton({
   order,
@@ -37,9 +79,6 @@ export function OrderWhatsAppButton({
     buyer_name_address: string | null;
     contact_no: string | null;
     photo_url: string | null;
-    // 2026-09-19 — full saved photo list (Main + Closeups); up to the first
-    // two extras ride along in the shared composite image.
-    photo_urls: string[] | null;
     item_category_name: string | null;
     size_label: string | null;
     qty: number;
@@ -47,12 +86,30 @@ export function OrderWhatsAppButton({
     order_currency: string;
     whatsapp_sent_at: string | null;
     dispatch_date: string | null;
+    // 2026-09-21 — "order page me ek option jodna hai estimate dispatch
+    // date jo whatsaap par jati hai": rough/planned dispatch date, set at
+    // order entry or via the Orders hub's edit form (order-edit-form.tsx).
+    // Shown in the packing message alongside the real Dispatch Date (which
+    // stays "-" until the order actually ships).
+    estimated_dispatch_date: string | null;
     sku_label: string | null;
     colour: string | null;
     tassel_fringes: boolean | null;
     photo_type: string | null;
+    // 2026-09-21 — closeup photos (from the order's multi-photo entry):
+    // shared AFTER the main photo in the same message when the platform
+    // allows multiple files (mobile share sheet), else downloaded alongside
+    // it on desktop. Max 2, matching the order form's Main + Closeup 1 +
+    // Closeup 2 entry UI.
+    photo_urls: (string | null)[] | null;
     remark: string | null;
     is_amazon: boolean;
+    // 2026-09-20b — which company (Nyko Mart / Rugara / CASA ARRA) this
+    // order belongs to, so the Telegram/WhatsApp auto-send routes can pick
+    // THAT company's own group instead of a single hardcoded one — see
+    // whapi-send-order/route.ts and telegram-send-order/route.ts header
+    // comments. null is fine (routes fall back to the global env var).
+    company_id: string | null;
   };
 }) {
   const [sentAt, setSentAt] = useState(order.whatsapp_sent_at);
@@ -60,6 +117,8 @@ export function OrderWhatsAppButton({
   const [notice, setNotice] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [copied, setCopied] = useState(false);
+  const [telegramSending, setTelegramSending] = useState(false);
+  const [whapiSending, setWhapiSending] = useState(false);
 
   function flashNotice(msg: string) {
     setNotice(msg);
@@ -76,104 +135,97 @@ export function OrderWhatsAppButton({
   const isCottonRug = (order.item_category_name || "").toLowerCase().includes("cotton");
 
   // 2026-08-07: production/packing-facing message — fixed field template
-  // given directly by the user (PO/RF/RG, QTY, Size, Dispatch Date, Photo,
-  // Colour, Tassel/Fringes, SKU, Note), all pulled straight from the order
-  // entry rather than typed by hand. Deliberately does NOT include buyer
-  // name/value — this message rides along with the product photo to
-  // whoever is packing/dispatching, not the customer. Amazon orders get a
-  // bolded "TOP PRIORITY" flag up top (store name match, see page.tsx).
-  function buildMessage() {
+  // given directly by the user (PO/RF/RG, QTY, Size, Dispatch Date,
+  // Estimated Dispatch Date [added 2026-09-21], Photo, Colour, Tassel/
+  // Fringes, SKU, Note), all pulled straight from the order entry rather
+  // than typed by hand. Deliberately does NOT include buyer name/value —
+  // this message rides along with the product photo to whoever is
+  // packing/dispatching, not the customer. Amazon orders get a
+  // "TOP PRIORITY" flag up top (store name match, see page.tsx).
+  //
+  // `bold` toggles WhatsApp-style single-asterisk emphasis around the fixed
+  // labels: WhatsApp itself renders `*text*` as bold once the caption is
+  // pasted/sent there, so WhatsApp keeps bold=true (unchanged from before).
+  // Telegram calls this with bold=false — see /api/telegram-send-order's
+  // header comment for why (Telegram's parse modes throw hard errors on
+  // unbalanced markdown characters inside free-text order fields like SKU
+  // or Note, so the Telegram caption is sent as plain text with no
+  // parse_mode at all, and literal asterisks here would just look broken).
+  function buildMessage(bold: boolean = true) {
+    const wrap = (label: string) => (bold ? `*${label}*` : label);
     const lines = [
-      order.is_amazon ? "*TOP PRIORITY*\n" : null,
-      `*PO/RF/RG:* ${order.ref_no}`,
-      `*QTY:* ${order.qty}`,
-      `*Size:* ${order.size_label || "-"}`,
-      `*Dispatch Date:* ${order.dispatch_date || "-"}`,
-      `*Photo:* ${order.photo_type || "-"}`,
-      `*Colour:* ${order.colour || "-"}`,
-      isCottonRug ? `*Tassel/ Fringes:* ${order.tassel_fringes ? "Yes" : "No"}` : null,
-      `*SKU:* ${order.sku_label || "-"}`,
+      order.is_amazon ? (bold ? "*TOP PRIORITY*\n" : "TOP PRIORITY\n") : null,
+      `${wrap("PO/RF/RG:")} ${order.ref_no}`,
+      `${wrap("QTY:")} ${order.qty}`,
+      `${wrap("Size:")} ${order.size_label || "-"}`,
+      `${wrap("Dispatch Date:")} ${order.dispatch_date || "-"}`,
+      `${wrap("Estimated Dispatch Date:")} ${order.estimated_dispatch_date || "-"}`,
+      `${wrap("Photo:")} ${order.photo_type || "-"}`,
+      `${wrap("Colour:")} ${order.colour || "-"}`,
+      isCottonRug ? `${wrap("Tassel/ Fringes:")} ${order.tassel_fringes ? "Yes" : "No"}` : null,
+      `${wrap("SKU:")} ${order.sku_label || "-"}`,
       "",
-      `*Note:*\n${order.remark || "-"}`,
+      `${wrap("Note:")}\n${order.remark || "-"}`,
     ].filter((l) => l !== null);
     return lines.join("\n");
   }
 
-  // 2026-09-15 (round 2) — "whatsaap or telegram ek msg me, photo or
-  // caption jisko agar whatsaap par search kiya jaye to search ho jaye":
-  // the baked-pixels composite alone is NOT searchable (WhatsApp search
-  // only indexes real text/captions, never pixels). So the flow is now
-  // platform-aware, always one message, and the caption is REAL text
-  // wherever the platform allows it:
-  //
-  //  • Mobile (share sheet keeps files+text together — Android and iOS
-  //    both compose image+text as ONE message with the text as the
-  //    image's caption): navigator.share({ files, text }) → real
-  //    searchable caption, one message. The composite (details ALSO
-  //    baked above the photo) is what gets shared, so even there the
-  //    info survives a text-dropping target.
-  //  • Desktop (WhatsApp/Telegram Desktop drop the text field — the
-  //    exact bug reported on Windows): the composite DOWNLOADS and the
-  //    caption AUTO-COPIES to the clipboard, with on-screen steps:
-  //    attach the photo → paste (Ctrl+V) in the caption box → send.
-  //    That is one message with a real, searchable caption. No auto-open
-  //    of any deep link — a prefilled text input would just become a
-  //    SECOND message.
-  //  • If the composite can't be fetched at all: fall back to the old
-  //    wa.me text link so the message still goes.
-  // 2026-09-19 — "whatsaap par bhi jayegi ... close photo first & second,
-  // agar single hai to uske hisabse": the composite now carries Main + up
-  // to 2 closeup photos in ONE image (the route bakes Main Photo / Closeup
-  // 1 / Closeup 2 label strips between them). Single-photo orders keep the
-  // exact old look — no strips, no change. photo_url is always Main, so
-  // dedupe against it just in case an entry duplicated the same link.
-  const closeupUrls = (order.photo_urls ?? []).filter((u) => u && u !== order.photo_url).slice(0, 2);
-
-  async function fetchComposite(): Promise<Blob | null> {
-    if (!order.photo_url) return null;
-    const imageParams = new URLSearchParams({
-      url1: order.photo_url,
-      ref_no: order.ref_no,
-      qty: String(order.qty),
-      size: order.size_label || "-",
-      dispatch_date: order.dispatch_date || "-",
-      photo_type: order.photo_type || "-",
-      colour: order.colour || "-",
-      tassel_fringes: order.tassel_fringes ? "1" : "0",
-      show_tassel_fringes: isCottonRug ? "1" : "0",
-      sku: order.sku_label || "-",
-      note: order.remark || "-",
-      is_amazon: order.is_amazon ? "1" : "0",
-    });
-    if (closeupUrls[0]) imageParams.set("url2", closeupUrls[0]);
-    if (closeupUrls[1]) imageParams.set("url3", closeupUrls[1]);
-    const res = await fetch(`/api/order-whatsapp-image?${imageParams.toString()}`);
-    return res.ok ? res.blob() : null;
+  // Fetches the REAL, unmodified product photo(s) — server-to-server
+  // through /api/order-photo-proxy, because most photo URLs live on outside
+  // vendor/marketplace hosts that don't send CORS headers allowing a
+  // browser fetch to read the response directly.
+  // 2026-09-21 — "isme ek to order ki main photo ka ho baki ke do closeup
+  // photo ke option ho / WHATSAAP PAR BHI JAYEGI PHOTO PO ON YE CLOSE PHOTO
+  // FIRST & SECOND, AGAR SINGLE HAI TO USKE HISABSE": the MAIN photo comes
+  // first, then up to 2 closeups (order.photo_urls, deduped against the
+  // main and against each other). No composite, no baked pixels — each
+  // photo travels as itself; single-photo orders behave exactly as before.
+  async function fetchPhotos(): Promise<{ name: string; blob: Blob }[]> {
+    const urls = [order.photo_url, ...(order.photo_urls ?? [])]
+      .filter((u, i, arr): u is string => !!u && arr.indexOf(u) === i)
+      .slice(0, 3); // main + closeup 1 + closeup 2
+    const out: { name: string; blob: Blob }[] = [];
+    for (const url of urls) {
+      try {
+        const res = await fetch(`/api/order-photo-proxy?url=${encodeURIComponent(url)}`);
+        if (res.ok) out.push({ name: `${order.ref_no}${out.length > 0 ? `-${out.length + 1}` : ""}.jpg`, blob: await res.blob() });
+      } catch {
+        // one photo failing never blocks the others
+      }
+    }
+    return out;
   }
 
-  async function shareOrder(target: "whatsapp" | "telegram") {
+  async function shareWhatsApp() {
     setError(null);
     setNotice(null);
     const text = buildMessage();
 
-    let blob: Blob | null = null;
-    try {
-      blob = await fetchComposite();
-    } catch {
-      blob = null;
-    }
+    const photos = await fetchPhotos().catch(() => [] as { name: string; blob: Blob }[]);
+    const mainPhoto = photos[0] ?? null;
 
     // Path 1 — mobile share sheet: files+text arrive as ONE message whose
-    // caption is the real, searchable text (and the pixels carry the same
-    // details as a safety net).
-    if (blob && typeof navigator !== "undefined" && "share" in navigator) {
+    // caption is the real, searchable text, and every photo is exactly what's
+    // on the order (no overlay). Main photo first, then the closeups.
+    if (photos.length > 0 && typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
-        const shareData = { files: [file], text };
-        if ("canShare" in navigator && navigator.canShare(shareData)) {
+        const files = photos.map(({ name, blob }) => new File([blob], name, { type: blob.type || "image/jpeg" }));
+        const shareData = { files, text };
+        const shareable = "canShare" in navigator && navigator.canShare(shareData);
+        if (shareable) {
           await navigator.share(shareData);
           markSent();
           return;
+        }
+        // Some sheets accept exactly one file but not many — retry with just
+        // the main photo so the send still happens.
+        if (mainPhoto && "canShare" in navigator) {
+          const single = { files: [new File([mainPhoto.blob], mainPhoto.name, { type: mainPhoto.blob.type || "image/jpeg" })], text };
+          if (navigator.canShare(single)) {
+            await navigator.share(single);
+            markSent();
+            return;
+          }
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
@@ -181,20 +233,24 @@ export function OrderWhatsAppButton({
       }
     }
 
-    // Path 2 — desktop: composite downloads + caption auto-copies; the
-    // employee attaches the photo and pastes the caption in the caption
-    // box → ONE message, searchable caption. (Clipboard write here rides
-    // on the click's user activation — if the browser refuses it, the
-    // 📋 Copy caption button right below is the same text.)
-    if (blob) {
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = `${order.ref_no}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+    // Path 2 — desktop: the real photo downloads (no baked text) and the
+    // caption auto-copies; the employee attaches the photo and pastes the
+    // caption in the caption box → ONE message, searchable caption.
+    // (Clipboard write here rides on the click's user activation — if the
+    // browser refuses it, the 📋 Copy caption button right below is the
+    // same text.)
+    if (photos.length > 0) {
+      for (const [i, { blob, name }] of photos.entries()) {
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+        if (i < photos.length - 1) await new Promise((r) => setTimeout(r, 350)); // don't drop multi-download prompts
+      }
 
       let copiedOk = false;
       try {
@@ -203,9 +259,8 @@ export function OrderWhatsAppButton({
       } catch {
         copiedOk = false;
       }
-      const appName = target === "whatsapp" ? "WhatsApp" : "Telegram";
       flashNotice(
-        `📷 Photo (details ke sath) download ho gayi — ${appName} me photo ATTACH karo, caption box me ${
+        `📷 Asli photo (koi text nahi, jaisi hai waisi) download ho gayi — WhatsApp me photo ATTACH karo, caption box me ${
           copiedOk ? "Ctrl+V se PASTE karo (caption copy ho chuka hai)" : "📋 Copy caption button se caption copy karke paste karo"
         }, phir send. Ek hi message jayega aur caption search me milega.`
       );
@@ -213,15 +268,69 @@ export function OrderWhatsAppButton({
       return;
     }
 
-    // Path 3 — last resort (composite fetch failed / no photo): text-only
-    // deep link so the message still goes out.
+    // Path 3 — last resort (photo fetch failed / no photo): text-only deep
+    // link so the message still goes out.
     const fullText = order.photo_url ? `${text}\n\n*Photo Link:* ${order.photo_url}` : text;
-    const url =
-      target === "whatsapp"
-        ? `https://wa.me/?text=${encodeURIComponent(fullText)}`
-        : `https://t.me/share/url?url=${encodeURIComponent(order.photo_url || " ")}&text=${encodeURIComponent(text)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, "_blank", "noopener,noreferrer");
     markSent();
+  }
+
+  // Real automation: one call to our own server route, which calls
+  // Telegram's Bot API server-side (photo + caption together, one
+  // message). No download, no clipboard, no manual attach step.
+  async function sendTelegram() {
+    setError(null);
+    setNotice(null);
+    setTelegramSending(true);
+    try {
+      const res = await fetch("/api/telegram-send-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(false), companyId: order.company_id }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Telegram par bhej nahi paye — dobara try karein.");
+        return;
+      }
+      flashNotice("☁️ Telegram par bhej diya — photo aur caption ek hi message me chale gaye.");
+      markSent();
+    } catch {
+      setError("Telegram par bhej nahi paye — internet check karke dobara try karein.");
+    } finally {
+      setTelegramSending(false);
+    }
+  }
+
+  // Real automation: one call to our own server route, which calls
+  // Whapi.Cloud's API server-side (photo + caption together, one message,
+  // to the "Nyko Mart order" WhatsApp group). No download, no clipboard, no
+  // manual attach step. Uses buildMessage(true) (bold=true, the default) —
+  // unlike Telegram, real WhatsApp DOES render `*text*` as bold once the
+  // message actually arrives via the WhatsApp network, so this keeps the
+  // same bold labels the manual share flow already used.
+  async function sendWhapiAuto() {
+    setError(null);
+    setNotice(null);
+    setWhapiSending(true);
+    try {
+      const res = await fetch("/api/whapi-send-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoUrl: order.photo_url, caption: buildMessage(), companyId: order.company_id }),
+      });
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "WhatsApp (auto) par bhej nahi paye — dobara try karein.");
+        return;
+      }
+      flashNotice("🚀 WhatsApp group par bhej diya — photo aur caption ek hi message me chale gaye.");
+      markSent();
+    } catch {
+      setError("WhatsApp (auto) par bhej nahi paye — internet check karke dobara try karein.");
+    } finally {
+      setWhapiSending(false);
+    }
   }
 
   function markSent() {
@@ -263,7 +372,7 @@ export function OrderWhatsAppButton({
         <button
           type="button"
           disabled={isPending}
-          onClick={() => shareOrder("whatsapp")}
+          onClick={shareWhatsApp}
           className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-60 ${
             sentAt
               ? "border-green-400 bg-green-100 text-green-800 hover:bg-green-200"
@@ -272,16 +381,28 @@ export function OrderWhatsAppButton({
         >
           {sentAt ? "✓ Sent — Send Again" : "📱 Send on WhatsApp"}
         </button>
-        {/* 2026-09-15 — "whatsaap or telegram par ek hi msg me..." — Telegram
-            twin of the WhatsApp button: same composite image (details baked
-            in) + same caption text, t.me deep link as the fallback path. */}
+        {/* 2026-09-20 — real Whapi.Cloud automation (see header comment):
+            one click, one automated message, no manual step. Sits beside the
+            manual button above as a fallback-safe addition, not a
+            replacement — Whapi's free tier is rate-limited and may not
+            always be configured. */}
         <button
           type="button"
-          disabled={isPending}
-          onClick={() => shareOrder("telegram")}
+          disabled={isPending || whapiSending}
+          onClick={sendWhapiAuto}
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+        >
+          {whapiSending ? "🚀 Sending…" : "🚀 Send on WhatsApp (Auto)"}
+        </button>
+        {/* 2026-09-20 — real Telegram Bot API automation (see header
+            comment): one click, one automated message, no manual step. */}
+        <button
+          type="button"
+          disabled={isPending || telegramSending}
+          onClick={sendTelegram}
           className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
         >
-          ☁️ Send on Telegram
+          {telegramSending ? "☁️ Sending…" : "☁️ Send on Telegram"}
         </button>
         <button
           type="button"
