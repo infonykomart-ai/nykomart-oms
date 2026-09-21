@@ -3,6 +3,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { listCreditNoteRegister, findUnregisteredManualCreditNotes } from "@/app/dashboard/bill-payment/credit-note-actions";
 import { cnKindLabel } from "../bill-payment/credit-note-kinds";
 import { CreditNoteRegisterActions } from "./register-actions-bar";
+import { DocStatementDialog } from "@/components/doc-statement-dialog";
 
 // Credit Note Register — 2026-09-13. "us se ye hoga ki apne ko pata chal
 // jayega ki kis party se apne ko kitne ammonut ka credit mil gaya tha."
@@ -114,7 +115,10 @@ export default async function CreditNotesRegisterPage({
                 <tbody className="divide-y divide-slate-100">
                   {g.notes.map((n) => (
                     <tr key={n.id}>
-                      <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">{n.cn_no ?? "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-700">
+                        {/* 2026-09-19 — "a4 ke dilog box me" view/print/WhatsApp/PDF, same pattern as the Bill Statement dialog. */}
+                        <DocStatementDialog type="credit_note" id={n.id} label={n.cn_no ?? "—"} />
+                      </td>
                       <td className="whitespace-nowrap px-3 py-1.5">
                         <span
                           className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${

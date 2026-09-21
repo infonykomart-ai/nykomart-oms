@@ -6,6 +6,12 @@ import { OrderLookupBox } from "./order-lookup-box";
 import { BillLookupSelect } from "./bill-lookup-select";
 import { PartyBillPicker } from "./party-bill-picker";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+// 2026-09-19 (audit fix, item C1) — same GST slab vocabulary the Bill
+// Payment panel's own CN dialog already uses (src/app/dashboard/bill-
+// payment/credit-note-kinds.ts), reused here so the Rate Difference
+// Calculator below can fold GST into its suggested Refund Amount instead
+// of silently leaving it out.
+import { SUPPLIER_GST_OPTIONS } from "../bill-payment/credit-note-kinds";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -58,6 +64,10 @@ export function CreditNoteForm({
   const [qtyInput, setQtyInput] = useState("");
   const [poRateInput, setPoRateInput] = useState("");
   const [billedRateInput, setBilledRateInput] = useState("");
+  // 2026-09-19 (audit fix, item C1) — "blank = no GST" default, same as
+  // the Bill Payment panel's single_bill CN mode, so a note that genuinely
+  // has no GST behaves exactly as before this fix.
+  const [gstRateInput, setGstRateInput] = useState("");
   const [refundAmountManual, setRefundAmountManual] = useState("");
   const [refundAmountTouched, setRefundAmountTouched] = useState(false);
   const rateDiff = useMemo(() => {
@@ -65,10 +75,18 @@ export function CreditNoteForm({
     const billed = Number(billedRateInput);
     return poRateInput !== "" && billedRateInput !== "" ? billed - po : null;
   }, [poRateInput, billedRateInput]);
-  const rateDiffAmount = useMemo(() => {
+  const rateDiffBaseAmount = useMemo(() => {
     const qty = Number(qtyInput);
     return rateDiff != null && qty > 0 ? rateDiff * qty : null;
   }, [rateDiff, qtyInput]);
+  // GST-inclusive suggestion — same gstMultiplier formula already used for
+  // the multi-AWB Credit Note flow (src/app/dashboard/bill-payment/
+  // credit-note-actions.ts): individual rate stored, TOTAL GST is double
+  // it (CGST+SGST), matching purchase_bills.gst_rate_pct's convention.
+  const gstMultiplier = gstRateInput ? 1 + (Number(gstRateInput) * 2) / 100 : 1;
+  const rateDiffAmount = useMemo(() => {
+    return rateDiffBaseAmount != null ? Math.round(rateDiffBaseAmount * gstMultiplier * 100) / 100 : null;
+  }, [rateDiffBaseAmount, gstMultiplier]);
   // Refund Amount shown/submitted is derived at render time, not synced via
   // an effect — same reasoning as debit-note-form.tsx's debitAmountInput:
   // the calculator's suggestion drives it until the user types into the
@@ -141,9 +159,10 @@ export function CreditNoteForm({
             <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
             <p className="mb-2 text-[11px] text-slate-500">
               If the party&apos;s own credit note is for a rate difference — e.g. undercharged/overcharged relative to
-              agreed/PO — fill Qty and both rates here; Refund Amount fills in automatically as (Billed − PO Rate) × Qty.
+              agreed/PO — fill Qty and both rates here; Refund Amount fills in automatically as (Billed − PO Rate) × Qty,
+              plus GST below if the difference itself was billed with GST.
             </p>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               <div>
                 <label className={labelClass} htmlFor="cn_qty">Qty</label>
                 <input
@@ -179,13 +198,37 @@ export function CreditNoteForm({
                   className={inputClass}
                 />
               </div>
+              <div>
+                {/* 2026-09-19 (audit fix, item C1) — same slab vocabulary as
+                    the Bill Payment panel's CN dialog; blank = no GST, same
+                    as before this fix, so nothing changes for a note that
+                    genuinely has none. */}
+                <label className={labelClass} htmlFor="cn_gst_rate">GST % (blank = no GST)</label>
+                <select
+                  id="cn_gst_rate"
+                  name="gst_rate_pct"
+                  value={gstRateInput}
+                  onChange={(e) => setGstRateInput(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">— No GST —</option>
+                  {SUPPLIER_GST_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label} ({o.total}%)</option>
+                  ))}
+                </select>
+              </div>
             </div>
             {rateDiff != null && (
               <p className="mt-2 text-xs text-slate-600">
                 Difference: <strong>₹{rateDiff.toFixed(2)}</strong> / unit
-                {rateDiffAmount != null && (
+                {rateDiffBaseAmount != null && (
                   <>
-                    {" "}× Qty {qtyInput} = <strong className="text-slate-800">₹{rateDiffAmount.toFixed(2)}</strong>
+                    {" "}× Qty {qtyInput} = Base <strong className="text-slate-800">₹{rateDiffBaseAmount.toFixed(2)}</strong>
+                    {gstRateInput && (
+                      <>
+                        {" "}+ GST {Number(gstRateInput) * 2}% = <strong className="text-slate-800">₹{rateDiffAmount?.toFixed(2)}</strong>
+                      </>
+                    )}
                     {refundAmountTouched && Number(refundAmountInput) !== rateDiffAmount && (
                       <span className="ml-1 text-amber-600">(Refund Amount was edited manually — not auto-filled)</span>
                     )}

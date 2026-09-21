@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
-import { StatementEntryForms } from "./statement-entry-forms";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import {
+  EbayMonthlyStatementList,
+  EbaySummaryList,
+  EtsyInvoiceList,
+  StatementEntryForms,
+  type EbayMonthlyStatementRecord,
+  type EbaySummaryRecord,
+  type EtsyInvoiceRecord,
+} from "./statement-entry-forms";
 
 // Statement Entry (round 11) — see actions.ts header comment.
 // 2026-08-17 fix — same bug/fix as Party Ledger / Bill Payment: the 3
@@ -17,6 +25,17 @@ import { StatementEntryForms } from "./statement-entry-forms";
 export default async function StatementsPage() {
   const employee = await requireCapability("statement_entry");
   const supabase = await createClient();
+  // 2026-09-19 (audit fix, Phase 4 / D) — ebay_financial_summary_computed_view
+  // is one of the 16 SECURITY DEFINER views whose anon/authenticated REST
+  // grant was revoked
+  // (db/2026-09-19-security-definer-views-revoke-authenticated.sql), since
+  // SECURITY DEFINER bypasses RLS entirely — any authenticated employee
+  // could otherwise query it directly via REST and see every company's
+  // eBay financial summary, not just the one this page's own
+  // "statement_entry"-capability gate + .eq("company_id", ...) filter below
+  // intends. Same finSupabase pattern already used by crm/page.tsx and
+  // reports/sale-profit/page.tsx for their own SECURITY DEFINER view reads.
+  const finSupabase = createServiceRoleClient();
 
   const [
     { data: companies },
@@ -28,21 +47,27 @@ export default async function StatementsPage() {
     { data: allEbayMonthlyForTotal },
   ] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
+    // 2026-09-19 — switched from a partial column select to "*" so the full
+    // row is available to pre-fill the inline Edit form (see
+    // statement-entry-forms.tsx's EtsyInvoiceList / EbaySummaryList /
+    // EbayMonthlyStatementList). The generated columns (subtotal_inr etc.)
+    // just come along for the ride — they're display-only, never sent back
+    // in an update payload (actions.ts never includes them in `payload`).
     supabase
       .from("etsy_monthly_tax_invoices")
-      .select("id, company_id, invoice_no, invoice_date, subtotal_inr, gst_amount_inr, total_inr")
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("invoice_date", { ascending: false })
       .limit(20),
-    supabase
+    finSupabase
       .from("ebay_financial_summary_computed_view")
-      .select("id, company_id, period_from, period_to, net_cash_movement_check")
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("period_from", { ascending: false })
       .limit(20),
     supabase
       .from("ebay_monthly_financial_statement")
-      .select("id, company_id, period_from, period_to, closing_funds_stated, closing_funds_computed")
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("period_from", { ascending: false })
       .limit(20),
@@ -53,11 +78,15 @@ export default async function StatementsPage() {
     // queries (cheap — one numeric column each) so the "Total" line under
     // each list is accurate regardless of the cap.
     supabase.from("etsy_monthly_tax_invoices").select("total_inr").eq("company_id", employee.currentCompanyId),
-    supabase.from("ebay_financial_summary_computed_view").select("net_cash_movement_check").eq("company_id", employee.currentCompanyId),
+    finSupabase.from("ebay_financial_summary_computed_view").select("net_cash_movement_check").eq("company_id", employee.currentCompanyId),
     supabase.from("ebay_monthly_financial_statement").select("closing_funds_stated").eq("company_id", employee.currentCompanyId),
   ]);
 
-  const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  // 2026-09-19 — a Map isn't JSON-serializable and can't cross the
+  // Server->Client component boundary, so the 3 list components (now
+  // client components, since they hold `editingId` state) take this plain
+  // array of [id, name] pairs instead and build their own Map from it.
+  const companyNamePairs: [string, string][] = (companies ?? []).map((c) => [c.id, c.name]);
   const etsyTotal = {
     count: (allEtsyForTotal ?? []).length,
     amount: (allEtsyForTotal ?? []).reduce((s, r) => s + Number(r.total_inr ?? 0), 0),
@@ -85,59 +114,34 @@ export default async function StatementsPage() {
         </Link>
       </div>
 
-      <StatementEntryForms companies={companies ?? []} />
+      {/* 2026-09-19 — defaultCompanyId defaults a *new* entry's Company
+          dropdown to whichever company is currently selected up top,
+          instead of a blank placeholder. See the header comment in
+          statement-entry-forms.tsx for why this — not true per-order
+          detection — is the fix: a monthly aggregate statement isn't tied
+          to any single order, so there's no order to read a company off
+          of. The dropdown is still fully editable either way. */}
+      <StatementEntryForms companies={companies ?? []} defaultCompanyId={employee.currentCompanyId} />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-1 text-sm font-semibold text-slate-800">Recent Etsy Monthly Tax Invoices</h2>
-          <p className="mb-3 text-xs font-medium text-slate-500">
-            Total: {etsyTotal.count} invoice{etsyTotal.count === 1 ? "" : "s"} · ₹{etsyTotal.amount.toFixed(2)} (all-time)
-          </p>
-          <div className="space-y-1 text-xs">
-            {(etsyInvoices ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
-            {(etsyInvoices ?? []).map((r) => (
-              <div key={r.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
-                <span className="text-slate-600">{companyName.get(r.company_id)} — {r.invoice_no} ({r.invoice_date ?? "—"})</span>
-                <span className="font-medium text-slate-800">₹{Number(r.total_inr ?? 0).toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-1 text-sm font-semibold text-slate-800">Recent eBay Financial Summaries</h2>
-          <p className="mb-3 text-xs font-medium text-slate-500">
-            Total: {ebaySummaryTotal.count} summar{ebaySummaryTotal.count === 1 ? "y" : "ies"} · ₹{ebaySummaryTotal.amount.toFixed(2)} (all-time)
-          </p>
-          <div className="space-y-1 text-xs">
-            {(ebaySummaries ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
-            {(ebaySummaries ?? []).map((r) => (
-              <div key={r.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
-                <span className="text-slate-600">{companyName.get(r.company_id ?? "")} — {r.period_from} to {r.period_to}</span>
-                <span className="font-medium text-slate-800">₹{Number(r.net_cash_movement_check ?? 0).toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-1 text-sm font-semibold text-slate-800">Recent eBay Financial Statements (Monthly)</h2>
-          <p className="mb-3 text-xs font-medium text-slate-500">
-            Total: {ebayMonthlyTotal.count} statement{ebayMonthlyTotal.count === 1 ? "" : "s"} · ${ebayMonthlyTotal.amount.toFixed(2)} closing funds stated (all-time)
-          </p>
-          <div className="space-y-1 text-xs">
-            {(ebayMonthlyStatements ?? []).length === 0 && <p className="text-slate-400">None entered yet.</p>}
-            {(ebayMonthlyStatements ?? []).map((r) => {
-              const mismatch = Math.abs(Number(r.closing_funds_stated ?? 0) - Number(r.closing_funds_computed ?? 0)) > 0.01;
-              return (
-                <div key={r.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 last:border-0">
-                  <span className="text-slate-600">{companyName.get(r.company_id)} — {r.period_from} to {r.period_to}</span>
-                  <span className={`font-medium ${mismatch ? "text-red-600" : "text-slate-800"}`}>
-                    ${Number(r.closing_funds_stated ?? 0).toFixed(2)}{mismatch ? " ⚠️ mismatch" : ""}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <EtsyInvoiceList
+          companies={companies ?? []}
+          companyNamePairs={companyNamePairs}
+          invoices={(etsyInvoices ?? []) as EtsyInvoiceRecord[]}
+          total={etsyTotal}
+        />
+        <EbaySummaryList
+          companies={companies ?? []}
+          companyNamePairs={companyNamePairs}
+          summaries={(ebaySummaries ?? []) as EbaySummaryRecord[]}
+          total={ebaySummaryTotal}
+        />
+        <EbayMonthlyStatementList
+          companies={companies ?? []}
+          companyNamePairs={companyNamePairs}
+          statements={(ebayMonthlyStatements ?? []) as EbayMonthlyStatementRecord[]}
+          total={ebayMonthlyTotal}
+        />
       </div>
     </div>
   );

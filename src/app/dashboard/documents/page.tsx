@@ -307,10 +307,6 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   // order_shipment — the "recheck" comparison shown alongside
   // billed_freight_amt below. One batched query, not per-row.
   const freightShipmentIds = Array.from(new Set((freightAssignments ?? []).map((a) => a.order_shipment_id).filter((v): v is string => !!v)));
-  const { data: bookedShipmentRows } = freightShipmentIds.length
-    ? await supabase.from("order_shipments").select("id, booked_freight_amt, booked_currency, booked_amount_source").in("id", freightShipmentIds)
-    : { data: [] };
-  const bookedById = new Map((bookedShipmentRows ?? []).map((r) => [r.id, r]));
 
   // 2026-08-27 (later same day) — "purchase bill ho ya kisi bhi party ka
   // bill ho ... credite note ya debit note agar us invoice se related ho
@@ -327,7 +323,37 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     ...bprIdByDutyBillId.values(),
     ...bprIdByPurchaseBillId.values(),
   ];
-  const relatedNotesForBills = await listRelatedNotesForBills(allBprIds);
+
+  const assignmentOrderIds = Array.from(
+    new Set([...(freightAssignments ?? []).map((a) => a.order_id), ...(dutyAssignments ?? []).map((a) => a.order_id)])
+  );
+
+  // Shipment Handover Chalan lines — same "fetch header, then its lines by
+  // chalan_id" shape as Material OUT Chalan (stock/page.tsx), joined back
+  // to the order's own ref_no for a human-readable list.
+  const shipmentChalanIds = (recentShipmentChalans ?? []).map((c) => c.id);
+
+  // 2026-09-19 (audit fix, item C4) — these 4 lookups are independent of
+  // each other (each depends only on ids already resolved above, from the
+  // earlier Promise.all block), so they were needlessly running one after
+  // another instead of concurrently — same latency-cost pattern already
+  // fixed for received_chalan_items/orders further down in this same file.
+  const [{ data: bookedShipmentRows }, relatedNotesForBills, { data: assignmentOrders }, { data: shipmentChalanLines }] = await Promise.all([
+    freightShipmentIds.length
+      ? supabase.from("order_shipments").select("id, booked_freight_amt, booked_currency, booked_amount_source").in("id", freightShipmentIds)
+      : Promise.resolve({ data: [] }),
+    listRelatedNotesForBills(allBprIds),
+    assignmentOrderIds.length
+      ? supabase.from("orders").select("id, ref_no").in("id", assignmentOrderIds)
+      : Promise.resolve({ data: [] }),
+    shipmentChalanIds.length
+      ? supabase
+          .from("shipment_handover_chalan_lines")
+          .select("chalan_id, order_id, orders(ref_no)")
+          .in("chalan_id", shipmentChalanIds)
+      : Promise.resolve({ data: [] as { chalan_id: string; order_id: string; orders: { ref_no: string } | { ref_no: string }[] | null }[] }),
+  ]);
+  const bookedById = new Map((bookedShipmentRows ?? []).map((r) => [r.id, r]));
   const notesByBprId = new Map<string, typeof relatedNotesForBills>();
   for (const n of relatedNotesForBills) {
     const list = notesByBprId.get(n.billPassRegisterId) ?? [];
@@ -337,25 +363,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   function notesFor(bprId: string | undefined) {
     return bprId ? notesByBprId.get(bprId) ?? [] : [];
   }
-
-  const assignmentOrderIds = Array.from(
-    new Set([...(freightAssignments ?? []).map((a) => a.order_id), ...(dutyAssignments ?? []).map((a) => a.order_id)])
-  );
-  const { data: assignmentOrders } = assignmentOrderIds.length
-    ? await supabase.from("orders").select("id, ref_no").in("id", assignmentOrderIds)
-    : { data: [] };
   const orderRefNo = new Map((assignmentOrders ?? []).map((o) => [o.id, o.ref_no]));
-
-  // Shipment Handover Chalan lines — same "fetch header, then its lines by
-  // chalan_id" shape as Material OUT Chalan (stock/page.tsx), joined back
-  // to the order's own ref_no for a human-readable list.
-  const shipmentChalanIds = (recentShipmentChalans ?? []).map((c) => c.id);
-  const { data: shipmentChalanLines } = shipmentChalanIds.length
-    ? await supabase
-        .from("shipment_handover_chalan_lines")
-        .select("chalan_id, order_id, orders(ref_no)")
-        .in("chalan_id", shipmentChalanIds)
-    : { data: [] as { chalan_id: string; order_id: string; orders: { ref_no: string } | { ref_no: string }[] | null }[] };
   const shipmentChalanRows = (recentShipmentChalans ?? []).map((c) => ({
     id: c.id,
     chalan_no: c.chalan_no,

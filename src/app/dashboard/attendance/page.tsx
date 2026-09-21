@@ -119,7 +119,19 @@ export default async function AttendancePage({
         .select("holiday_date, name")
         .or(`company_id.eq.${employee.currentCompanyId},company_id.is.null`)
         .gte("holiday_date", monthStart)
-        .lte("holiday_date", `${year}-${String(month).padStart(2, "0")}-31`),
+        // 2026-09-19 — was a hardcoded "-31" day-of-month. Every month that
+        // doesn't have 31 days (Feb, Apr, Jun, Sep, Nov) turned this into an
+        // impossible calendar date (e.g. "2026-09-31"), which Postgres
+        // rejects outright — confirmed live via edge_logs: this exact query
+        // was 400ing on every single /dashboard/attendance page load this
+        // September. The whole holidays fetch failed silently (this page's
+        // `?? []` fallback swallowed the error), so every Holiday this
+        // month was mis-categorized. Same bug class already fixed in
+        // salary/actions.ts, salary/page.tsx, and attendance/admin/page.tsx
+        // (see that file's own comment) via the real daysInMonth() helper
+        // (already imported at the top of this file) — this was the one
+        // remaining call site still using the old hardcoded day.
+        .lte("holiday_date", `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth(year, month)).padStart(2, "0")}`),
       supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
       dwlSupabase
         .from("daily_work_logs")

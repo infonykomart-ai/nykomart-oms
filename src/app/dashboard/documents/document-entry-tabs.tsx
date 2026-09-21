@@ -41,6 +41,8 @@ import { PrintArea, PrintButton } from "@/components/print-view";
 import { RelatedNotesBadge } from "./related-notes-badge";
 import { BillStatementDialog } from "@/components/bill-statement-dialog";
 import { A4Dialog } from "@/components/a4-dialog";
+import { DocStatementDialog } from "@/components/doc-statement-dialog";
+import type { DocType } from "@/lib/doc-statement";
 
 type Company = { id: string; name: string };
 type Party = PartyOption;
@@ -326,6 +328,7 @@ export function DocumentEntryTabs({
             amount: `₹${r.refund_amount}`,
             record: r,
             printHref: `/dashboard/documents/credit-notes/${r.id}/report`,
+            docStatement: { type: "credit_note", id: r.id },
           }))}
           onDelete={deleteCreditNote}
           renderEdit={(r, onDone) => (
@@ -431,6 +434,7 @@ export function DocumentEntryTabs({
             sub: `HAWB ${r.hawb_number ?? "—"} · Inv ${r.invoice_no ?? "—"}`,
             amount: r.fob_value_inr != null ? `₹${r.fob_value_inr}` : "—",
             record: r,
+            docStatement: { type: "csb_filing", id: r.id },
           }))}
           onDelete={deleteCsbFiling}
           renderEdit={(r, onDone) => <CsbFilingEditForm filing={r} currencies={currencies} onDone={onDone} />}
@@ -584,7 +588,25 @@ function DocList<T extends { id: string }>({
   // company you can't access shows an error instead of the document).
   // Wired for Purchase/Courier/Duty bills via their bill_pass_register
   // link ids passed from page.tsx.
-  rows: { id: string; no: string; date: string; sub: string; amount: string; record: T; notes?: RelatedNote[]; printHref?: string; statementBillId?: string }[];
+  // 2026-09-19 — optional `docStatement`: the same idea as statementBillId
+  // above, but for the 4 standalone document tables (Credit Note / CSB
+  // Filing / Refund / Order Refund) that don't route through
+  // bill_pass_register at all — see src/lib/doc-statement.ts. Kept as its
+  // own field rather than overloading statementBillId since the access
+  // check and API route genuinely differ per table (see that file's header
+  // comment), even though the on-screen button looks identical.
+  rows: {
+    id: string;
+    no: string;
+    date: string;
+    sub: string;
+    amount: string;
+    record: T;
+    notes?: RelatedNote[];
+    printHref?: string;
+    statementBillId?: string;
+    docStatement?: { type: DocType; id: string };
+  }[];
   // 2026-08-29 (evening, follow-up round) — optional: Material OUT Chalan
   // and Received Chalan (multi-item chalans, create+delete only, matching
   // Material OUT Chalan's own established shape) have no edit form — when
@@ -653,6 +675,7 @@ function DocList<T extends { id: string }>({
                     </Link>
                   )}
                   {r.statementBillId && <BillStatementDialog billId={r.statementBillId} />}
+                  {r.docStatement && <DocStatementDialog type={r.docStatement.type} id={r.docStatement.id} />}
                   {renderEdit && (
                     <button
                       type="button"

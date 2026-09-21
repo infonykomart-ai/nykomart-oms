@@ -32,7 +32,7 @@
 // companies, so the bill header itself isn't company-scoped; only the
 // AWB lookup re-checks employee.companyIds (via the order it resolves to).
 
-import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
+import { requireCapability, requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
@@ -175,6 +175,23 @@ type CreditNoteParams = {
   qty: number | null;
   poRate: number | null;
   billedRate: number | null;
+  // 2026-09-19 (audit fix, item C1) — the Rate Difference Calculator above
+  // was computing (billedRate - poRate) * qty and silently auto-filling
+  // that GST-EXCLUSIVE base straight into refund_amount, with no way to
+  // add GST at all in this flow — unlike this table's OWN gst_rate_pct
+  // column (already populated by the Bill Payment panel's separate CN
+  // creation flow, src/app/dashboard/bill-payment/credit-note-actions.ts)
+  // and unlike Debit Note's parallel calculator, whose debit_amount is
+  // correctly base-only because debit_notes has GENERATED cgst/sgst/total
+  // columns that add GST automatically — credit_notes has no such
+  // generated columns, so a supplier-side CN made through THIS calculator
+  // with no GST field always under-credited the vendor by the GST portion
+  // whenever GST actually applied, matching the user's own original
+  // scenario verbatim ("10 rupees+GST jyada liya hai"). Fixed by adding
+  // the same optional gst_rate_pct the Bill Payment panel already uses
+  // (see credit-note-kinds.ts's SUPPLIER_GST_OPTIONS) to this flow too,
+  // and folding it into the calculator's suggested amount.
+  gstRatePct: number | null;
   // 2026-09-13 — "BHAI 2 PARKAR KE CREDIT NOTE HONGE": which of the two
   // kinds this note is — 'buyer_refund' (we refund the buyer against an
   // order) or 'supplier' (against a bill we owe: purchase-party or
@@ -199,6 +216,11 @@ async function saveCreditNoteCore(
   if (cnDateError) return { error: cnDateError, id: null, docNo: null };
   if (p.adjustTargetBillPassRegisterId && (!p.adjustAmount || p.adjustAmount <= 0)) {
     return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
+  }
+  // 2026-09-19 (audit fix, item C1) — same validation the Bill Payment
+  // panel's own CN dialog already applies to this column.
+  if (p.gstRatePct != null && ![2.5, 3, 4, 6, 9].includes(p.gstRatePct)) {
+    return { error: "GST rate must be one of 2.5, 3, 4, 6 or 9 (or leave blank for no GST).", id: null, docNo: null };
   }
 
   const { data, error } = await supabase
@@ -227,6 +249,7 @@ async function saveCreditNoteCore(
       qty: p.qty,
       po_rate: p.poRate,
       billed_rate: p.billedRate,
+      gst_rate_pct: p.gstRatePct,
       cn_kind: (p.cnKind as "buyer_refund" | "supplier" | null) ?? null,
       created_by_employee_id: employee.id,
       remark: p.remark,
@@ -290,6 +313,7 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
     qty: numOrNull(formData, "qty"),
     poRate: numOrNull(formData, "po_rate"),
     billedRate: numOrNull(formData, "billed_rate"),
+    gstRatePct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
     cnKind: strOrNull(formData, "cn_kind"),
   });
 
@@ -467,6 +491,15 @@ export type RelatedNote = {
 };
 
 export async function listRelatedNotesForBills(billPassRegisterIds: string[]): Promise<RelatedNote[]> {
+  // 2026-09-19 (audit fix) — this had no auth check at all. Both current
+  // callers (documents/page.tsx, bill-payment/page.tsx) are already
+  // capability-gated Server Components, so this was not yet a real leak —
+  // but it's exactly the same "service-role client, no requireAnyCapability
+  // call, arbitrary ids in" shape as the getGroupMembers bug fixed the same
+  // day, one careless future client-component import away from becoming one
+  // (this returns credit/debit-note amounts and doc numbers across every
+  // company). Fixed defensively rather than waiting for that to happen.
+  await requireAnyCapability("bill_payment", "doc_entry");
   const ids = Array.from(new Set(billPassRegisterIds.filter(Boolean)));
   if (ids.length === 0) return [];
   const supabase = createServiceRoleClient();
@@ -3387,6 +3420,7 @@ export async function bulkSaveCreditNotes(_prev: BulkDocState, formData: FormDat
       qty: null,
       poRate: null,
       billedRate: null,
+      gstRatePct: null,
       cnKind: "buyer_refund",
     });
 

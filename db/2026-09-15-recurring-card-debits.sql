@@ -38,9 +38,19 @@ CREATE TABLE IF NOT EXISTS recurring_card_debits (
   last_logged_month text,
   remark            text,
   created_by_employee_id uuid REFERENCES employees(id),
-  created_at        timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, lower(vendor_name))
+  created_at        timestamptz NOT NULL DEFAULT now()
 );
+
+-- 2026-09-19 (audit fix) — a table-level UNIQUE(...) constraint can only
+-- list plain columns in Postgres; it cannot take an expression like
+-- lower(vendor_name). The original UNIQUE (company_id, lower(vendor_name))
+-- above was invalid SQL that failed with "syntax error at or near '('" the
+-- first time this migration was actually run (2026-09-19) — which is very
+-- likely why this table was never created at all despite being delivered
+-- 2026-09-15. Fixed the only way Postgres allows a case-insensitive unique
+-- pair like this: a unique INDEX on the expression, not a table constraint.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recurring_card_debits_company_vendor
+  ON recurring_card_debits(company_id, lower(vendor_name));
 
 CREATE INDEX IF NOT EXISTS idx_recurring_card_debits_company ON recurring_card_debits(company_id) WHERE active;
 
@@ -56,3 +66,9 @@ CREATE INDEX IF NOT EXISTS idx_internal_expenses_recurring ON internal_expenses(
 CREATE UNIQUE INDEX IF NOT EXISTS uq_internal_expenses_recurring_month
   ON internal_expenses(recurring_debit_id, recurring_month)
   WHERE recurring_debit_id IS NOT NULL AND recurring_month IS NOT NULL;
+
+-- Standard shape for a brand-new table in this codebase (db/2026-08-17-rls-policy-audit-fix.sql) —
+-- real authorization happens at the app layer via requireCapability()/company-id checks.
+ALTER TABLE recurring_card_debits ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_authenticated_all ON recurring_card_debits;
+CREATE POLICY allow_authenticated_all ON recurring_card_debits FOR ALL TO authenticated USING (true) WITH CHECK (true);

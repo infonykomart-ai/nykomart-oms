@@ -481,7 +481,15 @@ export async function generateInvoiceCore(
     // 2026-09-13 (#7) — the manual-numbering path relies on the table's
     // UNIQUE (company_id, invoice_no) constraint as its duplicate guard;
     // translate that raw message into something the form can show as-is.
+    // 2026-09-19 (audit fix, item B2) — master_invoice_no now has its own
+    // real UNIQUE (company_id, master_invoice_no) constraint too (it had
+    // none before — see db/2026-09-19-sales-invoices-master-invoice-no-
+    // unique.sql). Check which constraint actually fired so the message
+    // names the RIGHT field instead of always blaming invoice_no.
     if (insertError?.message.toLowerCase().includes("duplicate key")) {
+      if (insertError.message.includes("master_invoice_no")) {
+        return { error: `A Master Invoice No. "${masterInvoiceNo}" already exists for this company — manual master invoice numbers must be unique.`, invoice: null };
+      }
       return { error: `An invoice with the number "${invoiceNo}" already exists for this company — manual invoice numbers must be unique.`, invoice: null };
     }
     return { error: `Failed to save invoice: ${insertError?.message ?? "unknown error"}`, invoice: null };

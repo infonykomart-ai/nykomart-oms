@@ -639,6 +639,33 @@ LANGUAGE sql STABLE AS $$
   LIMIT 1;
 $$;
 
+-- ...and because its body calls auth.uid(), guard the auth schema itself:
+-- this file is ALSO applied to a plain throwaway Postgres (local type-gen /
+-- CI schema-check) that has no auth schema — see the RLS-section comment
+-- near the messaging tables for the original statement of that rule. On
+-- Supabase the real auth.uid() exists and this block does nothing.
+DO $auth_uid_stub_present$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') THEN
+    CREATE SCHEMA auth;
+    CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
+    AS $fn$ SELECT NULL::uuid $fn$;
+  END IF;
+END
+$auth_uid_stub_present$;
+
+-- 2026-09-19 (audit fix, item C6) — current_employee_id() existed live but
+-- was never added here (no tracked migration file defines it either — it
+-- was created directly at some point). Backfilled from its live definition
+-- so this file stops silently missing a function several RLS policies key
+-- off of.
+CREATE OR REPLACE FUNCTION current_employee_id()
+RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public AS $$
+  SELECT id FROM employees WHERE auth_user_id = auth.uid();
+$$;
+
 
 -- =============================================================================
 -- SECTION 5 — ORDERS  (old: All_Orders_Master + Nyko Mart + Rugara + CASA ARRA — collapsed into ONE table)
@@ -1192,7 +1219,10 @@ CREATE INDEX idx_audit_log_employee      ON audit_log(employee_id, created_at DE
 CREATE TABLE entry_errors (
   id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id              uuid REFERENCES companies(id),
-  source                  text NOT NULL CHECK (source IN ('validation', 'courier_api', 'manual')),
+  -- 2026-09-19 (audit fix, item C5): 'system' added — a background/
+  -- automatic process failure with no employee action to attribute it to.
+  -- See db/2026-09-19-entry-errors-system-source.sql.
+  source                  text NOT NULL CHECK (source IN ('validation', 'courier_api', 'manual', 'system')),
   status                  text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved')),
   reason                  text NOT NULL,
   reference_type          text,
@@ -1806,7 +1836,10 @@ CREATE TABLE sales_invoices (
   created_by_employee_id                                 uuid NOT NULL REFERENCES employees(id),
   created_at                                               timestamptz NOT NULL DEFAULT now(),
 
-  UNIQUE (company_id, invoice_no)
+  UNIQUE (company_id, invoice_no),
+  -- 2026-09-19 (audit fix, item B2) — master_invoice_no had no uniqueness
+  -- guard at all; see db/2026-09-19-sales-invoices-master-invoice-no-unique.sql
+  UNIQUE (company_id, master_invoice_no)
 );
 CREATE INDEX idx_sales_invoices_company ON sales_invoices(company_id);
 
@@ -2555,6 +2588,34 @@ COMMENT ON VIEW order_courier_duty_expense_view IS
 -- ============================================================================
 
 
+-- 2026-09-19 (audit fix, item C6) — pl_dashboard_by_company_month_view,
+-- pl_dashboard_by_store_view, current_employee_id(), finance_dashboard_
+-- monthly() and finance_dashboard_unlinked_purchase_washing() all existed
+-- live and in database.ts but were never added here — documentation debt
+-- flagged by the audit, not a runtime risk (this file isn't executed;
+-- it's the assembled reference). Backfilled below from their own source
+-- migrations (db/2026-09-17b-pl-usd-and-company-month.sql,
+-- db/2026-09-19-pl-store-finance-purchase-cn-netting.sql) and, for
+-- current_employee_id (no tracked migration file defines it — created
+-- directly at some point), from its live definition.
+
+-- (2026-09-19 audit fix, item C6) pl_dashboard_by_company_month_view and
+-- pl_dashboard_by_store_view were backfilled here, but SECTION 17 (P&L
+-- appendix, end of file) defines both — including the 2026-09-19 purchase-
+-- credit-note NETTING of expense_purchase_inr. Duplicate definitions = last
+-- CREATE wins on a fresh apply, which would silently un-net the number, and
+-- the mid-file copies also forward-referenced etsy_ledger_lines. They now
+-- live ONLY in SECTION 17 (17g and 17f).
+
+-- (2026-09-19 audit fix, item C6) finance_dashboard_monthly() and
+-- finance_dashboard_unlinked_purchase_washing() were first backfilled here,
+-- but SECTION 17h (end of file) already folds them — including the 2026-09-19
+-- credit-note NETTING of expense_purchase_inr. Two definitions = last CREATE
+-- wins on a fresh apply, which silently un-netted the number; they now live
+-- ONLY in SECTION 17h. See db/2026-09-18b-finance-dashboard-rpc.sql +
+-- db/2026-09-18c-pl-purchase-washing-order-linked.sql +
+-- db/2026-09-19-pl-store-finance-purchase-cn-netting.sql.
+
 
 -- =============================================================================
 -- SECTION 13 — REFUNDS  (old sheets: Dispatch & Refund / FBA Refund / No Dispatch & Refund — unified)
@@ -3017,6 +3078,14 @@ CREATE TABLE etsy_monthly_tax_invoices (
   renew_sold_fees_qty                                 integer NOT NULL DEFAULT 0,
   renew_sold_fees                                       numeric(14,2) NOT NULL DEFAULT 0,
   renew_sold_fees_other                                   numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-09-19: a real invoice carries a separate one-time "Account
+  -- Opening Fee" line; the Statement Entry form has always collected it
+  -- (src/app/dashboard/statements/statement-entry-forms.tsx) and the
+  -- insert action always sent it — but the column itself was never folded
+  -- into schema.sql, so every Etsy statement insert failed with
+  -- "column account_opening_fee does not exist". Folded back here and
+  -- added to all three generated-column formulas below.
+  account_opening_fee                                        numeric(14,2) NOT NULL DEFAULT 0,
   etsy_ads_fees                                           numeric(14,2) NOT NULL DEFAULT 0,
   processing_fees                                           numeric(14,2) NOT NULL DEFAULT 0,
   offsite_ads_fees                                            numeric(14,2) NOT NULL DEFAULT 0,
@@ -3040,18 +3109,18 @@ CREATE TABLE etsy_monthly_tax_invoices (
   subtotal_inr numeric(14,2) GENERATED ALWAYS AS (
     subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
     + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
-    + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount
+    + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees + account_opening_fee - promotional_discount
   ) STORED,
   gst_amount_inr numeric(14,2) GENERATED ALWAYS AS (
     (subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
      + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
-     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount)
+     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees + account_opening_fee - promotional_discount)
     * gst_pct
   ) STORED,
   total_inr numeric(14,2) GENERATED ALWAYS AS (
     (subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
      + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
-     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount)
+     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees + account_opening_fee - promotional_discount)
     * (1 + gst_pct)
   ) STORED,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -5048,8 +5117,11 @@ COMMENT ON VIEW pl_dashboard_by_month_view IS
 -- ============================================================================
 -- 1. pl_dashboard_by_store_view — append expense_purchase_inr / expense_washing_inr
 -- ============================================================================
-DROP VIEW IF EXISTS pl_dashboard_by_store_view;
-CREATE VIEW pl_dashboard_by_store_view AS
+-- db/2026-09-19-pl-store-finance-purchase-cn-netting.sql (originally
+-- db/2026-09-18-pl-by-marketplace-store.sql, extended
+-- db/2026-09-18c-pl-purchase-washing-order-linked.sql) — "P&L by
+-- Marketplace/Store" CRM tab, one row per store.
+CREATE OR REPLACE VIEW pl_dashboard_by_store_view AS
 WITH order_refund_totals AS (
   SELECT order_id,
     SUM(refund_amount_inr) AS refund_total_inr,
@@ -5127,17 +5199,21 @@ ad_spend_agg AS (
   FROM store_ad_spend
   GROUP BY store_id
 ),
--- NEW — purchase bills attributed to a store via their order's store_id.
--- Only bills WITH order_id filled in can appear here at all (a raw-
--- material stock purchase with no order has no store to attribute to).
 purchase_agg AS (
   SELECT o.store_id, SUM(pb.g_total_plus_gst) AS purchase_inr
   FROM purchase_bills pb
   JOIN orders o ON o.id = pb.order_id
   GROUP BY o.store_id
 ),
--- NEW — washing entries attributed via their OWN store_id column (set
--- directly on the entry — more reliable than going through order_id).
+purchase_adjustments AS (
+  SELECT o.store_id, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  JOIN purchase_bills pb ON pb.id = bpr.source_id
+  JOIN orders o ON o.id = pb.order_id
+  WHERE bpr.source = 'purchase_bill'
+  GROUP BY o.store_id
+),
 washing_agg AS (
   SELECT store_id, SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
   FROM washing_entries
@@ -5155,7 +5231,7 @@ combined AS (
     COALESCE(mf.fees_matched_inr, 0)     AS portal_fees_matched_inr,
     COALESCE(ad.ad_spend_usd, 0)         AS ad_spend_usd,
     COALESCE(ad.ad_budget_usd, 0)        AS ad_budget_usd,
-    COALESCE(pa.purchase_inr, 0)         AS expense_purchase_inr,
+    COALESCE(pa.purchase_inr, 0) - COALESCE(padj.adjustment_total_inr, 0) AS expense_purchase_inr,
     COALESCE(wa.washing_inr, 0)          AS expense_washing_inr
   FROM stores s
   JOIN companies comp                 ON comp.id = s.company_id
@@ -5164,6 +5240,7 @@ combined AS (
   LEFT JOIN marketplace_fee_totals mf ON mf.store_id = s.id
   LEFT JOIN ad_spend_agg ad           ON ad.store_id = s.id
   LEFT JOIN purchase_agg pa           ON pa.store_id = s.id
+  LEFT JOIN purchase_adjustments padj ON padj.store_id = s.id
   LEFT JOIN washing_agg wa            ON wa.store_id = s.id
 )
 SELECT
@@ -5193,13 +5270,11 @@ SELECT
   (total_sale_value_usd / NULLIF(ad_spend_usd, 0))            AS roas
 FROM combined
 ORDER BY total_sale_value_inr DESC NULLS LAST;
-
 COMMENT ON VIEW pl_dashboard_by_store_view IS
-  '2026-09-18 (round 8) — now includes expense_purchase_inr/expense_washing_inr, attributed via '
-  'purchase_bills.order_id and washing_entries.store_id (both already exist on those tables). Only '
-  'internal_expenses (office rent/salary/electricity — genuinely not tied to any order) remains '
-  'outside net_before_overhead_inr. Purchase bills with no order_id are company-wide and cannot '
-  'appear here — see finance_dashboard_unlinked_purchase_washing() for how much that is.';
+  '2026-09-19 (audit fix, item B3): expense_purchase_inr is NET of purchase-bill Credit/Debit Note '
+  'adjustments, attributed via order_id -> store_id, same as the gross purchase sum. History: '
+  '2026-09-18 (round 8) added expense_purchase_inr/expense_washing_inr via purchase_bills.order_id / '
+  'washing_entries.store_id.';
 
 -- ============================================================================
 -- SECTION 17g (2026-09-17 evening) — P&L by Company × Month
@@ -5214,8 +5289,10 @@ COMMENT ON VIEW pl_dashboard_by_store_view IS
 -- company_id/company_name, so the CRM page can sum an FY's worth of months
 -- per company in JS (exactly like the existing P&L-by-Month FY selector
 -- already sums plMonthRowsFiltered) to answer "this company, this FY".
-DROP VIEW IF EXISTS pl_dashboard_by_company_month_view;
-CREATE VIEW pl_dashboard_by_company_month_view AS
+-- db/2026-09-17b-pl-usd-and-company-month.sql — one row per (company,
+-- month), lets the CRM page's "P&L by Company" FY selector sum an FY's
+-- months per company.
+CREATE OR REPLACE VIEW pl_dashboard_by_company_month_view AS
 WITH company_months AS (
   SELECT DISTINCT company_id, date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
   UNION
@@ -5411,7 +5488,7 @@ COMMENT ON VIEW pl_dashboard_by_company_month_view IS
   '2026-09-17 (evening): one row per (company, month) — same figures as pl_dashboard_by_company_view '
   'and pl_dashboard_by_month_view, just crossed so the CRM page can sum an FY''s months PER COMPANY '
   '(the FY-by-Company selector). Sum this view''s rows for one company across all its months and it '
-  'should equal that company''s row in pl_dashboard_by_company_view (see verification query below).';
+  'should equal that company''s row in pl_dashboard_by_company_view.';
 
 -- ============================================================================
 -- SECTION 17h (2026-09-18, round 8) — FINANCE DASHBOARD RPC FUNCTIONS
@@ -5430,7 +5507,7 @@ COMMENT ON VIEW pl_dashboard_by_company_month_view IS
 -- ============================================================================
 DROP FUNCTION IF EXISTS finance_dashboard_monthly(uuid, date, date, uuid, text);
 
-CREATE FUNCTION finance_dashboard_monthly(
+CREATE OR REPLACE FUNCTION finance_dashboard_monthly(
   p_company_id uuid,
   p_from date,
   p_to date,
@@ -5549,12 +5626,6 @@ returns_agg AS (
     AND (p_buyer_country IS NULL OR o2.buyer_country = p_buyer_country)
   GROUP BY date_trunc('month', orf.refund_date)
 ),
--- NEW — purchase bills. No filter active: every bill in range counts
--- (linked or not — matches the company-wide total this used to be). A
--- Marketplace/Country filter active: ONLY bills linked (order_id) to an
--- order that itself matches the filter count — an unlinked bill can't be
--- confirmed to belong to this marketplace/country, so it's correctly left
--- out of a filtered view (still counted once you clear the filter).
 purchase_agg AS (
   SELECT date_trunc('month', pb.vendor_invoice_date)::date AS month,
     SUM(pb.g_total_plus_gst) AS purchase_inr
@@ -5570,10 +5641,24 @@ purchase_agg AS (
     )
   GROUP BY date_trunc('month', pb.vendor_invoice_date)
 ),
--- NEW — washing entries. Same no-filter/filter-active split, but the store
--- filter uses washing_entries' OWN store_id (set directly on the entry,
--- more reliable than the optional order_id link); the country filter still
--- needs the order_id link since washing_entries has no country of its own.
+purchase_adjustments AS (
+  SELECT date_trunc('month', pb.vendor_invoice_date)::date AS month,
+    SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  JOIN purchase_bills pb ON pb.id = bpr.source_id
+  LEFT JOIN orders o5 ON o5.id = pb.order_id
+  WHERE bpr.source = 'purchase_bill'
+    AND pb.company_id = p_company_id
+    AND pb.vendor_invoice_date >= p_from AND pb.vendor_invoice_date <= p_to
+    AND (
+      (p_store_id IS NULL AND p_buyer_country IS NULL)
+      OR (o5.id IS NOT NULL
+          AND (p_store_id IS NULL OR o5.store_id = p_store_id)
+          AND (p_buyer_country IS NULL OR o5.buyer_country = p_buyer_country))
+    )
+  GROUP BY date_trunc('month', pb.vendor_invoice_date)
+),
 washing_agg AS (
   SELECT date_trunc('month', we.chalan_date)::date AS month,
     SUM(COALESCE(we.amount, 0) + COALESCE(we.debit_charges, 0)) AS washing_inr
@@ -5595,6 +5680,7 @@ months AS (
   UNION SELECT month FROM ad_spend_agg
   UNION SELECT month FROM returns_agg
   UNION SELECT month FROM purchase_agg
+  UNION SELECT month FROM purchase_adjustments
   UNION SELECT month FROM washing_agg
 )
 SELECT
@@ -5609,7 +5695,7 @@ SELECT
        ELSE COALESCE(oa.sale_inr, 0) * 0.25 END AS portal_expense_effective_inr,
   COALESCE(ad.ad_spend_usd, 0) AS ad_spend_usd,
   COALESCE(ra.returns_inr, 0)  AS returns_inr,
-  COALESCE(pa.purchase_inr, 0) AS expense_purchase_inr,
+  COALESCE(pa.purchase_inr, 0) - COALESCE(padj.adjustment_total_inr, 0) AS expense_purchase_inr,
   COALESCE(wa.washing_inr, 0)  AS expense_washing_inr
 FROM months m
 LEFT JOIN order_agg oa          ON oa.month = m.month
@@ -5618,12 +5704,15 @@ LEFT JOIN marketplace_fee_agg mfa ON mfa.month = m.month
 LEFT JOIN ad_spend_agg ad       ON ad.month = m.month
 LEFT JOIN returns_agg ra        ON ra.month = m.month
 LEFT JOIN purchase_agg pa       ON pa.month = m.month
+LEFT JOIN purchase_adjustments padj ON padj.month = m.month
 LEFT JOIN washing_agg wa        ON wa.month = m.month
 ORDER BY m.month;
 $$;
 
 COMMENT ON FUNCTION finance_dashboard_monthly IS
-  '2026-09-18 (round 8) — now includes expense_purchase_inr/expense_washing_inr, filter-aware: '
+  '2026-09-18 (round 8), NETTED 2026-09-19 — includes expense_purchase_inr (net of purchase-bill '
+  'CN/Debit adjustments via bill_pass_register_adjustments attributed through order_id) and '
+  'expense_washing_inr, filter-aware: '
   'with no Marketplace/Country filter every bill/entry in range counts; with a filter active, only '
   'ones linked to a matching order count (washing via its own store_id; purchase via order_id). '
   'Internal/office overhead (rent, salary — genuinely not order-linked) is still added by the page '
@@ -5861,7 +5950,6 @@ COMMENT ON FUNCTION sync_capabilities(text[], text[]) IS
   'into capabilities with current descriptions, so new app sections appear in the '
   'Roles & Permissions matrix automatically after a deploy. Grants in role_capabilities '
   'are never touched. Zero-arg call is a no-op.';
-
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
 JOIN (VALUES

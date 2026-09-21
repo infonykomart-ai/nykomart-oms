@@ -395,14 +395,36 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
       .single();
     if (cnError || !cn) return { error: `Failed to save the Credit Note: ${cnError?.message ?? "unknown error"}`, success: false };
 
-    // Split adjustments: per-bill base amounts (the document carries GST).
-    const adjRows = splitEntries.map(([id, amt]) => ({
-      bill_pass_register_id: id,
-      credit_note_id: cn.id,
-      amount: Number(amt),
-      remark: remark ? remark : `Credit note ${cn.cn_no ?? ""} (multi-AWB)`.trim(),
-      created_by_employee_id: employee.id,
-    }));
+    // 2026-09-19 (audit fix) — these adjustment rows are what actually
+    // reduces each bill's payable (bill_pass_register.adj_amt is a
+    // trigger-maintained SUM of this table; to_be_pay/balance_due are
+    // GENERATED as total_amt - credit_note_amt - adj_amt[- total_paid]).
+    // The CN document above stores gstTotal (GST-inclusive), but this used
+    // to insert the BASE-only splitEntries amount into each row — so a
+    // company GST-registered vendor's bills were under-credited by exactly
+    // the GST portion on every multi-AWB CN (e.g. base 10,000 + 18% GST =
+    // 11,800 on the document, but only 10,000 ever came off the payable).
+    // Fixed: scale every split by the same GST multiplier the document
+    // itself used, so adj_amt's total tracks the real amount actually
+    // credited. Rounding is allocated onto the LAST row (a standard
+    // largest-remainder-style plug) so the rows sum to EXACTLY gstTotal,
+    // never a few paise off from the document they're supposed to net to.
+    const gstMultiplier = gstRatePct != null ? 1 + (gstRatePct * 2) / 100 : 1;
+    let allocatedGstInclusive = 0;
+    const adjRows = splitEntries.map(([id, amt], idx) => {
+      const isLast = idx === splitEntries.length - 1;
+      const gstInclusiveAmt = isLast
+        ? Math.round((gstTotal - allocatedGstInclusive) * 100) / 100
+        : Math.round(Number(amt) * gstMultiplier * 100) / 100;
+      allocatedGstInclusive += gstInclusiveAmt;
+      return {
+        bill_pass_register_id: id,
+        credit_note_id: cn.id,
+        amount: gstInclusiveAmt,
+        remark: remark ? remark : `Credit note ${cn.cn_no ?? ""} (multi-AWB)`.trim(),
+        created_by_employee_id: employee.id,
+      };
+    });
     const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert(adjRows);
     if (adjError) {
       return {

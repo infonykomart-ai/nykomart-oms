@@ -4,6 +4,7 @@ import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 import { PrintArea } from "@/components/print-view";
+import { DocStatementDialog } from "@/components/doc-statement-dialog";
 
 // 2026-08-22 — Returns/Refunds ported onto the Reports hub pattern (see
 // src/app/dashboard/reports/orders-report-table.tsx's header comment: "the
@@ -148,6 +149,13 @@ export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
               {visibleColumns.map((c) => (
                 <th key={c.key} className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">{c.label}</th>
               ))}
+              {/* 2026-09-19 — fixed column, outside the ExportColumn/
+                  visibleColumns loop (those render plain strings via
+                  String(c.value(r) ?? "")) — opens the read-only "A4 dialog
+                  box" statement for this order refund, same pattern as
+                  DocList's statementBillId/docStatement buttons. Not part of
+                  the export/print column set on purpose: print:hidden. */}
+              <th className="px-3 py-2 print:hidden"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -156,11 +164,14 @@ export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
                 {visibleColumns.map((c) => (
                   <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">{String(c.value(r) ?? "")}</td>
                 ))}
+                <td className="whitespace-nowrap px-3 py-2 text-right print:hidden">
+                  <DocStatementDialog type="order_refund" id={r.id} />
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-slate-400">No order refunds found for this filter.</td>
+                <td colSpan={visibleColumns.length + 1} className="px-3 py-8 text-center text-slate-400">No order refunds found for this filter.</td>
               </tr>
             )}
           </tbody>
@@ -220,6 +231,10 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
               {visibleColumns.map((c) => (
                 <th key={c.key} className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold text-slate-500">{c.label}</th>
               ))}
+              {/* 2026-09-19 — same fixed statement-dialog column as
+                  OrderRefundsReportTable above, this time opening the
+                  "refund" kind (historical marketplace refunds). */}
+              <th className="px-3 py-2 print:hidden"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -228,11 +243,14 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
                 {visibleColumns.map((c) => (
                   <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">{String(c.value(r) ?? "")}</td>
                 ))}
+                <td className="whitespace-nowrap px-3 py-2 text-right print:hidden">
+                  <DocStatementDialog type="refund" id={r.id} />
+                </td>
               </tr>
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={visibleColumns.length} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={visibleColumns.length + 1} className="px-3 py-8 text-center text-slate-400">
                   No historical refund rows for this filter.
                 </td>
               </tr>
