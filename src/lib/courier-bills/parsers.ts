@@ -340,6 +340,16 @@ export function parseCourierBill(text: string): CourierBillParseResult {
       break;
   }
 
+  // 2026-09-21 (verify pass): FedEx freight bills print ONE IGST/CGST/SGST
+  // summary line for the whole invoice, but parseFedexFreight leaves gstAmt
+  // null — so the per-AWB proration below never fired and the report's GST
+  // column fell back to the dispatch estimate (showed 0.00 when no estimate
+  // existed). Second chance: scrape the tax summary lines off the raw text
+  // for any freight bill whose row parser didn't capture them.
+  if (bill.billCategory === "freight" && bill.gstAmt == null) {
+    bill.gstAmt = parseUpsGst(text) || null;
+  }
+
   // 2026-09-21: some templates (UPS freight) print GST once for the whole
   // invoice rather than per shipment — prorate bill.gstAmt across the
   // bill's shipments by each one's share of the pre-tax total, and also
@@ -370,7 +380,10 @@ export function parseCourierBill(text: string): CourierBillParseResult {
         if (t <= 0) continue;
         if (x.baseAmt == null && (bill.freightAmt ?? 0) > 0) x.baseAmt = Math.round((t * (bill.freightAmt! / compSum)) * 100) / 100;
         if (x.fuelAmt == null && (bill.fuelAmt ?? 0) > 0) x.fuelAmt = Math.round((t * (bill.fuelAmt! / compSum)) * 100) / 100;
-        if (x.remoteAmt == null && (bill.otherCharges ?? 0) > 0) x.remoteAmt = Math.round((t * (bill.otherCharges! / compSum)) * 100) / 100;
+        // "Other" is captured per AWB directly by the FedEx/DHL row parsers
+        // (otherAmt) — don't double-fill remote from the header's Other
+        // when the row already carries its own figure.
+        if (x.remoteAmt == null && x.otherAmt == null && (bill.otherCharges ?? 0) > 0) x.remoteAmt = Math.round((t * (bill.otherCharges! / compSum)) * 100) / 100;
       }
     }
   }
