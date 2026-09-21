@@ -18,6 +18,12 @@ export type EditableOrder = {
   order_date: string;
   status: string;
   dispatch_date: string | null;
+  // 2026-09-21 — rough/planned dispatch date, set/corrected here and at
+  // order entry (order-form.tsx); rides into the packing WhatsApp/
+  // Telegram/Whapi message via order-whatsapp-button.tsx's buildMessage().
+  // Separate from dispatch_date above, which only gets set once the order
+  // actually ships.
+  estimated_dispatch_date: string | null;
   marketplace_order_no: string | null;
   po_date: string | null;
   delivery_date: string | null;
@@ -187,6 +193,16 @@ export function OrderEditForm({
         <div>
           <label className={labelClass} htmlFor={`dispatch_date-${order.id}`}>Dispatch Date</label>
           <input id={`dispatch_date-${order.id}`} name="dispatch_date" type="date" defaultValue={order.dispatch_date ?? ""} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor={`estimated_dispatch_date-${order.id}`}>Estimated Dispatch Date</label>
+          <input
+            id={`estimated_dispatch_date-${order.id}`}
+            name="estimated_dispatch_date"
+            type="date"
+            defaultValue={order.estimated_dispatch_date ?? ""}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor={`marketplace_order_no-${order.id}`}>Marketplace Order No.</label>

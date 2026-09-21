@@ -111,6 +111,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
     { value: strOrNull(formData, "dispatch_date"), label: "Dispatch date" },
     { value: strOrNull(formData, "po_date"), label: "PO date" },
     { value: strOrNull(formData, "delivery_date"), label: "Delivery date" },
+    { value: strOrNull(formData, "estimated_dispatch_date"), label: "Estimated dispatch date" },
   ]);
   if (dateError) return { error: dateError, success: false };
 
@@ -132,6 +133,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       marketplace_order_no: strOrNull(formData, "marketplace_order_no"),
       po_date: strOrNull(formData, "po_date"),
       delivery_date: strOrNull(formData, "delivery_date"),
+      estimated_dispatch_date: strOrNull(formData, "estimated_dispatch_date"),
       item_category_id: itemCategoryId,
       sku_label: strOrNull(formData, "sku_label"),
       size_label: strOrNull(formData, "size_label") ?? "",

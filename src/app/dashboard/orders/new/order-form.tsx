@@ -402,6 +402,17 @@ export function OrderForm({
             <input id="delivery_date" name="delivery_date" type="date" className={inputClass} />
           </div>
           <div>
+            {/* 2026-09-21 — "order page me ek option jodna hai estimate dispatch
+                date jo whatsaap par jati hai": a rough/planned dispatch date,
+                set at order entry (or corrected later via the edit form),
+                separate from the real dispatch_date which only gets set once
+                the order actually ships (see shipping-actions.ts/invoices
+                actions.ts). Rides into the packing WhatsApp/Telegram/Whapi
+                message via order-whatsapp-button.tsx's buildMessage(). */}
+            <label className={labelClass} htmlFor="estimated_dispatch_date">Estimated Dispatch Date</label>
+            <input id="estimated_dispatch_date" name="estimated_dispatch_date" type="date" className={inputClass} />
+          </div>
+          <div>
             <label className={labelClass} htmlFor="vendor_party_id">Purchasing From (if known)</label>
             <select id="vendor_party_id" name="vendor_party_id" defaultValue="" className={inputClass}>
               <option value="">Not known yet</option>

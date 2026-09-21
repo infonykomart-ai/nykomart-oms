@@ -86,6 +86,12 @@ export function OrderWhatsAppButton({
     order_currency: string;
     whatsapp_sent_at: string | null;
     dispatch_date: string | null;
+    // 2026-09-21 — "order page me ek option jodna hai estimate dispatch
+    // date jo whatsaap par jati hai": rough/planned dispatch date, set at
+    // order entry or via the Orders hub's edit form (order-edit-form.tsx).
+    // Shown in the packing message alongside the real Dispatch Date (which
+    // stays "-" until the order actually ships).
+    estimated_dispatch_date: string | null;
     sku_label: string | null;
     colour: string | null;
     tassel_fringes: boolean | null;
@@ -123,11 +129,12 @@ export function OrderWhatsAppButton({
   const isCottonRug = (order.item_category_name || "").toLowerCase().includes("cotton");
 
   // 2026-08-07: production/packing-facing message — fixed field template
-  // given directly by the user (PO/RF/RG, QTY, Size, Dispatch Date, Photo,
-  // Colour, Tassel/Fringes, SKU, Note), all pulled straight from the order
-  // entry rather than typed by hand. Deliberately does NOT include buyer
-  // name/value — this message rides along with the product photo to
-  // whoever is packing/dispatching, not the customer. Amazon orders get a
+  // given directly by the user (PO/RF/RG, QTY, Size, Dispatch Date,
+  // Estimated Dispatch Date [added 2026-09-21], Photo, Colour, Tassel/
+  // Fringes, SKU, Note), all pulled straight from the order entry rather
+  // than typed by hand. Deliberately does NOT include buyer name/value —
+  // this message rides along with the product photo to whoever is
+  // packing/dispatching, not the customer. Amazon orders get a
   // "TOP PRIORITY" flag up top (store name match, see page.tsx).
   //
   // `bold` toggles WhatsApp-style single-asterisk emphasis around the fixed
@@ -146,6 +153,7 @@ export function OrderWhatsAppButton({
       `${wrap("QTY:")} ${order.qty}`,
       `${wrap("Size:")} ${order.size_label || "-"}`,
       `${wrap("Dispatch Date:")} ${order.dispatch_date || "-"}`,
+      `${wrap("Estimated Dispatch Date:")} ${order.estimated_dispatch_date || "-"}`,
       `${wrap("Photo:")} ${order.photo_type || "-"}`,
       `${wrap("Colour:")} ${order.colour || "-"}`,
       isCottonRug ? `${wrap("Tassel/ Fringes:")} ${order.tassel_fringes ? "Yes" : "No"}` : null,

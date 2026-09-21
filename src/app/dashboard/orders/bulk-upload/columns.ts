@@ -36,6 +36,7 @@ export const BULK_ORDER_COLUMNS: BulkOrderColumn[] = [
   { label: "Tassel/Fringes", example: "No", required: false, help: "Yes or No" },
   { label: "PO Date", example: "", required: false },
   { label: "Delivery Date", example: "", required: false },
+  { label: "Estimated Dispatch Date", example: "", required: false },
   { label: "Email", example: "", required: false },
   { label: "Tax ID", example: "", required: false, help: "Legacy generic field — prefer VAT/EORI/IOSS Number below." },
   { label: "Address Type", example: "Residential", required: false, help: "Residential or Commercial" },

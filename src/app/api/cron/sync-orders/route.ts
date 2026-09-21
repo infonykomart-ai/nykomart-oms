@@ -120,6 +120,10 @@ export async function GET(req: NextRequest) {
           manualRefNo: null,
           poDate: null,
           deliveryDate: null,
+          // 2026-09-21 — no reliable source from marketplace sync APIs either,
+          // same treatment as poDate/deliveryDate above; fillable later via
+          // the order edit panel.
+          estimatedDispatchDate: null,
           emailId: o.emailId,
           taxId: null,
           addressType: o.addressType,

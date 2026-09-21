@@ -23,6 +23,7 @@ export type Order = {
   po_date: string | null;
   delivery_date: string | null;
   dispatch_date: string | null;
+  estimated_dispatch_date: string | null;
   status: string;
   shipment_status: string | null;
   marketplace_order_no: string | null;
@@ -159,6 +160,10 @@ export function OrderPrintSheet({
             <div>
               <div className="font-semibold">Dispatch Date</div>
               <div>{order.dispatch_date ?? "—"}</div>
+            </div>
+            <div>
+              <div className="font-semibold">Estimated Dispatch Date</div>
+              <div>{order.estimated_dispatch_date ?? "—"}</div>
             </div>
           </div>
 
