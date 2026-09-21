@@ -29,7 +29,9 @@ export type SaveThemeResult = { error: string | null };
 export async function saveThemePreference(input: SaveThemeInput): Promise<SaveThemeResult> {
   const employee = await getAuthedEmployee();
 
-  const update: { theme_id?: string; custom_accent_color?: string | null } = {};
+  // employees.theme_id carries the app's own ThemeId union as a CHECK
+  // constraint (see schema.sql) — the generated update types enforce it.
+  const update: { theme_id?: ThemeId; custom_accent_color?: string | null } = {};
 
   if (input.themeId !== undefined) {
     if (!isThemeId(input.themeId)) return { error: "Unknown theme." };

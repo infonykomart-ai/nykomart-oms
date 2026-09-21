@@ -3,6 +3,7 @@
 import { useActionState, useRef, useEffect, useState, type FormEvent } from "react";
 import { createOrder, checkFinishedStockAction, type OrderFormState } from "./actions";
 import { PhotoUrlField } from "../photo-url-field";
+import { MultiPhotoUrls } from "../multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
@@ -138,7 +139,15 @@ function ItemBlock({
           </select>
         </div>
         <div className="sm:col-span-2">
-          <PhotoUrlField id={id("photo_url")} name={id("photo_url")} labelClass={labelClass} />
+          <PhotoUrlField id={id("photo_url")} name={id("photo_url")} label="Main Photo (order photo)" labelClass={labelClass} />
+          {/* 2026-09-18 — "order me agar ek se jyada photo or dalni pade to
+              kese manage hoyegi link se dalegi": extra photo links per item,
+              added with "+ Add Photo". The first PhotoUrlField above is
+              always photo #1 (it feeds the thumbnail/print/WhatsApp as
+              before); each extra row below is a plain URL field serialized
+              into items_json.photoUrls on submit — see new/actions.ts's
+              parseItems(). */}
+          <MultiPhotoUrls namePrefix={id("photo_extra_url")} inputClass={inputClass} />
         </div>
         <div className="sm:col-span-2 space-y-2">
           <span className={labelClass}>Closeup Photos (optional — extra links)</span>

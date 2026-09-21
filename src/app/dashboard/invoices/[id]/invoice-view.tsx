@@ -150,7 +150,7 @@ export function InvoiceView({
   const [brokerName, setBrokerName] = useState(invoice.broker_name ?? "");
   const [brokerTel, setBrokerTel] = useState(invoice.broker_tel ?? "");
   const [brokerContact, setBrokerContact] = useState(invoice.broker_contact ?? "");
-  const [dutyPayableBy, setDutyPayableBy] = useState(invoice.duty_payable_by ?? "");
+  const [dutyPayableBy, setDutyPayableBy] = useState<string>(invoice.duty_payable_by ?? "");
   const [dutyPayableOtherSpecify, setDutyPayableOtherSpecify] = useState(invoice.duty_payable_other_specify ?? "");
   const [isSaving, startSave] = useTransition();
   const [saved, setSaved] = useState<string | null>(null);
@@ -237,7 +237,9 @@ export function InvoiceView({
         broker_name: brokerName || null,
         broker_tel: brokerTel || null,
         broker_contact: brokerContact || null,
-        duty_payable_by: dutyPayableBy || null,
+        duty_payable_by: (["Exporter", "Consignee", "Other"] as const).includes(dutyPayableBy as never)
+          ? (dutyPayableBy as "Exporter" | "Consignee" | "Other")
+          : null,
         duty_payable_other_specify: dutyPayableOtherSpecify || null,
       });
       setSaved(result.error ? `Error: ${result.error}` : "Saved successfully.");

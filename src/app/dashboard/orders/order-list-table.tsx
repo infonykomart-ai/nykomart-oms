@@ -10,6 +10,7 @@ import { CustomerWhatsAppButton } from "./customer-whatsapp-button";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
+import { A4Dialog } from "@/components/a4-dialog";
 import type { OrderStatusSummary } from "@/lib/orders/order-status-summary";
 import { BulkVendorAssignBar } from "./bulk-vendor-assign-bar";
 
@@ -171,6 +172,7 @@ export function OrderListTable({
   amazonFeesByOrder: Record<string, AmazonFeeMatch>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedFeesId, setExpandedFeesId] = useState<string | null>(null);
   const [expandedEbayFeesId, setExpandedEbayFeesId] = useState<string | null>(null);
@@ -907,22 +909,46 @@ export function OrderListTable({
                         : "bg-white";
                   return (
                     <FragmentRow key={o.id}>
-                      {editingId === o.id ? (
-                        <tr>
-                          <td className={CELL} colSpan={visibleColumns.length + 2}>
-                            <OrderEditForm
-                              order={o}
-                              itemCategories={itemCategories}
-                              sizes={sizes}
-                              currencies={currencies}
-                              parties={parties}
-                              statuses={statuses}
-                              onDone={() => setEditingId(null)}
-                            />
-                          </td>
-                        </tr>
-                      ) : (
-                        <tr className={`${rowBg} hover:bg-amber-50/60`}>
+                      {/* 2026-09-19 — "edit ... dusre page par le jane ki bajaye ek alag
+                          window dialogbox ki tarah open hoye. usi me update ho": the
+                          inline edit row is replaced by an A4-sized modal dialog — the
+                          table no longer reflows, the rest of the list stays exactly
+                          where it was, and Update saves in place. The old inline row
+                          shape is preserved for the sidebar's today-list edit path. */}
+                      {editingId === o.id && (
+                        <A4Dialog
+                          open
+                          onClose={() => setEditingId(null)}
+                          title={`Edit Order — ${o.ref_no}`}
+                          subtitle="A4-size dialog — update karke Save dabao, page change nahi hota."
+                        >
+                          <OrderEditForm
+                            order={o}
+                            itemCategories={itemCategories}
+                            sizes={sizes}
+                            currencies={currencies}
+                            parties={parties}
+                            statuses={statuses}
+                            onDone={() => setEditingId(null)}
+                          />
+                        </A4Dialog>
+                      )}
+                      {viewingId === o.id && (
+                        <A4Dialog
+                          open
+                          onClose={() => setViewingId(null)}
+                          title={`Order — ${o.ref_no}`}
+                          subtitle="A4-size dialog — poora detail view, page change nahi hota."
+                          flushBody
+                        >
+                          <iframe
+                            src={`/dashboard/orders/${o.id}`}
+                            title={`Order ${o.ref_no}`}
+                            className="h-full min-h-[60vh] w-full border-0"
+                          />
+                        </A4Dialog>
+                      )}
+                      <tr className={`${rowBg} hover:bg-amber-50/60`}>
                           <td className={`${CELL} print:hidden`}>
                             <input
                               type="checkbox"
@@ -942,13 +968,20 @@ export function OrderListTable({
                           ))}
                           <td className={`${CELL} print:hidden`}>
                             <div className="flex items-center gap-1 whitespace-nowrap">
-                              <Link
-                                href={`/dashboard/orders/${o.id}`}
+                              {/* 2026-09-19 — View now opens the real detail page
+                                  (/dashboard/orders/[id], same one the old link opened)
+                                  inside the same A4 dialog instead of navigating away —
+                                  "dusre page par le jane ki bajaye ... dialogbox ki tarah
+                                  open hoye". Iframe because that page is a server
+                                  component with its own data fetching. */}
+                              <button
+                                type="button"
                                 title="View"
+                                onClick={() => setViewingId(o.id)}
                                 className="rounded border border-slate-300 bg-white px-1.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
                               >
                                 👁️
-                              </Link>
+                              </button>
                               <button
                                 type="button"
                                 title="Edit"
@@ -982,8 +1015,6 @@ export function OrderListTable({
                             {deleteError[o.id] && <p className="mt-1 text-[10px] font-medium text-red-600">{deleteError[o.id]}</p>}
                           </td>
                         </tr>
-                      )}
-
                       {expandedId === o.id && editingId !== o.id && (
                         <tr className={rowBg}>
                           <td className={`${CELL} print:hidden`} colSpan={visibleColumns.length + 2}>

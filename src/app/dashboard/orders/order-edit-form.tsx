@@ -258,6 +258,7 @@ export function OrderEditForm({
             id={`photo_url-${order.id}`}
             name="photo_url"
             defaultValue={order.photo_url}
+            label="Main Photo (order photo)"
             labelClass={labelClass}
           />
         </div>

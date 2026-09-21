@@ -1095,18 +1095,33 @@ export async function deleteInternalInvoice(id: string): Promise<SimpleResult> {
 // db/2026-08-17-purchase-bills-optional-order-company-id.sql.
 // =============================================================================
 
+// Narrowers — form fields arrive as free strings; the CHECK unions on
+// purchase_bills.qty_unit / gst_type (see db/schema.sql) are enforced by the
+// generated insert/update types, so coerce here (unknown -> documented default
+// for units; invalid gst_type -> null = "no GST split recorded").
+function qtyUnitUnion(v: string): "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS" {
+  return (["FT", "MTR", "INCH", "YARD", "CM", "PCS"] as const).includes(v as never)
+    ? (v as "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS")
+    : "FT";
+}
+function gstTypeUnion(v: string | null): "CGST_SGST" | "IGST" | null {
+  return v === "CGST_SGST" || v === "IGST" ? v : null;
+}
+
 type PurchaseBillParams = {
   vendorPartyId: string;
   vendorInvoiceNo: string;
   vendorInvoiceDate: string | null;
   qty: number;
   sqFeet: number;
-  qtyUnit: string;
+  // purchase_bills.qty_unit CHECK union — see schema.sql
+  qtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
   workDescription: string | null;
   unitRate: number;
   orderId: string | null;
   gstRatePct: number | null;
-  gstType: string | null;
+  // purchase_bills.gst_type CHECK union — see schema.sql
+  gstType: "CGST_SGST" | "IGST" | null;
   // 2026-08-17: manual round-off so the system total can match a vendor
   // invoice that itself rounds by a few paise (e.g. AF/145: -0.30). See
   // db/2026-08-17-purchase-bills-round-off.sql. Defaults to 0 (no-op) for
@@ -1276,12 +1291,12 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
     vendorInvoiceDate: strOrNull(formData, "vendor_invoice_date"),
     qty: numOrZero(formData, "qty"),
     sqFeet: numOrZero(formData, "sq_feet"),
-    qtyUnit: str(formData, "qty_unit") || "FT",
+    qtyUnit: qtyUnitUnion(str(formData, "qty_unit") || "FT"),
     workDescription: strOrNull(formData, "work_description"),
     unitRate: numOrZero(formData, "unit_rate"),
     orderId: strOrNull(formData, "order_id"),
     gstRatePct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
-    gstType: strOrNull(formData, "gst_type"),
+    gstType: gstTypeUnion(strOrNull(formData, "gst_type")),
     roundOffAmt: numOrZero(formData, "round_off_amt"),
   });
 
@@ -1428,9 +1443,9 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
   // comment above) — each line carries its own rate now. qty_unit is still
   // shared: ONE unit for the whole invoice, so every line's Sq. Feet stays
   // comparable (see purchase-bill-multi-form.tsx's header comment).
-  const qtyUnit = str(formData, "qty_unit") || "FT";
+  const qtyUnit = qtyUnitUnion(str(formData, "qty_unit") || "FT");
   const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
-  const gstType = strOrNull(formData, "gst_type");
+  const gstType = gstTypeUnion(strOrNull(formData, "gst_type"));
   const linesRaw = str(formData, "lines_json");
 
   if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
@@ -1491,7 +1506,7 @@ export type PurchaseBillMultiItemLine = {
   workDescription: string | null;
   qty: number;
   sqFeet: number;
-  qtyUnit: string;
+  qtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
   unitRate: number;
 };
 export type PurchaseBillMultiItemsState = {
@@ -1510,7 +1525,7 @@ export async function savePurchaseBillMultiItems(
   const vendorInvoiceNo = str(formData, "vendor_invoice_no");
   const vendorInvoiceDate = strOrNull(formData, "vendor_invoice_date");
   const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
-  const gstType = strOrNull(formData, "gst_type");
+  const gstType = gstTypeUnion(strOrNull(formData, "gst_type"));
   const itemsRaw = str(formData, "items_json");
 
   if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
@@ -1534,7 +1549,7 @@ export async function savePurchaseBillMultiItems(
       vendorInvoiceDate,
       qty: item.qty || 1,
       sqFeet: item.sqFeet || 0,
-      qtyUnit: item.qtyUnit || "FT",
+      qtyUnit: qtyUnitUnion(item.qtyUnit || "FT"),
       workDescription: item.workDescription,
       unitRate: item.unitRate,
       orderId: null,
@@ -1595,11 +1610,11 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
       vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
       qty: numOrZero(formData, "qty") || 1,
       sq_feet: numOrZero(formData, "sq_feet"),
-      qty_unit: str(formData, "qty_unit") || "FT",
+      qty_unit: qtyUnitUnion(str(formData, "qty_unit") || "FT"),
       work_description: strOrNull(formData, "work_description"),
       unit_rate: numOrZero(formData, "unit_rate"),
       gst_rate_pct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
-      gst_type: strOrNull(formData, "gst_type"),
+      gst_type: gstTypeUnion(strOrNull(formData, "gst_type")),
       round_off_amt: numOrZero(formData, "round_off_amt"),
     })
     .eq("id", id)
@@ -1741,6 +1756,14 @@ export type ReconciliationLookup = {
     buyer_country: string | null;
     shipping_weight_kg: number | null;
   } | null;
+  // 2026-09-21: prefill/context data — the shipment's real AWB + booked
+  // package weights (actual + volumetric L×W×H/5000) so the form can
+  // prefill Bill/Dim weight from what we booked, and the order's sale
+  // value for the shipping-% cross-check.
+  shipmentAwbNo: string | null;
+  bookedWeightKg: number | null;
+  volumetricWeightKg: number | null;
+  orderValueInr: number | null;
   alreadyAssigned: boolean;
   // 2026-09-01: what this shipment was booked for (any real courier
   // booking flow) — freight bills only (see the reconciliation migration's
@@ -1756,6 +1779,10 @@ const EMPTY_RECON: ReconciliationLookup = {
   order: null,
   orderShipmentId: null,
   dispatch: null,
+  shipmentAwbNo: null,
+  bookedWeightKg: null,
+  volumetricWeightKg: null,
+  orderValueInr: null,
   alreadyAssigned: false,
   bookedFreightAmt: null,
   bookedCurrency: null,
@@ -1825,6 +1852,22 @@ export async function lookupOrderForReconciliation(
     return { ...EMPTY_RECON, error: `No order found for "${trimmed}".` };
   }
 
+  // 2026-09-21: the shipment's own AWB + its packages' booked weights —
+  // the AWB column on the bill belongs to THIS row (order-level
+  // dispatch_invoices.awb_no is a stale order-level summary), and Bill/Dim
+  // weight prefill comes from what we actually booked.
+  const { data: shipmentRow } = await supabase
+    .from("order_shipments")
+    .select("awb_no")
+    .eq("id", orderShipmentId)
+    .maybeSingle();
+  const { data: shipmentPackages } = await supabase
+    .from("order_packages")
+    .select("weight_kg, volumetric_weight")
+    .eq("order_shipment_id", orderShipmentId);
+  const bookedWeightKg = (shipmentPackages ?? []).reduce((sum, p) => sum + (p.weight_kg != null ? Number(p.weight_kg) : 0), 0) || null;
+  const volumetricWeightKg = (shipmentPackages ?? []).reduce((sum, p) => sum + (p.volumetric_weight != null ? Number(p.volumetric_weight) : 0), 0) || null;
+
   const { data: dispatch } = await supabase
     .from("dispatch_invoices")
     .select("awb_no, courier_name, buyer_country, shipping_weight_kg")
@@ -1855,6 +1898,10 @@ export async function lookupOrderForReconciliation(
     order,
     orderShipmentId,
     dispatch: dispatch ?? null,
+    shipmentAwbNo: shipmentRow?.awb_no ?? null,
+    bookedWeightKg,
+    volumetricWeightKg,
+    orderValueInr: order.order_value_inr != null ? Number(order.order_value_inr) : null,
     alreadyAssigned: !!existing,
     bookedFreightAmt,
     bookedCurrency,
@@ -2130,6 +2177,13 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
       // 2026-09-01: booking-cost-vs-billed-cost recheck — see
       // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
       billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
+      // 2026-09-21: per-AWB charge breakup — see
+      // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+      billed_base_amt: numOrNull(formData, "billed_base_amt"),
+      billed_fuel_amt: numOrNull(formData, "billed_fuel_amt"),
+      billed_remote_amt: numOrNull(formData, "billed_remote_amt"),
+      billed_other_amt: numOrNull(formData, "billed_other_amt"),
+      billed_gst_amt: numOrNull(formData, "billed_gst_amt"),
       remark: strOrNull(formData, "remark"),
     })
     .select("id")
@@ -2180,6 +2234,13 @@ export type BulkAwbRow = {
   dimensionalWeightKg: number | null;
   differenceAmt: number | null;
   remark: string | null;
+  // 2026-09-21: per-AWB billed charge breakup — see
+  // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+  billedFreightAmt: number | null;
+  billedBaseAmt: number | null;
+  billedFuelAmt: number | null;
+  billedRemoteAmt: number | null;
+  billedGstAmt: number | null;
 };
 export type BulkAwbResult = { query: string; ok: boolean; refNo: string | null; error: string | null };
 
@@ -2206,6 +2267,13 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       bill_weight_kg: row.billWeightKg,
       dimensional_weight_kg: row.dimensionalWeightKg,
       difference_amt: row.differenceAmt,
+      // 2026-09-21: per-AWB charge breakup — see
+      // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+      billed_freight_amt: row.billedFreightAmt,
+      billed_base_amt: row.billedBaseAmt,
+      billed_fuel_amt: row.billedFuelAmt,
+      billed_remote_amt: row.billedRemoteAmt,
+      billed_gst_amt: row.billedGstAmt,
       remark: row.remark,
     });
     if (error) {
@@ -3077,7 +3145,9 @@ export async function deleteJournalVoucher(id: string): Promise<SimpleResult> {
 type ReceivedChalanItemInput = {
   description: string;
   qty: number;
-  qtyUnit: string;
+  // CHECK-constrained union on received_chalan_items.qty_unit (FT/MTR/...)
+  // — the generated insert types now enforce it.
+  qtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
   rate: number | null;
   remark: string | null;
 };
@@ -3118,7 +3188,7 @@ async function createReceivedChalanForBillGroup(supabase: ServiceClient, billPas
   const items: ReceivedChalanItemInput[] = pbItems.map((it) => ({
     description: it.work_description || "Item",
     qty: Number(it.qty ?? 1),
-    qtyUnit: it.qty_unit ?? "FT",
+    qtyUnit: qtyUnitUnion(it.qty_unit ?? "FT"),
     rate: it.unit_rate != null ? Number(it.unit_rate) : null,
     remark: null,
   }));
@@ -3217,7 +3287,7 @@ export async function createReceivedChalanManual(_prev: ReceivedChalanState, for
       chalan_id: chalan.id,
       description: it.description.trim(),
       qty: it.qty,
-      qty_unit: it.qtyUnit || "FT",
+      qty_unit: it.qtyUnit ? it.qtyUnit : ("FT" as const),
       rate: it.rate ?? null,
       remark: it.remark ?? null,
     }))

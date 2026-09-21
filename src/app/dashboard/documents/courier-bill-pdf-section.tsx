@@ -21,6 +21,12 @@ type Row = {
   weightKg: number | null;
   amount: number | null; // duty bills: Import Duty portion. freight bills (2026-09-01): this shipment's billed Total — see billed_freight_amt
   otherAmt: number | null; // duty bills only — service/disbursement fee portion
+  // 2026-09-21: per-AWB charge breakup (freight) — see
+  // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+  baseAmt: number | null;
+  fuelAmt: number | null;
+  remoteAmt: number | null;
+  gstAmt: number | null;
   orderId: string | null;
   orderShipmentId: string | null;
   orderRefNo: string | null;
@@ -85,6 +91,10 @@ export function CourierBillPdfSection() {
           // billed_freight_amt and show the booked-vs-billed recheck.
           amount: rest.billCategory === "freight" ? s.amount : s.dutyAmt,
           otherAmt: s.otherAmt,
+          baseAmt: s.baseAmt,
+          fuelAmt: s.fuelAmt,
+          remoteAmt: s.remoteAmt,
+          gstAmt: s.gstAmt,
           orderId: s.alreadyAssigned ? null : s.orderId,
           orderShipmentId: s.alreadyAssigned ? null : s.orderShipmentId,
           orderRefNo: s.alreadyAssigned ? null : s.orderRefNo,
@@ -122,6 +132,10 @@ export function CourierBillPdfSection() {
           weightKg: r.weightKg,
           amount: r.amount,
           otherAmt: r.otherAmt,
+          baseAmt: r.baseAmt ?? null,
+          fuelAmt: r.fuelAmt ?? null,
+          remoteAmt: r.remoteAmt ?? null,
+          gstAmt: r.gstAmt ?? null,
         })),
       });
       if (result.error) setSaveError(result.error);
@@ -302,7 +316,7 @@ function ShipmentRow({
         </div>
       </div>
 
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
         <div>
           <label className={labelClass}>Weight (kg)</label>
           <input
@@ -348,6 +362,54 @@ function ShipmentRow({
               onChange={(e) => onChange({ amount: e.target.value ? Number(e.target.value) : null })}
             />
           </div>
+        )}
+        {/* 2026-09-21: per-AWB charge breakup — freight bills break each
+            shipment's charge into base/fuel/remote and charge GST; capture
+            them so the Courier Bill Report's Total/GST/Gross columns are
+            real numbers, not zeroes. */}
+        {billCategory === "freight" && (
+          <>
+            <div>
+              <label className={labelClass}>Base Charge</label>
+              <input
+                type="number"
+                step="0.01"
+                className={inputClass}
+                value={row.baseAmt ?? ""}
+                onChange={(e) => onChange({ baseAmt: e.target.value ? Number(e.target.value) : null })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Fuel Charge</label>
+              <input
+                type="number"
+                step="0.01"
+                className={inputClass}
+                value={row.fuelAmt ?? ""}
+                onChange={(e) => onChange({ fuelAmt: e.target.value ? Number(e.target.value) : null })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Remote / Other</label>
+              <input
+                type="number"
+                step="0.01"
+                className={inputClass}
+                value={row.remoteAmt ?? ""}
+                onChange={(e) => onChange({ remoteAmt: e.target.value ? Number(e.target.value) : null })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>GST on this AWB</label>
+              <input
+                type="number"
+                step="0.01"
+                className={inputClass}
+                value={row.gstAmt ?? ""}
+                onChange={(e) => onChange({ gstAmt: e.target.value ? Number(e.target.value) : null })}
+              />
+            </div>
+          </>
         )}
         <div className="flex items-end gap-2">
           <button

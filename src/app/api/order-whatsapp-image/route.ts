@@ -212,25 +212,54 @@ export async function GET(request: Request) {
     throw err;
   }
 
+  // 2026-09-19 — multi-photo composite: url1 = Main, url2/url3 = Closeup 1/2
+  // (the button only sends url2/url3 when those slots are actually filled).
+  // `url` stays accepted as the legacy alias for url1. A closeup that fails
+  // to load is skipped (the composite still goes out with what loaded); the
+  // MAIN photo failing is still a hard error, same as before.
   const params = new URL(request.url).searchParams;
-  const raw = params.get("url");
-  if (!raw) return new Response("Missing url", { status: 400 });
+  const mainRaw = params.get("url1") ?? params.get("url");
+  if (!mainRaw) return new Response("Missing url", { status: 400 });
+  const closeupRaws = [params.get("url2"), params.get("url3")]
+    .filter((u): u is string => !!u)
+    .slice(0, 2);
 
-  const result = await safeExternalFetch(raw);
-  if (!result.ok) return new Response(result.error, { status: result.status });
-  const photoBuffer = Buffer.from(await result.response.arrayBuffer());
-
-  let photo = sharp(photoBuffer);
-  const meta = await photo.metadata();
-  let width = meta.width ?? MAX_WIDTH;
-  let height = meta.height ?? Math.round((width * 3) / 4);
-  if (width > MAX_WIDTH) {
-    const scale = MAX_WIDTH / width;
-    height = Math.round(height * scale);
-    width = MAX_WIDTH;
-    photo = photo.resize(width, height);
+  async function fetchDecoded(raw: string): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+    try {
+      const r = await safeExternalFetch(raw);
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.response.arrayBuffer());
+      const p = sharp(buf);
+      const meta = await p.metadata();
+      const w = meta.width ?? MAX_WIDTH;
+      return { buffer: buf, width: w, height: meta.height ?? Math.round((w * 3) / 4) };
+    } catch {
+      return null;
+    }
   }
-  const resizedPhotoBuffer = await photo.jpeg({ quality: 88 }).toBuffer();
+
+  // Positional results: slot 0 is ALWAYS the Main photo — if it fails the
+  // request errors rather than silently relabeling a closeup as Main; a
+  // failed closeup slot is just skipped from the composite.
+  const [mainResult, ...closeupResults] = await Promise.all([
+    fetchDecoded(mainRaw),
+    ...closeupRaws.map((u) => fetchDecoded(u)),
+  ]);
+  if (!mainResult) return new Response("Could not load the main photo", { status: 502 });
+  const loaded = [mainResult, ...closeupResults.filter((p): p is NonNullable<typeof p> => !!p)];
+
+  // One shared width for the whole composite: the narrowest photo, capped
+  // at MAX_WIDTH — nothing gets stretched and the panel math stays
+  // single-column.
+  const width = Math.min(MAX_WIDTH, ...loaded.map((p) => p.width));
+  const photos = await Promise.all(
+    loaded.map(async (p) => {
+      const scale = width / p.width;
+      const height = Math.max(1, Math.round(p.height * scale));
+      const resized = await sharp(p.buffer).resize(width, height).jpeg({ quality: 88 }).toBuffer();
+      return { buffer: resized, height };
+    })
+  );
 
   // ── Baked details panel (above the photo) ──────────────────────────────
   const panel = buildPanelFromParams(params);
@@ -242,7 +271,15 @@ export async function GET(request: Request) {
   const measured =
     panelPad + bannerH + measurePanelHeight(panel, width - panelPad * 2, panelScale) + panelPad;
 
-  const canvas = createCanvas(width, measured + height);
+  // 2026-09-19 — per-photo label strip (only when 2+ photos made it in):
+  // "Main Photo" / "Closeup 1" / "Closeup 2", matching the entry form's
+  // slots and the print sheet's captions. Single photo → no strips at all,
+  // exactly the old look ("agar single hai to uske hisab se").
+  const labels = photos.length > 1 ? ["Main Photo", "Closeup 1", "Closeup 2"].slice(0, photos.length) : [];
+  const labelH = labels.length ? 26 * panelScale : 0;
+
+  const totalPhotosH = photos.reduce((sum, p) => sum + labelH + p.height, 0);
+  const canvas = createCanvas(width, measured + totalPhotosH);
   const ctx = canvas.getContext("2d");
 
   // Panel background + Amazon banner
@@ -268,10 +305,25 @@ export async function GET(request: Request) {
     ctx.fillText("Order details: see caption", panelPad, panelPad + bannerH + 8 * panelScale);
   }
 
-  // Photo below the panel — loadImage fully decodes before drawImage.
-  const photoPng = await sharp(resizedPhotoBuffer).png().toBuffer(); // canvas drawImage decodes png reliably
-  const img = await loadImage(photoPng);
-  ctx.drawImage(img, 0, measured, width, height);
+  // Photos below the panel, stacked — each is fully decoded via PNG before
+  // drawImage (canvas drawImage decodes png reliably).
+  let y = measured;
+  for (let i = 0; i < photos.length; i++) {
+    if (labels.length) {
+      ctx.fillStyle = "#f5f5f4";
+      ctx.fillRect(0, y, width, labelH);
+      ctx.fillStyle = "#78716c";
+      ctx.font = `600 ${13 * panelScale}px ${HINDI}`;
+      ctx.textBaseline = "middle";
+      ctx.fillText(labels[i], panelPad, y + labelH / 2 + 1);
+      ctx.textBaseline = "top";
+      y += labelH;
+    }
+    const png = await sharp(photos[i].buffer).png().toBuffer();
+    const img = await loadImage(png);
+    ctx.drawImage(img, 0, y, width, photos[i].height);
+    y += photos[i].height;
+  }
 
   const composite = await canvas.encode("jpeg", 88);
 

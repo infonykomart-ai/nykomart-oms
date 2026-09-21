@@ -196,7 +196,7 @@ CREATE TYPE employee_marital_status AS ENUM ('Married', 'Unmarried');
 CREATE TYPE letter_type AS ENUM (
   'Joining Letter', 'Offer Letter', 'Promotion Letter', 'Increment Letter',
   'Experience Letter', 'Relieving Letter', 'Warning Letter', 'Salary Slip',
-  'Custom / Other Letter'
+  'Termination Letter', 'Custom / Other Letter'   -- 2026-08-27: Termination Letter (db/2026-08-27-hr-letters-record-and-dispatch-no.sql)
 );
 
 
@@ -218,6 +218,12 @@ CREATE TABLE companies (
   -- fixed prefix per company (NYM/RA/CASA), separate from ref_prefix
   -- (PO/RF/RG, which is per-ORDER not per-invoice) and from
   -- stores.invoice_ref_prefix (which is per-STORE/marketplace, not company).
+  -- 2026-09-20: per-company order-notify destinations (see
+  -- db/2026-09-20-company-order-notify-channels.sql). NULL falls back to
+  -- the global env var, so existing behavior is unchanged until each
+  -- company's group/chat id is confirmed and filled in.
+  whapi_group_id text,
+  telegram_chat_id text,
   master_invoice_prefix text,
   -- 2026-08-11: recurring weekly-off day(s) for attendance/payroll, e.g.
   -- every Sunday off. 0=Sunday..6=Saturday (matches both JS Date.getDay()
@@ -639,6 +645,21 @@ LANGUAGE sql STABLE AS $$
   LIMIT 1;
 $$;
 
+-- ...and because its body calls auth.uid(), guard the auth schema itself:
+-- this file is ALSO applied to a plain throwaway Postgres (local type-gen /
+-- CI schema-check) that has no auth schema — see the RLS-section comment
+-- near the messaging tables for the original statement of that rule. On
+-- Supabase the real auth.uid() exists and this block does nothing.
+DO $auth_uid_stub_present$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') THEN
+    CREATE SCHEMA auth;
+    CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE
+    AS $fn$ SELECT NULL::uuid $fn$;
+  END IF;
+END
+$auth_uid_stub_present$;
+
 -- 2026-09-19 (audit fix, item C6) — current_employee_id() existed live but
 -- was never added here (no tracked migration file defines it either — it
 -- was created directly at some point). Backfilled from its live definition
@@ -691,6 +712,11 @@ CREATE TABLE orders (
   dispatch_date            date,
 
   photo_url                text,      -- old =IMAGE(url) formula; raw URL only, thumbnailing is a UI concern now
+  -- 2026-09-18: ALL photo links for the order (multi-photo support). See
+  -- db/2026-09-18-orders-multi-photo-and-capability-sync.sql — photo_url
+  -- above stays the canonical FIRST photo (thumbnail/print/WhatsApp);
+  -- photo_urls = [photo_url, extra2, ...], nulls/empties trimmed.
+  photo_urls               text[],
 
   sku_id                   uuid REFERENCES skus(id),
   sku_label                text,      -- raw fallback (see design decision #7's sibling reasoning for SKU)
@@ -707,6 +733,26 @@ CREATE TABLE orders (
 
   buyer_name_address       text,      -- old "BUYER NAME & ADDRESS" — single free-text field in the source; see
                                        -- SCHEMA_NOTES.md open question #3 on why this wasn't split further
+
+  -- 2026-08-22 (folded back 2026-09-19 from
+  -- db/2026-08-22-orders-buyer-country.sql): auto-derived buyer country,
+  -- written by app code (src/lib/geo/parse-country.ts) from buyer_name_address
+  -- at order entry/edit — plain column, not DB-GENERATED (parsing logic is
+  -- maintainable in TS; see the migration header).
+  buyer_country                 text,
+
+  -- 2026-09-08 (folded 2026-09-19 from
+  -- db/2026-09-08-order-address-fields-and-vendor-assignments.sql):
+  -- structured buyer address. Auto-filled client-side from postal code +
+  -- destination_country where a free lookup covers the country (see
+  -- src/lib/postal-lookup.ts); always employee-editable. buyer_name_address
+  -- above stays the fallback for old orders.
+  buyer_address1            text,
+  buyer_address2            text,
+  buyer_address3            text,
+  buyer_city                text,
+  buyer_state               text,
+  buyer_postal_code         text,
   contact_no               text,
   email_id                 text,
   tax_id                   text,      -- legacy generic VAT/IOSS/Tax ID field — superseded 2026-08-11 by the 3
@@ -910,7 +956,9 @@ CREATE TABLE freight_bills (
   credit_note_no          text,
   credit_note_date         date,
   credit_note_amt           numeric(14,2) NOT NULL DEFAULT 0,
-  created_at               timestamptz NOT NULL DEFAULT now()
+  created_at               timestamptz NOT NULL DEFAULT now(),
+  -- 2026-08-17 (folded 2026-09-19): vendor party link — mirrors purchase_bills.vendor_party_id.
+  vendor_party_id          uuid REFERENCES parties(id)
 );
 COMMENT ON COLUMN freight_bills.gross_total_amt IS
   'The old sheet''s "DIFRANCE AMOUNT" (this Gross Total minus the SUM of Gross Shipping Amt across every AWB '
@@ -941,7 +989,9 @@ CREATE TABLE duty_tax_bills (
   disbursement_fee            numeric(14,2) NOT NULL DEFAULT 0,
   courier_duty_charges_adj      numeric(14,2) NOT NULL DEFAULT 0,
   total_payable_amt               numeric(14,2),
-  created_at                timestamptz NOT NULL DEFAULT now()
+  created_at                timestamptz NOT NULL DEFAULT now(),
+  -- 2026-08-17 (folded 2026-09-19): vendor party link — mirrors purchase_bills.vendor_party_id.
+  vendor_party_id          uuid REFERENCES parties(id)
 );
 
 -- Old sheet: Shipping Bills — customs export shipping-bill register. Every
@@ -1250,6 +1300,21 @@ CREATE TABLE freight_bill_awb_assignments (
   -- "recheck" variance — see db/2026-09-01-multi-courier-booking-and-
   -- freight-recon.sql.
   billed_freight_amt         numeric(14,2),
+  -- 2026-09-21: per-AWB charge BREAKUP as printed on the courier bill
+  -- (db/2026-09-21-freight-awb-billed-charge-breakup.sql) —
+  -- "total shipping amt = per awb charges jisme fuel+remote+other hote hai
+  -- phir GST alag aata hai phir gross shipping ammount". billed_base_amt =
+  -- line-haul base, billed_fuel_amt = fuel surcharge, billed_remote_amt =
+  -- remote/delivery-area surcharge, billed_other_amt = everything else,
+  -- billed_gst_amt = GST actually charged on this AWB (header GST prorated
+  -- across AWBs by pre-tax charge share when the bill doesn't break it per
+  -- line). billed_freight_amt above stays the TOTAL pre-GST charge; report
+  -- gross = billed_freight_amt + billed_gst_amt.
+  billed_base_amt   numeric(14,2),
+  billed_fuel_amt   numeric(14,2),
+  billed_remote_amt numeric(14,2),
+  billed_other_amt  numeric(14,2),
+  billed_gst_amt    numeric(14,2),
   UNIQUE (order_shipment_id)   -- one AWB is billed under exactly one freight invoice (Gap 1, 2026-08-20 — was UNIQUE(order_id))
 );
 CREATE INDEX idx_freight_awb_assign_bill ON freight_bill_awb_assignments(freight_bill_id);
@@ -1384,41 +1449,7 @@ COMMENT ON VIEW freight_awb_net_view IS
   'credit_note_amt/debit_note_amt (manual single-AWB capture). Feeds the P&L '
   'courier expense net of CNs. Bill payable (bill_pass_register) unchanged.';
 
--- 2026-09-14 — FedEx ledger mismatch diagnosis ("fedex ke jitne ke bill
--- apne pass credit match huye ... lekin phir bhi match nahi ho raha
--- credit note adjust karne vala fourmula ki vajh se to nahi ho raha kahi
--- galt tarike se to nahi bana diya"): a courier/duty CN can reach a
--- bill's payable through TWO doors — baked into total_amt at "Send to
--- Finance" time (the send form's default is source gross − CN), and/or
--- afterwards as a bill_pass_register_adjustments row (adj_amt). Both
--- doors on the same bill = the payable was reduced TWICE, which is
--- exactly the "payments don't match" symptom. This read-only view lists
--- every finance-ledger courier/duty bill with both CN amounts side by
--- side and flags the double-applied cases; see
--- db/2026-09-14-courier-cn-audit-view.sql for the usage queries.
-CREATE VIEW courier_cn_audit_view AS
-SELECT
-  bpr.id                                     AS bill_pass_register_id,
-  bpr.company_id,
-  bpr.party_id,
-  bpr.vendor_invoice_no,
-  bpr.invoice_type,
-  bpr.source,
-  bpr.source_id,
-  bpr.total_amt                              AS ledger_total_amt,
-  COALESCE(fb.gross_total_amt, dtb.gross_total_amt) AS source_gross_amt,
-  COALESCE(fb.credit_note_amt, 0)            AS source_cn_amt,
-  GREATEST(COALESCE(fb.gross_total_amt, dtb.gross_total_amt, 0) - bpr.total_amt, 0) AS cn_in_total,
-  bpr.adj_amt                                AS cn_adjusted,
-  bpr.credit_note_amt                        AS manual_cn_amt,
-  bpr.total_paid,
-  bpr.balance_due,
-  (bpr.adj_amt > 0
-    AND COALESCE(fb.gross_total_amt, dtb.gross_total_amt, 0) > bpr.total_amt) AS double_applied_flag
-FROM bill_pass_register bpr
-LEFT JOIN freight_bills fb   ON bpr.source = 'freight_bill'   AND bpr.source_id = fb.id
-LEFT JOIN duty_tax_bills dtb ON bpr.source = 'duty_tax_bill'  AND bpr.source_id = dtb.id
-WHERE bpr.invoice_type IN ('FREIGHT INVOICE', 'DUTY TAX');
+
 
 -- Old Duty Reconciliation sheet — same idea, additionally pulling its
 -- "SHIPPING AMT" from freight_reconciliation_view.gross_shipping_amt
@@ -2213,6 +2244,41 @@ CREATE TABLE bill_pass_register_adjustments (
 CREATE INDEX idx_bpr_adjustments_target ON bill_pass_register_adjustments(bill_pass_register_id);
 CREATE INDEX idx_bpr_adjustments_debit_note ON bill_pass_register_adjustments(debit_note_id);
 CREATE INDEX idx_bpr_adjustments_credit_note ON bill_pass_register_adjustments(credit_note_id);
+-- 2026-09-14 — FedEx ledger mismatch diagnosis ("fedex ke jitne ke bill
+-- apne pass credit match huye ... lekin phir bhi match nahi ho raha
+-- credit note adjust karne vala fourmula ki vajh se to nahi ho raha kahi
+-- galt tarike se to nahi bana diya"): a courier/duty CN can reach a
+-- bill's payable through TWO doors — baked into total_amt at "Send to
+-- Finance" time (the send form's default is source gross − CN), and/or
+-- afterwards as a bill_pass_register_adjustments row (adj_amt). Both
+-- doors on the same bill = the payable was reduced TWICE, which is
+-- exactly the "payments don't match" symptom. This read-only view lists
+-- every finance-ledger courier/duty bill with both CN amounts side by
+-- side and flags the double-applied cases; see
+-- db/2026-09-14-courier-cn-audit-view.sql for the usage queries.
+CREATE VIEW courier_cn_audit_view AS
+SELECT
+  bpr.id                                     AS bill_pass_register_id,
+  bpr.company_id,
+  bpr.party_id,
+  bpr.vendor_invoice_no,
+  bpr.invoice_type,
+  bpr.source,
+  bpr.source_id,
+  bpr.total_amt                              AS ledger_total_amt,
+  COALESCE(fb.gross_total_amt, dtb.gross_total_amt) AS source_gross_amt,
+  COALESCE(fb.credit_note_amt, 0)            AS source_cn_amt,
+  GREATEST(COALESCE(fb.gross_total_amt, dtb.gross_total_amt, 0) - bpr.total_amt, 0) AS cn_in_total,
+  bpr.adj_amt                                AS cn_adjusted,
+  bpr.credit_note_amt                        AS manual_cn_amt,
+  bpr.total_paid,
+  bpr.balance_due,
+  (bpr.adj_amt > 0
+    AND COALESCE(fb.gross_total_amt, dtb.gross_total_amt, 0) > bpr.total_amt) AS double_applied_flag
+FROM bill_pass_register bpr
+LEFT JOIN freight_bills fb   ON bpr.source = 'freight_bill'   AND bpr.source_id = fb.id
+LEFT JOIN duty_tax_bills dtb ON bpr.source = 'duty_tax_bill'  AND bpr.source_id = dtb.id
+WHERE bpr.invoice_type IN ('FREIGHT INVOICE', 'DUTY TAX');
 
 -- 2026-09-13 — "KISI INVIOCE KI DO BAAR ENTRY NAHI AAYEGI DUPLICATE
 -- RESTICATION JARURI HAI" — hard DB-level guard: a MANUALLY-ENTERED bill
@@ -2452,10 +2518,16 @@ CREATE TABLE recurring_card_debits (
   last_logged_month text,
   remark            text,
   created_by_employee_id uuid REFERENCES employees(id),
-  created_at        timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, lower(vendor_name))
+  created_at        timestamptz NOT NULL DEFAULT now()
+  -- NOTE (2026-09-19): expression uniqueness (lower(vendor_name)) can't be a
+  -- table constraint in Postgres — it was a syntax error here. See the
+  -- dedicated unique index right below the table.
 );
+CREATE UNIQUE INDEX uq_recurring_card_debits_company_vendor
+  ON recurring_card_debits(company_id, lower(vendor_name));
 CREATE INDEX idx_recurring_card_debits_company ON recurring_card_debits(company_id) WHERE active;
+-- (company_id, lower(vendor_name)) unique index emitted above, right after
+-- the table — see the NOTE inside the CREATE TABLE.
 ALTER TABLE internal_expenses
   ADD COLUMN recurring_debit_id uuid REFERENCES recurring_card_debits(id) ON DELETE SET NULL;
 ALTER TABLE internal_expenses
@@ -2518,363 +2590,24 @@ COMMENT ON VIEW order_courier_duty_expense_view IS
 -- revenue regardless of which status button was clicked. Cancelled orders
 -- are unaffected either way: their FULL order_value_inr is already
 -- excluded by the FILTER below, refund or not.
-CREATE OR REPLACE VIEW pl_dashboard_by_company_view AS
-WITH order_refund_totals AS (
-  SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr
-  FROM order_refunds
-  GROUP BY order_id
-),
--- 2026-09-17 (late): NET courier/duty — freight/duty AWB gross MINUS their
--- allocated CN share (freight_awb_net_view / duty_awb_net_view above).
-courier_agg AS (
-  SELECT o.company_id,
-    SUM(COALESCE(fn.net_shipping_amt, 0)) FILTER (WHERE o.status <> 'Cancelled') AS courier_net_inr,
-    SUM(COALESCE(dn.net_duty_amt, 0))     FILTER (WHERE o.status <> 'Cancelled') AS duty_net_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.company_id
-),
-order_agg AS (
-  SELECT o.company_id,
-    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) FILTER (WHERE o.status <> 'Cancelled') AS total_sale_value_inr,
-    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0)) FILTER (WHERE o.status <> 'Cancelled') AS order_expenses_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.company_id
-),
-purchase_agg AS (
-  SELECT company_id, SUM(g_total_plus_gst) AS purchase_expenses_gross_inr
-  FROM purchase_bills
-  WHERE company_id IS NOT NULL
-  GROUP BY company_id
-),
-purchase_adjustments AS (
-  SELECT bpr.company_id, SUM(a.amount) AS adjustment_total_inr
-  FROM bill_pass_register_adjustments a
-  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
-  WHERE bpr.source = 'purchase_bill'
-  GROUP BY bpr.company_id
-),
-washing_agg AS (
-  SELECT company_id, SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
-  FROM washing_entries
-  GROUP BY company_id
-),
-etsy_fee_by_order AS (
-  SELECT o.id AS order_id, SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
-  FROM orders o
-  JOIN etsy_ledger_lines e
-    ON e.company_id = o.company_id
-   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id
-),
-ebay_fee_by_order AS (
-  SELECT o.id AS order_id,
-    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN ebay_tax_invoice_lines b
-    ON b.company_id = o.company_id
-   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id
-),
-amazon_fee_by_order AS (
-  SELECT o.id AS order_id,
-    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN amazon_transactions a
-    ON a.company_id = o.company_id
-   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id
-),
-marketplace_fee_totals AS (
-  SELECT o.company_id,
-    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
-  FROM orders o
-  LEFT JOIN etsy_fee_by_order e    ON e.order_id = o.id
-  LEFT JOIN ebay_fee_by_order b    ON b.order_id = o.id
-  LEFT JOIN amazon_fee_by_order a  ON a.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-    AND (e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL)
-  GROUP BY o.company_id
-),
-bank_inflow AS (
-  SELECT bsl.company_id,
-    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
-  FROM bank_statement_lines bsl
-  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
-  WHERE bsl.cr_amount IS NOT NULL
-    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
-  GROUP BY bsl.company_id
-),
-historical_agg AS (
-  SELECT company_id, SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
-  FROM sale_profit_ledger
-  WHERE order_id IS NULL
-  GROUP BY company_id
-),
-combined AS (
-  SELECT
-    c.id AS company_id, c.name AS company_name,
-    COALESCE(oa.total_sale_value_inr,0) + COALESCE(ha.hist_sale_inr,0) AS total_sale_value_inr,
-    COALESCE(oa.order_expenses_inr,0)
-      + (COALESCE(pa.purchase_expenses_gross_inr,0) - COALESCE(padj.adjustment_total_inr,0))
-      + COALESCE(wa.washing_inr, 0)
-      + COALESCE(ha.hist_expense_inr,0) AS total_expenses_inr,
-    COALESCE(ca.courier_net_inr, 0)             AS expense_courier_inr,
-    COALESCE(ca.duty_net_inr, 0)                AS expense_duty_inr,
-    COALESCE(pa.purchase_expenses_gross_inr, 0) AS expense_purchase_inr,
-    -COALESCE(padj.adjustment_total_inr, 0)     AS expense_purchase_adjustments_inr,
-    COALESCE(wa.washing_inr, 0)                 AS expense_washing_inr,
-    COALESCE(ha.hist_expense_inr, 0)            AS expense_historical_inr,
-    COALESCE(mf.fees_matched_inr, 0)            AS portal_fees_matched_inr,
-    COALESCE(bi.inflow_inr, 0)                  AS bank_inflow_inr
-  FROM companies c
-  LEFT JOIN order_agg oa              ON oa.company_id = c.id
-  LEFT JOIN purchase_agg pa           ON pa.company_id = c.id
-  LEFT JOIN purchase_adjustments padj ON padj.company_id = c.id
-  LEFT JOIN washing_agg wa            ON wa.company_id = c.id
-  LEFT JOIN marketplace_fee_totals mf ON mf.company_id = c.id
-  LEFT JOIN historical_agg ha         ON ha.company_id = c.id
-  LEFT JOIN courier_agg ca            ON ca.company_id = c.id
-  LEFT JOIN bank_inflow bi            ON bi.company_id = c.id
-)
-SELECT
-  combined.company_id, company_name,
-  total_sale_value_inr,
-  total_expenses_inr,
-  (total_sale_value_inr - total_expenses_inr)                          AS net_total_value,
-  (total_sale_value_inr * 0.25)                                        AS portal_expenses_25pct,
-  -- 2026-09-17 (late): REAL-IF-KNOWN portal expense — matched fees when
-  -- any exist for this scope, else the 25% estimate (user-approved).
-  CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-       ELSE (total_sale_value_inr * 0.25) END                          AS portal_expense_effective_inr,
-  ((total_sale_value_inr - total_expenses_inr)
-     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-            ELSE (total_sale_value_inr * 0.25) END)                    AS net_earn,
-  (((total_sale_value_inr - total_expenses_inr)
-     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-            ELSE (total_sale_value_inr * 0.25) END) / NULLIF(total_sale_value_inr, 0)) AS profit_pct,
-  COALESCE(ie.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
-  (((total_sale_value_inr - total_expenses_inr)
-     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-            ELSE (total_sale_value_inr * 0.25) END)
-     - COALESCE(ie.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
-  expense_courier_inr,
-  expense_duty_inr,
-  expense_purchase_inr,
-  expense_purchase_adjustments_inr,
-  expense_washing_inr,
-  expense_historical_inr,
-  portal_fees_matched_inr,
-  bank_inflow_inr
-FROM combined
-LEFT JOIN (
-  SELECT company_id, SUM(amount_inr) AS total_internal_expenses_inr
-  FROM internal_expenses GROUP BY company_id
-) ie ON ie.company_id = combined.company_id;
-COMMENT ON VIEW pl_dashboard_by_company_view IS
-  '2026-09-17 (late): portal expense is REAL-IF-KNOWN — matched Etsy/eBay/Amazon fees when the scope has '
-  'any, else the flat 25% estimate (portal_expense_effective_inr; the raw estimate stays in '
-  'portal_expenses_25pct for comparison). Courier/duty expense is now NET of credit notes '
-  '(auto-proportional per-AWB CN split + per-AWB manual notes — see freight_awb_net_view / '
-  'duty_awb_net_view). History: 2026-08-20 live rebuild, 2026-08-25 refund netting, 2026-08-27 '
-  'purchase adjustments, 2026-09-17 breakdown columns + washing + fee hybrid.';
+-- ============================================================================
+-- (2026-09-19) pl_dashboard_by_company_view is now defined in SECTION 17f
+-- (2026-09-17b final shape with total_sale_value_usd, folded from
+-- db/2026-09-17b-pl-usd-and-company-month.sql) — it must come AFTER the
+-- marketplace/bank tables its CTEs join (a fresh apply failed here before
+-- the move).
+-- ============================================================================
 
-CREATE OR REPLACE VIEW pl_dashboard_by_month_view AS
-WITH months AS (
-  SELECT DISTINCT date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
-  UNION
-  SELECT DISTINCT date_trunc('month', vendor_invoice_date)::date AS month FROM purchase_bills WHERE vendor_invoice_date IS NOT NULL
-  UNION
-  SELECT DISTINCT date_trunc('month', chalan_date)::date AS month FROM washing_entries
-  UNION
-  SELECT DISTINCT date_trunc('month', invoice_date)::date AS month FROM sale_profit_ledger WHERE order_id IS NULL AND invoice_date IS NOT NULL
-  UNION
-  SELECT DISTINCT date_trunc('month', expense_date)::date AS month FROM internal_expenses
-),
-order_refund_totals AS (
-  SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr
-  FROM order_refunds
-  GROUP BY order_id
-),
-courier_agg AS (
-  SELECT date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
-    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY date_trunc('month', o.order_date)
-),
-order_agg AS (
-  SELECT date_trunc('month', o.order_date)::date AS month,
-    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0))                                 AS sale_inr,
-    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0))                         AS order_expense_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY date_trunc('month', o.order_date)
-),
-purchase_agg AS (
-  SELECT date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_gross_inr
-  FROM purchase_bills
-  WHERE vendor_invoice_date IS NOT NULL
-  GROUP BY date_trunc('month', vendor_invoice_date)
-),
-purchase_adjustments AS (
-  SELECT date_trunc('month', bpr.invoice_date)::date AS month, SUM(a.amount) AS adjustment_total_inr
-  FROM bill_pass_register_adjustments a
-  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
-  WHERE bpr.source = 'purchase_bill' AND bpr.invoice_date IS NOT NULL
-  GROUP BY date_trunc('month', bpr.invoice_date)
-),
-washing_agg AS (
-  SELECT date_trunc('month', chalan_date)::date AS month,
-    SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
-  FROM washing_entries
-  GROUP BY date_trunc('month', chalan_date)
-),
-etsy_fee_by_order AS (
-  SELECT o.id AS order_id,
-    date_trunc('month', o.order_date)::date AS month,
-    SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
-  FROM orders o
-  JOIN etsy_ledger_lines e
-    ON e.company_id = o.company_id
-   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, date_trunc('month', o.order_date)
-),
-ebay_fee_by_order AS (
-  SELECT o.id AS order_id,
-    date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN ebay_tax_invoice_lines b
-    ON b.company_id = o.company_id
-   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, date_trunc('month', o.order_date)
-),
-amazon_fee_by_order AS (
-  SELECT o.id AS order_id,
-    date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN amazon_transactions a
-    ON a.company_id = o.company_id
-   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, date_trunc('month', o.order_date)
-),
-marketplace_fee_totals AS (
-  SELECT om.month,
-    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
-  FROM (
-    SELECT DISTINCT o.id, date_trunc('month', o.order_date)::date AS month
-    FROM orders o
-    WHERE o.status <> 'Cancelled'
-  ) om
-  LEFT JOIN etsy_fee_by_order e    ON e.order_id = om.id
-  LEFT JOIN ebay_fee_by_order b    ON b.order_id = om.id
-  LEFT JOIN amazon_fee_by_order a  ON a.order_id = om.id
-  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
-  GROUP BY om.month
-),
-bank_inflow AS (
-  SELECT date_trunc('month', bsl.txn_date)::date AS month,
-    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
-  FROM bank_statement_lines bsl
-  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
-  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
-    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
-  GROUP BY date_trunc('month', bsl.txn_date)
-),
-historical_agg AS (
-  SELECT date_trunc('month', invoice_date)::date AS month,
-    SUM(total_value_inr) AS hist_sale_inr, SUM(total_expenses_inr) AS hist_expense_inr
-  FROM sale_profit_ledger
-  WHERE order_id IS NULL AND invoice_date IS NOT NULL
-  GROUP BY date_trunc('month', invoice_date)
-),
-expense_agg AS (
-  SELECT date_trunc('month', expense_date)::date AS month, SUM(amount_inr) AS total_internal_expenses_inr
-  FROM internal_expenses
-  GROUP BY date_trunc('month', expense_date)
-),
-combined AS (
-  SELECT
-    m.month,
-    COALESCE(oa.sale_inr, 0) + COALESCE(ha.hist_sale_inr, 0) AS total_sale_value_inr,
-    COALESCE(oa.order_expense_inr, 0)
-      + (COALESCE(pa.purchase_expense_gross_inr, 0) - COALESCE(padj.adjustment_total_inr, 0))
-      + COALESCE(wa.washing_inr, 0)
-      + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr,
-    COALESCE(ca.courier_net_inr, 0)   AS expense_courier_inr,
-    COALESCE(ca.duty_net_inr, 0)      AS expense_duty_inr,
-    COALESCE(pa.purchase_expense_gross_inr, 0) AS expense_purchase_inr,
-    -COALESCE(padj.adjustment_total_inr, 0)    AS expense_purchase_adjustments_inr,
-    COALESCE(wa.washing_inr, 0)                AS expense_washing_inr,
-    COALESCE(ha.hist_expense_inr, 0)           AS expense_historical_inr,
-    COALESCE(mf.fees_matched_inr, 0)           AS portal_fees_matched_inr,
-    COALESCE(bi.inflow_inr, 0)                 AS bank_inflow_inr
-  FROM months m
-  LEFT JOIN order_agg oa              ON oa.month = m.month
-  LEFT JOIN purchase_agg pa           ON pa.month = m.month
-  LEFT JOIN purchase_adjustments padj ON padj.month = m.month
-  LEFT JOIN washing_agg wa            ON wa.month = m.month
-  LEFT JOIN marketplace_fee_totals mf ON mf.month = m.month
-  LEFT JOIN historical_agg ha         ON ha.month = m.month
-  LEFT JOIN courier_agg ca            ON ca.month = m.month
-  LEFT JOIN bank_inflow bi            ON bi.month = m.month
-)
-SELECT
-  c.month,
-  c.total_sale_value_inr,
-  c.total_expenses_inr,
-  (c.total_sale_value_inr * 0.25) AS portal_expenses_25pct,
-  CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-       ELSE (c.total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
-  ((c.total_sale_value_inr - c.total_expenses_inr)
-     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-            ELSE (c.total_sale_value_inr * 0.25) END) AS net_earn,
-  (((c.total_sale_value_inr - c.total_expenses_inr)
-     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-            ELSE (c.total_sale_value_inr * 0.25) END) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
-  COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
-  (((c.total_sale_value_inr - c.total_expenses_inr)
-     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-            ELSE (c.total_sale_value_inr * 0.25) END)
-     - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
-  c.expense_courier_inr,
-  c.expense_duty_inr,
-  c.expense_purchase_inr,
-  c.expense_purchase_adjustments_inr,
-  c.expense_washing_inr,
-  c.expense_historical_inr,
-  c.portal_fees_matched_inr,
-  c.bank_inflow_inr
-FROM combined c
-LEFT JOIN expense_agg ea ON ea.month = c.month
-ORDER BY c.month DESC;
-COMMENT ON VIEW pl_dashboard_by_month_view IS
-  '2026-09-17 (late): portal expense REAL-IF-KNOWN per month (matched fees when any, else 25%); '
-  'courier/duty NET of CNs. Month-wise history mirrors the company view''s comment.';
+
+-- ============================================================================
+-- (2026-09-19) pl_dashboard_by_month_view is now defined in SECTION 17g
+-- (per-company round-9 shape, rebuilt from
+-- db/2026-09-18-pl-month-per-company.sql) — it must come AFTER the
+-- marketplace/bank tables its CTEs join (a fresh apply failed here before
+-- the move). The old all-companies shape that lived here merged every
+-- company into one row per month — wrong for a multi-company system.
+-- ============================================================================
+
 
 -- 2026-09-19 (audit fix, item C6) — pl_dashboard_by_company_month_view,
 -- pl_dashboard_by_store_view, current_employee_id(), finance_dashboard_
@@ -2887,604 +2620,22 @@ COMMENT ON VIEW pl_dashboard_by_month_view IS
 -- current_employee_id (no tracked migration file defines it — created
 -- directly at some point), from its live definition.
 
--- db/2026-09-17b-pl-usd-and-company-month.sql — one row per (company,
--- month), lets the CRM page's "P&L by Company" FY selector sum an FY's
--- months per company.
-CREATE OR REPLACE VIEW pl_dashboard_by_company_month_view AS
-WITH company_months AS (
-  SELECT DISTINCT company_id, date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
-  UNION
-  SELECT DISTINCT company_id, date_trunc('month', vendor_invoice_date)::date AS month FROM purchase_bills WHERE vendor_invoice_date IS NOT NULL AND company_id IS NOT NULL
-  UNION
-  SELECT DISTINCT company_id, date_trunc('month', chalan_date)::date AS month FROM washing_entries
-  UNION
-  SELECT DISTINCT company_id, date_trunc('month', invoice_date)::date AS month FROM sale_profit_ledger WHERE order_id IS NULL AND invoice_date IS NOT NULL
-  UNION
-  SELECT DISTINCT company_id, date_trunc('month', expense_date)::date AS month FROM internal_expenses
-),
-order_refund_totals AS (
-  SELECT order_id,
-    SUM(refund_amount_inr) AS refund_total_inr,
-    SUM(refund_amount_usd) AS refund_total_usd
-  FROM order_refunds
-  GROUP BY order_id
-),
-courier_agg AS (
-  SELECT o.company_id, date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
-    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.company_id, date_trunc('month', o.order_date)
-),
-order_agg AS (
-  SELECT o.company_id, date_trunc('month', o.order_date)::date AS month,
-    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) AS sale_inr,
-    SUM(o.order_value_usd - COALESCE(ort.refund_total_usd, 0)) AS sale_usd,
-    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0)) AS order_expense_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.company_id, date_trunc('month', o.order_date)
-),
-purchase_agg AS (
-  SELECT company_id, date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_gross_inr
-  FROM purchase_bills
-  WHERE vendor_invoice_date IS NOT NULL AND company_id IS NOT NULL
-  GROUP BY company_id, date_trunc('month', vendor_invoice_date)
-),
-purchase_adjustments AS (
-  SELECT bpr.company_id, date_trunc('month', bpr.invoice_date)::date AS month, SUM(a.amount) AS adjustment_total_inr
-  FROM bill_pass_register_adjustments a
-  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
-  WHERE bpr.source = 'purchase_bill' AND bpr.invoice_date IS NOT NULL
-  GROUP BY bpr.company_id, date_trunc('month', bpr.invoice_date)
-),
-washing_agg AS (
-  SELECT company_id, date_trunc('month', chalan_date)::date AS month,
-    SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
-  FROM washing_entries
-  GROUP BY company_id, date_trunc('month', chalan_date)
-),
-etsy_fee_by_order AS (
-  SELECT o.id AS order_id, o.company_id,
-    date_trunc('month', o.order_date)::date AS month,
-    SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
-  FROM orders o
-  JOIN etsy_ledger_lines e
-    ON e.company_id = o.company_id
-   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
-),
-ebay_fee_by_order AS (
-  SELECT o.id AS order_id, o.company_id,
-    date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN ebay_tax_invoice_lines b
-    ON b.company_id = o.company_id
-   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
-),
-amazon_fee_by_order AS (
-  SELECT o.id AS order_id, o.company_id,
-    date_trunc('month', o.order_date)::date AS month,
-    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN amazon_transactions a
-    ON a.company_id = o.company_id
-   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
-),
-marketplace_fee_totals AS (
-  SELECT om.company_id, om.month,
-    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
-  FROM (
-    SELECT DISTINCT o.id, o.company_id, date_trunc('month', o.order_date)::date AS month
-    FROM orders o
-    WHERE o.status <> 'Cancelled'
-  ) om
-  LEFT JOIN etsy_fee_by_order e    ON e.order_id = om.id
-  LEFT JOIN ebay_fee_by_order b    ON b.order_id = om.id
-  LEFT JOIN amazon_fee_by_order a  ON a.order_id = om.id
-  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
-  GROUP BY om.company_id, om.month
-),
-bank_inflow AS (
-  SELECT bsl.company_id, date_trunc('month', bsl.txn_date)::date AS month,
-    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
-  FROM bank_statement_lines bsl
-  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
-  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
-    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
-  GROUP BY bsl.company_id, date_trunc('month', bsl.txn_date)
-),
-historical_agg AS (
-  SELECT company_id, date_trunc('month', invoice_date)::date AS month,
-    SUM(total_value_inr) AS hist_sale_inr,
-    SUM(sale_value_usd) AS hist_sale_usd,
-    SUM(total_expenses_inr) AS hist_expense_inr
-  FROM sale_profit_ledger
-  WHERE order_id IS NULL AND invoice_date IS NOT NULL
-  GROUP BY company_id, date_trunc('month', invoice_date)
-),
-expense_agg AS (
-  SELECT company_id, date_trunc('month', expense_date)::date AS month, SUM(amount_inr) AS total_internal_expenses_inr
-  FROM internal_expenses
-  GROUP BY company_id, date_trunc('month', expense_date)
-),
-combined AS (
-  SELECT
-    cm.company_id, cm.month,
-    COALESCE(oa.sale_inr, 0) + COALESCE(ha.hist_sale_inr, 0) AS total_sale_value_inr,
-    COALESCE(oa.sale_usd, 0) + COALESCE(ha.hist_sale_usd, 0) AS total_sale_value_usd,
-    COALESCE(oa.order_expense_inr, 0)
-      + (COALESCE(pa.purchase_expense_gross_inr, 0) - COALESCE(padj.adjustment_total_inr, 0))
-      + COALESCE(wa.washing_inr, 0)
-      + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr,
-    COALESCE(ca.courier_net_inr, 0)   AS expense_courier_inr,
-    COALESCE(ca.duty_net_inr, 0)      AS expense_duty_inr,
-    COALESCE(pa.purchase_expense_gross_inr, 0) AS expense_purchase_inr,
-    -COALESCE(padj.adjustment_total_inr, 0)    AS expense_purchase_adjustments_inr,
-    COALESCE(wa.washing_inr, 0)                AS expense_washing_inr,
-    COALESCE(ha.hist_expense_inr, 0)           AS expense_historical_inr,
-    COALESCE(mf.fees_matched_inr, 0)           AS portal_fees_matched_inr,
-    COALESCE(bi.inflow_inr, 0)                 AS bank_inflow_inr
-  FROM company_months cm
-  LEFT JOIN order_agg oa              ON oa.company_id = cm.company_id AND oa.month = cm.month
-  LEFT JOIN purchase_agg pa           ON pa.company_id = cm.company_id AND pa.month = cm.month
-  LEFT JOIN purchase_adjustments padj ON padj.company_id = cm.company_id AND padj.month = cm.month
-  LEFT JOIN washing_agg wa            ON wa.company_id = cm.company_id AND wa.month = cm.month
-  LEFT JOIN marketplace_fee_totals mf ON mf.company_id = cm.company_id AND mf.month = cm.month
-  LEFT JOIN historical_agg ha         ON ha.company_id = cm.company_id AND ha.month = cm.month
-  LEFT JOIN courier_agg ca            ON ca.company_id = cm.company_id AND ca.month = cm.month
-  LEFT JOIN bank_inflow bi            ON bi.company_id = cm.company_id AND bi.month = cm.month
-)
-SELECT
-  c.company_id,
-  comp.name AS company_name,
-  c.month,
-  c.total_sale_value_inr,
-  c.total_sale_value_usd,
-  c.total_expenses_inr,
-  (c.total_sale_value_inr * 0.25) AS portal_expenses_25pct,
-  CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-       ELSE (c.total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
-  ((c.total_sale_value_inr - c.total_expenses_inr)
-     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-            ELSE (c.total_sale_value_inr * 0.25) END) AS net_earn,
-  (((c.total_sale_value_inr - c.total_expenses_inr)
-     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-            ELSE (c.total_sale_value_inr * 0.25) END) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
-  COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
-  (((c.total_sale_value_inr - c.total_expenses_inr)
-     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
-            ELSE (c.total_sale_value_inr * 0.25) END)
-     - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
-  c.expense_courier_inr,
-  c.expense_duty_inr,
-  c.expense_purchase_inr,
-  c.expense_purchase_adjustments_inr,
-  c.expense_washing_inr,
-  c.expense_historical_inr,
-  c.portal_fees_matched_inr,
-  c.bank_inflow_inr
-FROM combined c
-JOIN companies comp ON comp.id = c.company_id
-LEFT JOIN expense_agg ea ON ea.company_id = c.company_id AND ea.month = c.month
-ORDER BY c.company_id, c.month DESC;
-COMMENT ON VIEW pl_dashboard_by_company_month_view IS
-  '2026-09-17 (evening): one row per (company, month) — same figures as pl_dashboard_by_company_view '
-  'and pl_dashboard_by_month_view, just crossed so the CRM page can sum an FY''s months PER COMPANY '
-  '(the FY-by-Company selector). Sum this view''s rows for one company across all its months and it '
-  'should equal that company''s row in pl_dashboard_by_company_view.';
+-- (2026-09-19 audit fix, item C6) pl_dashboard_by_company_month_view and
+-- pl_dashboard_by_store_view were backfilled here, but SECTION 17 (P&L
+-- appendix, end of file) defines both — including the 2026-09-19 purchase-
+-- credit-note NETTING of expense_purchase_inr. Duplicate definitions = last
+-- CREATE wins on a fresh apply, which would silently un-net the number, and
+-- the mid-file copies also forward-referenced etsy_ledger_lines. They now
+-- live ONLY in SECTION 17 (17g and 17f).
 
--- db/2026-09-19-pl-store-finance-purchase-cn-netting.sql (originally
--- db/2026-09-18-pl-by-marketplace-store.sql, extended
--- db/2026-09-18c-pl-purchase-washing-order-linked.sql) — "P&L by
--- Marketplace/Store" CRM tab, one row per store.
-CREATE OR REPLACE VIEW pl_dashboard_by_store_view AS
-WITH order_refund_totals AS (
-  SELECT order_id,
-    SUM(refund_amount_inr) AS refund_total_inr,
-    SUM(refund_amount_usd) AS refund_total_usd
-  FROM order_refunds
-  GROUP BY order_id
-),
-courier_agg AS (
-  SELECT o.store_id,
-    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
-    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
-  FROM orders o
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.store_id
-),
-order_agg AS (
-  SELECT o.store_id,
-    COUNT(*) AS order_count,
-    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) AS total_sale_value_inr,
-    SUM(o.order_value_usd - COALESCE(ort.refund_total_usd, 0)) AS total_sale_value_usd
-  FROM orders o
-  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.store_id
-),
-etsy_fee_by_order AS (
-  SELECT o.id AS order_id, o.store_id, SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
-  FROM orders o
-  JOIN etsy_ledger_lines e
-    ON e.company_id = o.company_id
-   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, o.store_id
-),
-ebay_fee_by_order AS (
-  SELECT o.id AS order_id, o.store_id,
-    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN ebay_tax_invoice_lines b
-    ON b.company_id = o.company_id
-   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, o.store_id
-),
-amazon_fee_by_order AS (
-  SELECT o.id AS order_id, o.store_id,
-    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
-  FROM orders o
-  JOIN amazon_transactions a
-    ON a.company_id = o.company_id
-   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
-  WHERE o.status <> 'Cancelled'
-  GROUP BY o.id, o.store_id
-),
-marketplace_fee_totals AS (
-  SELECT om.store_id,
-    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
-  FROM (
-    SELECT DISTINCT o.id, o.store_id FROM orders o WHERE o.status <> 'Cancelled'
-  ) om
-  LEFT JOIN etsy_fee_by_order e   ON e.order_id = om.id
-  LEFT JOIN ebay_fee_by_order b   ON b.order_id = om.id
-  LEFT JOIN amazon_fee_by_order a ON a.order_id = om.id
-  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
-  GROUP BY om.store_id
-),
-ad_spend_agg AS (
-  SELECT store_id,
-    SUM(spend_usd)   AS ad_spend_usd,
-    SUM(budget_usd)  AS ad_budget_usd
-  FROM store_ad_spend
-  GROUP BY store_id
-),
-purchase_agg AS (
-  SELECT o.store_id, SUM(pb.g_total_plus_gst) AS purchase_inr
-  FROM purchase_bills pb
-  JOIN orders o ON o.id = pb.order_id
-  GROUP BY o.store_id
-),
-purchase_adjustments AS (
-  SELECT o.store_id, SUM(a.amount) AS adjustment_total_inr
-  FROM bill_pass_register_adjustments a
-  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
-  JOIN purchase_bills pb ON pb.id = bpr.source_id
-  JOIN orders o ON o.id = pb.order_id
-  WHERE bpr.source = 'purchase_bill'
-  GROUP BY o.store_id
-),
-washing_agg AS (
-  SELECT store_id, SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
-  FROM washing_entries
-  WHERE store_id IS NOT NULL
-  GROUP BY store_id
-),
-combined AS (
-  SELECT
-    s.id AS store_id, s.name AS store_name, s.company_id, comp.name AS company_name,
-    COALESCE(oa.order_count, 0)          AS order_count,
-    COALESCE(oa.total_sale_value_inr, 0) AS total_sale_value_inr,
-    COALESCE(oa.total_sale_value_usd, 0) AS total_sale_value_usd,
-    COALESCE(ca.courier_net_inr, 0)      AS expense_courier_inr,
-    COALESCE(ca.duty_net_inr, 0)         AS expense_duty_inr,
-    COALESCE(mf.fees_matched_inr, 0)     AS portal_fees_matched_inr,
-    COALESCE(ad.ad_spend_usd, 0)         AS ad_spend_usd,
-    COALESCE(ad.ad_budget_usd, 0)        AS ad_budget_usd,
-    COALESCE(pa.purchase_inr, 0) - COALESCE(padj.adjustment_total_inr, 0) AS expense_purchase_inr,
-    COALESCE(wa.washing_inr, 0)          AS expense_washing_inr
-  FROM stores s
-  JOIN companies comp                 ON comp.id = s.company_id
-  LEFT JOIN order_agg oa              ON oa.store_id = s.id
-  LEFT JOIN courier_agg ca            ON ca.store_id = s.id
-  LEFT JOIN marketplace_fee_totals mf ON mf.store_id = s.id
-  LEFT JOIN ad_spend_agg ad           ON ad.store_id = s.id
-  LEFT JOIN purchase_agg pa           ON pa.store_id = s.id
-  LEFT JOIN purchase_adjustments padj ON padj.store_id = s.id
-  LEFT JOIN washing_agg wa            ON wa.store_id = s.id
-)
-SELECT
-  store_id, store_name, company_id, company_name,
-  order_count,
-  total_sale_value_inr,
-  total_sale_value_usd,
-  expense_courier_inr,
-  expense_duty_inr,
-  (total_sale_value_inr * 0.25) AS portal_expenses_25pct,
-  CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-       ELSE (total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
-  portal_fees_matched_inr,
-  ad_spend_usd,
-  ad_budget_usd,
-  expense_purchase_inr,
-  expense_washing_inr,
-  (total_sale_value_inr - expense_courier_inr - expense_duty_inr
-    - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-           ELSE (total_sale_value_inr * 0.25) END
-    - expense_purchase_inr - expense_washing_inr)             AS net_before_overhead_inr,
-  ((total_sale_value_inr - expense_courier_inr - expense_duty_inr
-    - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
-           ELSE (total_sale_value_inr * 0.25) END
-    - expense_purchase_inr - expense_washing_inr)
-    / NULLIF(total_sale_value_inr, 0))                        AS profit_pct_before_overhead,
-  (total_sale_value_usd / NULLIF(ad_spend_usd, 0))            AS roas
-FROM combined
-ORDER BY total_sale_value_inr DESC NULLS LAST;
-COMMENT ON VIEW pl_dashboard_by_store_view IS
-  '2026-09-19 (audit fix, item B3): expense_purchase_inr is NET of purchase-bill Credit/Debit Note '
-  'adjustments, attributed via order_id -> store_id, same as the gross purchase sum. History: '
-  '2026-09-18 (round 8) added expense_purchase_inr/expense_washing_inr via purchase_bills.order_id / '
-  'washing_entries.store_id.';
-
--- 2026-09-19 (audit fix, item C6) — finance_dashboard_monthly() and
--- finance_dashboard_unlinked_purchase_washing() (Finance Dashboard page,
--- db/2026-09-18b-finance-dashboard-rpc.sql + db/2026-09-18c-pl-purchase-
--- washing-order-linked.sql, netting fixed in db/2026-09-19-pl-store-
--- finance-purchase-cn-netting.sql) existed live but were never added here.
--- Placed here (not near get_official_rate_as_of, where an earlier pass of
--- this same fix first put them) because they reference orders/purchase_
--- bills/washing_entries/freight_awb_net_view etc., all defined later in
--- this file — same reasoning the pl_dashboard_by_* views above are
--- clustered here rather than near the top.
-CREATE OR REPLACE FUNCTION finance_dashboard_monthly(
-  p_company_id uuid,
-  p_from date,
-  p_to date,
-  p_store_id uuid DEFAULT NULL,
-  p_buyer_country text DEFAULT NULL
-)
-RETURNS TABLE (
-  month                        date,
-  order_count                  bigint,
-  total_sale_value_inr         numeric,
-  total_sale_value_usd         numeric,
-  expense_courier_inr          numeric,
-  expense_duty_inr             numeric,
-  portal_fees_matched_inr      numeric,
-  portal_expense_effective_inr numeric,
-  ad_spend_usd                 numeric,
-  returns_inr                  numeric,
-  expense_purchase_inr         numeric,
-  expense_washing_inr          numeric
-)
-LANGUAGE sql STABLE AS $$
-WITH filtered_orders AS (
-  SELECT o.*
-  FROM orders o
-  WHERE o.company_id = p_company_id
-    AND o.status <> 'Cancelled'
-    AND o.order_date >= p_from AND o.order_date <= p_to
-    AND (p_store_id IS NULL OR o.store_id = p_store_id)
-    AND (p_buyer_country IS NULL OR o.buyer_country = p_buyer_country)
-),
-order_refund_totals AS (
-  SELECT orf.order_id,
-    SUM(orf.refund_amount_inr) AS refund_total_inr,
-    SUM(orf.refund_amount_usd) AS refund_total_usd
-  FROM order_refunds orf
-  WHERE orf.order_id IN (SELECT id FROM filtered_orders)
-  GROUP BY orf.order_id
-),
-courier_agg AS (
-  SELECT date_trunc('month', fo.order_date)::date AS month,
-    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
-    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
-  FROM filtered_orders fo
-  LEFT JOIN freight_awb_net_view fn ON fn.order_id = fo.id
-  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = fo.id
-  GROUP BY date_trunc('month', fo.order_date)
-),
-order_agg AS (
-  SELECT date_trunc('month', fo.order_date)::date AS month,
-    COUNT(*) AS order_count,
-    SUM(fo.order_value_inr - COALESCE(ort.refund_total_inr, 0)) AS sale_inr,
-    SUM(fo.order_value_usd - COALESCE(ort.refund_total_usd, 0)) AS sale_usd
-  FROM filtered_orders fo
-  LEFT JOIN order_refund_totals ort ON ort.order_id = fo.id
-  GROUP BY date_trunc('month', fo.order_date)
-),
-etsy_fee AS (
-  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
-    SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
-  FROM filtered_orders fo
-  JOIN etsy_ledger_lines e
-    ON e.company_id = fo.company_id
-   AND e.order_number = btrim(regexp_replace(fo.marketplace_order_no, '^\s*#+', ''))
-  GROUP BY fo.id, date_trunc('month', fo.order_date)
-),
-ebay_fee AS (
-  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
-    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
-  FROM filtered_orders fo
-  JOIN ebay_tax_invoice_lines b
-    ON b.company_id = fo.company_id
-   AND b.order_number = btrim(regexp_replace(fo.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, fo.order_date, CURRENT_DATE)) ru ON true
-  GROUP BY fo.id, date_trunc('month', fo.order_date)
-),
-amazon_fee AS (
-  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
-    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
-  FROM filtered_orders fo
-  JOIN amazon_transactions a
-    ON a.company_id = fo.company_id
-   AND a.order_id = btrim(regexp_replace(fo.marketplace_order_no, '^\s*#+', ''))
-  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, fo.order_date, CURRENT_DATE)) ra ON true
-  GROUP BY fo.id, date_trunc('month', fo.order_date)
-),
-marketplace_fee_by_order AS (
-  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
-    COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0) AS fees_inr
-  FROM filtered_orders fo
-  LEFT JOIN etsy_fee e   ON e.order_id = fo.id
-  LEFT JOIN ebay_fee b   ON b.order_id = fo.id
-  LEFT JOIN amazon_fee a ON a.order_id = fo.id
-  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
-),
-marketplace_fee_agg AS (
-  SELECT month, SUM(fees_inr) AS fees_matched_inr FROM marketplace_fee_by_order GROUP BY month
-),
-ad_spend_agg AS (
-  SELECT date_trunc('month', sas.spend_date)::date AS month,
-    SUM(sas.spend_usd) AS ad_spend_usd
-  FROM store_ad_spend sas
-  JOIN stores s ON s.id = sas.store_id
-  WHERE s.company_id = p_company_id
-    AND sas.spend_date >= p_from AND sas.spend_date <= p_to
-    AND (p_store_id IS NULL OR sas.store_id = p_store_id)
-  GROUP BY date_trunc('month', sas.spend_date)
-),
-returns_agg AS (
-  SELECT date_trunc('month', orf.refund_date)::date AS month,
-    SUM(orf.refund_amount_inr) AS returns_inr
-  FROM order_refunds orf
-  JOIN orders o2 ON o2.id = orf.order_id
-  WHERE o2.company_id = p_company_id
-    AND orf.refund_date >= p_from AND orf.refund_date <= p_to
-    AND (p_store_id IS NULL OR o2.store_id = p_store_id)
-    AND (p_buyer_country IS NULL OR o2.buyer_country = p_buyer_country)
-  GROUP BY date_trunc('month', orf.refund_date)
-),
-purchase_agg AS (
-  SELECT date_trunc('month', pb.vendor_invoice_date)::date AS month,
-    SUM(pb.g_total_plus_gst) AS purchase_inr
-  FROM purchase_bills pb
-  LEFT JOIN orders o3 ON o3.id = pb.order_id
-  WHERE pb.company_id = p_company_id
-    AND pb.vendor_invoice_date >= p_from AND pb.vendor_invoice_date <= p_to
-    AND (
-      (p_store_id IS NULL AND p_buyer_country IS NULL)
-      OR (o3.id IS NOT NULL
-          AND (p_store_id IS NULL OR o3.store_id = p_store_id)
-          AND (p_buyer_country IS NULL OR o3.buyer_country = p_buyer_country))
-    )
-  GROUP BY date_trunc('month', pb.vendor_invoice_date)
-),
-purchase_adjustments AS (
-  SELECT date_trunc('month', pb.vendor_invoice_date)::date AS month,
-    SUM(a.amount) AS adjustment_total_inr
-  FROM bill_pass_register_adjustments a
-  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
-  JOIN purchase_bills pb ON pb.id = bpr.source_id
-  LEFT JOIN orders o5 ON o5.id = pb.order_id
-  WHERE bpr.source = 'purchase_bill'
-    AND pb.company_id = p_company_id
-    AND pb.vendor_invoice_date >= p_from AND pb.vendor_invoice_date <= p_to
-    AND (
-      (p_store_id IS NULL AND p_buyer_country IS NULL)
-      OR (o5.id IS NOT NULL
-          AND (p_store_id IS NULL OR o5.store_id = p_store_id)
-          AND (p_buyer_country IS NULL OR o5.buyer_country = p_buyer_country))
-    )
-  GROUP BY date_trunc('month', pb.vendor_invoice_date)
-),
-washing_agg AS (
-  SELECT date_trunc('month', we.chalan_date)::date AS month,
-    SUM(COALESCE(we.amount, 0) + COALESCE(we.debit_charges, 0)) AS washing_inr
-  FROM washing_entries we
-  LEFT JOIN orders o4 ON o4.id = we.order_id
-  WHERE we.company_id = p_company_id
-    AND we.chalan_date >= p_from AND we.chalan_date <= p_to
-    AND (
-      (p_store_id IS NULL AND p_buyer_country IS NULL)
-      OR (
-        (p_store_id IS NULL OR we.store_id = p_store_id)
-        AND (p_buyer_country IS NULL OR (o4.id IS NOT NULL AND o4.buyer_country = p_buyer_country))
-      )
-    )
-  GROUP BY date_trunc('month', we.chalan_date)
-),
-months AS (
-  SELECT month FROM order_agg
-  UNION SELECT month FROM ad_spend_agg
-  UNION SELECT month FROM returns_agg
-  UNION SELECT month FROM purchase_agg
-  UNION SELECT month FROM purchase_adjustments
-  UNION SELECT month FROM washing_agg
-)
-SELECT
-  m.month,
-  COALESCE(oa.order_count, 0)::bigint AS order_count,
-  COALESCE(oa.sale_inr, 0)  AS total_sale_value_inr,
-  COALESCE(oa.sale_usd, 0)  AS total_sale_value_usd,
-  COALESCE(ca.courier_net_inr, 0) AS expense_courier_inr,
-  COALESCE(ca.duty_net_inr, 0)    AS expense_duty_inr,
-  COALESCE(mfa.fees_matched_inr, 0) AS portal_fees_matched_inr,
-  CASE WHEN COALESCE(mfa.fees_matched_inr, 0) > 0 THEN mfa.fees_matched_inr
-       ELSE COALESCE(oa.sale_inr, 0) * 0.25 END AS portal_expense_effective_inr,
-  COALESCE(ad.ad_spend_usd, 0) AS ad_spend_usd,
-  COALESCE(ra.returns_inr, 0)  AS returns_inr,
-  COALESCE(pa.purchase_inr, 0) - COALESCE(padj.adjustment_total_inr, 0) AS expense_purchase_inr,
-  COALESCE(wa.washing_inr, 0)  AS expense_washing_inr
-FROM months m
-LEFT JOIN order_agg oa          ON oa.month = m.month
-LEFT JOIN courier_agg ca        ON ca.month = m.month
-LEFT JOIN marketplace_fee_agg mfa ON mfa.month = m.month
-LEFT JOIN ad_spend_agg ad       ON ad.month = m.month
-LEFT JOIN returns_agg ra        ON ra.month = m.month
-LEFT JOIN purchase_agg pa       ON pa.month = m.month
-LEFT JOIN purchase_adjustments padj ON padj.month = m.month
-LEFT JOIN washing_agg wa        ON wa.month = m.month
-ORDER BY m.month;
-$$;
-
-CREATE OR REPLACE FUNCTION finance_dashboard_unlinked_purchase_washing(
-  p_company_id uuid,
-  p_from date,
-  p_to date
-)
-RETURNS TABLE (
-  unlinked_purchase_bill_count integer,
-  unlinked_purchase_inr        numeric,
-  unlinked_washing_entry_count integer,
-  unlinked_washing_inr         numeric
-)
-LANGUAGE sql STABLE AS $$
-  SELECT
-    (SELECT COUNT(*)::int FROM purchase_bills
-      WHERE company_id = p_company_id AND order_id IS NULL
-        AND vendor_invoice_date >= p_from AND vendor_invoice_date <= p_to),
-    (SELECT COALESCE(SUM(g_total_plus_gst), 0) FROM purchase_bills
-      WHERE company_id = p_company_id AND order_id IS NULL
-        AND vendor_invoice_date >= p_from AND vendor_invoice_date <= p_to),
-    (SELECT COUNT(*)::int FROM washing_entries
-      WHERE company_id = p_company_id AND order_id IS NULL
-        AND chalan_date >= p_from AND chalan_date <= p_to),
-    (SELECT COALESCE(SUM(COALESCE(amount,0) + COALESCE(debit_charges,0)), 0) FROM washing_entries
-      WHERE company_id = p_company_id AND order_id IS NULL
-        AND chalan_date >= p_from AND chalan_date <= p_to);
-$$;
+-- (2026-09-19 audit fix, item C6) finance_dashboard_monthly() and
+-- finance_dashboard_unlinked_purchase_washing() were first backfilled here,
+-- but SECTION 17h (end of file) already folds them — including the 2026-09-19
+-- credit-note NETTING of expense_purchase_inr. Two definitions = last CREATE
+-- wins on a fresh apply, which silently un-netted the number; they now live
+-- ONLY in SECTION 17h. See db/2026-09-18b-finance-dashboard-rpc.sql +
+-- db/2026-09-18c-pl-purchase-washing-order-linked.sql +
+-- db/2026-09-19-pl-store-finance-purchase-cn-netting.sql.
 
 
 -- =============================================================================
@@ -3948,6 +3099,14 @@ CREATE TABLE etsy_monthly_tax_invoices (
   renew_sold_fees_qty                                 integer NOT NULL DEFAULT 0,
   renew_sold_fees                                       numeric(14,2) NOT NULL DEFAULT 0,
   renew_sold_fees_other                                   numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-09-19: a real invoice carries a separate one-time "Account
+  -- Opening Fee" line; the Statement Entry form has always collected it
+  -- (src/app/dashboard/statements/statement-entry-forms.tsx) and the
+  -- insert action always sent it — but the column itself was never folded
+  -- into schema.sql, so every Etsy statement insert failed with
+  -- "column account_opening_fee does not exist". Folded back here and
+  -- added to all three generated-column formulas below.
+  account_opening_fee                                        numeric(14,2) NOT NULL DEFAULT 0,
   etsy_ads_fees                                           numeric(14,2) NOT NULL DEFAULT 0,
   processing_fees                                           numeric(14,2) NOT NULL DEFAULT 0,
   offsite_ads_fees                                            numeric(14,2) NOT NULL DEFAULT 0,
@@ -3971,18 +3130,18 @@ CREATE TABLE etsy_monthly_tax_invoices (
   subtotal_inr numeric(14,2) GENERATED ALWAYS AS (
     subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
     + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
-    + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount
+    + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees + account_opening_fee - promotional_discount
   ) STORED,
   gst_amount_inr numeric(14,2) GENERATED ALWAYS AS (
     (subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
      + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
-     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount)
+     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees + account_opening_fee - promotional_discount)
     * gst_pct
   ) STORED,
   total_inr numeric(14,2) GENERATED ALWAYS AS (
     (subscription_plan_fees + listing_fees + listing_fees_other + transaction_fees
      + renew_fees + renew_expired_fees + renew_expired_fees_other + renew_sold_fees + renew_sold_fees_other
-     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees - promotional_discount)
+     + etsy_ads_fees + processing_fees + offsite_ads_fees + regulatory_operating_fees + account_opening_fee - promotional_discount)
     * (1 + gst_pct)
   ) STORED,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -4097,6 +3256,46 @@ CREATE TABLE ebay_monthly_financial_statement (
 -- =============================================================================
 -- SECTION 16 — HR: ATTENDANCE, HR LETTERS
 -- =============================================================================
+
+-- ============================================================================
+-- SECTION 16a-1 (2026-09-11, folded back 2026-09-19) — LEAVE TYPES + BALANCE
+-- ADJUSTMENTS. Moved ABOVE attendance/leave_requests, which both reference
+-- leave_types(id) — a fresh apply failed on those references before.
+-- ============================================================================
+
+CREATE TABLE leave_types (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id            uuid NOT NULL REFERENCES companies(id),
+  name                  text NOT NULL,
+  code                  text,
+  paid                  boolean NOT NULL DEFAULT true,
+  annual_accrual_days   numeric(5,1) NOT NULL DEFAULT 0,
+  accrual_frequency     text NOT NULL DEFAULT 'Monthly' CHECK (accrual_frequency IN ('Monthly', 'Upfront')),
+  carry_forward_cap     numeric(5,1),
+  active                boolean NOT NULL DEFAULT true,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, name)
+);
+COMMENT ON TABLE leave_types IS
+  'Real leave categories, admin-configurable per company from /dashboard/leave/admin. A company with zero rows '
+  'here keeps the original single-pool leave behavior (employee_salary.allowed_leaves_per_month) unchanged.';
+
+CREATE TABLE leave_balance_adjustments (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id             uuid NOT NULL REFERENCES employees(id),
+  leave_type_id           uuid NOT NULL REFERENCES leave_types(id),
+  leave_year              int NOT NULL,
+  adjustment_days         numeric(5,1) NOT NULL,
+  reason                  text,
+  entered_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_leave_balance_adjustments_employee ON leave_balance_adjustments(employee_id, leave_type_id, leave_year);
+COMMENT ON TABLE leave_balance_adjustments IS
+  'Ledger of manual balance corrections (opening/carry-forward balances, one-off grants, mistakes fixed). The '
+  'live balance for (employee, leave_type, leave_year) is: SUM(adjustment_days here) + accrued-to-date (computed '
+  'live from leave_types.annual_accrual_days/accrual_frequency, see src/lib/attendance/leave-balance.ts) minus '
+  'approved Leave days of that type this year (counted from attendance, not stored anywhere separately).';
 
 -- Old sheet: Attendance — one row per person per day, from either the web
 -- app's own Punch In/Punch Out (a backup for the physical biometric device)
@@ -4252,7 +3451,18 @@ CREATE TABLE hr_letters (
   letter_date                              date NOT NULL DEFAULT CURRENT_DATE,
   remark                                     text,
   generated_by_employee_id                     uuid NOT NULL REFERENCES employees(id),
-  generated_on                                   timestamptz NOT NULL DEFAULT now()
+  generated_on                                   timestamptz NOT NULL DEFAULT now(),
+
+  -- 2026-08-27 (folded 2026-09-19): full record of every issued letter
+  -- (template identity + rendered body + who/what signed it) so the letter
+  -- log can re-render/audit any issued letter.
+  template_slug             text,
+  employee_address          text,
+  signatory_name            text,
+  signatory_designation     text,
+  subject_line              text,
+  field_values              jsonb NOT NULL DEFAULT '{}'::jsonb,
+  body_text                 text NOT NULL DEFAULT ''
 );
 CREATE INDEX idx_hr_letters_company ON hr_letters(for_company_id);
 
@@ -4264,7 +3474,7 @@ DECLARE
   v_type_code_map jsonb := '{
     "Joining Letter":"JL", "Offer Letter":"OL", "Promotion Letter":"PL", "Increment Letter":"IL",
     "Experience Letter":"EL", "Relieving Letter":"RL", "Warning Letter":"WL", "Salary Slip":"SS",
-    "Custom / Other Letter":"GL"
+    "Termination Letter":"TL", "Custom / Other Letter":"GL"
   }';
 BEGIN
   SELECT ref_prefix INTO v_prefix FROM companies WHERE id = NEW.for_company_id;
@@ -4717,39 +3927,8 @@ COMMENT ON TABLE leave_coverage_assignments IS
 -- request (leave_type_id IS NULL, both here and on leave_requests) behaves
 -- EXACTLY as before this round.
 -- =============================================================================
-CREATE TABLE leave_types (
-  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id            uuid NOT NULL REFERENCES companies(id),
-  name                  text NOT NULL,
-  code                  text,
-  paid                  boolean NOT NULL DEFAULT true,
-  annual_accrual_days   numeric(5,1) NOT NULL DEFAULT 0,
-  accrual_frequency     text NOT NULL DEFAULT 'Monthly' CHECK (accrual_frequency IN ('Monthly', 'Upfront')),
-  carry_forward_cap     numeric(5,1),
-  active                boolean NOT NULL DEFAULT true,
-  created_at            timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (company_id, name)
-);
-COMMENT ON TABLE leave_types IS
-  'Real leave categories, admin-configurable per company from /dashboard/leave/admin. A company with zero rows '
-  'here keeps the original single-pool leave behavior (employee_salary.allowed_leaves_per_month) unchanged.';
 
-CREATE TABLE leave_balance_adjustments (
-  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_id             uuid NOT NULL REFERENCES employees(id),
-  leave_type_id           uuid NOT NULL REFERENCES leave_types(id),
-  leave_year              int NOT NULL,
-  adjustment_days         numeric(5,1) NOT NULL,
-  reason                  text,
-  entered_by_employee_id  uuid REFERENCES employees(id),
-  created_at              timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_leave_balance_adjustments_employee ON leave_balance_adjustments(employee_id, leave_type_id, leave_year);
-COMMENT ON TABLE leave_balance_adjustments IS
-  'Ledger of manual balance corrections (opening/carry-forward balances, one-off grants, mistakes fixed). The '
-  'live balance for (employee, leave_type, leave_year) is: SUM(adjustment_days here) + accrued-to-date (computed '
-  'live from leave_types.annual_accrual_days/accrual_frequency, see src/lib/attendance/leave-balance.ts) minus '
-  'approved Leave days of that type this year (counted from attendance, not stored anywhere separately).';
+
 
 
 -- =============================================================================
@@ -5401,6 +4580,34 @@ CREATE INDEX idx_bank_recon_accounts_company ON bank_recon_accounts(company_id) 
 -- (account, date, +/-amount, 8-char narration stem) - two same-day same-
 -- amount payments to one vendor have different UTRs so both import; a
 -- re-uploaded file fingerprint-matches every row and imports nothing.
+
+-- The recon columns themselves (2026-09-17) — the CREATE TABLE above predates
+-- the recon migration, so a fresh apply needs these ALTERs before the indexes
+-- below can exist:
+ALTER TABLE bank_statement_lines
+  ADD COLUMN recon_account_id uuid REFERENCES bank_recon_accounts(id);
+ALTER TABLE bank_statement_lines
+  ADD COLUMN recon_status text NOT NULL DEFAULT 'unmatched';
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_party_id uuid REFERENCES parties(id);
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_store_id uuid REFERENCES stores(id);
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_bill_id uuid;         -- bill_pass_register.id (no FK on purpose: links must survive bill merges)
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_order_id uuid REFERENCES orders(id);
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_reference text;       -- human-readable "what this matched to"
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_at timestamptz;
+ALTER TABLE bank_statement_lines
+  ADD COLUMN linked_by_employee_id uuid REFERENCES employees(id);
+ALTER TABLE bank_statement_lines
+  ADD COLUMN match_method text;           -- utr | order_no | invoice_no | party_name | amount_month | verified
+ALTER TABLE bank_statement_lines
+  ADD COLUMN import_fingerprint text;     -- dedupe key (see migration header)
+ALTER TABLE bank_statement_lines
+  ADD COLUMN imported_batch_id uuid;      -- groups one upload
 CREATE INDEX idx_bank_stmt_account_status ON bank_statement_lines(recon_account_id, recon_status);
 CREATE INDEX idx_bank_stmt_fingerprint ON bank_statement_lines(import_fingerprint) WHERE import_fingerprint IS NOT NULL;
 
@@ -5444,6 +4651,1134 @@ CREATE TABLE bank_statement_columns (
 CREATE UNIQUE INDEX uq_bank_statement_columns_header
   ON bank_statement_columns(account_id, lower(file_header));
 
+
+
+-- ============================================================================
+-- SECTION 17i — COMPANION / CSB FILINGS / VENDOR ASSIGNMENTS / STOCK-OUT LINKS
+-- Folded from db/2026-09-05-ai-companion-live.sql,
+-- db/2026-09-05-ai-companion-refinements.sql, db/2026-08-14-csb-filings.sql,
+-- db/2026-09-08-order-address-fields-and-vendor-assignments.sql,
+-- db/2026-08-17-stock-out-order-links.sql. RLS policies live only in the
+-- migrations (schema.sql never carried them — see its enable-RLS migration).
+-- ============================================================================
+
+-- 2026-09-05: per-employee AI companion switch + display name.
+ALTER TABLE employees
+  ADD COLUMN companion_enabled boolean NOT NULL DEFAULT false;
+ALTER TABLE employees
+  ADD COLUMN companion_name text;
+
+-- One row per reaction the companion should show (written server-side only).
+CREATE TABLE companion_events (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id   uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  event_type    text NOT NULL, -- 'order_placed' | 'task_assigned' | 'return_processed' | 'shipment_booked' | 'attendance_marked'
+  message       text NOT NULL, -- fully-formed display text
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_companion_events_employee_created ON companion_events(employee_id, created_at);
+
+-- Companion character image override (single row, id='default').
+CREATE TABLE companion_character_image (
+  id text PRIMARY KEY DEFAULT 'default',
+  image_url text NOT NULL,
+  prompt text,
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  generated_by uuid REFERENCES employees(id) ON DELETE SET NULL
+);
+
+-- CSB-V customs filing register (2026-08-14; see the migration header for
+-- the full column-by-column provenance from NYKO_MART_Output.xlsx).
+CREATE TABLE csb_filings (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  csb_number             text NOT NULL UNIQUE,
+  exchange_rate          numeric(10,4),
+  total_taxable_value    numeric(14,2),
+  taxable_value_currency text,
+  fob_value_inr          numeric(14,2),
+  filing_date            date,
+  egm_number             text,
+  egm_date               date,
+  hawb_number            text,
+  invoice_no             text,
+  invoice_date           date,
+  entry_by_employee_id   uuid REFERENCES employees(id),
+  created_at             timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_csb_filings_invoice_no ON csb_filings (invoice_no);
+CREATE INDEX idx_csb_filings_hawb_number ON csb_filings (hawb_number);
+
+-- Multi-cycle vendor assign/receive history (2026-09-08).
+CREATE TABLE order_vendor_assignments (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id                uuid NOT NULL REFERENCES orders(id),
+  cycle_no                integer NOT NULL,
+  party_id                uuid NOT NULL REFERENCES parties(id),
+  assigned_date           date NOT NULL,
+  received_date           date,
+  remark                  text,
+  created_by_employee_id  uuid REFERENCES employees(id),
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  updated_at              timestamptz NOT NULL DEFAULT now(),
+  CHECK (cycle_no > 0),
+  UNIQUE (order_id, cycle_no)
+);
+CREATE INDEX idx_order_vendor_assignments_order ON order_vendor_assignments(order_id);
+CREATE INDEX idx_order_vendor_assignments_party ON order_vendor_assignments(party_id);
+
+-- Optional order link for raw-material Stock Out / Material OUT Chalan
+-- lines (2026-08-17) — many-to-many, one movement can cover many orders.
+CREATE TABLE stock_out_order_links (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  stock_out_id  uuid NOT NULL REFERENCES stock_out(id) ON DELETE CASCADE,
+  order_id      uuid NOT NULL REFERENCES orders(id),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (stock_out_id, order_id)
+);
+CREATE INDEX idx_stock_out_order_links_stock_out ON stock_out_order_links(stock_out_id);
+CREATE INDEX idx_stock_out_order_links_order ON stock_out_order_links(order_id);
+
+
+-- ============================================================================
+-- SECTION 17e — P&L VIEWS, FINAL SHAPES (2026-09-19 fold-back)
+-- pl_dashboard_by_company_view / pl_dashboard_by_month_view are DEFINED
+-- here, not in section 12, because their CTEs join etsy_ledger_lines /
+-- ebay/amazon lines / bank_recon_links (sections 15/17) — a fresh apply
+-- failed on them at their old position. Shapes: company view per
+-- db/2026-09-17b-pl-usd-and-company-month.sql (total_sale_value_usd
+-- appended); month view per db/2026-09-18-pl-month-per-company.sql
+-- (PER-COMPANY rows, round 9).
+-- ============================================================================
+
+CREATE OR REPLACE VIEW pl_dashboard_by_company_view AS
+WITH order_refund_totals AS (
+  SELECT order_id,
+    SUM(refund_amount_inr) AS refund_total_inr,
+    SUM(refund_amount_usd) AS refund_total_usd
+  FROM order_refunds
+  GROUP BY order_id
+),
+courier_agg AS (
+  SELECT o.company_id,
+    SUM(COALESCE(fn.net_shipping_amt, 0)) FILTER (WHERE o.status <> 'Cancelled') AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     FILTER (WHERE o.status <> 'Cancelled') AS duty_net_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id
+),
+order_agg AS (
+  SELECT o.company_id,
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) FILTER (WHERE o.status <> 'Cancelled') AS total_sale_value_inr,
+    SUM(o.order_value_usd - COALESCE(ort.refund_total_usd, 0)) FILTER (WHERE o.status <> 'Cancelled') AS total_sale_value_usd,
+    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0)) FILTER (WHERE o.status <> 'Cancelled') AS order_expenses_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id
+),
+purchase_agg AS (
+  SELECT company_id, SUM(g_total_plus_gst) AS purchase_expenses_gross_inr
+  FROM purchase_bills
+  WHERE company_id IS NOT NULL
+  GROUP BY company_id
+),
+purchase_adjustments AS (
+  SELECT bpr.company_id, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  WHERE bpr.source = 'purchase_bill'
+  GROUP BY bpr.company_id
+),
+washing_agg AS (
+  SELECT company_id, SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
+  FROM washing_entries
+  GROUP BY company_id
+),
+etsy_fee_by_order AS (
+  SELECT o.id AS order_id, SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
+  FROM orders o
+  JOIN etsy_ledger_lines e
+    ON e.company_id = o.company_id
+   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id
+),
+ebay_fee_by_order AS (
+  SELECT o.id AS order_id,
+    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN ebay_tax_invoice_lines b
+    ON b.company_id = o.company_id
+   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id
+),
+amazon_fee_by_order AS (
+  SELECT o.id AS order_id,
+    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN amazon_transactions a
+    ON a.company_id = o.company_id
+   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id
+),
+marketplace_fee_totals AS (
+  SELECT o.company_id,
+    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
+  FROM orders o
+  LEFT JOIN etsy_fee_by_order e    ON e.order_id = o.id
+  LEFT JOIN ebay_fee_by_order b    ON b.order_id = o.id
+  LEFT JOIN amazon_fee_by_order a  ON a.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+    AND (e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL)
+  GROUP BY o.company_id
+),
+bank_inflow AS (
+  SELECT bsl.company_id,
+    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
+  FROM bank_statement_lines bsl
+  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
+  WHERE bsl.cr_amount IS NOT NULL
+    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
+  GROUP BY bsl.company_id
+),
+historical_agg AS (
+  SELECT company_id,
+    SUM(total_value_inr) AS hist_sale_inr,
+    SUM(sale_value_usd) AS hist_sale_usd,
+    SUM(total_expenses_inr) AS hist_expense_inr
+  FROM sale_profit_ledger
+  WHERE order_id IS NULL
+  GROUP BY company_id
+),
+combined AS (
+  SELECT
+    c.id AS company_id, c.name AS company_name,
+    COALESCE(oa.total_sale_value_inr,0) + COALESCE(ha.hist_sale_inr,0) AS total_sale_value_inr,
+    COALESCE(oa.total_sale_value_usd,0) + COALESCE(ha.hist_sale_usd,0) AS total_sale_value_usd,
+    COALESCE(oa.order_expenses_inr,0)
+      + (COALESCE(pa.purchase_expenses_gross_inr,0) - COALESCE(padj.adjustment_total_inr,0))
+      + COALESCE(wa.washing_inr, 0)
+      + COALESCE(ha.hist_expense_inr,0) AS total_expenses_inr,
+    COALESCE(ca.courier_net_inr, 0)             AS expense_courier_inr,
+    COALESCE(ca.duty_net_inr, 0)                AS expense_duty_inr,
+    COALESCE(pa.purchase_expenses_gross_inr, 0) AS expense_purchase_inr,
+    -COALESCE(padj.adjustment_total_inr, 0)     AS expense_purchase_adjustments_inr,
+    COALESCE(wa.washing_inr, 0)                 AS expense_washing_inr,
+    COALESCE(ha.hist_expense_inr, 0)            AS expense_historical_inr,
+    COALESCE(mf.fees_matched_inr, 0)            AS portal_fees_matched_inr,
+    COALESCE(bi.inflow_inr, 0)                  AS bank_inflow_inr
+  FROM companies c
+  LEFT JOIN order_agg oa              ON oa.company_id = c.id
+  LEFT JOIN purchase_agg pa           ON pa.company_id = c.id
+  LEFT JOIN purchase_adjustments padj ON padj.company_id = c.id
+  LEFT JOIN washing_agg wa            ON wa.company_id = c.id
+  LEFT JOIN marketplace_fee_totals mf ON mf.company_id = c.id
+  LEFT JOIN historical_agg ha         ON ha.company_id = c.id
+  LEFT JOIN courier_agg ca            ON ca.company_id = c.id
+  LEFT JOIN bank_inflow bi            ON bi.company_id = c.id
+)
+SELECT
+  combined.company_id, company_name,
+  total_sale_value_inr,
+  total_expenses_inr,
+  (total_sale_value_inr - total_expenses_inr)                          AS net_total_value,
+  (total_sale_value_inr * 0.25)                                        AS portal_expenses_25pct,
+  CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+       ELSE (total_sale_value_inr * 0.25) END                          AS portal_expense_effective_inr,
+  ((total_sale_value_inr - total_expenses_inr)
+     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+            ELSE (total_sale_value_inr * 0.25) END)                    AS net_earn,
+  (((total_sale_value_inr - total_expenses_inr)
+     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+            ELSE (total_sale_value_inr * 0.25) END) / NULLIF(total_sale_value_inr, 0)) AS profit_pct,
+  COALESCE(ie.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
+  (((total_sale_value_inr - total_expenses_inr)
+     - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+            ELSE (total_sale_value_inr * 0.25) END)
+     - COALESCE(ie.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
+  expense_courier_inr,
+  expense_duty_inr,
+  expense_purchase_inr,
+  expense_purchase_adjustments_inr,
+  expense_washing_inr,
+  expense_historical_inr,
+  portal_fees_matched_inr,
+  bank_inflow_inr,
+  total_sale_value_usd                                                  -- 2026-09-17 (evening): NEW, appended last
+FROM combined
+LEFT JOIN (
+  SELECT company_id, SUM(amount_inr) AS total_internal_expenses_inr
+  FROM internal_expenses GROUP BY company_id
+) ie ON ie.company_id = combined.company_id;
+COMMENT ON VIEW pl_dashboard_by_company_view IS
+  '2026-09-17 (evening): + total_sale_value_usd (appended last — same netting as the INR column, '
+  'via orders.order_value_usd / order_refunds.refund_amount_usd / sale_profit_ledger.sale_value_usd). '
+  'History: see pl_dashboard_by_month_view''s comment for everything before this.';
+
+DROP VIEW IF EXISTS pl_dashboard_by_month_view;
+
+
+CREATE VIEW pl_dashboard_by_month_view AS
+WITH months AS (
+  SELECT company_id, date_trunc('month', order_date)::date AS month
+  FROM orders WHERE status <> 'Cancelled'
+  UNION
+  SELECT company_id, date_trunc('month', vendor_invoice_date)::date FROM purchase_bills WHERE vendor_invoice_date IS NOT NULL
+  UNION
+  SELECT company_id, date_trunc('month', chalan_date)::date FROM washing_entries
+  UNION
+  SELECT company_id, date_trunc('month', invoice_date)::date FROM sale_profit_ledger WHERE order_id IS NULL AND invoice_date IS NOT NULL
+  UNION
+  SELECT company_id, date_trunc('month', expense_date)::date FROM internal_expenses
+),
+order_refund_totals AS (
+  SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr, SUM(refund_amount_usd) AS refund_total_usd
+  FROM order_refunds
+  GROUP BY order_id
+),
+courier_agg AS (
+  SELECT o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id, date_trunc('month', o.order_date)
+),
+order_agg AS (
+  SELECT o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0))         AS sale_inr,
+    SUM(o.order_value_usd - COALESCE(ort.refund_total_usd, 0))         AS sale_usd,
+    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0)) AS order_expense_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id, date_trunc('month', o.order_date)
+),
+purchase_agg AS (
+  SELECT company_id, date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_gross_inr
+  FROM purchase_bills
+  WHERE vendor_invoice_date IS NOT NULL
+  GROUP BY company_id, date_trunc('month', vendor_invoice_date)
+),
+purchase_adjustments AS (
+  SELECT bpr.company_id, date_trunc('month', bpr.invoice_date)::date AS month, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  WHERE bpr.source = 'purchase_bill' AND bpr.invoice_date IS NOT NULL
+  GROUP BY bpr.company_id, date_trunc('month', bpr.invoice_date)
+),
+washing_agg AS (
+  SELECT company_id, date_trunc('month', chalan_date)::date AS month,
+    SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
+  FROM washing_entries
+  GROUP BY company_id, date_trunc('month', chalan_date)
+),
+etsy_fee_by_order AS (
+  SELECT o.id AS order_id,
+    o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
+  FROM orders o
+  JOIN etsy_ledger_lines e
+    ON e.company_id = o.company_id
+   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
+),
+ebay_fee_by_order AS (
+  SELECT o.id AS order_id,
+    o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN ebay_tax_invoice_lines b
+    ON b.company_id = o.company_id
+   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
+),
+amazon_fee_by_order AS (
+  SELECT o.id AS order_id,
+    o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN amazon_transactions a
+    ON a.company_id = o.company_id
+   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
+),
+marketplace_fee_totals AS (
+  SELECT om.company_id, om.month,
+    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
+  FROM (
+    SELECT DISTINCT o.company_id, o.id, date_trunc('month', o.order_date)::date AS month
+    FROM orders o
+    WHERE o.status <> 'Cancelled'
+  ) om
+  LEFT JOIN etsy_fee_by_order e    ON e.order_id = om.id
+  LEFT JOIN ebay_fee_by_order b    ON b.order_id = om.id
+  LEFT JOIN amazon_fee_by_order a  ON a.order_id = om.id
+  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
+  GROUP BY om.company_id, om.month
+),
+bank_inflow AS (
+  SELECT bsl.company_id,
+    date_trunc('month', bsl.txn_date)::date AS month,
+    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
+  FROM bank_statement_lines bsl
+  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
+  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
+    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
+  GROUP BY bsl.company_id, date_trunc('month', bsl.txn_date)
+),
+historical_agg AS (
+  SELECT company_id, date_trunc('month', invoice_date)::date AS month,
+    SUM(total_value_inr) AS hist_sale_inr, SUM(sale_value_usd) AS hist_sale_usd, SUM(total_expenses_inr) AS hist_expense_inr
+  FROM sale_profit_ledger
+  WHERE order_id IS NULL AND invoice_date IS NOT NULL
+  GROUP BY company_id, date_trunc('month', invoice_date)
+),
+expense_agg AS (
+  SELECT company_id, date_trunc('month', expense_date)::date AS month, SUM(amount_inr) AS total_internal_expenses_inr
+  FROM internal_expenses
+  GROUP BY company_id, date_trunc('month', expense_date)
+),
+combined AS (
+  SELECT
+    m.company_id,
+    m.month,
+    COALESCE(oa.sale_inr, 0) + COALESCE(ha.hist_sale_inr, 0) AS total_sale_value_inr,
+    COALESCE(oa.sale_usd, 0) + COALESCE(ha.hist_sale_usd, 0) AS total_sale_value_usd,
+    COALESCE(oa.order_expense_inr, 0)
+      + (COALESCE(pa.purchase_expense_gross_inr, 0) - COALESCE(padj.adjustment_total_inr, 0))
+      + COALESCE(wa.washing_inr, 0)
+      + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr,
+    COALESCE(ca.courier_net_inr, 0)   AS expense_courier_inr,
+    COALESCE(ca.duty_net_inr, 0)      AS expense_duty_inr,
+    COALESCE(pa.purchase_expense_gross_inr, 0) AS expense_purchase_inr,
+    -COALESCE(padj.adjustment_total_inr, 0)    AS expense_purchase_adjustments_inr,
+    COALESCE(wa.washing_inr, 0)                AS expense_washing_inr,
+    COALESCE(ha.hist_expense_inr, 0)           AS expense_historical_inr,
+    COALESCE(mf.fees_matched_inr, 0)           AS portal_fees_matched_inr,
+    COALESCE(bi.inflow_inr, 0)                 AS bank_inflow_inr
+  FROM (SELECT DISTINCT company_id, month FROM months) m
+  LEFT JOIN order_agg oa              ON oa.company_id = m.company_id AND oa.month = m.month
+  LEFT JOIN purchase_agg pa           ON pa.company_id = m.company_id AND pa.month = m.month
+  LEFT JOIN purchase_adjustments padj ON padj.company_id = m.company_id AND padj.month = m.month
+  LEFT JOIN washing_agg wa            ON wa.company_id = m.company_id AND wa.month = m.month
+  LEFT JOIN marketplace_fee_totals mf ON mf.company_id = m.company_id AND mf.month = m.month
+  LEFT JOIN historical_agg ha         ON ha.company_id = m.company_id AND ha.month = m.month
+  LEFT JOIN courier_agg ca            ON ca.company_id = m.company_id AND ca.month = m.month
+  LEFT JOIN bank_inflow bi            ON bi.company_id = m.company_id AND bi.month = m.month
+)
+SELECT
+  c.company_id,
+  co.name AS company_name,
+  c.month,
+  c.total_sale_value_inr,
+  c.total_sale_value_usd,
+  c.total_expenses_inr,
+  (c.total_sale_value_inr * 0.25) AS portal_expenses_25pct,
+  CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+       ELSE (c.total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
+  ((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END) AS net_earn,
+  (((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
+  COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
+  (((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END)
+     - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
+  c.expense_courier_inr,
+  c.expense_duty_inr,
+  c.expense_purchase_inr,
+  c.expense_purchase_adjustments_inr,
+  c.expense_washing_inr,
+  c.expense_historical_inr,
+  c.portal_fees_matched_inr,
+  c.bank_inflow_inr
+FROM combined c
+LEFT JOIN companies co ON co.id = c.company_id
+LEFT JOIN expense_agg ea ON ea.company_id = c.company_id AND ea.month = c.month
+ORDER BY c.month DESC;
+COMMENT ON VIEW pl_dashboard_by_month_view IS
+  '2026-09-18: per-COMPANY month rows — every aggregation groups by company_id + month so the CRM page can '
+  'filter P&L by Month through the company switcher (was: all companies merged into one row per month). '
+  'Portal REAL-IF-KNOWN and net-of-CN courier/duty unchanged from 2026-09-17 (late).';
+
+-- ============================================================================
+-- SECTION 17f (2026-09-18, round 8) — P&L BY MARKETPLACE/STORE
+-- pl_dashboard_by_store_view: per-store P&L incl. order-linked purchase and
+-- washing costs. Folded from 2026-09-18-pl-by-marketplace-store.sql (as
+-- extended by 2026-09-18c-pl-purchase-washing-order-linked.sql, which lives
+-- at the repo root).
+-- ============================================================================
+
+-- ============================================================================
+-- 1. pl_dashboard_by_store_view — append expense_purchase_inr / expense_washing_inr
+-- ============================================================================
+-- db/2026-09-19-pl-store-finance-purchase-cn-netting.sql (originally
+-- db/2026-09-18-pl-by-marketplace-store.sql, extended
+-- db/2026-09-18c-pl-purchase-washing-order-linked.sql) — "P&L by
+-- Marketplace/Store" CRM tab, one row per store.
+CREATE OR REPLACE VIEW pl_dashboard_by_store_view AS
+WITH order_refund_totals AS (
+  SELECT order_id,
+    SUM(refund_amount_inr) AS refund_total_inr,
+    SUM(refund_amount_usd) AS refund_total_usd
+  FROM order_refunds
+  GROUP BY order_id
+),
+courier_agg AS (
+  SELECT o.store_id,
+    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.store_id
+),
+order_agg AS (
+  SELECT o.store_id,
+    COUNT(*) AS order_count,
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) AS total_sale_value_inr,
+    SUM(o.order_value_usd - COALESCE(ort.refund_total_usd, 0)) AS total_sale_value_usd
+  FROM orders o
+  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.store_id
+),
+etsy_fee_by_order AS (
+  SELECT o.id AS order_id, o.store_id, SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
+  FROM orders o
+  JOIN etsy_ledger_lines e
+    ON e.company_id = o.company_id
+   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.store_id
+),
+ebay_fee_by_order AS (
+  SELECT o.id AS order_id, o.store_id,
+    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN ebay_tax_invoice_lines b
+    ON b.company_id = o.company_id
+   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.store_id
+),
+amazon_fee_by_order AS (
+  SELECT o.id AS order_id, o.store_id,
+    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN amazon_transactions a
+    ON a.company_id = o.company_id
+   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.store_id
+),
+marketplace_fee_totals AS (
+  SELECT om.store_id,
+    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
+  FROM (
+    SELECT DISTINCT o.id, o.store_id FROM orders o WHERE o.status <> 'Cancelled'
+  ) om
+  LEFT JOIN etsy_fee_by_order e   ON e.order_id = om.id
+  LEFT JOIN ebay_fee_by_order b   ON b.order_id = om.id
+  LEFT JOIN amazon_fee_by_order a ON a.order_id = om.id
+  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
+  GROUP BY om.store_id
+),
+ad_spend_agg AS (
+  SELECT store_id,
+    SUM(spend_usd)   AS ad_spend_usd,
+    SUM(budget_usd)  AS ad_budget_usd
+  FROM store_ad_spend
+  GROUP BY store_id
+),
+purchase_agg AS (
+  SELECT o.store_id, SUM(pb.g_total_plus_gst) AS purchase_inr
+  FROM purchase_bills pb
+  JOIN orders o ON o.id = pb.order_id
+  GROUP BY o.store_id
+),
+purchase_adjustments AS (
+  SELECT o.store_id, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  JOIN purchase_bills pb ON pb.id = bpr.source_id
+  JOIN orders o ON o.id = pb.order_id
+  WHERE bpr.source = 'purchase_bill'
+  GROUP BY o.store_id
+),
+washing_agg AS (
+  SELECT store_id, SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
+  FROM washing_entries
+  WHERE store_id IS NOT NULL
+  GROUP BY store_id
+),
+combined AS (
+  SELECT
+    s.id AS store_id, s.name AS store_name, s.company_id, comp.name AS company_name,
+    COALESCE(oa.order_count, 0)          AS order_count,
+    COALESCE(oa.total_sale_value_inr, 0) AS total_sale_value_inr,
+    COALESCE(oa.total_sale_value_usd, 0) AS total_sale_value_usd,
+    COALESCE(ca.courier_net_inr, 0)      AS expense_courier_inr,
+    COALESCE(ca.duty_net_inr, 0)         AS expense_duty_inr,
+    COALESCE(mf.fees_matched_inr, 0)     AS portal_fees_matched_inr,
+    COALESCE(ad.ad_spend_usd, 0)         AS ad_spend_usd,
+    COALESCE(ad.ad_budget_usd, 0)        AS ad_budget_usd,
+    COALESCE(pa.purchase_inr, 0) - COALESCE(padj.adjustment_total_inr, 0) AS expense_purchase_inr,
+    COALESCE(wa.washing_inr, 0)          AS expense_washing_inr
+  FROM stores s
+  JOIN companies comp                 ON comp.id = s.company_id
+  LEFT JOIN order_agg oa              ON oa.store_id = s.id
+  LEFT JOIN courier_agg ca            ON ca.store_id = s.id
+  LEFT JOIN marketplace_fee_totals mf ON mf.store_id = s.id
+  LEFT JOIN ad_spend_agg ad           ON ad.store_id = s.id
+  LEFT JOIN purchase_agg pa           ON pa.store_id = s.id
+  LEFT JOIN purchase_adjustments padj ON padj.store_id = s.id
+  LEFT JOIN washing_agg wa            ON wa.store_id = s.id
+)
+SELECT
+  store_id, store_name, company_id, company_name,
+  order_count,
+  total_sale_value_inr,
+  total_sale_value_usd,
+  expense_courier_inr,
+  expense_duty_inr,
+  (total_sale_value_inr * 0.25) AS portal_expenses_25pct,
+  CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+       ELSE (total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
+  portal_fees_matched_inr,
+  ad_spend_usd,
+  ad_budget_usd,
+  expense_purchase_inr,
+  expense_washing_inr,
+  (total_sale_value_inr - expense_courier_inr - expense_duty_inr
+    - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+           ELSE (total_sale_value_inr * 0.25) END
+    - expense_purchase_inr - expense_washing_inr)             AS net_before_overhead_inr,
+  ((total_sale_value_inr - expense_courier_inr - expense_duty_inr
+    - CASE WHEN portal_fees_matched_inr > 0 THEN portal_fees_matched_inr
+           ELSE (total_sale_value_inr * 0.25) END
+    - expense_purchase_inr - expense_washing_inr)
+    / NULLIF(total_sale_value_inr, 0))                        AS profit_pct_before_overhead,
+  (total_sale_value_usd / NULLIF(ad_spend_usd, 0))            AS roas
+FROM combined
+ORDER BY total_sale_value_inr DESC NULLS LAST;
+COMMENT ON VIEW pl_dashboard_by_store_view IS
+  '2026-09-19 (audit fix, item B3): expense_purchase_inr is NET of purchase-bill Credit/Debit Note '
+  'adjustments, attributed via order_id -> store_id, same as the gross purchase sum. History: '
+  '2026-09-18 (round 8) added expense_purchase_inr/expense_washing_inr via purchase_bills.order_id / '
+  'washing_entries.store_id.';
+
+-- ============================================================================
+-- SECTION 17g (2026-09-17 evening) — P&L by Company × Month
+-- pl_dashboard_by_company_month_view: one row per (company, month) so the
+-- CRM page can sum an FY's months PER COMPANY. Folded from
+-- db/2026-09-17b-pl-usd-and-company-month.sql section 3.
+-- ============================================================================
+
+-- 3. NEW: pl_dashboard_by_company_month_view — P&L by Company, FY-filterable
+-- ============================================================================
+-- Same shape as pl_dashboard_by_month_view (one row per month) PLUS
+-- company_id/company_name, so the CRM page can sum an FY's worth of months
+-- per company in JS (exactly like the existing P&L-by-Month FY selector
+-- already sums plMonthRowsFiltered) to answer "this company, this FY".
+-- db/2026-09-17b-pl-usd-and-company-month.sql — one row per (company,
+-- month), lets the CRM page's "P&L by Company" FY selector sum an FY's
+-- months per company.
+CREATE OR REPLACE VIEW pl_dashboard_by_company_month_view AS
+WITH company_months AS (
+  SELECT DISTINCT company_id, date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
+  UNION
+  SELECT DISTINCT company_id, date_trunc('month', vendor_invoice_date)::date AS month FROM purchase_bills WHERE vendor_invoice_date IS NOT NULL AND company_id IS NOT NULL
+  UNION
+  SELECT DISTINCT company_id, date_trunc('month', chalan_date)::date AS month FROM washing_entries
+  UNION
+  SELECT DISTINCT company_id, date_trunc('month', invoice_date)::date AS month FROM sale_profit_ledger WHERE order_id IS NULL AND invoice_date IS NOT NULL
+  UNION
+  SELECT DISTINCT company_id, date_trunc('month', expense_date)::date AS month FROM internal_expenses
+),
+order_refund_totals AS (
+  SELECT order_id,
+    SUM(refund_amount_inr) AS refund_total_inr,
+    SUM(refund_amount_usd) AS refund_total_usd
+  FROM order_refunds
+  GROUP BY order_id
+),
+courier_agg AS (
+  SELECT o.company_id, date_trunc('month', o.order_date)::date AS month,
+    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id, date_trunc('month', o.order_date)
+),
+order_agg AS (
+  SELECT o.company_id, date_trunc('month', o.order_date)::date AS month,
+    SUM(o.order_value_inr - COALESCE(ort.refund_total_inr, 0)) AS sale_inr,
+    SUM(o.order_value_usd - COALESCE(ort.refund_total_usd, 0)) AS sale_usd,
+    SUM(COALESCE(fn.net_shipping_amt,0) + COALESCE(dn.net_duty_amt,0)) AS order_expense_inr
+  FROM orders o
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = o.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = o.id
+  LEFT JOIN order_refund_totals ort ON ort.order_id = o.id
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.company_id, date_trunc('month', o.order_date)
+),
+purchase_agg AS (
+  SELECT company_id, date_trunc('month', vendor_invoice_date)::date AS month, SUM(g_total_plus_gst) AS purchase_expense_gross_inr
+  FROM purchase_bills
+  WHERE vendor_invoice_date IS NOT NULL AND company_id IS NOT NULL
+  GROUP BY company_id, date_trunc('month', vendor_invoice_date)
+),
+purchase_adjustments AS (
+  SELECT bpr.company_id, date_trunc('month', bpr.invoice_date)::date AS month, SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  WHERE bpr.source = 'purchase_bill' AND bpr.invoice_date IS NOT NULL
+  GROUP BY bpr.company_id, date_trunc('month', bpr.invoice_date)
+),
+washing_agg AS (
+  SELECT company_id, date_trunc('month', chalan_date)::date AS month,
+    SUM(COALESCE(amount, 0) + COALESCE(debit_charges, 0)) AS washing_inr
+  FROM washing_entries
+  GROUP BY company_id, date_trunc('month', chalan_date)
+),
+etsy_fee_by_order AS (
+  SELECT o.id AS order_id, o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
+  FROM orders o
+  JOIN etsy_ledger_lines e
+    ON e.company_id = o.company_id
+   AND e.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
+),
+ebay_fee_by_order AS (
+  SELECT o.id AS order_id, o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN ebay_tax_invoice_lines b
+    ON b.company_id = o.company_id
+   AND b.order_number = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, o.order_date, CURRENT_DATE)) ru ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
+),
+amazon_fee_by_order AS (
+  SELECT o.id AS order_id, o.company_id,
+    date_trunc('month', o.order_date)::date AS month,
+    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
+  FROM orders o
+  JOIN amazon_transactions a
+    ON a.company_id = o.company_id
+   AND a.order_id = btrim(regexp_replace(o.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, o.order_date, CURRENT_DATE)) ra ON true
+  WHERE o.status <> 'Cancelled'
+  GROUP BY o.id, o.company_id, date_trunc('month', o.order_date)
+),
+marketplace_fee_totals AS (
+  SELECT om.company_id, om.month,
+    SUM(COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0)) AS fees_matched_inr
+  FROM (
+    SELECT DISTINCT o.id, o.company_id, date_trunc('month', o.order_date)::date AS month
+    FROM orders o
+    WHERE o.status <> 'Cancelled'
+  ) om
+  LEFT JOIN etsy_fee_by_order e    ON e.order_id = om.id
+  LEFT JOIN ebay_fee_by_order b    ON b.order_id = om.id
+  LEFT JOIN amazon_fee_by_order a  ON a.order_id = om.id
+  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
+  GROUP BY om.company_id, om.month
+),
+bank_inflow AS (
+  SELECT bsl.company_id, date_trunc('month', bsl.txn_date)::date AS month,
+    SUM(COALESCE(bsl.cr_amount, 0)) AS inflow_inr
+  FROM bank_statement_lines bsl
+  JOIN bank_recon_links brl ON brl.statement_line_id = bsl.id
+  WHERE bsl.cr_amount IS NOT NULL AND bsl.txn_date IS NOT NULL
+    AND brl.target_type IN ('order_sale', 'bill_payment', 'expense', 'salary_payment', 'card_expense')
+  GROUP BY bsl.company_id, date_trunc('month', bsl.txn_date)
+),
+historical_agg AS (
+  SELECT company_id, date_trunc('month', invoice_date)::date AS month,
+    SUM(total_value_inr) AS hist_sale_inr,
+    SUM(sale_value_usd) AS hist_sale_usd,
+    SUM(total_expenses_inr) AS hist_expense_inr
+  FROM sale_profit_ledger
+  WHERE order_id IS NULL AND invoice_date IS NOT NULL
+  GROUP BY company_id, date_trunc('month', invoice_date)
+),
+expense_agg AS (
+  SELECT company_id, date_trunc('month', expense_date)::date AS month, SUM(amount_inr) AS total_internal_expenses_inr
+  FROM internal_expenses
+  GROUP BY company_id, date_trunc('month', expense_date)
+),
+combined AS (
+  SELECT
+    cm.company_id, cm.month,
+    COALESCE(oa.sale_inr, 0) + COALESCE(ha.hist_sale_inr, 0) AS total_sale_value_inr,
+    COALESCE(oa.sale_usd, 0) + COALESCE(ha.hist_sale_usd, 0) AS total_sale_value_usd,
+    COALESCE(oa.order_expense_inr, 0)
+      + (COALESCE(pa.purchase_expense_gross_inr, 0) - COALESCE(padj.adjustment_total_inr, 0))
+      + COALESCE(wa.washing_inr, 0)
+      + COALESCE(ha.hist_expense_inr, 0) AS total_expenses_inr,
+    COALESCE(ca.courier_net_inr, 0)   AS expense_courier_inr,
+    COALESCE(ca.duty_net_inr, 0)      AS expense_duty_inr,
+    COALESCE(pa.purchase_expense_gross_inr, 0) AS expense_purchase_inr,
+    -COALESCE(padj.adjustment_total_inr, 0)    AS expense_purchase_adjustments_inr,
+    COALESCE(wa.washing_inr, 0)                AS expense_washing_inr,
+    COALESCE(ha.hist_expense_inr, 0)           AS expense_historical_inr,
+    COALESCE(mf.fees_matched_inr, 0)           AS portal_fees_matched_inr,
+    COALESCE(bi.inflow_inr, 0)                 AS bank_inflow_inr
+  FROM company_months cm
+  LEFT JOIN order_agg oa              ON oa.company_id = cm.company_id AND oa.month = cm.month
+  LEFT JOIN purchase_agg pa           ON pa.company_id = cm.company_id AND pa.month = cm.month
+  LEFT JOIN purchase_adjustments padj ON padj.company_id = cm.company_id AND padj.month = cm.month
+  LEFT JOIN washing_agg wa            ON wa.company_id = cm.company_id AND wa.month = cm.month
+  LEFT JOIN marketplace_fee_totals mf ON mf.company_id = cm.company_id AND mf.month = cm.month
+  LEFT JOIN historical_agg ha         ON ha.company_id = cm.company_id AND ha.month = cm.month
+  LEFT JOIN courier_agg ca            ON ca.company_id = cm.company_id AND ca.month = cm.month
+  LEFT JOIN bank_inflow bi            ON bi.company_id = cm.company_id AND bi.month = cm.month
+)
+SELECT
+  c.company_id,
+  comp.name AS company_name,
+  c.month,
+  c.total_sale_value_inr,
+  c.total_sale_value_usd,
+  c.total_expenses_inr,
+  (c.total_sale_value_inr * 0.25) AS portal_expenses_25pct,
+  CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+       ELSE (c.total_sale_value_inr * 0.25) END AS portal_expense_effective_inr,
+  ((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END) AS net_earn,
+  (((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END) / NULLIF(c.total_sale_value_inr, 0)) AS profit_pct,
+  COALESCE(ea.total_internal_expenses_inr, 0) AS total_internal_expenses_inr,
+  (((c.total_sale_value_inr - c.total_expenses_inr)
+     - CASE WHEN c.portal_fees_matched_inr > 0 THEN c.portal_fees_matched_inr
+            ELSE (c.total_sale_value_inr * 0.25) END)
+     - COALESCE(ea.total_internal_expenses_inr, 0)) AS net_earn_after_overhead,
+  c.expense_courier_inr,
+  c.expense_duty_inr,
+  c.expense_purchase_inr,
+  c.expense_purchase_adjustments_inr,
+  c.expense_washing_inr,
+  c.expense_historical_inr,
+  c.portal_fees_matched_inr,
+  c.bank_inflow_inr
+FROM combined c
+JOIN companies comp ON comp.id = c.company_id
+LEFT JOIN expense_agg ea ON ea.company_id = c.company_id AND ea.month = c.month
+ORDER BY c.company_id, c.month DESC;
+COMMENT ON VIEW pl_dashboard_by_company_month_view IS
+  '2026-09-17 (evening): one row per (company, month) — same figures as pl_dashboard_by_company_view '
+  'and pl_dashboard_by_month_view, just crossed so the CRM page can sum an FY''s months PER COMPANY '
+  '(the FY-by-Company selector). Sum this view''s rows for one company across all its months and it '
+  'should equal that company''s row in pl_dashboard_by_company_view.';
+
+-- ============================================================================
+-- SECTION 17h (2026-09-18, round 8) — FINANCE DASHBOARD RPC FUNCTIONS
+-- finance_dashboard_monthly (filter-aware monthly P&L) +
+-- finance_dashboard_unlinked_purchase_washing (the explicit "not yet linked
+  -- to an order" figure). Folded from db/2026-09-18b-finance-dashboard-rpc.sql
+-- as extended by 2026-09-18c-pl-purchase-washing-order-linked.sql.
+-- ============================================================================
+
+-- ============================================================================
+-- 2. finance_dashboard_monthly — append expense_purchase_inr / expense_washing_inr,
+--    filter-aware (see header comment). Function signature is unchanged
+--    (same 5 args) but the RETURNS TABLE shape changed, so DROP + CREATE
+--    rather than CREATE OR REPLACE (Postgres refuses to change a function's
+--    return columns via REPLACE).
+-- ============================================================================
+DROP FUNCTION IF EXISTS finance_dashboard_monthly(uuid, date, date, uuid, text);
+
+CREATE OR REPLACE FUNCTION finance_dashboard_monthly(
+  p_company_id uuid,
+  p_from date,
+  p_to date,
+  p_store_id uuid DEFAULT NULL,
+  p_buyer_country text DEFAULT NULL
+)
+RETURNS TABLE (
+  month                        date,
+  order_count                  bigint,
+  total_sale_value_inr         numeric,
+  total_sale_value_usd         numeric,
+  expense_courier_inr          numeric,
+  expense_duty_inr             numeric,
+  portal_fees_matched_inr      numeric,
+  portal_expense_effective_inr numeric,
+  ad_spend_usd                 numeric,
+  returns_inr                  numeric,
+  expense_purchase_inr         numeric,
+  expense_washing_inr          numeric
+)
+LANGUAGE sql STABLE AS $$
+WITH filtered_orders AS (
+  SELECT o.*
+  FROM orders o
+  WHERE o.company_id = p_company_id
+    AND o.status <> 'Cancelled'
+    AND o.order_date >= p_from AND o.order_date <= p_to
+    AND (p_store_id IS NULL OR o.store_id = p_store_id)
+    AND (p_buyer_country IS NULL OR o.buyer_country = p_buyer_country)
+),
+order_refund_totals AS (
+  SELECT orf.order_id,
+    SUM(orf.refund_amount_inr) AS refund_total_inr,
+    SUM(orf.refund_amount_usd) AS refund_total_usd
+  FROM order_refunds orf
+  WHERE orf.order_id IN (SELECT id FROM filtered_orders)
+  GROUP BY orf.order_id
+),
+courier_agg AS (
+  SELECT date_trunc('month', fo.order_date)::date AS month,
+    SUM(COALESCE(fn.net_shipping_amt, 0)) AS courier_net_inr,
+    SUM(COALESCE(dn.net_duty_amt, 0))     AS duty_net_inr
+  FROM filtered_orders fo
+  LEFT JOIN freight_awb_net_view fn ON fn.order_id = fo.id
+  LEFT JOIN duty_awb_net_view   dn ON dn.order_id = fo.id
+  GROUP BY date_trunc('month', fo.order_date)
+),
+order_agg AS (
+  SELECT date_trunc('month', fo.order_date)::date AS month,
+    COUNT(*) AS order_count,
+    SUM(fo.order_value_inr - COALESCE(ort.refund_total_inr, 0)) AS sale_inr,
+    SUM(fo.order_value_usd - COALESCE(ort.refund_total_usd, 0)) AS sale_usd
+  FROM filtered_orders fo
+  LEFT JOIN order_refund_totals ort ON ort.order_id = fo.id
+  GROUP BY date_trunc('month', fo.order_date)
+),
+etsy_fee AS (
+  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
+    SUM(-COALESCE(e.fees_and_taxes, 0)) AS fees_inr
+  FROM filtered_orders fo
+  JOIN etsy_ledger_lines e
+    ON e.company_id = fo.company_id
+   AND e.order_number = btrim(regexp_replace(fo.marketplace_order_no, '^\s*#+', ''))
+  GROUP BY fo.id, date_trunc('month', fo.order_date)
+),
+ebay_fee AS (
+  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
+    SUM(COALESCE(b.total_amount, 0) * ru.rate_to_inr) AS fees_inr
+  FROM filtered_orders fo
+  JOIN ebay_tax_invoice_lines b
+    ON b.company_id = fo.company_id
+   AND b.order_number = btrim(regexp_replace(fo.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(b.currency, 'USD'), COALESCE(b.txn_date, fo.order_date, CURRENT_DATE)) ru ON true
+  GROUP BY fo.id, date_trunc('month', fo.order_date)
+),
+amazon_fee AS (
+  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
+    SUM(COALESCE(a.amazon_fees, 0) * ra.rate_to_inr) AS fees_inr
+  FROM filtered_orders fo
+  JOIN amazon_transactions a
+    ON a.company_id = fo.company_id
+   AND a.order_id = btrim(regexp_replace(fo.marketplace_order_no, '^\s*#+', ''))
+  LEFT JOIN LATERAL get_official_rate_as_of(COALESCE(a.currency, 'USD'), COALESCE(a.txn_date, fo.order_date, CURRENT_DATE)) ra ON true
+  GROUP BY fo.id, date_trunc('month', fo.order_date)
+),
+marketplace_fee_by_order AS (
+  SELECT fo.id AS order_id, date_trunc('month', fo.order_date)::date AS month,
+    COALESCE(e.fees_inr, 0) + COALESCE(b.fees_inr, 0) + COALESCE(a.fees_inr, 0) AS fees_inr
+  FROM filtered_orders fo
+  LEFT JOIN etsy_fee e   ON e.order_id = fo.id
+  LEFT JOIN ebay_fee b   ON b.order_id = fo.id
+  LEFT JOIN amazon_fee a ON a.order_id = fo.id
+  WHERE e.order_id IS NOT NULL OR b.order_id IS NOT NULL OR a.order_id IS NOT NULL
+),
+marketplace_fee_agg AS (
+  SELECT month, SUM(fees_inr) AS fees_matched_inr FROM marketplace_fee_by_order GROUP BY month
+),
+ad_spend_agg AS (
+  SELECT date_trunc('month', sas.spend_date)::date AS month,
+    SUM(sas.spend_usd) AS ad_spend_usd
+  FROM store_ad_spend sas
+  JOIN stores s ON s.id = sas.store_id
+  WHERE s.company_id = p_company_id
+    AND sas.spend_date >= p_from AND sas.spend_date <= p_to
+    AND (p_store_id IS NULL OR sas.store_id = p_store_id)
+  GROUP BY date_trunc('month', sas.spend_date)
+),
+returns_agg AS (
+  SELECT date_trunc('month', orf.refund_date)::date AS month,
+    SUM(orf.refund_amount_inr) AS returns_inr
+  FROM order_refunds orf
+  JOIN orders o2 ON o2.id = orf.order_id
+  WHERE o2.company_id = p_company_id
+    AND orf.refund_date >= p_from AND orf.refund_date <= p_to
+    AND (p_store_id IS NULL OR o2.store_id = p_store_id)
+    AND (p_buyer_country IS NULL OR o2.buyer_country = p_buyer_country)
+  GROUP BY date_trunc('month', orf.refund_date)
+),
+purchase_agg AS (
+  SELECT date_trunc('month', pb.vendor_invoice_date)::date AS month,
+    SUM(pb.g_total_plus_gst) AS purchase_inr
+  FROM purchase_bills pb
+  LEFT JOIN orders o3 ON o3.id = pb.order_id
+  WHERE pb.company_id = p_company_id
+    AND pb.vendor_invoice_date >= p_from AND pb.vendor_invoice_date <= p_to
+    AND (
+      (p_store_id IS NULL AND p_buyer_country IS NULL)
+      OR (o3.id IS NOT NULL
+          AND (p_store_id IS NULL OR o3.store_id = p_store_id)
+          AND (p_buyer_country IS NULL OR o3.buyer_country = p_buyer_country))
+    )
+  GROUP BY date_trunc('month', pb.vendor_invoice_date)
+),
+purchase_adjustments AS (
+  SELECT date_trunc('month', pb.vendor_invoice_date)::date AS month,
+    SUM(a.amount) AS adjustment_total_inr
+  FROM bill_pass_register_adjustments a
+  JOIN bill_pass_register bpr ON bpr.id = a.bill_pass_register_id
+  JOIN purchase_bills pb ON pb.id = bpr.source_id
+  LEFT JOIN orders o5 ON o5.id = pb.order_id
+  WHERE bpr.source = 'purchase_bill'
+    AND pb.company_id = p_company_id
+    AND pb.vendor_invoice_date >= p_from AND pb.vendor_invoice_date <= p_to
+    AND (
+      (p_store_id IS NULL AND p_buyer_country IS NULL)
+      OR (o5.id IS NOT NULL
+          AND (p_store_id IS NULL OR o5.store_id = p_store_id)
+          AND (p_buyer_country IS NULL OR o5.buyer_country = p_buyer_country))
+    )
+  GROUP BY date_trunc('month', pb.vendor_invoice_date)
+),
+washing_agg AS (
+  SELECT date_trunc('month', we.chalan_date)::date AS month,
+    SUM(COALESCE(we.amount, 0) + COALESCE(we.debit_charges, 0)) AS washing_inr
+  FROM washing_entries we
+  LEFT JOIN orders o4 ON o4.id = we.order_id
+  WHERE we.company_id = p_company_id
+    AND we.chalan_date >= p_from AND we.chalan_date <= p_to
+    AND (
+      (p_store_id IS NULL AND p_buyer_country IS NULL)
+      OR (
+        (p_store_id IS NULL OR we.store_id = p_store_id)
+        AND (p_buyer_country IS NULL OR (o4.id IS NOT NULL AND o4.buyer_country = p_buyer_country))
+      )
+    )
+  GROUP BY date_trunc('month', we.chalan_date)
+),
+months AS (
+  SELECT month FROM order_agg
+  UNION SELECT month FROM ad_spend_agg
+  UNION SELECT month FROM returns_agg
+  UNION SELECT month FROM purchase_agg
+  UNION SELECT month FROM purchase_adjustments
+  UNION SELECT month FROM washing_agg
+)
+SELECT
+  m.month,
+  COALESCE(oa.order_count, 0)::bigint AS order_count,
+  COALESCE(oa.sale_inr, 0)  AS total_sale_value_inr,
+  COALESCE(oa.sale_usd, 0)  AS total_sale_value_usd,
+  COALESCE(ca.courier_net_inr, 0) AS expense_courier_inr,
+  COALESCE(ca.duty_net_inr, 0)    AS expense_duty_inr,
+  COALESCE(mfa.fees_matched_inr, 0) AS portal_fees_matched_inr,
+  CASE WHEN COALESCE(mfa.fees_matched_inr, 0) > 0 THEN mfa.fees_matched_inr
+       ELSE COALESCE(oa.sale_inr, 0) * 0.25 END AS portal_expense_effective_inr,
+  COALESCE(ad.ad_spend_usd, 0) AS ad_spend_usd,
+  COALESCE(ra.returns_inr, 0)  AS returns_inr,
+  COALESCE(pa.purchase_inr, 0) - COALESCE(padj.adjustment_total_inr, 0) AS expense_purchase_inr,
+  COALESCE(wa.washing_inr, 0)  AS expense_washing_inr
+FROM months m
+LEFT JOIN order_agg oa          ON oa.month = m.month
+LEFT JOIN courier_agg ca        ON ca.month = m.month
+LEFT JOIN marketplace_fee_agg mfa ON mfa.month = m.month
+LEFT JOIN ad_spend_agg ad       ON ad.month = m.month
+LEFT JOIN returns_agg ra        ON ra.month = m.month
+LEFT JOIN purchase_agg pa       ON pa.month = m.month
+LEFT JOIN purchase_adjustments padj ON padj.month = m.month
+LEFT JOIN washing_agg wa        ON wa.month = m.month
+ORDER BY m.month;
+$$;
+
+COMMENT ON FUNCTION finance_dashboard_monthly IS
+  '2026-09-18 (round 8), NETTED 2026-09-19 — includes expense_purchase_inr (net of purchase-bill '
+  'CN/Debit adjustments via bill_pass_register_adjustments attributed through order_id) and '
+  'expense_washing_inr, filter-aware: '
+  'with no Marketplace/Country filter every bill/entry in range counts; with a filter active, only '
+  'ones linked to a matching order count (washing via its own store_id; purchase via order_id). '
+  'Internal/office overhead (rent, salary — genuinely not order-linked) is still added by the page '
+  'itself from internal_expenses, unchanged.';
+
+-- ============================================================================
+-- 3. NEW — visibility into how much purchase/washing is NOT yet linked to
+--    an order (the number that should shrink toward zero as data entry
+--    gets more consistent, per the owner's "new FY se pura manage ho
+--    jayega"). Company-wide only (an unlinked row has no store/country to
+--    scope it to).
+-- ============================================================================
+CREATE OR REPLACE FUNCTION finance_dashboard_unlinked_purchase_washing(
+  p_company_id uuid,
+  p_from date,
+  p_to date
+)
+RETURNS TABLE (
+  unlinked_purchase_bill_count integer,
+  unlinked_purchase_inr        numeric,
+  unlinked_washing_entry_count integer,
+  unlinked_washing_inr         numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    (SELECT COUNT(*)::int FROM purchase_bills
+      WHERE company_id = p_company_id AND order_id IS NULL
+        AND vendor_invoice_date >= p_from AND vendor_invoice_date <= p_to),
+    (SELECT COALESCE(SUM(g_total_plus_gst), 0) FROM purchase_bills
+      WHERE company_id = p_company_id AND order_id IS NULL
+        AND vendor_invoice_date >= p_from AND vendor_invoice_date <= p_to),
+    (SELECT COUNT(*)::int FROM washing_entries
+      WHERE company_id = p_company_id AND order_id IS NULL
+        AND chalan_date >= p_from AND chalan_date <= p_to),
+    (SELECT COALESCE(SUM(COALESCE(amount,0) + COALESCE(debit_charges,0)), 0) FROM washing_entries
+      WHERE company_id = p_company_id AND order_id IS NULL
+        AND chalan_date >= p_from AND chalan_date <= p_to);
+$$;
+
+COMMENT ON FUNCTION finance_dashboard_unlinked_purchase_washing IS
+  '2026-09-18 (round 8) — count + total of purchase bills / washing entries in a date range that '
+  'have NO order_id, i.e. cannot be attributed to any marketplace/country. Shown on the Finance '
+  'Dashboard as an explicit "not yet linked" figure — should trend toward zero as entry gets more '
+  'consistent, per the owner''s own point that this is a data-entry-completeness issue, not a '
+  'schema limitation.';
 
 -- =============================================================================
 -- SECTION 18 — SEED DATA
@@ -5569,6 +5904,73 @@ INSERT INTO capabilities (code, description) VALUES
   -- signed-in employee).
   ('error_log_view', 'View and resolve the Error Tab — validation failures, failed courier bookings, and staff-flagged wrong entries — Admin/MD only');
 
+-- 2026-09-18: capabilities that shipped in the app after this seed was
+-- written but never landed in the table (fresh databases only - live
+-- databases get the same rows via sync_capabilities() from the app's
+-- registry, see db/2026-09-18-orders-multi-photo-and-capability-sync.sql
+-- and src/lib/capability-sync.ts). leave_management/leave_admin ship with
+-- no seed grant by design - MD/Admin grant them via the matrix.
+INSERT INTO capabilities (code, description) VALUES
+  ('leave_management', 'Apply for leave with an application, and track its approval status'),
+  ('leave_admin',      'Approve/reject leave requests and assign who covers the absent employee''s store work'),
+  ('bank_recon',       'Add every bank account and credit card, upload their statements (any format auto-maps), and auto-match UTR / reference / invoice / party / store payouts - old payments are never modified'),
+  ('companion_admin',  'Turn the live AI companion on/off for specific employees - a per-person switch, not a role permission'),
+  ('hr_letter_admin',  'Placeholder description for the help-center article-admin capability code used by older builds');
+
+-- (Descriptions above are refreshed from the app''s live CAPABILITY_INFO
+-- registry by sync_capabilities() on every Roles & Permissions page load,
+-- so wording here is a bootstrap default only.)
+
+
+-- ============================================================================
+-- 2026-09-18: sync_capabilities - capability auto-sync from the app registry
+-- ============================================================================
+-- The Roles & Permissions page calls this with the app's live CAPABILITY_INFO
+-- registry (src/lib/capability-info.ts) on every page load, so a new app
+-- section appears in the matrix automatically after a deploy - no manual SQL.
+-- Upserts codes + refreshes descriptions; NEVER touches role_capabilities
+-- grants. Zero-arg call is a no-op (db/schema.sql's INSERT above stays the
+-- fresh-database bootstrap). See
+-- db/2026-09-18-orders-multi-photo-and-capability-sync.sql.
+CREATE OR REPLACE FUNCTION sync_capabilities(
+  p_codes        text[] DEFAULT NULL,
+  p_descriptions text[] DEFAULT NULL
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $func$
+DECLARE
+  v_processed integer := 0;
+  v_code      text;
+  v_desc      text;
+  i           int;
+BEGIN
+  IF p_codes IS NULL THEN
+    RETURN 0;
+  END IF;
+  FOR i IN 1 .. array_length(p_codes, 1) LOOP
+    v_code := btrim(coalesce(p_codes[i], ''));
+    CONTINUE WHEN v_code = '';
+    v_desc := NULL;
+    IF p_descriptions IS NOT NULL AND i <= coalesce(array_length(p_descriptions, 1), 0) THEN
+      v_desc := NULLIF(btrim(coalesce(p_descriptions[i], '')), '');
+    END IF;
+    INSERT INTO capabilities (code, description)
+    VALUES (v_code, v_desc)
+    ON CONFLICT (code) DO UPDATE
+      SET description = COALESCE(EXCLUDED.description, capabilities.description);
+    v_processed := v_processed + 1;
+  END LOOP;
+  RETURN v_processed;
+END;
+$func$;
+
+COMMENT ON FUNCTION sync_capabilities(text[], text[]) IS
+  '2026-09-18: upserts the app''s live CAPABILITY_INFO registry (src/lib/capability-info.ts) '
+  'into capabilities with current descriptions, so new app sections appear in the '
+  'Roles & Permissions matrix automatically after a deploy. Grants in role_capabilities '
+  'are never touched. Zero-arg call is a no-op.';
 INSERT INTO role_capabilities (role_id, capability_code)
 SELECT r.id, cap FROM roles r
 JOIN (VALUES

@@ -18,7 +18,7 @@ export default async function NewOrderPage() {
       supabase
         .from("orders")
         .select(
-          "id, ref_no, order_date, buyer_name_address, contact_no, photo_url, qty, size_label, item_category_id, order_value_original, order_currency, status, whatsapp_sent_at, store_id, company_id, dispatch_date, estimated_dispatch_date, sku_label, colour, tassel_fringes, photo_type, remark"
+          "id, ref_no, order_date, buyer_name_address, contact_no, photo_url, photo_urls, qty, size_label, item_category_id, order_value_original, order_currency, status, whatsapp_sent_at, store_id, company_id, dispatch_date, estimated_dispatch_date, sku_label, colour, tassel_fringes, photo_type, remark"
         )
         .eq("company_id", employee.currentCompanyId)
         .order("entry_timestamp", { ascending: false })
@@ -83,6 +83,7 @@ export default async function NewOrderPage() {
                       buyer_name_address: o.buyer_name_address,
                       contact_no: o.contact_no,
                       photo_url: o.photo_url,
+                      photo_urls: o.photo_urls,
                       item_category_name: categoryName.get(o.item_category_id) ?? null,
                       size_label: o.size_label,
                       qty: o.qty,

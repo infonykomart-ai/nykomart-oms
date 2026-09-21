@@ -40,6 +40,7 @@ import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { RelatedNotesBadge } from "./related-notes-badge";
 import { BillStatementDialog } from "@/components/bill-statement-dialog";
+import { A4Dialog } from "@/components/a4-dialog";
 import { DocStatementDialog } from "@/components/doc-statement-dialog";
 import type { DocType } from "@/lib/doc-statement";
 
@@ -633,8 +634,20 @@ function DocList<T extends { id: string }>({
       {total && <p className="mb-2 text-xs font-medium text-slate-500">{total}</p>}
       <div className="space-y-1.5">
         {rows.map((r) =>
+          /* 2026-09-19 — "baki kisi or page par bhi kuch update karte hai to
+              dusre page par le jane ki bajaye A4 sige me dialogbox open hoye usi
+              me change karke save kar sake": every document tab's Edit now
+              opens in the shared A4 dialog instead of reflowing the list. */
           editingId === r.id && renderEdit ? (
-            <div key={r.id}>{renderEdit(r.record, () => setEditingId(null))}</div>
+            <A4Dialog
+              key={r.id}
+              open
+              onClose={() => setEditingId(null)}
+              title={`Edit — ${r.no}`}
+              subtitle="A4-size dialog — change karke Save dabao."
+            >
+              {renderEdit(r.record, () => setEditingId(null))}
+            </A4Dialog>
           ) : (
             <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between">

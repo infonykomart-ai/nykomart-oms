@@ -96,6 +96,12 @@ export function OrderWhatsAppButton({
     colour: string | null;
     tassel_fringes: boolean | null;
     photo_type: string | null;
+    // 2026-09-21 — closeup photos (from the order's multi-photo entry):
+    // shared AFTER the main photo in the same message when the platform
+    // allows multiple files (mobile share sheet), else downloaded alongside
+    // it on desktop. Max 2, matching the order form's Main + Closeup 1 +
+    // Closeup 2 entry UI.
+    photo_urls: (string | null)[] | null;
     remark: string | null;
     is_amazon: boolean;
     // 2026-09-20b — which company (Nyko Mart / Rugara / CASA ARRA) this
@@ -164,19 +170,30 @@ export function OrderWhatsAppButton({
     return lines.join("\n");
   }
 
-  // Fetches the REAL, unmodified product photo — server-to-server through
-  // /api/order-photo-proxy, same SSRF-safe proxy pattern the (now-unused)
-  // composite route used, because most photo URLs live on outside vendor/
-  // marketplace hosts that don't send CORS headers allowing a browser fetch
-  // to read the response directly.
-  async function fetchRawPhoto(): Promise<Blob | null> {
-    if (!order.photo_url) return null;
-    try {
-      const res = await fetch(`/api/order-photo-proxy?url=${encodeURIComponent(order.photo_url)}`);
-      return res.ok ? await res.blob() : null;
-    } catch {
-      return null;
+  // Fetches the REAL, unmodified product photo(s) — server-to-server
+  // through /api/order-photo-proxy, because most photo URLs live on outside
+  // vendor/marketplace hosts that don't send CORS headers allowing a
+  // browser fetch to read the response directly.
+  // 2026-09-21 — "isme ek to order ki main photo ka ho baki ke do closeup
+  // photo ke option ho / WHATSAAP PAR BHI JAYEGI PHOTO PO ON YE CLOSE PHOTO
+  // FIRST & SECOND, AGAR SINGLE HAI TO USKE HISABSE": the MAIN photo comes
+  // first, then up to 2 closeups (order.photo_urls, deduped against the
+  // main and against each other). No composite, no baked pixels — each
+  // photo travels as itself; single-photo orders behave exactly as before.
+  async function fetchPhotos(): Promise<{ name: string; blob: Blob }[]> {
+    const urls = [order.photo_url, ...(order.photo_urls ?? [])]
+      .filter((u, i, arr): u is string => !!u && arr.indexOf(u) === i)
+      .slice(0, 3); // main + closeup 1 + closeup 2
+    const out: { name: string; blob: Blob }[] = [];
+    for (const url of urls) {
+      try {
+        const res = await fetch(`/api/order-photo-proxy?url=${encodeURIComponent(url)}`);
+        if (res.ok) out.push({ name: `${order.ref_no}${out.length > 0 ? `-${out.length + 1}` : ""}.jpg`, blob: await res.blob() });
+      } catch {
+        // one photo failing never blocks the others
+      }
     }
+    return out;
   }
 
   async function shareWhatsApp() {
@@ -184,24 +201,31 @@ export function OrderWhatsAppButton({
     setNotice(null);
     const text = buildMessage();
 
-    let blob: Blob | null = null;
-    try {
-      blob = await fetchRawPhoto();
-    } catch {
-      blob = null;
-    }
+    const photos = await fetchPhotos().catch(() => [] as { name: string; blob: Blob }[]);
+    const mainPhoto = photos[0] ?? null;
 
     // Path 1 — mobile share sheet: files+text arrive as ONE message whose
-    // caption is the real, searchable text, and the photo itself is
-    // exactly what's on the order (no overlay).
-    if (blob && typeof navigator !== "undefined" && "share" in navigator) {
+    // caption is the real, searchable text, and every photo is exactly what's
+    // on the order (no overlay). Main photo first, then the closeups.
+    if (photos.length > 0 && typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        const file = new File([blob], `${order.ref_no}.jpg`, { type: blob.type || "image/jpeg" });
-        const shareData = { files: [file], text };
-        if ("canShare" in navigator && navigator.canShare(shareData)) {
+        const files = photos.map(({ name, blob }) => new File([blob], name, { type: blob.type || "image/jpeg" }));
+        const shareData = { files, text };
+        const shareable = "canShare" in navigator && navigator.canShare(shareData);
+        if (shareable) {
           await navigator.share(shareData);
           markSent();
           return;
+        }
+        // Some sheets accept exactly one file but not many — retry with just
+        // the main photo so the send still happens.
+        if (mainPhoto && "canShare" in navigator) {
+          const single = { files: [new File([mainPhoto.blob], mainPhoto.name, { type: mainPhoto.blob.type || "image/jpeg" })], text };
+          if (navigator.canShare(single)) {
+            await navigator.share(single);
+            markSent();
+            return;
+          }
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled
@@ -215,15 +239,18 @@ export function OrderWhatsAppButton({
     // (Clipboard write here rides on the click's user activation — if the
     // browser refuses it, the 📋 Copy caption button right below is the
     // same text.)
-    if (blob) {
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = `${order.ref_no}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+    if (photos.length > 0) {
+      for (const [i, { blob, name }] of photos.entries()) {
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+        if (i < photos.length - 1) await new Promise((r) => setTimeout(r, 350)); // don't drop multi-download prompts
+      }
 
       let copiedOk = false;
       try {

@@ -42,6 +42,12 @@ export default async function ErrorLogPage({
 
   const status = typeof sp.status === "string" ? sp.status : "pending";
   const source = typeof sp.source === "string" ? sp.source : "";
+  // status/source are CHECK-constrained enum-ish text columns (see
+  // db/2026-09-08-error-log.sql) — the generated Database types now carry
+  // those unions, so narrow the free-form search param before filtering.
+  const statusFilter = status === "resolved" ? ("resolved" as const) : ("pending" as const);
+  const sourceFilter =
+    source === "courier_api" ? ("courier_api" as const) : source === "manual" ? ("manual" as const) : ("validation" as const);
   const fromDate = typeof sp.from === "string" ? sp.from : "";
   const toDate = typeof sp.to === "string" ? sp.to : "";
 
@@ -54,8 +60,8 @@ export default async function ErrorLogPage({
     .order("created_at", { ascending: false })
     .limit(300);
 
-  if (status) query = query.eq("status", status);
-  if (source) query = query.eq("source", source);
+  if (status) query = query.eq("status", statusFilter);
+  if (source) query = query.eq("source", sourceFilter);
   if (fromDate) query = query.gte("created_at", fromDate);
   if (toDate) query = query.lte("created_at", `${toDate}T23:59:59`);
 

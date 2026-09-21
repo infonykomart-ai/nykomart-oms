@@ -13,6 +13,18 @@ export type ParsedShipment = {
   amount: number | null; // freight bills: this shipment's "Total" column; duty bills: unused (see dutyAmt/otherAmt)
   dutyAmt: number | null; // duty bills only — Import Duty (+ Import Tax where broken out)
   otherAmt: number | null; // duty bills only — the courier's own service/disbursement fee portion
+  // 2026-09-21: per-AWB charge BREAKUP where the bill prints it ("total
+  // shipping amt = per awb charges jisme fuel+remote+other hote hai phir
+  // GST alag aata hai phir gross shipping ammount"). base = line-haul,
+  // fuel = fuel surcharge, remote = remote/delivery-area surcharge —
+  // components of `amount` above, null when this template doesn't break
+  // them out per AWB. gst = GST charged on this AWB (prorated from the
+  // bill's header GST by pre-tax charge share when the bill doesn't
+  // invoice GST per line).
+  baseAmt: number | null;
+  fuelAmt: number | null;
+  remoteAmt: number | null;
+  gstAmt: number | null;
 };
 
 export type ParsedBill = {

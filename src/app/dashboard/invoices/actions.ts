@@ -888,7 +888,7 @@ export async function updateInvoiceFields(
     broker_name?: string | null;
     broker_tel?: string | null;
     broker_contact?: string | null;
-    duty_payable_by?: string | null;
+    duty_payable_by?: "Exporter" | "Consignee" | "Other" | null; // sales_invoices CHECK union
     duty_payable_other_specify?: string | null;
   }
 ): Promise<{ error: string | null }> {

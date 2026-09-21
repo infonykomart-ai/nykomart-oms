@@ -279,14 +279,19 @@ export function OrderPrintSheet({
                   {allPhotos.length > 1 ? ` — ${allPhotos.length} photos` : ""}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-2">
-                  {allPhotos.map((url) => (
-                    <a key={url} href={url} target="_blank" rel="noreferrer">
+                  {allPhotos.map((url, idx) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer" className="block">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={url}
                         alt=""
                         className="h-32 w-32 rounded-lg border border-slate-200 object-cover"
                       />
+                      {/* 2026-09-19 — Main vs Closeup caption, matching the
+                          form's Main Photo + 2 Closeup slots layout. */}
+                      <span className="mt-0.5 block text-center text-[10px] font-medium text-slate-400">
+                        {idx === 0 ? "Main" : `Closeup ${idx}`}
+                      </span>
                     </a>
                   ))}
                 </div>
