@@ -273,6 +273,31 @@ async function FreightBillReportInner({ id }: { id: string }) {
     return { ...r, shippingPct };
   });
 
+  // Display order — 2026-09-22: PO No. shown in A-Z (natural, digit-aware)
+  // order across every series prefix (PO-, RF-, RG-, …), per user request
+  // ("report PO RF RG ki series me aayegi A-Z ke order me"). BUT when rows
+  // share an AWB (a split shipment, e.g. PO-A626-1/2 / PO-A626-2/2) they
+  // must stay grouped together and adjacent — never separated by the
+  // straight alphabetical sort — since the report already treats them as
+  // one physical shipment (see the Shipping % grouping above). Each group
+  // sorts to the position of its lowest PO No.; a row with no shared AWB is
+  // its own group of one. Sr. No. is then renumbered 1..N in this final
+  // display order (sums/category totals above are unaffected — order
+  // doesn't change a total).
+  const natCompare = (x: string, y: string) => x.localeCompare(y, undefined, { numeric: true, sensitivity: "base" });
+  const groupsByAwb = new Map<string, typeof rows>();
+  rows.forEach((r, idx) => {
+    const key = r.awb !== "—" ? `awb:${r.awb}` : `solo:${idx}`;
+    const g = groupsByAwb.get(key) ?? [];
+    g.push(r);
+    groupsByAwb.set(key, g);
+  });
+  const sortedRows = Array.from(groupsByAwb.values())
+    .map((g) => [...g].sort((a, b) => natCompare(a.refNo, b.refNo)))
+    .sort((ga, gb) => natCompare(ga[0].refNo, gb[0].refNo))
+    .flat()
+    .map((r, i) => ({ ...r, sr: i + 1 }));
+
   // Bottom summary — per item-category sale/shipping breakdown (whatever
   // categories actually appear, not a hardcoded Jute/Cotton/Tufted list —
   // those were just what happened to be in the one example file).
@@ -354,7 +379,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {sortedRows.map((r) => (
                 <tr key={r.sr} className="border-b border-slate-100 text-slate-700">
                   <td className="py-1 pr-2">{r.sr}</td>
                   <td className="py-1 pr-2 font-medium text-slate-900">{r.refNo}</td>
