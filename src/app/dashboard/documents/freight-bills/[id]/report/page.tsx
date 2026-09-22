@@ -173,12 +173,31 @@ async function FreightBillReportInner({ id }: { id: string }) {
     const billGst = a.billed_gst_amt != null ? Number(a.billed_gst_amt) : null;
     const hasBillFigures = billTotal != null || billGst != null;
     const totalShipping = billTotal ?? ourShipping;
-    const gst = billGst ?? ourGst;
+    // 2026-09-22 fix: when the bill's pre-tax total WAS captured
+    // (billed_freight_amt) but its GST wasn't separately captured
+    // (billed_gst_amt still null — true for most imported AWBs, since only
+    // the total line was captured off the courier invoice, not its GST
+    // split), compute GST as 18% of that real bill total instead of
+    // borrowing our own dispatch estimate's GST. GST 18% is a fixed
+    // statutory rate on whatever the pre-tax figure is, so this is the
+    // correct bill-side GST, not a substitute figure from an unrelated
+    // estimate. Confirmed against the user's own courier invoice for
+    // PO-A570 (Invoice 276437655): Freight 18,635.20 + Fuel 10,829.90 +
+    // Other 4,655.00 = Total 34,120.10 → GST 18% = 6,141.618 → Gross
+    // 40,261.72 — matches exactly. Only fall back to ourGst when there's
+    // no real bill total at all (totalShipping itself came from the
+    // ourShipping fallback, not a captured bill figure).
+    const gst = billGst ?? (billTotal != null ? billTotal * 0.18 : ourGst);
     const grossShipping = totalShipping + gst;
 
-    // Diff Amt = Over Shipping − Courier Shipping, per AWB (the manual
-    // override stays authoritative when entered).
-    const diffAmt = a.difference_amt != null ? Number(a.difference_amt) : hasBillFigures ? ourShipping - totalShipping : null;
+    // Diff Amt = Our (fully-loaded, incl. GST) − Courier Gross (fully-
+    // loaded, incl. GST) — both totals GST-inclusive so it's a genuine
+    // apples-to-apples "what we estimated we'd pay" vs "what the courier
+    // actually billed" comparison (previously compared our GST-inclusive
+    // figure against the bill's pre-GST subtotal — confirmed wrong against
+    // the user's own PO-A570 invoice: expected Diff Amt magnitude
+    // 7,254.52 = |33,007.20 − 40,261.72|, not |33,007.20 − 34,120.10|).
+    const diffAmt = a.difference_amt != null ? Number(a.difference_amt) : hasBillFigures ? ourShipping - grossShipping : null;
 
     return {
       sr: i + 1,
