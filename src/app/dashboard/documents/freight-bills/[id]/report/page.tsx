@@ -136,7 +136,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
     if (p.volumetric_weight != null) volByShipment.set(p.order_shipment_id, (volByShipment.get(p.order_shipment_id) ?? 0) + Number(p.volumetric_weight));
   }
 
-  const rows = (assignments ?? []).map((a, i) => {
+  const rowsBase = (assignments ?? []).map((a, i) => {
     const order = orderById.get(a.order_id);
     const dispatch = dispatchByOrder.get(a.order_id);
     const shipment = shipmentById.get(a.order_shipment_id);
@@ -145,10 +145,18 @@ async function FreightBillReportInner({ id }: { id: string }) {
     const orgSale = Number(order?.order_value_inr ?? 0);
 
     // OUR side — the dispatch-time estimate.
+    // 2026-09-22 fix: our_freight_amt (ourBase) is ALREADY the fully-loaded
+    // estimate total — Base Rate + Discount + Fuel + Demand Surcharge/Other
+    // Charges + GST 18% (confirmed against the user's own manual
+    // reconciliation of PO-A570). Adding demand_surcharge_other_charge again
+    // here double-counted it — reported live: "dekho other charges ko 2 baar
+    // count kar rhe ho", screenshot showing 36,830.70 (= 33,007.20 +
+    // 3,823.50) instead of the correct 33,007.20. The pre-GST our-side
+    // subtotal — comparable to the bill-side totalShipping, which is also
+    // pre-GST — is our_freight_amt minus its own baked-in GST.
     const ourBase = Number(dispatch?.our_freight_amt ?? 0);
-    const ourOther = Number(dispatch?.demand_surcharge_other_charge ?? 0);
-    const ourShipping = ourBase + ourOther;
     const ourGst = Number(dispatch?.gst_18pct ?? 0);
+    const ourShipping = ourBase - ourGst;
 
     // BILL side — what the courier actually charged this AWB. Total
     // pre-GST = billed_freight_amt when captured, else the sum of its
@@ -170,9 +178,6 @@ async function FreightBillReportInner({ id }: { id: string }) {
     // Diff Amt = Over Shipping − Courier Shipping, per AWB (the manual
     // override stays authoritative when entered).
     const diffAmt = a.difference_amt != null ? Number(a.difference_amt) : hasBillFigures ? ourShipping - totalShipping : null;
-
-    // Shipping % — gross shipping as a % of the order's sale value.
-    const shippingPct = orgSale > 0 ? (grossShipping / orgSale) * 100 : null;
 
     return {
       sr: i + 1,
@@ -203,7 +208,6 @@ async function FreightBillReportInner({ id }: { id: string }) {
             ? volByShipment.get(a.order_shipment_id)!
             : null,
       differenceAmt: diffAmt,
-      shippingPct,
       // 2026-09-01: non-blocking booking-cost-vs-billed-cost "recheck" note
       // — see db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
       remark: [
@@ -225,6 +229,28 @@ async function FreightBillReportInner({ id }: { id: string }) {
         .filter(Boolean)
         .join(" · "),
     };
+  });
+
+  // Shipping % — 2026-09-22 fix, per user spec: "jo persent niklega dono
+  // order ki value ko jod ke phir niklega" (the percent should be worked
+  // out off the combined value of both/all orders, then computed). Split
+  // shipments (PO-A560-1/3, -2/3, -3/3 style series) go out on one physical
+  // AWB but each split order has its OWN order_shipments row — there's no
+  // schema-level shared-shipment relationship (order_shipments.order_id is
+  // NOT NULL), so the only way to find "the same shipment" is to match the
+  // plain-text awb_no. Group rows sharing a real AWB and use their COMBINED
+  // sale value as the % denominator instead of each split order's own
+  // individual sale value; rows with no AWB on file ("—") fall back to
+  // their own sale value.
+  const saleByAwb = new Map<string, number>();
+  for (const r of rowsBase) {
+    if (r.awb === "—") continue;
+    saleByAwb.set(r.awb, (saleByAwb.get(r.awb) ?? 0) + r.orgSale);
+  }
+  const rows = rowsBase.map((r) => {
+    const denom = r.awb !== "—" ? saleByAwb.get(r.awb)! : r.orgSale;
+    const shippingPct = denom > 0 ? (r.grossShipping / denom) * 100 : null;
+    return { ...r, shippingPct };
   });
 
   // Bottom summary — per item-category sale/shipping breakdown (whatever
