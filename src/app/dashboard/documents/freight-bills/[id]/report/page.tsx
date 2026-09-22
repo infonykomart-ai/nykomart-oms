@@ -303,24 +303,66 @@ async function FreightBillReportInner({ id }: { id: string }) {
   // those were just what happened to be in the one example file).
   // 2026-09-21: each category also shows its own SHIPPING % — "cotton ki
   // sale itni hai shipping itni hai or shipping ka % itna hai".
+  // 2026-09-22 fix: "handwoven & braided jute ek hi category hai" — Hand
+  // Braided and Hand Woven Jute Rug are the same business category, so
+  // merge them into one bucket for this summary (the per-row TYPE column
+  // in the table above keeps showing each order's own specific label —
+  // only this rollup merges them).
+  const categoryGroupKey = (name: string) =>
+    name === "HAND BRAIDED JUTE RUG" || name === "HAND WOVEN JUTE RUG" ? "HAND BRAIDED / WOVEN JUTE RUG" : name;
   const byCategory = new Map<string, { sale: number; shipping: number }>();
   for (const r of rows) {
-    const cur = byCategory.get(r.category) ?? { sale: 0, shipping: 0 };
+    const key = categoryGroupKey(r.category);
+    const cur = byCategory.get(key) ?? { sale: 0, shipping: 0 };
     cur.sale += r.orgSale;
     cur.shipping += r.grossShipping;
-    byCategory.set(r.category, cur);
+    byCategory.set(key, cur);
   }
 
   // Payables block — "courier ka bill kitne ka hai or gst kitna laga hai or
-  // apne ko pay kitna karna hai": the bill's own header figures, and the
-  // over/under vs our dispatch estimates summed across the assigned AWBs.
-  const billPreTax = bill.total_amt ?? bill.freight_amt + bill.fuel_amt + bill.other_charges;
-  const billGstHeader = bill.gst_18pct_amt ?? (billPreTax != null ? billPreTax * 0.18 : null);
-  const billGross = bill.gross_total_amt ?? (billPreTax != null && billGstHeader != null ? billPreTax + billGstHeader : null);
-  const cnNet = billGross != null ? billGross - bill.credit_note_amt : null;
+  // apne ko pay kitna karna hai".
+  // 2026-09-22 fix: previously the top-right Bill/GST/Gross Total came from
+  // the freight_bills HEADER fields (a single figure typed in separately
+  // from the 33 AWB line items) and didn't reconcile with them — user
+  // flagged it directly: "Top right me Bill+GST galt aata hai / Gross
+  // Total galat aara". For Invoice 276437655 the header said Bill
+  // ₹284,941.40 + GST ₹51,289.45 → Gross ₹336,230.85, while the sum of the
+  // actual assigned AWBs came to ₹288,642.00 + GST ₹51,955.56 → Gross
+  // ₹340,597.56. Per the same principle behind every fix in this report
+  // today, the per-AWB captured data is the trustworthy source, so
+  // Bill/GST/Gross Total (and Total Payable) are now computed by summing
+  // the assigned AWBs' own figures instead of trusting a header total
+  // that isn't reconciled against them. If the physical courier invoice's
+  // own printed total still doesn't match this sum, that means an AWB is
+  // missing from this bill or one line item needs correcting — not that
+  // this sum is wrong.
   const ourShippingTotal = rows.reduce((s, r) => s + r.ourShipping, 0);
-  const courierShippingTotal = rows.reduce((s, r) => s + r.totalShipping, 0);
+  const courierPreGstTotal = rows.reduce((s, r) => s + r.totalShipping, 0);
+  const courierGstTotal = rows.reduce((s, r) => s + r.gst, 0);
+  // "GST add karna hai" — Courier Shipping Charge must be GST-inclusive
+  // (gross), same basis as Our Shipping Charge (also GST-inclusive), so
+  // Difference below is a genuine apples-to-apples comparison — previously
+  // this compared a GST-inclusive our-side total against a pre-GST courier
+  // total.
+  const courierShippingTotal = rows.reduce((s, r) => s + r.grossShipping, 0);
   const difference = ourShippingTotal - courierShippingTotal;
+  const billPreTax = courierPreGstTotal;
+  const billGstHeader = courierGstTotal;
+  const billGross = courierShippingTotal;
+  // "Total Payable jo couriour ka charge hoga gst ke sath vo" — Total
+  // Payable IS the courier's gross (GST-inclusive) charge, less any credit
+  // note.
+  const cnNet = billGross - bill.credit_note_amt;
+
+  // Bottom TOTAL row — 2026-09-22: a bold summary row under the last data
+  // row, per user request ("last ki line ke niche bold me total aaye").
+  const totalSale = rows.reduce((s, r) => s + r.orgSale, 0);
+  const totalBase = rows.reduce((s, r) => s + (r.billBase ?? 0), 0);
+  const totalFuel = rows.reduce((s, r) => s + (r.billFuel ?? 0), 0);
+  const totalRemote = rows.reduce((s, r) => s + (r.billRemote ?? 0), 0);
+  const totalOther = rows.reduce((s, r) => s + (r.billOther ?? 0), 0);
+  const totalDiff = rows.reduce((s, r) => s + (r.differenceAmt ?? 0), 0);
+  const overallShippingPct = totalSale > 0 ? (courierShippingTotal / totalSale) * 100 : null;
 
   const fmt = (n: number | null | undefined) => (n == null ? "—" : n.toFixed(2));
 
@@ -338,8 +380,10 @@ async function FreightBillReportInner({ id }: { id: string }) {
               <h1 className="text-lg font-bold text-slate-900">Courier Bill Report</h1>
               <p className="text-slate-500">Invoice {bill.invoice_no} · {bill.invoice_date ?? "—"}</p>
             </div>
-            {/* 2026-09-21: payables summary — bill total + GST + net payable
-                after credit note, all off the bill's own header. */}
+            {/* 2026-09-22: payables summary — bill total + GST + net payable
+                after credit note, now computed from the sum of the AWB
+                assignments themselves rather than the bill's own header
+                fields (see the fix note above rows.reduce for why). */}
             <div className="text-right text-slate-600">
               <p>Bill: ₹{fmt(billPreTax)} + GST ₹{fmt(billGstHeader)}</p>
               <p className="font-semibold text-slate-900">Gross Total ₹{fmt(billGross)}</p>
@@ -411,6 +455,24 @@ async function FreightBillReportInner({ id }: { id: string }) {
                   <td colSpan={21} className="py-3 text-center text-slate-400">No AWBs assigned to this bill yet.</td>
                 </tr>
               )}
+              {rows.length > 0 && (
+                <tr className="border-t-2 border-slate-400 font-bold text-slate-900">
+                  <td colSpan={6} className="py-1 pr-2 text-right">TOTAL</td>
+                  <td className="py-1 pr-2 text-right">{totalSale.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{ourShippingTotal.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{totalBase.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{totalFuel.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{totalRemote.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{totalOther.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{courierPreGstTotal.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{courierGstTotal.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{courierShippingTotal.toFixed(2)}</td>
+                  <td className="py-1 pr-2" colSpan={3}></td>
+                  <td className={`py-1 pr-2 text-right ${totalDiff < 0 ? "text-red-700" : ""}`}>{totalDiff.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{overallShippingPct != null ? `${overallShippingPct.toFixed(1)}%` : "—"}</td>
+                  <td className="py-1 pr-2"></td>
+                </tr>
+              )}
             </tbody>
           </table>
 
@@ -425,18 +487,17 @@ async function FreightBillReportInner({ id }: { id: string }) {
               ))}
             </div>
             <div className="text-right">
-              {/* 2026-09-21: OUR vs COURIER totals now compare the same
+              {/* 2026-09-22: OUR vs COURIER totals now compare the same
                   thing — our dispatch estimate vs the courier's actual
-                  per-AWB charges (both pre-GST) — instead of the old
-                  circular self-comparison. */}
+                  per-AWB charges, BOTH fully loaded incl. GST — instead of
+                  comparing a GST-inclusive our-side figure against a
+                  pre-GST courier figure. */}
               <p className="text-slate-600">OUR SHIPPING CHARGE: ₹{ourShippingTotal.toFixed(2)}</p>
-              <p className="text-slate-600">COURIER SHIPPING CHARGE: ₹{courierShippingTotal.toFixed(2)}</p>
+              <p className="text-slate-600">COURIER SHIPPING CHARGE (incl. GST): ₹{courierShippingTotal.toFixed(2)}</p>
               <p className={`font-semibold ${difference < 0 ? "text-red-700" : "text-slate-900"}`}>
                 DIFFERENCE (OVER − COURIER): ₹{difference.toFixed(2)}
               </p>
-              {billGross != null && (
-                <p className="mt-1 text-slate-600">TOTAL PAYABLE TO COURIER (incl. GST): ₹{cnNet ?? billGross}</p>
-              )}
+              <p className="mt-1 text-slate-600">TOTAL PAYABLE TO COURIER (incl. GST): ₹{cnNet.toFixed(2)}</p>
             </div>
           </div>
         </div>
