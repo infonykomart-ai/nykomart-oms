@@ -146,17 +146,18 @@ async function FreightBillReportInner({ id }: { id: string }) {
 
     // OUR side — the dispatch-time estimate.
     // 2026-09-22 fix: our_freight_amt (ourBase) is ALREADY the fully-loaded
-    // estimate total — Base Rate + Discount + Fuel + Demand Surcharge/Other
+    // estimate total — Base Rate − Discount + Fuel + Demand Surcharge/Other
     // Charges + GST 18% (confirmed against the user's own manual
-    // reconciliation of PO-A570). Adding demand_surcharge_other_charge again
-    // here double-counted it — reported live: "dekho other charges ko 2 baar
-    // count kar rhe ho", screenshot showing 36,830.70 (= 33,007.20 +
-    // 3,823.50) instead of the correct 33,007.20. The pre-GST our-side
-    // subtotal — comparable to the bill-side totalShipping, which is also
-    // pre-GST — is our_freight_amt minus its own baked-in GST.
+    // reconciliation of PO-A570: 65,820 − 50,549.80 + 8,878.50 + 3,823.50 +
+    // 5,035.00 = 33,007.20 = our_freight_amt exactly). Adding
+    // demand_surcharge_other_charge again here double-counted it — reported
+    // live: "dekho other charges ko 2 baar count kar rhe ho", screenshot
+    // showing 36,830.70 (= 33,007.20 + 3,823.50) instead of the correct
+    // 33,007.20. Fix: show our_freight_amt as-is — nothing added a second
+    // time.
     const ourBase = Number(dispatch?.our_freight_amt ?? 0);
     const ourGst = Number(dispatch?.gst_18pct ?? 0);
-    const ourShipping = ourBase - ourGst;
+    const ourShipping = ourBase;
 
     // BILL side — what the courier actually charged this AWB. Total
     // pre-GST = billed_freight_amt when captured, else the sum of its
