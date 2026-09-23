@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -482,8 +483,18 @@ export default async function AttendanceAdminPage({
     <div>
       {/* 2026-09-10 — near-live data sync (see src/components/auto-refresh.tsx). */}
       <AutoRefresh intervalMs={15000} />
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-900">🗓️ Attendance Admin</h1>
+        {/* 2026-09-23 — "apne oms me bhi to chahiye na report": Month
+            Summary/IN-OUT/Absent/Late In/Early In-Out/Overtime/Half Day/
+            Mis Punch reports, filterable by company/employee, exportable
+            to PDF/Excel/Word — see monthly-report/page.tsx. */}
+        <Link
+          href="/dashboard/attendance/admin/monthly-report"
+          className="rounded-lg border border-amber-500 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
+        >
+          📊 Monthly Report
+        </Link>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
