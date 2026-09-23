@@ -135,7 +135,23 @@ export function IssuedLetterView({ letter, company }: { letter: IssuedLetter; co
               letter.subjectLine && <div className="mb-4 text-sm font-semibold">Subject: {letter.subjectLine}</div>
             )}
 
-            <div className="whitespace-pre-wrap text-sm leading-relaxed">{letter.bodyText}</div>
+            {/* 2026-09-23 — letters issued after the rich-text editor
+                (rich-text-editor.tsx) shipped have body_text stored as
+                real HTML, so it's rendered directly to keep bold/bullets/
+                alignment. Letters issued before that change stored a
+                plain \n-broken string with no tags at all — rendering
+                THOSE as raw HTML would collapse their line breaks into
+                one run-on paragraph, so plain text (no "<" followed by a
+                tag-like pattern) still goes through the old
+                whitespace-pre-wrap path instead. */}
+            {/<[a-z][\s\S]*>/i.test(letter.bodyText) ? (
+              <div
+                className="text-sm leading-relaxed [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
+                dangerouslySetInnerHTML={{ __html: letter.bodyText }}
+              />
+            ) : (
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">{letter.bodyText}</div>
+            )}
 
             <div className="mt-10 text-sm">
               <div className="font-semibold">{letter.signatoryName || " "}</div>

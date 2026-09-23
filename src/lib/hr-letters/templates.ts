@@ -242,4 +242,24 @@ export function renderTemplate(template: string, values: Record<string, string>)
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => values[key] ?? `[${key}]`);
 }
 
+// 2026-09-23 — the letter body editor (letter-form.tsx) switched from a
+// plain <textarea> to a rich-text (HTML) editor so bold/bullets/alignment
+// can be applied, but renderTemplate() above still returns a plain string
+// with \n for line breaks (the templates themselves are plain text). This
+// converts that plain output into the same "one <div> per line" shape a
+// contentEditable area produces natively, so the rich editor starts from
+// correctly-broken paragraphs instead of one run-on line — a blank line
+// becomes an empty div (rendered as <br> so it doesn't collapse to zero
+// height), matching how the templates use blank lines as paragraph gaps.
+function escapeHtmlText(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export function plainTextToEditableHtml(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line.trim() === "" ? "<div><br></div>" : `<div>${escapeHtmlText(line)}</div>`))
+    .join("");
+}
+
 export { today as todayFormatted };

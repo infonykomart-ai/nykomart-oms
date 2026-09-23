@@ -62,6 +62,39 @@
 // pagination) — a fixed-position DESCENDANT doesn't affect its own static
 // ancestor's flow/pagination, and Chrome's print engine repeats a fixed
 // element on every printed page, which is exactly what a footer needs.
+//
+// 2026-09-23 fixes — "HR letter print left menu bar ko cover karta hai" +
+// "A4 ke page me header or footer ko sahi manage kar ke aaye":
+//
+// (a) STALE SELECTOR: the shell's root div (theme/themed-shell.tsx) was
+// renamed `h-screen` → `h-dvh` on 2026-09-15 (a mobile-viewport fix), but
+// this rule — last touched 2026-08-19, before that rename — still only
+// neutralized `.h-screen`. So since 2026-09-15 the shell's fixed-height +
+// overflow-hidden constraint was silently back in effect during print for
+// EVERY one of the 31 PrintArea call sites (not just HR letters), which
+// is exactly the single-page/clipped-content bug the 2026-08-19 fix was
+// written to prevent. Added `.h-dvh` (and `.min-h-screen`/`.min-h-dvh` for
+// the same reason) alongside `.h-screen` below.
+//
+// (b) SPACE-RESERVING SIDEBAR: `body * { visibility: hidden }` below makes
+// the dashboard sidebar invisible but — unlike `display: none` —
+// `visibility: hidden` does NOT remove an element from layout flow, so the
+// sidebar's `w-72`/`w-60` column was still reserved during print, pushing/
+// squeezing the actual printable content into the remaining width (read
+// by the user as "print left menu bar ko cover karta hai"). Fixed at the
+// source in dashboard-sidebar.tsx (`print:hidden` added directly to each
+// of its 3 rendered states) rather than here, since this stylesheet has
+// no selector for a component further up the tree it doesn't render.
+//
+// (c) A4 PAGE SIZE/MARGINS: no `@page` rule existed at all, so the actual
+// paper size/margins were whatever the browser's print dialog defaulted
+// to (often US Letter, and margins tight enough that the fixed-position
+// footer above could sit right at the physical edge of the sheet). Added
+// an explicit `@page { size: A4; margin: ... }` below so every printed/
+// PDF'd document in the app — reports, bills, HR letters — consistently
+// lays out on A4 with a real margin the header/footer content sits inside
+// of, instead of relying on whatever the browser/OS happened to default
+// to.
 function ReportFooter({ companyName, companyLogoUrl }: { companyName?: string; companyLogoUrl?: string | null }) {
   return (
     <div className="print:fixed print:bottom-2 print:right-3 mt-6 flex items-center justify-end gap-2 border-t border-slate-200 pt-2 text-right print:mt-0 print:border-0 print:pt-0">
@@ -92,9 +125,13 @@ export function PrintArea({
   return (
     <>
       <style>{`
+        @page {
+          size: A4;
+          margin: 14mm 12mm 16mm 12mm;
+        }
         @media print {
           html, body { height: auto !important; overflow: visible !important; }
-          .h-screen, .overflow-hidden, .overflow-y-auto {
+          .h-screen, .h-dvh, .min-h-screen, .min-h-dvh, .overflow-hidden, .overflow-y-auto {
             height: auto !important;
             max-height: none !important;
             overflow: visible !important;

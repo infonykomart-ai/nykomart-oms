@@ -17,6 +17,21 @@ function escapeHtml(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// 2026-09-23 — `bodyText` used to be a plain string (\n for line breaks);
+// the letter body editor is now a rich-text (HTML) editor (see
+// rich-text-editor.tsx) so bold/bullets/alignment survive into Print and
+// Word export. Email and WhatsApp, though, only ever take plain text —
+// this strips the markup back down for those two, via the browser's own
+// HTML parser (innerText) rather than a hand-rolled tag-stripping regex,
+// so nested tags/entities are handled the same way the page itself
+// renders them.
+function htmlToPlainText(html: string): string {
+  if (typeof document === "undefined") return html.replace(/<[^>]+>/g, "");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  return (tmp.innerText || tmp.textContent || "").trim();
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -42,7 +57,16 @@ export type LetterDocInput = {
 };
 
 function buildLetterHtml(input: LetterDocInput): string {
-  const bodyHtml = escapeHtml(input.bodyText).replace(/\n/g, "<br>");
+  // 2026-09-23 — bodyText is now the rich-text editor's real HTML (see
+  // rich-text-editor.tsx), not a plain string, so it's embedded as-is
+  // (formatting carries into the exported .doc) instead of being escaped
+  // and \n→<br> converted, which would have shown literal "<b>" tags in
+  // the downloaded Word file. Older issued letters saved before this
+  // change still hold a plain string — detect that case (no tags) and
+  // fall back to the old escape+<br> behaviour so those still export
+  // correctly.
+  const looksLikeHtml = /<[a-z][\s\S]*>/i.test(input.bodyText);
+  const bodyHtml = looksLikeHtml ? input.bodyText : escapeHtml(input.bodyText).replace(/\n/g, "<br>");
   const signatureHtml =
     input.signatoryName || input.signatoryDesignation
       ? `<div style="margin-top:40px;">` +
@@ -81,7 +105,7 @@ export function mailtoLetterLink(subject: string, input: LetterDocInput): string
     "",
     ...(input.toLine ? [input.toLine, ""] : []),
     ...(input.subjectLine ? [input.subjectLine, ""] : []),
-    input.bodyText,
+    htmlToPlainText(input.bodyText),
     "",
     input.signatoryName ?? "",
     input.signatoryDesignation ? `(${input.signatoryDesignation})` : "",
@@ -95,7 +119,8 @@ export function mailtoLetterLink(subject: string, input: LetterDocInput): string
 // text-only wa.me link with the letter's opening lines.
 export async function shareLetterOnWhatsApp(filenameBase: string, subject: string, input: LetterDocInput, phone?: string | null) {
   const html = buildLetterHtml(input);
-  const summary = [subject, "", input.bodyText.slice(0, 500) + (input.bodyText.length > 500 ? "..." : "")].join("\n");
+  const plainBody = htmlToPlainText(input.bodyText);
+  const summary = [subject, "", plainBody.slice(0, 500) + (plainBody.length > 500 ? "..." : "")].join("\n");
 
   if (typeof navigator !== "undefined" && "share" in navigator) {
     try {

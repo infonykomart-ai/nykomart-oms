@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { renderTemplate, todayFormatted, type LetterTemplate } from "@/lib/hr-letters/templates";
+import { plainTextToEditableHtml, renderTemplate, todayFormatted, type LetterTemplate } from "@/lib/hr-letters/templates";
 import { PrintArea } from "@/components/print-view";
 import { downloadLetterDoc, mailtoLetterLink, shareLetterOnWhatsApp } from "@/lib/hr-letters/letter-export";
+import { RichTextEditor } from "@/components/hr-letters/rich-text-editor";
 import { issueHrLetter } from "../actions";
 
 type Employee = {
@@ -96,7 +97,13 @@ export function LetterForm({
       date_issued: dateIssued,
       ...fieldValues,
     };
-    setBodyText(renderTemplate(template.bodyTemplate, values));
+    // 2026-09-23 — bodyText now holds rich-text HTML (see
+    // rich-text-editor.tsx) so the editor's toolbar formatting carries
+    // into print/Word, but the templates themselves are still plain text
+    // with \n line breaks — plainTextToEditableHtml() converts the
+    // rendered template into the same per-line <div> shape a
+    // contentEditable area produces natively.
+    setBodyText(plainTextToEditableHtml(renderTemplate(template.bodyTemplate, values)));
     setHasGenerated(true);
     setIssued(null);
     setIssueError(null);
@@ -249,8 +256,8 @@ export function LetterForm({
 
         {hasGenerated && (
           <div>
-            <label className={labelClass} htmlFor="body_text">Letter Text (editable)</label>
-            <textarea id="body_text" rows={14} className={inputClass} value={bodyText} onChange={(e) => setBodyText(e.target.value)} />
+            <label className={labelClass}>Letter Text (editable)</label>
+            <RichTextEditor html={bodyText} onChange={setBodyText} placeholder="Letter text will appear here…" />
           </div>
         )}
 
@@ -358,9 +365,17 @@ export function LetterForm({
             subject && <div className="mb-4 text-sm font-semibold">Subject: {subject}</div>
           )}
 
-          <div className="whitespace-pre-wrap text-sm leading-relaxed">
-            {bodyText || "Click \"Generate letter text\" — the text will appear here, and you can edit it before printing."}
-          </div>
+          {bodyText ? (
+            // bodyText is the rich-text editor's HTML (see
+            // rich-text-editor.tsx) — rendered directly so bold/bullets/
+            // alignment applied on the left actually show up here, since
+            // this exact markup is also what gets printed.
+            <div className="text-sm leading-relaxed [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6" dangerouslySetInnerHTML={{ __html: bodyText }} />
+          ) : (
+            <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-400">
+              Click &quot;Generate letter text&quot; — the text will appear here, and you can edit it before printing.
+            </div>
+          )}
 
           <div className="mt-10 text-sm">
             <div className="font-semibold">{signatoryName || " "}</div>

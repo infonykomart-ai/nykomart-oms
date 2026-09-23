@@ -125,8 +125,17 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   );
 
   // ── Phone drawer (below md): fixed overlay, never steals layout width ──
+  // 2026-09-23 — "print left menu bar ko cover karta hai": `visibility:
+  // hidden` (from print-view.tsx's blanket `body * { visibility: hidden }`
+  // rule) makes hidden elements invisible but NOT removed from layout, so
+  // every one of these three states was still reserving its real on-screen
+  // width/position during print, squeezing or offsetting the actual
+  // printable content. `print:hidden` (Tailwind's print-only `display:
+  // none`) genuinely removes each from layout at print time, same fix
+  // already applied to the "Details" panel these sidebar states sit next
+  // to in every printable page.
   const drawer = (
-    <div className={`md:hidden ${mobileOpen ? "" : "pointer-events-none"}`}>
+    <div className={`print:hidden md:hidden ${mobileOpen ? "" : "pointer-events-none"}`}>
       {/* Backdrop — tap anywhere outside to close */}
       <button
         type="button"
@@ -155,14 +164,14 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
     <>
       {showFull ? (
         // ≥md: always-visible in-flow column (w-72 desktop / w-60 tablet).
-        <aside className="oms-sidebar hidden w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] md:flex lg:w-60">
+        <aside className="oms-sidebar hidden w-72 flex-col border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] md:flex lg:w-60 print:hidden">
           {chrome(false, true)}
           {menu}
         </aside>
       ) : (
         // Hidden: a slim always-there rail with just one button to bring
         // the menu back — same idea as Claude's own collapsed sidebar edge.
-        <div className="hidden w-10 shrink-0 flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3 md:flex">
+        <div className="hidden w-10 shrink-0 flex-col items-center border-r border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] pt-3 md:flex print:hidden">
           <button
             type="button"
             onClick={toggleHidden}
