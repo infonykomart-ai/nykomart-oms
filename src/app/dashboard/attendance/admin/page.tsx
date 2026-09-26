@@ -22,6 +22,22 @@ import { ManualAttendanceForm } from "./manual-attendance-form";
 import { RemoveHolidayButton } from "./remove-holiday-button";
 import { PendingWorkPanel, type PendingWorkGroup } from "./pending-work-panel";
 import { WorkPlanTemplatesPanel, type WorkPlanTemplateRow } from "./work-plan-templates-panel";
+import {
+  Panel,
+  StatTile,
+  StatRow,
+  Pill,
+  PRIORITY_TONE,
+  TASK_STATUS_TONE,
+  tableWrapClass,
+  tableClass,
+  theadRowClass,
+  thClass,
+  tbodyRowClass,
+  tdClass,
+  numTdClass,
+  emptyRowClass,
+} from "./dashboard-ui";
 
 // 2026-08-11: Attendance Admin — holiday calendar + weekly-off pattern per
 // company, a team-wide monthly Present/Absent/Late/Leave/Holiday/Week Off
@@ -397,11 +413,25 @@ export default async function AttendanceAdminPage({
     : { data: null };
   const perfLogs = perfLogsData ?? [];
 
-  const perfDailyMinutes = new Map<string, number>();
+  // 2026-09-26 — "6h17m + 30m00s + 1h34m yaha 8h21m banta hai lekin Time
+  // Worked 8h22m dikha raha hai": this used to round EACH report's
+  // time_spent_seconds to the nearest minute individually
+  // (Math.round(seconds/60)) and THEN sum those rounded minutes per day.
+  // formatDuration() (used for each row in "Report Details" below) instead
+  // FLOORS seconds for display when hours/minutes are shown. A row whose
+  // real duration was e.g. 6:17:35 therefore displayed as "6h 17m" (floor)
+  // but contributed a rounded-up 378 minutes (6h18m-worth) to this day's
+  // total — a silent 1-minute drift per row with a >=30s remainder, and it
+  // compounds with more rows. Fix: sum the RAW seconds for each day first,
+  // and round only once, at the very end, per day — matching how a human
+  // adding up the row durations by hand would actually compute it.
+  const perfDailySeconds = new Map<string, number>();
   for (const l of perfLogs) {
-    const mins = Math.round((l.time_spent_seconds ?? 0) / 60);
-    perfDailyMinutes.set(l.log_date, (perfDailyMinutes.get(l.log_date) ?? 0) + mins);
+    perfDailySeconds.set(l.log_date, (perfDailySeconds.get(l.log_date) ?? 0) + (l.time_spent_seconds ?? 0));
   }
+  const perfDailyMinutes = new Map<string, number>(
+    Array.from(perfDailySeconds, ([date, secs]) => [date, Math.round(secs / 60)])
+  );
   const perfDates = Array.from(perfDailyMinutes.keys()).sort().reverse();
   const perfTotalMinutes = Array.from(perfDailyMinutes.values()).reduce((a, b) => a + b, 0);
   const perfDaysWorked = perfDates.length;
@@ -415,6 +445,20 @@ export default async function AttendanceAdminPage({
   const hasTaskAdmin = employee.capabilities.includes("task_admin");
   let tasks: { id: string; website: string | null; category: string | null; priority: string; deadline: string | null; status: string; description: string; created_at: string; timer_started_at: string | null; time_spent_seconds: number; assigned_by_employee_id: string; assigned_to_employee_id: string }[] = [];
   let liveNow: { id: string; description: string; timer_started_at: string | null; time_spent_seconds: number; assigned_to_employee_id: string; company_id: string }[] = [];
+  // 2026-09-26 — Employee Performance "Pending" section: "agar task
+  // compleate nahi hua to vo work sheet me nahi aata, report pending show
+  // honi chahiye" — markTaskDone() only writes a daily_work_logs row once
+  // a task reaches Done (see actions.ts), so a still-open (Pending/In
+  // Progress) assigned task was previously invisible on this whole page
+  // until finished. This is that gap filled: a live snapshot of the
+  // selected employee's own not-yet-Done tasks, so admin can see committed
+  // time-so-far before it's finalized — same time_spent_seconds/
+  // timer_started_at numbers already shown on Live Now/All Tasks below,
+  // just filtered to one person. Deliberately never mixed into
+  // perfTotalMinutes/perfAvgMinutes above — only a Done task's finalized
+  // time counts there, same "Estimated Time never counted" rule already
+  // stated on this panel.
+  let perfPendingTasks: { id: string; description: string; category: string | null; priority: string; status: string; deadline: string | null; timer_started_at: string | null; time_spent_seconds: number }[] = [];
   // 2026-09-09 — today's (IST) committed task_daily_time_log seconds per
   // task id, keyed the same way as attendance/page.tsx's own
   // todaySecondsByTaskId — covers both the "All Tasks" table (selected
@@ -475,6 +519,16 @@ export default async function AttendanceAdminPage({
         .eq("log_date", todayIST());
       for (const r of todayRows ?? []) todaySecondsByTaskId.set(r.task_id, r.seconds_spent);
     }
+
+    if (perfEmployeeId) {
+      const { data: pendingTasksData } = await taskSupabase
+        .from("tasks")
+        .select("id, description, category, priority, status, deadline, timer_started_at, time_spent_seconds")
+        .eq("assigned_to_employee_id", perfEmployeeId)
+        .neq("status", "Done")
+        .order("created_at", { ascending: false });
+      perfPendingTasks = pendingTasksData ?? [];
+    }
   }
 
   const taskNowMs = new Date().getTime();
@@ -483,23 +537,36 @@ export default async function AttendanceAdminPage({
     <div>
       {/* 2026-09-10 — near-live data sync (see src/components/auto-refresh.tsx). */}
       <AutoRefresh intervalMs={15000} />
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-slate-900">🗓️ Attendance Admin</h1>
+
+      {/* 2026-09-26 — "UI professional bano jese fedex ups dhl me chalta
+          hai": one dark title bar anchors the page the way a courier
+          back-office console opens on a company/scope banner, instead of a
+          bare page heading. */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900 px-5 py-4 text-white shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-lg">🗓️</span>
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight">Attendance Admin</h1>
+            <p className="text-xs text-slate-300">
+              {selectedCompany?.name ?? "—"} <span className="mx-1 text-slate-500">·</span> {monthParam}
+            </p>
+          </div>
+        </div>
         {/* 2026-09-23 — "apne oms me bhi to chahiye na report": Month
             Summary/IN-OUT/Absent/Late In/Early In-Out/Overtime/Half Day/
             Mis Punch reports, filterable by company/employee, exportable
             to PDF/Excel/Word — see monthly-report/page.tsx. */}
         <Link
           href="/dashboard/attendance/admin/monthly-report"
-          className="rounded-lg border border-amber-500 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-100"
+          className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-400"
         >
           📊 Monthly Report
         </Link>
       </div>
 
-      <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
+      <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Company</label>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">Company</label>
           <select name="company" defaultValue={selectedCompanyId} className={selectClass}>
             {(companies ?? []).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -507,21 +574,20 @@ export default async function AttendanceAdminPage({
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Month</label>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">Month</label>
           <input type="month" name="month" defaultValue={monthParam} className={selectClass} />
         </div>
-        <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+        <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600">
           View
         </button>
       </form>
 
-      <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Holiday Calendar — {monthParam}</h2>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Panel icon="🎉" title={`Holiday Calendar — ${monthParam}`}>
           <div className="mb-3 space-y-1.5">
             {(holidays ?? []).length === 0 && <p className="text-xs text-slate-400">No holidays added for this month.</p>}
             {(holidays ?? []).map((h) => (
-              <div key={h.id} className="flex items-center justify-between rounded border border-slate-100 px-2 py-1.5 text-xs">
+              <div key={h.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2 text-xs">
                 <span>
                   <span className="font-medium text-slate-800">{h.holiday_date}</span> — {h.name}
                   {h.company_id === null && <span className="ml-1 text-slate-400">(all companies)</span>}
@@ -531,12 +597,11 @@ export default async function AttendanceAdminPage({
             ))}
           </div>
           <HolidayForm companyId={selectedCompanyId} companies={companies ?? []} />
-        </div>
+        </Panel>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Weekly Off — {selectedCompany?.name}</h2>
+        <Panel icon="🛌" title={`Weekly Off — ${selectedCompany?.name}`}>
           <WeeklyOffForm companyId={selectedCompanyId} currentDays={weeklyOffDays} />
-        </div>
+        </Panel>
       </div>
 
       {/* 2026-09-04 — Daily Work Planner: per-ROLE fixed/recurring
@@ -544,61 +609,60 @@ export default async function AttendanceAdminPage({
           employee's Today's Work each day (badged "🗂️ Template") — on top
           of whatever personal recurring items that employee has ALSO
           added themselves (self-managed, own attendance page). */}
-      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-slate-700">🗂️ Daily Work Planner — Fixed Items by Role ({selectedCompany?.name})</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          Set a baseline list of work items every employee in a role should see automatically each day, without re-typing it — they still show up as normal Today&apos;s Work rows (editable, completable, carry-forward-able), just badged so it&apos;s clear where they came from. Each employee can also add their own personal recurring items on top, from their own Attendance page.
-        </p>
+      <Panel
+        icon="🗂️"
+        title={`Daily Work Planner — Fixed Items by Role (${selectedCompany?.name})`}
+        description="Set a baseline list of work items every employee in a role should see automatically each day, without re-typing it — they still show up as normal Today's Work rows (editable, completable, carry-forward-able), just badged so it's clear where they came from. Each employee can also add their own personal recurring items on top, from their own Attendance page."
+      >
         <WorkPlanTemplatesPanel companyId={selectedCompanyId} roles={roles ?? []} templates={workPlanTemplateRows} />
-      </div>
+      </Panel>
 
-      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Team Attendance Summary — {monthParam}</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+      <Panel icon="📋" title={`Team Attendance Summary — ${monthParam}`} bodyClassName="p-0">
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
             <thead>
-              <tr className="text-slate-400">
-                <th className="py-1 pr-3">Employee</th>
-                <th className="px-2">Present</th>
-                <th className="px-2">Late</th>
-                <th className="px-2">Half Day</th>
-                <th className="px-2">Leave</th>
-                <th className="px-2">Absent</th>
-                <th className="px-2">Holiday</th>
-                <th className="px-2">Week Off</th>
+              <tr className={theadRowClass}>
+                <th className={thClass}>Employee</th>
+                <th className={thClass}>Present</th>
+                <th className={thClass}>Late</th>
+                <th className={thClass}>Half Day</th>
+                <th className={thClass}>Leave</th>
+                <th className={thClass}>Absent</th>
+                <th className={thClass}>Holiday</th>
+                <th className={thClass}>Week Off</th>
               </tr>
             </thead>
             <tbody>
               {teamSummary.map(({ employee: e, summary }) => (
-                <tr key={e.id} className="border-t border-slate-100">
-                  <td className="py-1.5 pr-3 font-medium text-slate-800">{e.name}</td>
-                  <td className="px-2 text-green-700">{summary.Present}</td>
-                  <td className="px-2 text-amber-700">{summary.Late}</td>
-                  <td className="px-2 text-amber-700">{summary["Half Day"]}</td>
-                  <td className="px-2 text-sky-700">{summary.Leave}</td>
-                  <td className="px-2 text-red-700">{summary.Absent}</td>
-                  <td className="px-2 text-purple-700">{summary.Holiday}</td>
-                  <td className="px-2 text-slate-500">{summary["Week Off"]}</td>
+                <tr key={e.id} className={tbodyRowClass}>
+                  <td className={`${tdClass} font-medium text-slate-800`}>{e.name}</td>
+                  <td className={numTdClass}><Pill tone="green">{summary.Present}</Pill></td>
+                  <td className={numTdClass}><Pill tone="amber">{summary.Late}</Pill></td>
+                  <td className={numTdClass}><Pill tone="amber">{summary["Half Day"]}</Pill></td>
+                  <td className={numTdClass}><Pill tone="sky">{summary.Leave}</Pill></td>
+                  <td className={numTdClass}><Pill tone="red">{summary.Absent}</Pill></td>
+                  <td className={numTdClass}><Pill tone="purple">{summary.Holiday}</Pill></td>
+                  <td className={numTdClass}><Pill tone="slate">{summary["Week Off"]}</Pill></td>
                 </tr>
               ))}
               {teamSummary.length === 0 && (
-                <tr><td colSpan={8} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+                <tr><td colSpan={8} className={emptyRowClass}>No active employees in this company.</td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
 
       {/* 2026-09-02: "pending work,next day carry on vala work sabhi
           employe ki sheet par dikhnae sath me admin ko bhi dikhe ki kiska
           kitna kaam baki hai" */}
-      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">🔄 Pending / Carry-Forward Work — Team</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          Every employee&apos;s still-open (Pending / In Progress) Daily Work Report items, regardless of which day they were logged on. Click Show to see the actual list for anyone.
-        </p>
+      <Panel
+        icon="🔄"
+        title="Pending / Carry-Forward Work — Team"
+        description="Every employee's still-open (Pending / In Progress) Daily Work Report items, regardless of which day they were logged on. Click Show to see the actual list for anyone."
+      >
         <PendingWorkPanel groups={pendingWorkGroups} />
-      </div>
+      </Panel>
 
       {/* 2026-09-02: "achi performance walo ke liye ... msg show hone lag
           jaye ki kis ko konsa award diya ja sakta hai ... sirf admin hr md
@@ -606,36 +670,36 @@ export default async function AttendanceAdminPage({
           only, never an automatic award name (clarified + chosen by the
           owner before building this). */}
       {hasPerformanceAdmin && (
-        <div className="mb-6 rounded-xl border border-amber-200 bg-white p-4">
-          <h2 className="mb-1 text-sm font-semibold text-slate-700">🏆 Performance &amp; Awards — Team Ranking ({monthParam})</h2>
-          <p className="mb-3 text-xs text-slate-500">
-            Admin/MD only. A weighted score (0-100) per employee — attendance/punctuality, leave discipline, work-report
-            efficiency, and (for order-entry/sales staff only) order value &amp; growth vs. last month. Ranked so YOU can
-            decide who gets what — this never names or suggests a specific award itself.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+        <Panel
+          icon="🏆"
+          tone="accent"
+          title={`Performance & Awards — Team Ranking (${monthParam})`}
+          description="Admin/MD only. A weighted score (0-100) per employee — attendance/punctuality, leave discipline, work-report efficiency, and (for order-entry/sales staff only) order value & growth vs. last month. Ranked so YOU can decide who gets what — this never names or suggests a specific award itself."
+          bodyClassName="p-0"
+        >
+          <div className={tableWrapClass}>
+            <table className={tableClass}>
               <thead>
-                <tr className="text-slate-400">
-                  <th className="py-1 pr-3">#</th>
-                  <th className="px-2">Employee</th>
-                  <th className="px-2">Attendance</th>
-                  <th className="px-2">Leave</th>
-                  <th className="px-2">Work Efficiency</th>
-                  <th className="px-2">Order Value (Growth)</th>
-                  <th className="px-2">Score</th>
-                  <th className="px-2">Why they rank here</th>
+                <tr className={theadRowClass}>
+                  <th className={thClass}>#</th>
+                  <th className={thClass}>Employee</th>
+                  <th className={thClass}>Attendance</th>
+                  <th className={thClass}>Leave</th>
+                  <th className={thClass}>Work Efficiency</th>
+                  <th className={thClass}>Order Value (Growth)</th>
+                  <th className={thClass}>Score</th>
+                  <th className={thClass}>Why they rank here</th>
                 </tr>
               </thead>
               <tbody>
                 {performanceRanking.map((r, i) => (
-                  <tr key={r.employeeId} className="border-t border-slate-100">
-                    <td className="py-1.5 pr-3 font-medium text-slate-800">{i < 3 ? "🏆" : i + 1}</td>
-                    <td className="px-2 font-medium text-slate-800">{r.name}</td>
-                    <td className="px-2">{r.attendance}</td>
-                    <td className="px-2">{r.leave}</td>
-                    <td className="px-2">{r.workEfficiency}</td>
-                    <td className="px-2">
+                  <tr key={r.employeeId} className={tbodyRowClass}>
+                    <td className={`${tdClass} font-medium text-slate-800`}>{i < 3 ? "🏆" : i + 1}</td>
+                    <td className={`${tdClass} font-medium text-slate-800`}>{r.name}</td>
+                    <td className={numTdClass}>{r.attendance}</td>
+                    <td className={numTdClass}>{r.leave}</td>
+                    <td className={numTdClass}>{r.workEfficiency}</td>
+                    <td className={numTdClass}>
                       {r.businessImpact === undefined ? (
                         <span className="text-slate-300">—</span>
                       ) : (
@@ -650,17 +714,17 @@ export default async function AttendanceAdminPage({
                         </>
                       )}
                     </td>
-                    <td className="px-2 font-semibold text-slate-900">{r.composite}</td>
-                    <td className="px-2 text-slate-500">{r.reason}</td>
+                    <td className={`${numTdClass} font-semibold text-slate-900`}>{r.composite}</td>
+                    <td className={`${tdClass} text-slate-500`}>{r.reason}</td>
                   </tr>
                 ))}
                 {performanceRanking.length === 0 && (
-                  <tr><td colSpan={8} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+                  <tr><td colSpan={8} className={emptyRowClass}>No active employees in this company.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
+        </Panel>
       )}
 
       {/* 2026-09-02 (round 3): "jis employe ko jo store allot hai uske
@@ -669,22 +733,22 @@ export default async function AttendanceAdminPage({
           performance_admin gate as the ranking table above; only lists
           employees who actually have >=1 store assigned. */}
       {hasPerformanceAdmin && storeCostRows.length > 0 && (
-        <div className="mb-6 rounded-xl border border-amber-200 bg-white p-4">
-          <h2 className="mb-1 text-sm font-semibold text-slate-700">💰 Store Cost vs Order Value — {monthParam}</h2>
-          <p className="mb-3 text-xs text-slate-500">
-            Ad spend vs. order value for each employee&apos;s assigned store(s) (Admin &gt; Employees &gt; Store Access). A store
-            shared by more than one employee shows its full cost/value to each of them, flagged below — not split.
-          </p>
+        <Panel
+          icon="💰"
+          tone="accent"
+          title={`Store Cost vs Order Value — ${monthParam}`}
+          description="Ad spend vs. order value for each employee's assigned store(s) (Admin > Employees > Store Access). A store shared by more than one employee shows its full cost/value to each of them, flagged below — not split."
+        >
           <div className="flex flex-col gap-3">
             {storeCostRows.map((row) => (
-              <div key={row.employeeId} className="rounded-lg bg-slate-50 p-3">
+              <div key={row.employeeId} className="rounded-lg border border-slate-100 bg-slate-50/60 p-3">
                 <div className="mb-1.5 text-sm font-medium text-slate-800">{row.name}</div>
                 <div className="flex flex-col gap-1.5">
                   {row.stores.map((s) => (
                     <div key={s.storeId} className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
                       <span className="font-medium text-slate-700">{s.storeName}</span>
-                      <span>Ad Spend: ${s.cost.toFixed(0)}</span>
-                      <span>Order Value: ${s.value.toFixed(0)}</span>
+                      <span className="tabular-nums">Ad Spend: ${s.cost.toFixed(0)}</span>
+                      <span className="tabular-nums">Order Value: ${s.value.toFixed(0)}</span>
                       <span>
                         {s.cost > 0
                           ? `${(s.value / s.cost).toFixed(2)}x value per $ spent`
@@ -693,9 +757,9 @@ export default async function AttendanceAdminPage({
                             : "No ad spend or orders logged"}
                       </span>
                       {s.sharedWithCount > 0 && (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                        <Pill tone="amber">
                           Shared with {s.sharedWithCount} other{s.sharedWithCount > 1 ? "s" : ""}
-                        </span>
+                        </Pill>
                       )}
                     </div>
                   ))}
@@ -703,56 +767,55 @@ export default async function AttendanceAdminPage({
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
 
-      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Manual Correction</h2>
-        <p className="mb-3 text-xs text-slate-500">Missed punch, approved leave, or a one-off half day — sets/overrides that day&apos;s status directly.</p>
+      <Panel
+        icon="✍️"
+        title="Manual Correction"
+        description="Missed punch, approved leave, or a one-off half day — sets/overrides that day's status directly."
+      >
         <ManualAttendanceForm companyId={selectedCompanyId} employees={teamEmployees ?? []} today={today} />
-      </div>
+      </Panel>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Team Daily Work Log — {monthParam}</h2>
-        <div className="max-h-96 space-y-1.5 overflow-y-auto">
+      <Panel icon="🧾" title={`Team Daily Work Log — ${monthParam}`}>
+        <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
           {(dailyLogs ?? []).length === 0 && <p className="text-xs text-slate-400">No work reports logged this month.</p>}
           {(dailyLogs ?? []).map((l) => (
-            <div key={l.id} className="rounded border border-slate-100 px-2 py-1.5 text-xs">
-              <span className="font-medium text-slate-800">{l.log_date}</span>
-              <span className="ml-2 text-slate-500">{employeeName.get(l.employee_id) ?? "—"}</span>
-              <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
-              <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
-              {/* 2026-09-02: "task compleate ho gaya to vo daily report me
-                  employe ko to dikh jata hai lekin admin ko show nahi
-                  hota" — markTaskDone() (tasks/actions.ts) already
-                  auto-inserts a submitted daily_work_logs row prefixed
-                  "[Task] ..." whenever an assigned Task is marked Done, so
-                  it was always technically included in this same feed —
-                  it just blended in with no visual signal, easy to miss.
-                  This badge is the fix: make a task-completion row
-                  unmistakable at a glance instead of adding a second,
-                  separate feed. */}
-              {l.description?.startsWith("[Task]") && (
-                <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700">📋 From Task</span>
-              )}
-              {/* 2026-09-04 — Daily Work Planner: same "make the source
-                  unmistakable at a glance" convention as the "From Task"
-                  badge above, for a row auto-materialized from a fixed
-                  role/personal template (see source_template_id). */}
-              {l.source_template_id && (
-                <span className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 font-medium text-teal-700">🗂️ Template</span>
-              )}
-              {l.estimated_time_minutes ? (
-                <span className="ml-2 text-slate-400" title="Just an estimate — never counted in any total">
-                  Est {formatDuration(l.estimated_time_minutes * 60)} (not counted)
-                </span>
-              ) : null}
-              <span className="ml-2 text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
-              <p className="mt-0.5 text-slate-600">{l.description}</p>
+            <div key={l.id} className="rounded-lg border border-slate-100 px-3 py-2 text-xs transition hover:border-slate-200 hover:bg-slate-50/60">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-slate-800">{l.log_date}</span>
+                <span className="text-slate-500">{employeeName.get(l.employee_id) ?? "—"}</span>
+                <span className="text-slate-400">[{l.category ?? "—"}]</span>
+                <Pill tone="slate">{l.work_status ?? "—"}</Pill>
+                {/* 2026-09-02: "task compleate ho gaya to vo daily report me
+                    employe ko to dikh jata hai lekin admin ko show nahi
+                    hota" — markTaskDone() (tasks/actions.ts) already
+                    auto-inserts a submitted daily_work_logs row prefixed
+                    "[Task] ..." whenever an assigned Task is marked Done, so
+                    it was always technically included in this same feed —
+                    it just blended in with no visual signal, easy to miss.
+                    This badge is the fix: make a task-completion row
+                    unmistakable at a glance instead of adding a second,
+                    separate feed. */}
+                {l.description?.startsWith("[Task]") && <Pill tone="purple">📋 From Task</Pill>}
+                {/* 2026-09-04 — Daily Work Planner: same "make the source
+                    unmistakable at a glance" convention as the "From Task"
+                    badge above, for a row auto-materialized from a fixed
+                    role/personal template (see source_template_id). */}
+                {l.source_template_id && <Pill tone="sky">🗂️ Template</Pill>}
+                {l.estimated_time_minutes ? (
+                  <span className="text-slate-400" title="Just an estimate — never counted in any total">
+                    Est {formatDuration(l.estimated_time_minutes * 60)} (not counted)
+                  </span>
+                ) : null}
+                <span className="font-medium tabular-nums text-amber-700">Consumed {formatDuration(l.time_spent_seconds)}</span>
+              </div>
+              <p className="mt-1 text-slate-600">{l.description}</p>
             </div>
           ))}
         </div>
-      </div>
+      </Panel>
 
       {/* 2026-09-04: "kitna kaam kiya hai kitna nahi" — how much of the
           logged work actually got DONE, per employee, for the same
@@ -760,69 +823,78 @@ export default async function AttendanceAdminPage({
           purpose: task-count % (how many logged items are Completed) and
           qty-based % (sum qty_done / sum target_qty — weights bigger jobs
           more than small ones). See taskCompletionSummary in score.ts. */}
-      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-1 text-sm font-semibold text-slate-700">✅ Task Completion Rate — Team ({monthParam})</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          Of the Daily Work Report items each employee submitted this month: how many are marked Completed
-          (task-count %), and how much of the committed quantity actually got done (qty-based %, sum of Qty Done ÷
-          sum of Target Qty). &quot;—&quot; means there&apos;s nothing to calculate that % from yet (no reports, or no
-          numeric target entered on any of them).
-        </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+      <Panel
+        icon="✅"
+        title={`Task Completion Rate — Team (${monthParam})`}
+        description={
+          <>
+            Of the Daily Work Report items each employee submitted this month: how many are marked Completed
+            (task-count %), and how much of the committed quantity actually got done (qty-based %, sum of Qty Done ÷
+            sum of Target Qty). &quot;—&quot; means there&apos;s nothing to calculate that % from yet (no reports, or no
+            numeric target entered on any of them).
+          </>
+        }
+        bodyClassName="p-0"
+      >
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
             <thead>
-              <tr className="text-slate-400">
-                <th className="py-1 pr-3">Employee</th>
-                <th className="px-2">Tasks Completed</th>
-                <th className="px-2">Task-Count %</th>
-                <th className="px-2">Qty Done / Target</th>
-                <th className="px-2">Qty %</th>
+              <tr className={theadRowClass}>
+                <th className={thClass}>Employee</th>
+                <th className={thClass}>Tasks Completed</th>
+                <th className={thClass}>Task-Count %</th>
+                <th className={thClass}>Qty Done / Target</th>
+                <th className={thClass}>Qty %</th>
               </tr>
             </thead>
             <tbody>
               {teamCompletion.map((r) => (
-                <tr key={r.employeeId} className="border-t border-slate-100">
-                  <td className="py-1.5 pr-3 font-medium text-slate-800">{r.name}</td>
-                  <td className="px-2">
+                <tr key={r.employeeId} className={tbodyRowClass}>
+                  <td className={`${tdClass} font-medium text-slate-800`}>{r.name}</td>
+                  <td className={numTdClass}>
                     {r.completedTasks}/{r.totalTasks} done
                   </td>
-                  <td className="px-2 font-semibold text-slate-900">
+                  <td className={`${numTdClass} font-semibold text-slate-900`}>
                     {r.taskCompletionPct === null ? <span className="text-slate-300">—</span> : `${r.taskCompletionPct}%`}
                   </td>
-                  <td className="px-2">
+                  <td className={numTdClass}>
                     {r.qtySum} / {r.targetSum}
                   </td>
-                  <td className="px-2 font-semibold text-slate-900">
+                  <td className={`${numTdClass} font-semibold text-slate-900`}>
                     {r.qtyCompletionPct === null ? <span className="text-slate-300">—</span> : `${r.qtyCompletionPct}%`}
                   </td>
                 </tr>
               ))}
               {teamCompletion.length === 0 && (
-                <tr><td colSpan={5} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+                <tr><td colSpan={5} className={emptyRowClass}>No active employees in this company.</td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
 
       {/* 2026-08-12 (round 6): "admin md ko power ho ki jo employee report
           submit kar raha hai uski har weekly report dikhe or coustome date
           ka option ho ki kis employe ne kya kaam kiya hai kitna kaam kiya
           hai, uski performance kya hai" */}
-      <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">📊 Employee Performance</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          Pick an employee and a date range (default: last 7 days) to see submitted reports and time worked vs. expected —{" "}
-          {formatHM(EXPECTED_WORK_MINUTES)}/day, based on {OFFICE_START_LABEL}–{OFFICE_END_LABEL} minus a {" "}
-          30-min lunch and 15-min tea break. All time figures below (Total Time, Avg/Working Day, Time Worked) are
-          built only from what the employee entered as &quot;Time Consumed&quot; on each row — Estimated Time is
-          never added into these numbers.
-        </p>
-        <form method="get" className="mb-4 flex flex-wrap items-end gap-3">
+      <Panel
+        icon="📊"
+        title="Employee Performance"
+        description={
+          <>
+            Pick an employee and a date range (default: last 7 days) to see submitted reports and time worked vs.
+            expected — {formatHM(EXPECTED_WORK_MINUTES)}/day, based on {OFFICE_START_LABEL}–{OFFICE_END_LABEL} minus a
+            30-min lunch and 15-min tea break. All time figures below (Total Time, Avg/Working Day, Time Worked) are
+            built only from what the employee entered as &quot;Time Consumed&quot; on each row — Estimated Time is
+            never added into these numbers, and neither is any not-yet-Done task&apos;s time (see Pending Tasks below).
+          </>
+        }
+      >
+        <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
           <input type="hidden" name="company" value={selectedCompanyId} />
           <input type="hidden" name="month" value={monthParam} />
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">Employee</label>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">Employee</label>
             <select name="perfEmp" defaultValue={perfEmployeeId} className={selectClass}>
               <option value="">— Select —</option>
               {(teamEmployees ?? []).map((e) => (
@@ -831,14 +903,14 @@ export default async function AttendanceAdminPage({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">From</label>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">From</label>
             <input type="date" name="perfFrom" defaultValue={perfFrom} max={today} className={selectClass} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">To</label>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">To</label>
             <input type="date" name="perfTo" defaultValue={perfTo} max={today} className={selectClass} />
           </div>
-          <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+          <button type="submit" className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600">
             View
           </button>
         </form>
@@ -847,21 +919,21 @@ export default async function AttendanceAdminPage({
           <p className="text-xs text-slate-400">Select an employee to see their performance.</p>
         ) : (
           <>
-            <div className="mb-4 flex flex-wrap gap-4">
-              <Stat label="Reports Submitted" value={String(perfLogs.length)} />
-              <Stat label="Days Worked" value={String(perfDaysWorked)} />
-              <Stat label="Total Time" value={formatHM(perfTotalMinutes)} />
-              <Stat label="Avg / Working Day" value={formatHM(perfAvgMinutes)} />
-              <Stat label="Expected / Day" value={formatHM(EXPECTED_WORK_MINUTES)} />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+            <StatRow>
+              <StatTile label="Reports Submitted" value={String(perfLogs.length)} />
+              <StatTile label="Days Worked" value={String(perfDaysWorked)} />
+              <StatTile label="Total Time" value={formatHM(perfTotalMinutes)} />
+              <StatTile label="Avg / Working Day" value={formatHM(perfAvgMinutes)} />
+              <StatTile label="Expected / Day" value={formatHM(EXPECTED_WORK_MINUTES)} />
+            </StatRow>
+            <div className={tableWrapClass}>
+              <table className={tableClass}>
                 <thead>
-                  <tr className="text-slate-400">
-                    <th className="py-1 pr-3">Date</th>
-                    <th className="px-2">Time Worked</th>
-                    <th className="px-2">Expected</th>
-                    <th className="px-2">Status</th>
+                  <tr className={theadRowClass}>
+                    <th className={thClass}>Date</th>
+                    <th className={thClass}>Time Worked</th>
+                    <th className={thClass}>Expected</th>
+                    <th className={thClass}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -869,21 +941,21 @@ export default async function AttendanceAdminPage({
                     const mins = perfDailyMinutes.get(d) ?? 0;
                     const cmp = compareToExpected(mins);
                     return (
-                      <tr key={d} className="border-t border-slate-100">
-                        <td className="py-1.5 pr-3 font-medium text-slate-800">{d}</td>
-                        <td className="px-2 text-amber-700">{formatHM(mins)}</td>
-                        <td className="px-2 text-slate-400">{formatHM(EXPECTED_WORK_MINUTES)}</td>
-                        <td className="px-2">
-                          <span
-                            className={`rounded-full px-2 py-0.5 font-medium ${
+                      <tr key={d} className={tbodyRowClass}>
+                        <td className={`${tdClass} font-medium text-slate-800`}>{d}</td>
+                        <td className={`${numTdClass} font-medium text-amber-700`}>{formatHM(mins)}</td>
+                        <td className={`${numTdClass} text-slate-400`}>{formatHM(EXPECTED_WORK_MINUTES)}</td>
+                        <td className={tdClass}>
+                          <Pill
+                            tone={
                               cmp.verdict === "anomaly"
-                                ? "bg-red-600 text-white"
+                                ? "redSolid"
                                 : cmp.verdict === "short"
-                                  ? "bg-red-100 text-red-700"
+                                  ? "red"
                                   : cmp.verdict === "on-track"
-                                    ? "bg-amber-100 text-amber-700"
-                                    : "bg-green-100 text-green-700"
-                            }`}
+                                    ? "amber"
+                                    : "green"
+                            }
                           >
                             {cmp.verdict === "anomaly"
                               ? `🚨 ${formatHM(mins)} — check entries`
@@ -892,103 +964,141 @@ export default async function AttendanceAdminPage({
                                 : cmp.verdict === "on-track"
                                   ? "On track"
                                   : `+${formatHM(cmp.deltaMinutes)}`}
-                          </span>
+                          </Pill>
                         </td>
                       </tr>
                     );
                   })}
                   {perfDates.length === 0 && (
-                    <tr><td colSpan={4} className="py-3 text-center text-slate-400">No submitted reports in this range.</td></tr>
+                    <tr><td colSpan={4} className={emptyRowClass}>No submitted reports in this range.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
 
             <div className="mt-4">
-              <h3 className="mb-2 text-xs font-semibold text-slate-600">Report Details</h3>
-              <div className="max-h-72 space-y-1.5 overflow-y-auto">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Report Details</h3>
+              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
                 {perfLogs.map((l) => (
-                  <div key={l.id} className="rounded border border-slate-100 px-2 py-1.5 text-xs">
-                    <span className="font-medium text-slate-800">{l.log_date}</span>
-                    <span className="ml-2 text-slate-400">[{l.category ?? "—"}]</span>
-                    <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">{l.work_status ?? "—"}</span>
-                    <span className="ml-2 text-amber-700">{formatDuration(l.time_spent_seconds)}</span>
-                    <p className="mt-0.5 text-slate-600">{l.description}</p>
+                  <div key={l.id} className="rounded-lg border border-slate-100 px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-slate-800">{l.log_date}</span>
+                      <span className="text-slate-400">[{l.category ?? "—"}]</span>
+                      <Pill tone="green">{l.work_status ?? "—"}</Pill>
+                      <span className="font-medium tabular-nums text-amber-700">{formatDuration(l.time_spent_seconds)}</span>
+                    </div>
+                    <p className="mt-1 text-slate-600">{l.description}</p>
                   </div>
                 ))}
+                {perfLogs.length === 0 && <p className="text-xs text-slate-400">Nothing submitted in this range yet.</p>}
+              </div>
+            </div>
+
+            {/* 2026-09-26 — "task compleate nahi hua to report pending show
+                honi chahiye": tasks assigned to this employee that are NOT
+                yet Done — see the perfPendingTasks query above for the
+                full rationale. Kept visually and numerically separate from
+                Report Details above: this time is live and can still
+                change, so it never feeds Total Time/Avg. */}
+            <div className="mt-4">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Pending / In-Progress Tasks
+                <span className="ml-1 font-normal normal-case text-slate-400">— not yet Done, time shown here isn&apos;t counted above</span>
+              </h3>
+              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                {perfPendingTasks.map((t) => (
+                  <div key={t.id} className="rounded-lg border border-dashed border-amber-200 bg-amber-50/40 px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill tone={TASK_STATUS_TONE[t.status] ?? "slate"}>
+                        {t.status}
+                        {t.timer_started_at && <span className="text-green-600">●</span>}
+                      </Pill>
+                      {t.category && <span className="text-slate-400">[{t.category}]</span>}
+                      <Pill tone={PRIORITY_TONE[t.priority] ?? "slate"}>{t.priority}</Pill>
+                      {t.deadline && <span className="text-slate-400">Due {t.deadline}</span>}
+                      <span className="font-medium tabular-nums text-amber-700">
+                        {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))} so far
+                      </span>
+                    </div>
+                    <p className="mt-1 text-slate-600">{t.description}</p>
+                  </div>
+                ))}
+                {perfPendingTasks.length === 0 && (
+                  <p className="text-xs text-slate-400">No open (Pending / In Progress) tasks assigned to this employee right now.</p>
+                )}
               </div>
             </div>
           </>
         )}
-      </div>
+      </Panel>
 
       {hasTaskAdmin && (
-        <div className="mt-6">
-          <div className="mb-6">
-            <h2 className="text-2xl font-semibold text-slate-900">📊 Task Reports</h2>
-          </div>
-
-          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-amber-800">🟢 Live Now</h3>
-            {liveNow.length === 0 && <p className="text-xs text-amber-700/70">No one is actively timing a task right now.</p>}
+        <>
+          <Panel
+            icon="🟢"
+            tone="accent"
+            title="Live Now"
+            description="Everyone actively timing a task right now, across every company this login can see."
+          >
+            {liveNow.length === 0 && <p className="text-xs text-slate-400">No one is actively timing a task right now.</p>}
             <div className="space-y-1.5">
               {liveNow.map((t) => (
-                <div key={t.id} className="flex flex-wrap items-center gap-2 rounded border border-amber-100 bg-white px-2.5 py-1.5 text-xs">
+                <div key={t.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs">
+                  <span className="inline-flex h-2 w-2 shrink-0 animate-pulse rounded-full bg-green-500" />
                   <span className="font-medium text-slate-800">{employeeName.get(t.assigned_to_employee_id) ?? "—"}</span>
                   <span className="flex-1 truncate text-slate-600">{t.description}</span>
-                  <span className="rounded-md bg-sky-50 px-1.5 py-0.5 font-semibold text-sky-700">
+                  <Pill tone="sky">
                     Today {formatDuration(liveElapsedSecondsForToday({ timerStartedAt: t.timer_started_at }, todaySecondsByTaskId.get(t.id) ?? 0, taskNowMs))}
-                  </span>
-                  <span className="font-semibold text-amber-800" title="Total time spent on this task across all days">
+                  </Pill>
+                  <span className="font-semibold tabular-nums text-amber-800" title="Total time spent on this task across all days">
                     Total {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))}
                   </span>
                 </div>
               ))}
             </div>
-          </div>
+          </Panel>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">All Tasks — {selectedCompany?.name}</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+          <Panel icon="🗒️" title={`All Tasks — ${selectedCompany?.name}`} bodyClassName="p-0">
+            <div className={tableWrapClass}>
+              <table className={tableClass}>
                 <thead>
-                  <tr className="text-slate-400">
-                    <th className="py-1 pr-3">Assigned To</th>
-                    <th className="px-2">Assigned By</th>
-                    <th className="px-2">Description</th>
-                    <th className="px-2">Priority</th>
-                    <th className="px-2">Status</th>
-                    <th className="px-2">Deadline</th>
-                    <th className="px-2">Today</th>
-                    <th className="px-2">Total Time</th>
+                  <tr className={theadRowClass}>
+                    <th className={thClass}>Assigned To</th>
+                    <th className={thClass}>Assigned By</th>
+                    <th className={thClass}>Description</th>
+                    <th className={thClass}>Priority</th>
+                    <th className={thClass}>Status</th>
+                    <th className={thClass}>Deadline</th>
+                    <th className={thClass}>Today</th>
+                    <th className={thClass}>Total Time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tasks.map((t) => (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <td className="py-1.5 pr-3 font-medium text-slate-800">{employeeName.get(t.assigned_to_employee_id) ?? "—"}</td>
-                      <td className="px-2 text-slate-500">{employeeName.get(t.assigned_by_employee_id) ?? "—"}</td>
-                      <td className="max-w-xs truncate px-2 text-slate-600">{t.description}</td>
-                      <td className="px-2">{t.priority}</td>
-                      <td className="px-2">{t.status}</td>
-                      <td className="px-2 text-slate-500">{t.deadline ?? "—"}</td>
-                      <td className="px-2 text-sky-700">
+                    <tr key={t.id} className={tbodyRowClass}>
+                      <td className={`${tdClass} font-medium text-slate-800`}>{employeeName.get(t.assigned_to_employee_id) ?? "—"}</td>
+                      <td className={`${tdClass} text-slate-500`}>{employeeName.get(t.assigned_by_employee_id) ?? "—"}</td>
+                      <td className={`${tdClass} max-w-xs truncate text-slate-600`}>{t.description}</td>
+                      <td className={tdClass}><Pill tone={PRIORITY_TONE[t.priority] ?? "slate"}>{t.priority}</Pill></td>
+                      <td className={tdClass}><Pill tone={TASK_STATUS_TONE[t.status] ?? "slate"}>{t.status}</Pill></td>
+                      <td className={`${tdClass} text-slate-500`}>{t.deadline ?? "—"}</td>
+                      <td className={`${numTdClass} text-sky-700`}>
                         {formatDuration(liveElapsedSecondsForToday({ timerStartedAt: t.timer_started_at }, todaySecondsByTaskId.get(t.id) ?? 0, taskNowMs))}
                       </td>
-                      <td className="px-2 text-amber-700">
+                      <td className={`${numTdClass} text-amber-700`}>
                         {formatDuration(liveElapsedSeconds({ timeSpentSeconds: t.time_spent_seconds, timerStartedAt: t.timer_started_at }, taskNowMs))}
                         {t.timer_started_at && <span className="ml-1 text-green-600">●</span>}
                       </td>
                     </tr>
                   ))}
                   {tasks.length === 0 && (
-                    <tr><td colSpan={8} className="py-3 text-center text-slate-400">No tasks for this company yet.</td></tr>
+                    <tr><td colSpan={8} className={emptyRowClass}>No tasks for this company yet.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
+          </Panel>
+        </>
       )}
     </div>
   );
@@ -996,12 +1106,3 @@ export default async function AttendanceAdminPage({
 
 const selectClass =
   "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className="text-sm font-semibold text-slate-900">{value}</div>
-    </div>
-  );
-}

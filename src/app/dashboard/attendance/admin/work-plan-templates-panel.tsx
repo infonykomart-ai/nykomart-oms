@@ -10,6 +10,7 @@
 // linked (see setWorkPlanTemplateActive's own doc comment in actions.ts).
 import { useState, useTransition } from "react";
 import { saveWorkPlanTemplate, setWorkPlanTemplateActive } from "./actions";
+import { Pill } from "./dashboard-ui";
 
 export type WorkPlanTemplateRow = {
   id: string;
@@ -92,11 +93,11 @@ export function WorkPlanTemplatesPanel({
               {rows
                 .sort((a, b) => a.sortOrder - b.sortOrder)
                 .map((t) => (
-                  <div key={t.id} className={`flex flex-wrap items-center gap-2 rounded border px-2.5 py-1.5 text-xs ${t.active ? "border-slate-100" : "border-slate-100 bg-slate-50 opacity-60"}`}>
+                  <div key={t.id} className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${t.active ? "border-slate-100" : "border-slate-100 bg-slate-50 opacity-60"}`}>
                     <span className="text-slate-400">[{t.category ?? "—"}]</span>
                     <span className="flex-1 text-slate-800">{t.description}</span>
                     {t.targetQty && <span className="text-slate-400">Target: {t.targetQty}</span>}
-                    {!t.active && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-slate-500">Inactive</span>}
+                    {!t.active && <Pill tone="slate">Inactive</Pill>}
                     <button type="button" onClick={() => startEdit(t)} className="text-amber-700 hover:underline">Edit</button>
                     <button type="button" disabled={pending} onClick={() => toggleActive(t.id, !t.active)} className="text-rose-600 hover:underline disabled:opacity-50">
                       {t.active ? "Deactivate" : "Reactivate"}

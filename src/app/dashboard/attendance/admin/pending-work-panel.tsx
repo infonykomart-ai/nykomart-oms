@@ -12,6 +12,7 @@
 // full-detail-only view (per the owner's own pick when asked).
 import { Fragment, useState } from "react";
 import { formatDuration } from "@/lib/attendance/timer";
+import { Pill, PRIORITY_TONE, tableWrapClass, tableClass, theadRowClass, thClass, tbodyRowClass, tdClass, emptyRowClass } from "./dashboard-ui";
 
 export type PendingWorkRow = {
   id: string;
@@ -31,13 +32,6 @@ export type PendingWorkGroup = {
   rows: PendingWorkRow[];
 };
 
-const PRIORITY_BADGE: Record<string, string> = {
-  Urgent: "bg-red-100 text-red-700",
-  High: "bg-orange-100 text-orange-700",
-  Medium: "bg-amber-100 text-amber-700",
-  Low: "bg-slate-100 text-slate-500",
-};
-
 export function PendingWorkPanel({ groups }: { groups: PendingWorkGroup[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -50,20 +44,16 @@ export function PendingWorkPanel({ groups }: { groups: PendingWorkGroup[] }) {
     });
   }
 
-  if (groups.length === 0) {
-    return <p className="text-xs text-slate-400">No pending or in-progress work for this team right now.</p>;
-  }
-
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-xs">
+    <div className={tableWrapClass}>
+      <table className={tableClass}>
         <thead>
-          <tr className="text-slate-400">
-            <th className="py-1 pr-3">Employee</th>
-            <th className="px-2">Pending</th>
-            <th className="px-2">In Progress</th>
-            <th className="px-2">Total</th>
-            <th className="px-2"></th>
+          <tr className={theadRowClass}>
+            <th className={thClass}>Employee</th>
+            <th className={thClass}>Pending</th>
+            <th className={thClass}>In Progress</th>
+            <th className={thClass}>Total</th>
+            <th className={thClass}></th>
           </tr>
         </thead>
         <tbody>
@@ -72,16 +62,16 @@ export function PendingWorkPanel({ groups }: { groups: PendingWorkGroup[] }) {
             const total = g.pendingCount + g.inProgressCount;
             return (
               <Fragment key={g.employeeId}>
-                <tr className="border-t border-slate-100">
-                  <td className="py-1.5 pr-3 font-medium text-slate-800">{g.employeeName}</td>
-                  <td className="px-2 text-amber-700">{g.pendingCount}</td>
-                  <td className="px-2 text-sky-700">{g.inProgressCount}</td>
-                  <td className="px-2 font-semibold text-slate-700">{total}</td>
-                  <td className="px-2">
+                <tr className={tbodyRowClass}>
+                  <td className={`${tdClass} font-medium text-slate-800`}>{g.employeeName}</td>
+                  <td className={tdClass}><Pill tone="amber">{g.pendingCount}</Pill></td>
+                  <td className={tdClass}><Pill tone="sky">{g.inProgressCount}</Pill></td>
+                  <td className={`${tdClass} font-semibold text-slate-700`}>{total}</td>
+                  <td className={tdClass}>
                     <button
                       type="button"
                       onClick={() => toggle(g.employeeId)}
-                      className="text-amber-700 hover:underline"
+                      className="font-medium text-amber-700 hover:underline"
                     >
                       {isOpen ? "Hide ▲" : "Show ▼"}
                     </button>
@@ -92,16 +82,12 @@ export function PendingWorkPanel({ groups }: { groups: PendingWorkGroup[] }) {
                     <td colSpan={5} className="px-3 py-2">
                       <div className="space-y-1.5">
                         {g.rows.map((r) => (
-                          <div key={r.id} className="rounded border border-slate-200 bg-white px-2.5 py-1.5">
+                          <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-medium text-slate-800">{r.logDate}</span>
                               <span className="text-slate-400">[{r.category ?? "—"}]</span>
-                              <span className={`rounded-full px-2 py-0.5 font-medium ${r.workStatus === "In Progress" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
-                                {r.workStatus ?? "—"}
-                              </span>
-                              <span className={`rounded-full px-2 py-0.5 font-medium ${PRIORITY_BADGE[r.priority] ?? "bg-slate-100 text-slate-500"}`}>
-                                {r.priority}
-                              </span>
+                              <Pill tone={r.workStatus === "In Progress" ? "sky" : "amber"}>{r.workStatus ?? "—"}</Pill>
+                              <Pill tone={PRIORITY_TONE[r.priority] ?? "slate"}>{r.priority}</Pill>
                               {r.estimatedTimeMinutes ? (
                                 <span className="text-slate-400">Est {formatDuration(r.estimatedTimeMinutes * 60)}</span>
                               ) : null}
@@ -116,6 +102,9 @@ export function PendingWorkPanel({ groups }: { groups: PendingWorkGroup[] }) {
               </Fragment>
             );
           })}
+          {groups.length === 0 && (
+            <tr><td colSpan={5} className={emptyRowClass}>No pending or in-progress work for this team right now.</td></tr>
+          )}
         </tbody>
       </table>
     </div>
