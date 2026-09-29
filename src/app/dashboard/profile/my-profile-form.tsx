@@ -137,6 +137,29 @@ function EditActions({ saving, onCancel }: { saving: boolean; onCancel: () => vo
   );
 }
 
+/** Downloads the self profile-data PDF from the authenticated endpoint. */
+function downloadMyDataPdf() {
+  void fetch("/api/profile-pdf", { method: "POST" })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Could not generate the PDF.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "my-profile-data.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    })
+    .catch(() => {
+      window.alert("Could not generate the PDF — please try again.");
+    });
+}
+
 export function MyProfileClient({
   me,
   roleName,
@@ -255,6 +278,16 @@ export function MyProfileClient({
               </p>
               {me.email && <p className="mt-0.5 truncate text-xs text-[var(--oms-text-muted)]">{me.email}</p>}
             </div>
+            {/* 2026-09-29 — Suggestion #2: self-service data export (the
+                employee's own record as an A4 PDF; see /api/profile-pdf). */}
+            <button
+              type="button"
+              onClick={downloadMyDataPdf}
+              className="shrink-0 self-start rounded-lg border border-[var(--oms-surface-border)] px-3 py-2 text-xs font-medium text-[var(--oms-text)] transition hover:bg-[var(--oms-canvas)]"
+              title="Download your profile data as a PDF"
+            >
+              ⬇ Download my data
+            </button>
           </div>
         </div>
       </div>
