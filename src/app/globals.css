@@ -1103,3 +1103,29 @@ tr.pl-expand:has(input.pl-toggle:checked) + tr.pl-detail { display: table-row; }
 @media print {
   .oms-card { background: #ffffff !important; }
 }
+
+/*
+ * 2026-09-29 — "last me ye page kyu tut raha hai" (profile page, but the
+ * class of bug is app-wide): the dashboard's layout contract is that the
+ * WINDOW itself never scrolls — ThemedShell is `h-dvh overflow-hidden` and
+ * ONLY DashboardMain's <main> scrolls (dashboard/layout.tsx's 2026-08-08
+ * note). Yet a full document-level scroll could appear on some pages: any
+ * in-flow element that ends up OUTSIDE that shell (or any fractional-dvh
+ * rounding overflow) grows the document instead, and the user sees the
+ * app end mid-screen with a dead unthemed strip below — the gray/black
+ * "torn page" area under the Recent-activity card.
+ *
+ * Fix, scoped to the dashboard only (the /login page legitimately uses a
+ * normal document scroll via min-h-screen): make html/body within the
+ * dashboard exactly viewport-sized and non-scrolling, so document height
+ * can never exceed the viewport no matter what a stray element computes
+ * to. Overlays that legitimately must scroll (dialogs, the A4Dialog, the
+ * messenger panel) scroll in their OWN containers and are unaffected.
+ * print-view.tsx's @media print rules below already reset html/body for
+ * printing, so printed output is unaffected.
+ */
+body:has([data-theme]) {
+  height: 100dvh;
+  overflow: hidden;
+}
+

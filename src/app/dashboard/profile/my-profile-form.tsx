@@ -233,7 +233,11 @@ export function MyProfileClient({
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    // 2026-09-29 — pb-6 on top of DashboardMain's own pb-24: the page ends
+    // with the wide Recent-activity card, and without this the card's
+    // shadow/edge sat flush against the scroll cutoff, reading as a torn
+    // page bottom.
+    <div className="mx-auto max-w-5xl pb-6">
       {/* ── Identity header ──────────────────────────────────────────── */}
       <div className="oms-card overflow-hidden rounded-2xl border shadow-sm">
         <div className="h-20 bg-[var(--oms-sidebar-bg)] md:h-24" />
