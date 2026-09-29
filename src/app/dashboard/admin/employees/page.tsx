@@ -1,9 +1,19 @@
-import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { EmployeesHeader } from "./employees-header";
 import { EmployeeForm } from "./employee-form";
 import { EmployeeRowActions } from "./employee-row-actions";
 
+// 2026-09-29 — FedEx-style upgrade: the bare "Employees" h1 row became a
+// card-style identity header for the whole ROSTER (Employee Roster, big
+// count, photo strip, active/inactive split) — the same visual language
+// the redesigned My Profile uses (see my-profile-form.tsx), plus the
+// user's bulk-download buttons ("sabhi employe ka data ek sath download"):
+// ⬇ Export All (Excel) and 📄 Directory PDF, both gated to this page's
+// existing employee_admin capability (see export-actions.ts).
+//
+// The create-form + table + row-actions layout below is UNCHANGED — only
+// the header block was replaced.
 export default async function EmployeesAdminPage() {
   await requireCapability("employee_admin");
   const supabase = await createClient();
@@ -65,39 +75,18 @@ export default async function EmployeesAdminPage() {
     documentsByEmployee.set(d.employee_id, list);
   }
 
+  // Header stats — computed once here, props-only from the client's view.
+  const list = employees ?? [];
+  const activeCount = list.filter((e) => e.active).length;
+
   return (
-    <div>
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Employees</h1>
-        </div>
-        {/* 2026-09-11 (Payroll Phase 3) — kept as in-page links rather than
-            top-level sidebar tiles, since both stay gated to the same
-            employee_admin capability this whole page already requires; no
-            new capability/role_capabilities grant needed for either. */}
-        <div className="flex gap-2">
-          <Link
-            href="/dashboard/admin/employees/onboarding"
-            className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
-          >
-            🧭 Onboarding
-          </Link>
-          <Link
-            href="/dashboard/admin/employees/org-chart"
-            className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100"
-          >
-            🌳 Org Chart
-          </Link>
-          {/* 2026-09-11 (Payroll Phase 4) — same reasoning: stays under this
-              page's existing employee_admin gate, no new capability. */}
-          <Link
-            href="/dashboard/admin/employees/settlements"
-            className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-          >
-            🧾 Full &amp; Final Settlement
-          </Link>
-        </div>
-      </div>
+    <div className="pb-6">
+      <EmployeesHeader
+        total={list.length}
+        activeCount={activeCount}
+        inactiveCount={list.length - activeCount}
+        photoUrls={list.map((e) => e.photo_url)}
+      />
 
       {/* 2026-09-15 — "screen auto adjust hojaye": @lg: variants respond to
           THIS page's own width (DashboardMain is a CSS container), not the
@@ -105,7 +94,7 @@ export default async function EmployeesAdminPage() {
           window-based lg: breakpoint stacked the form over the table far
           too late on tablets. The table also scrolls horizontally below
           @3xl instead of clipping under overflow-hidden. */}
-      <div className="grid grid-cols-1 gap-6 @lg:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-6 @lg:grid-cols-3">
         <div className="@lg:col-span-1">
           <EmployeeForm roles={roles ?? []} companies={companies ?? []} stores={stores ?? []} />
         </div>
@@ -122,7 +111,7 @@ export default async function EmployeesAdminPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {(employees ?? []).map((e) => (
+                {list.map((e) => (
                   <tr key={e.id}>
                     <td className="px-4 py-3">
                       <div className="font-medium text-slate-900">{e.name}</div>
@@ -168,7 +157,7 @@ export default async function EmployeesAdminPage() {
                     </td>
                   </tr>
                 ))}
-                {(employees ?? []).length === 0 && (
+                {list.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-400">
                       No employees yet.

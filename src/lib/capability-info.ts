@@ -137,6 +137,15 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // the whole flow without a permissions change.
   { code: "bank_recon", label: "Bank & Card Reconciliation", icon: "🏦", href: "/dashboard/bank-recon",
     description: "Add every bank account and credit card, upload their statements (any format auto-maps), and auto-match UTR / reference / invoice / party / store payouts — old payments are never modified." },
+  // 2026-09-29: Team Directory — a VIEW-ONLY company contact book open to
+  // every signed-in employee: name, photo, designation, role, email,
+  // WhatsApp, joining date. Deliberately its own capability (NOT folded
+  // into employee_admin — that one manages the roster and must stay
+  // Admin/MD-only) and deliberately a NARROWER field set: no bank/statutory
+  // columns, no salary/advance data, no documents. The Roles & Permissions
+  // matrix can grant it to any role without any code change.
+  { code: "team_directory", label: "Team Directory", icon: "📇", href: "/dashboard/team",
+    description: "View-only company contact book — teammates' names, photos, designations, roles and contact details. No bank/statutory data." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

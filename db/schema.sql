@@ -5917,6 +5917,17 @@ INSERT INTO capabilities (code, description) VALUES
   ('companion_admin',  'Turn the live AI companion on/off for specific employees - a per-person switch, not a role permission'),
   ('hr_letter_admin',  'Placeholder description for the help-center article-admin capability code used by older builds');
 
+-- 2026-09-29: Team Directory — see db/2026-09-29-team-directory.sql.
+-- View-only contact book; deliberately narrower field set than the
+-- Employees admin (no bank/statutory/salary data is ever selected).
+INSERT INTO capabilities (code, description) VALUES
+  ('team_directory', 'View-only company contact book - teammates'' names, photos, designations, roles and contact details. No bank/statutory data');
+
+INSERT INTO role_capabilities (role_id, capability_code)
+SELECT r.id, 'team_directory'
+FROM roles r
+WHERE r.name IN ('MD', 'Admin');
+
 -- (Descriptions above are refreshed from the app''s live CAPABILITY_INFO
 -- registry by sync_capabilities() on every Roles & Permissions page load,
 -- so wording here is a bootstrap default only.)
