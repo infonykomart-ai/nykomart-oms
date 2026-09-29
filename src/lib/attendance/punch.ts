@@ -12,6 +12,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { todayIST, nowISOInstant, nowISTTime } from "./ist-date";
 import { notifyCompanion } from "@/lib/companion/notify";
+// 2026-09-29 — best-effort WhatsApp confirmation per punch (see
+// whatsapp-notify.ts): fired AFTER the DB write below succeeds, never
+// blocks or fails the punch itself.
+import { notifyPunchInWhatsapp, notifyPunchOutWhatsapp } from "./whatsapp-notify";
 
 // HH:MM (IST, 24h) — same config-constant convention as the old system's
 // ATTENDANCE_LATE_CUTOFF_HOUR/MINUTE. No admin UI to change this yet
@@ -73,6 +77,18 @@ export async function recordPunchIn(
     message: `Attendance marked for today (${status}) 🕒`,
   });
 
+  // 2026-09-29 — WhatsApp confirmation to the employee's own number, same
+  // single-choke-point reasoning as the companion call above: every punch
+  // path (auto login punch, manual button) passes through here exactly
+  // once per day. Best-effort — a missing WHAPI_TOKEN or whatsapp_no is
+  // skipped silently, never blocking the punch.
+  await notifyPunchInWhatsapp({
+    supabase,
+    employeeId,
+    status: status as "Present" | "Late",
+    punchInAtIso: nowISOInstant(),
+  });
+
   return { ok: true, alreadyPunchedIn: false, status };
 }
 
@@ -81,9 +97,11 @@ export async function recordPunchOut(
   employeeId: string
 ): Promise<{ ok: true; noPunchInFound: boolean; alreadyPunchedOut: boolean } | { ok: false; error: string }> {
   const date = todayIST();
+  // 2026-09-29 — punch_in is now selected too: the WhatsApp confirmation
+  // reports the day's total work duration (punch_out − punch_in).
   const { data: existing, error: selectError } = await supabase
     .from("attendance")
-    .select("id, punch_out")
+    .select("id, punch_in, punch_out")
     .eq("employee_id", employeeId)
     .eq("attendance_date", date)
     .maybeSingle();
@@ -93,5 +111,16 @@ export async function recordPunchOut(
 
   const { error } = await supabase.from("attendance").update({ punch_out: nowISOInstant() }).eq("id", existing.id);
   if (error) return { ok: false, error: error.message };
+
+  // 2026-09-29 — WhatsApp confirmation, same best-effort contract as the
+  // punch-in one above (fires after the write succeeded; skipped silently
+  // when WHAPI_TOKEN / the employee's whatsapp_no is missing).
+  await notifyPunchOutWhatsapp({
+    supabase,
+    employeeId,
+    punchInAtIso: existing.punch_in,
+    punchOutAtIso: nowISOInstant(),
+  });
+
   return { ok: true, noPunchInFound: false, alreadyPunchedOut: false };
 }
