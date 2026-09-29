@@ -22,6 +22,7 @@ import { updateMyProfile, uploadMyPhoto, type MyProfileFormState, type ProfileSc
 import { TwoFactorSection } from "./two-factor-section";
 import { PasswordSection } from "./password-section";
 import { ActivitySection } from "./activity-section";
+import type { ActivityItem } from "./activity-types";
 import type { ProfileFieldDefaults } from "../admin/employees/profile-fields";
 
 const inputClass =
