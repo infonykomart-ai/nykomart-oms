@@ -8,8 +8,38 @@
 // See src/lib/auth/require-capability.ts for how a verified factor is then
 // ENFORCED (requires AAL2 to reach any /dashboard page) and
 // src/app/login/verify-2fa/ for the login-time challenge step.
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { getAuthedEmployee } from "@/lib/auth/require-capability";
+import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
+
+// 2026-09-12 — "Recent activity" helper: the confirm/disable actions below
+// write auth.2fa_enabled / auth.2fa_disabled audit rows (self-attributed,
+// best-effort — never blocks the primary auth operation).
+async function logTwoFactorEvent(employeeId: string, action: string): Promise<void> {
+  try {
+    const service = createServiceRoleClient();
+    const { data: employee } = await service
+      .from("employees")
+      .select("id, company_id, name")
+      .eq("id", employeeId)
+      .maybeSingle();
+    if (employee) {
+      await logAudit(service, {
+        companyId: employee.company_id,
+        employeeId: employee.id,
+        employeeName: employee.name,
+        action,
+        entityType: "employee",
+        entityId: employee.id,
+        entityLabel: employee.name,
+        changes: null,
+      });
+    }
+  } catch {
+    // Never let a logging hiccup break 2FA enrollment/disable.
+  }
+}
 
 export type SimpleResult = { error: string | null };
 
@@ -41,17 +71,21 @@ export async function enrollTwoFactor(): Promise<EnrollResult> {
 }
 
 export async function confirmTwoFactorEnrollment(factorId: string, code: string): Promise<SimpleResult> {
+  const employee = await getAuthedEmployee();
   const supabase = await createClient();
   const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code });
   if (error) return { error: error.message };
+  await logTwoFactorEvent(employee.id, "auth.2fa_enabled");
   revalidatePath("/dashboard/profile");
   return { error: null };
 }
 
 export async function unenrollTwoFactor(factorId: string): Promise<SimpleResult> {
+  const employee = await getAuthedEmployee();
   const supabase = await createClient();
   const { error } = await supabase.auth.mfa.unenroll({ factorId });
   if (error) return { error: error.message };
+  await logTwoFactorEvent(employee.id, "auth.2fa_disabled");
   revalidatePath("/dashboard/profile");
   return { error: null };
 }

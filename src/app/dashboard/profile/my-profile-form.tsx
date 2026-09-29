@@ -21,6 +21,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { updateMyProfile, uploadMyPhoto, type MyProfileFormState, type ProfileScope } from "./actions";
 import { TwoFactorSection } from "./two-factor-section";
 import { PasswordSection } from "./password-section";
+import { ActivitySection } from "./activity-section";
 import type { ProfileFieldDefaults } from "../admin/employees/profile-fields";
 
 const inputClass =
@@ -130,11 +131,13 @@ export function MyProfileClient({
   roleName,
   companyName,
   twoFactorStatus,
+  activity,
 }: {
   me: Me;
   roleName: string;
   companyName: string;
   twoFactorStatus: { enrolled: boolean; factorId: string | null };
+  activity: ActivityItem[];
 }) {
   const [state, setState] = useState<MyProfileFormState>({ error: null, success: false });
   const [saving, setSaving] = useState(false);
@@ -466,6 +469,9 @@ export function MyProfileClient({
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <PasswordSection />
           <TwoFactorSection initialStatus={twoFactorStatus} />
+          <div className="md:col-span-2">
+            <ActivitySection items={activity} />
+          </div>
         </div>
       </div>
     </div>

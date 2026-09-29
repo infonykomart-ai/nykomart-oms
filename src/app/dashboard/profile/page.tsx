@@ -20,7 +20,7 @@ export default async function MyProfilePage() {
   const employee = await getAuthedEmployee();
   const supabase = createServiceRoleClient();
 
-  const [{ data: me }, { data: role }, { data: company }, twoFactorStatus] = await Promise.all([
+  const [{ data: me }, { data: role }, { data: company }, twoFactorStatus, { data: activity }] = await Promise.all([
     supabase
       .from("employees")
       .select(
@@ -31,6 +31,17 @@ export default async function MyProfilePage() {
     supabase.from("roles").select("name").eq("id", employee.roleId).single(),
     supabase.from("companies").select("name").eq("id", employee.homeCompanyId).single(),
     getTwoFactorStatus(),
+    // 2026-09-12 — "Recent activity": the caller's OWN last 5 security
+    // events (logins, 2FA on/off, password changes, profile edits) from
+    // the existing audit_log — self-scoped, index-backed
+    // (idx_audit_log_employee), and capped, so this is a cheap read.
+    supabase
+      .from("audit_log")
+      .select("id, action, created_at")
+      .eq("employee_id", employee.id)
+      .in("action", ["auth.login", "auth.login_2fa", "auth.password_changed", "auth.2fa_enabled", "auth.2fa_disabled", "profile.updated"])
+      .order("created_at", { ascending: false })
+      .limit(5),
   ]);
 
   if (!me) {
@@ -44,6 +55,7 @@ export default async function MyProfilePage() {
         roleName={role?.name ?? ""}
         companyName={company?.name ?? ""}
         twoFactorStatus={twoFactorStatus}
+        activity={(activity ?? []).map((a) => ({ id: a.id, action: a.action, createdAt: a.created_at }))}
       />
     </div>
   );

@@ -3,6 +3,7 @@
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { recordPunchIn } from "@/lib/attendance/punch";
+import { logAudit } from "@/lib/audit/log-audit";
 
 export type LoginState = { error: string | null };
 
@@ -44,6 +45,26 @@ export async function login(_prevState: LoginState, formData: FormData): Promise
         .maybeSingle();
       if (employee) {
         await recordPunchIn(service, employee.id, employee.company_id, "Web Punch");
+        // 2026-09-12 — "Recent activity" on My Profile: log the sign-in
+        // (best-effort, inside the same never-blocks-login try/catch) so
+        // the employee sees their own login trail on the profile page.
+        // fetch the name for the audit row — the audit insert itself is
+        // fail-safe (logAudit swallows its own errors).
+        const { data: empRow } = await service
+          .from("employees")
+          .select("name")
+          .eq("id", employee.id)
+          .maybeSingle();
+        await logAudit(service, {
+          companyId: employee.company_id,
+          employeeId: employee.id,
+          employeeName: empRow?.name ?? "Unknown",
+          action: "auth.login",
+          entityType: "employee",
+          entityId: employee.id,
+          entityLabel: empRow?.name ?? "Unknown",
+          changes: null,
+        });
       }
     }
   } catch {
