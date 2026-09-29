@@ -47,7 +47,12 @@ function initials(name: string | null): string {
   );
 }
 
-function formatDate(value: string | null): string {
+// 2026-09-29 hotfix — value must accept undefined, not just null: Me mixes
+// ProfileFieldDefaults' OPTIONAL columns (dob?: string | null →
+// string | null | undefined) with its own required-nullable ones, so
+// callers can legally pass undefined (Vercel build caught this: TS2345 at
+// the Date of Birth / Anniversary / Date of Joining rows).
+function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
   const d = new Date(value.length === 10 ? value + "T00:00:00" : value);
   if (isNaN(d.getTime())) return value;
