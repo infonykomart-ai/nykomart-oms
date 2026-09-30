@@ -382,7 +382,8 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
           {bill.sentToFinance && (
             <p className="text-[11px] text-slate-400">
               This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
-              reviewed when it was sent (not auto-recalculated).
+              reviewed when it was sent, EXCEPT the Courier Credit Note: changing it here adjusts that entry&apos;s total by the same
+              difference, so Bill Payment / the Party Ledger reflect the credit note immediately.
             </p>
           )}
           <button

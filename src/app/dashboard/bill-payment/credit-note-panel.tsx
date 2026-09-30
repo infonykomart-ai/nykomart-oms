@@ -21,9 +21,11 @@ import {
   applyBillCreditNote,
   removeBillCreditNote,
   listPartyBillsForCn,
+  resolveAwbOrders,
   type ApplyCreditNoteState,
   type RegisterCnRow,
   type PartyAwbBill,
+  type AwbOrderHit,
 } from "./credit-note-actions";
 import { SUPPLIER_GST_OPTIONS, defaultGstRatePct } from "./credit-note-kinds";
 
@@ -31,6 +33,21 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-0.5 block text-[11px] text-slate-400";
 const initialState: ApplyCreditNoteState = { error: null, success: false };
+
+// 2026-09-30 — live "AWB → PO/RF/RG (Company)" preview under the AWB No(s). fields.
+function AwbOrderPreview({ hits }: { hits: AwbOrderHit[] | null }) {
+  if (!hits || hits.length === 0) return null;
+  return (
+    <div className="mt-1 space-y-0.5">
+      {hits.map((h) => (
+        <p key={h.awb} className={`text-[11px] ${h.found ? "text-emerald-700" : "text-amber-600"}`}>
+          {h.found ? "✓" : "?"} <span className="font-mono">{h.awb}</span>
+          {h.found ? ` → ${h.ordersLine}` : " — koi shipment nahi mila (check karo ya chhod do)"}
+        </p>
+      ))}
+    </div>
+  );
+}
 
 export type AppliedCn = {
   adjustment_id: string;
@@ -93,6 +110,37 @@ export function CreditNotePanel({
   }, [mode, awbBills, partyId]);
   const awbSplitSum = Object.values(awbAmounts).reduce((sum, v) => sum + (Number(v) || 0), 0);
   const awbGstTotal = awbBase !== "" && Number(awbBase) > 0 ? Number(awbBase) * 1.18 : null;
+
+  // 2026-09-30 — "courier party ka credit note direct couriour se aata hai
+  // ... lekin usme kon konse order PO/RG/RF ke against me AWB hai": live
+  // AWB → order mapping preview. Debounced (400ms) resolver call; the same
+  // mapping is re-resolved server-side on save and baked into the note's
+  // remark, so the register keeps the answer permanently.
+  const [awbNewInput, setAwbNewInput] = useState("");
+  const [awbNewHits, setAwbNewHits] = useState<AwbOrderHit[] | null>(null);
+  const [awbMultiInput, setAwbMultiInput] = useState("");
+  const [awbMultiHits, setAwbMultiHits] = useState<AwbOrderHit[] | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const raw = mode === "new" ? awbNewInput : awbMultiInput;
+      const setHits = mode === "new" ? setAwbNewHits : setAwbMultiHits;
+      if (mode !== "new" && mode !== "multi_awb") return;
+      const trimmed = raw.trim();
+      if (trimmed.length < 5) {
+        setHits(null);
+        return;
+      }
+      const alive = true;
+      resolveAwbOrders(trimmed)
+        .then((hits) => {
+          if (alive) setHits(hits);
+        })
+        .catch(() => {
+          if (alive) setHits(null);
+        });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [mode, awbNewInput, awbMultiInput]);
 
   async function handleRemove(adjustmentId: string) {
     setRemoveError(null);
@@ -177,6 +225,19 @@ export function CreditNotePanel({
               <label className={labelClass}>Remark</label>
               <input name="remark" placeholder="e.g. shortage / rate diff / damage / freight quote vs billed" className={inputClass} />
             </div>
+            {/* 2026-09-30 — courier CNs arrive AWB-wise; typing them here
+                shows WHICH PO/RF/RG orders they belong to before saving. */}
+            <div className="sm:col-span-2">
+              <label className={labelClass}>AWB No(s). (courier CN — optional)</label>
+              <input
+                name="awb_no"
+                value={awbNewInput}
+                onChange={(e) => setAwbNewInput(e.target.value)}
+                placeholder="AWB1, AWB2, …"
+                className={inputClass}
+              />
+              <AwbOrderPreview hits={awbNewHits} />
+            </div>
           </div>
         )}
 
@@ -232,7 +293,14 @@ export function CreditNotePanel({
               </div>
               <div>
                 <label className={labelClass}>AWB No(s).</label>
-                <input name="awb_no" placeholder="AWB1, AWB2, …" className={inputClass} />
+                <input
+                  name="awb_no"
+                  value={awbMultiInput}
+                  onChange={(e) => setAwbMultiInput(e.target.value)}
+                  placeholder="AWB1, AWB2, …"
+                  className={inputClass}
+                />
+                <AwbOrderPreview hits={awbMultiHits} />
               </div>
               <div>
                 <label className={labelClass}>Credit Note Date *</label>

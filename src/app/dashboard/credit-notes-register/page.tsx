@@ -107,6 +107,7 @@ export default async function CreditNotesRegisterPage({
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">GST (total)</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Against Invoice</th>
+                    <th className="px-3 py-2 text-left font-semibold text-slate-500">Orders (via AWB)</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Status</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Remark</th>
                     <th className="px-3 py-2 text-right font-semibold text-slate-500">Amount</th>
@@ -136,6 +137,16 @@ export default async function CreditNotesRegisterPage({
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.gst_rate_pct != null ? `${n.gst_rate_pct * 2}%` : "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.credit_note_date}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.invoice_no ?? "—"}</td>
+                      {/* 2026-09-30 — "usme kon konse order PO/RG/RF ke against
+                          me AWB hai": each AWB's resolved order(s), or "AWB → ?"
+                          when the number matched no shipment. */}
+                      <td className="px-3 py-1.5 text-slate-600">
+                        {n.awb_orders.length > 0 ? (
+                          <span className="block max-w-[22rem] whitespace-normal font-mono text-[10px] leading-snug">{n.awb_orders.join(", ")}</span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-500">{n.status ?? "—"}</td>
                       <td className="px-3 py-1.5 text-slate-500">{n.remark ?? ""}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-right font-semibold text-slate-800">₹{n.refund_amount.toFixed(2)}</td>
