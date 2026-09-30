@@ -651,8 +651,7 @@ export async function linkConversion(inquiryId: string, orderRefNo: string): Pro
 // quotation + these rows. printed_count increments every time the print
 // view is opened, so the register shows real usage.
 
-export type B2BDocKind = "PI" | "CI" | "PL";
-export const B2B_DOC_KINDS: B2BDocKind[] = ["PI", "CI", "PL"];
+export type B2BDocKind = "PI" | "CI" | "PL"; // const list lives in B2B_DOC_KIND_LIST above (async-only export rule)
 
 export async function issueDocument(
   quotationId: string,
