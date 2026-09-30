@@ -287,12 +287,12 @@ export type QuotationInput = {
   buyerContactNo: string;
   buyerEmail: string;
   buyerCountry: string;
-  subtotal: string;
   taxPercent: string;
   shippingAmount: string;
   currency: string;
   terms: string;
   notes: string;
+  items: { description: string; hsnCode: string; qty: string; unit: string; unitPrice: string }[];
 };
 
 export async function createQuotation(input: QuotationInput): Promise<SaveInquiryResult> {
@@ -317,10 +317,25 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
     return { ok: false, error: "Invalid validity date." };
   }
   const buyerName = input.buyerName.trim() || owned.inquiry.buyer_name;
-  const subtotal = Math.max(0, parseFloat(input.subtotal) || 0);
   const taxPercent = Math.min(100, Math.max(0, parseFloat(input.taxPercent) || 0));
   const shipping = Math.max(0, parseFloat(input.shippingAmount) || 0);
   const currency = (input.currency || "INR").trim().toUpperCase().slice(0, 3);
+
+  // Line items are the source of truth for money since the documents part
+  // (2026-09-30b): PI/CI print itemized tables, so the header subtotal is
+  // app-computed as the SUM of item rows — the client never sends a total.
+  const items = (input.items ?? [])
+    .map((it, idx) => ({
+      description: it.description.trim(),
+      hsn_code: it.hsnCode.trim() || null,
+      qty: Math.max(0.001, parseFloat(it.qty) || 0),
+      unit: it.unit.trim() || "pcs",
+      unit_price: Math.max(0, parseFloat(it.unitPrice) || 0),
+      display_order: idx,
+    }))
+    .filter((it) => it.description);
+  if (items.length === 0) return { ok: false, error: "Add at least one item with a description." };
+  const subtotal = Math.round(items.reduce((s, it) => s + it.qty * it.unit_price, 0) * 100) / 100;
 
   const { no, error: numError } = await reserveB2BNo(supabase, me.currentCompanyId, "B2B_QUOTE", "Q", quoteDate);
   if (errorImpossibleGuard(numError)) return { ok: false, error: numError ?? "Numbering failed." };
@@ -348,6 +363,11 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
     .select("id, quote_no")
     .single();
   if (error || !created) return { ok: false, error: error?.message ?? "Insert failed." };
+
+  const { error: itemError } = await supabase
+    .from("b2b_quotation_items")
+    .insert(items.map((it) => ({ ...it, quotation_id: created.id })));
+  if (itemError) console.error(`[b2b] quotation ${created.quote_no} line items failed: ${itemError.message}`);
 
   // Quotation Sent — the whole point of creating one.
   await supabase
@@ -414,7 +434,20 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
   if (input.validUntil && !/^\d{4}-\d{2}-\d{2}$/.test(input.validUntil)) {
     return { ok: false, error: "Invalid validity date." };
   }
-  const subtotal = Math.max(0, parseFloat(input.subtotal) || 0);
+  // Same items-are-the-money rule as createQuotation: header subtotal is
+  // the app-computed sum of the (replaced) item rows.
+  const items = (input.items ?? [])
+    .map((it, idx) => ({
+      description: it.description.trim(),
+      hsn_code: it.hsnCode.trim() || null,
+      qty: Math.max(0.001, parseFloat(it.qty) || 0),
+      unit: it.unit.trim() || "pcs",
+      unit_price: Math.max(0, parseFloat(it.unitPrice) || 0),
+      display_order: idx,
+    }))
+    .filter((it) => it.description);
+  if (items.length === 0) return { ok: false, error: "Add at least one item with a description." };
+  const subtotal = Math.round(items.reduce((s, it) => s + it.qty * it.unit_price, 0) * 100) / 100;
   const taxPercent = Math.min(100, Math.max(0, parseFloat(input.taxPercent) || 0));
   const shipping = Math.max(0, parseFloat(input.shippingAmount) || 0);
 
@@ -436,6 +469,14 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
     })
     .eq("id", input.quotationId);
   if (error) return { ok: false, error: error.message };
+
+  // Replace the item set wholesale (small row counts, delete+insert inside
+  // one action call — simplest correct model for an editable item grid).
+  await supabase.from("b2b_quotation_items").delete().eq("quotation_id", input.quotationId);
+  const { error: itemError } = await supabase
+    .from("b2b_quotation_items")
+    .insert(items.map((it) => ({ ...it, quotation_id: input.quotationId })));
+  if (itemError) console.error(`[b2b] quotation ${input.quotationId} line-item replace failed: ${itemError.message}`);
 
   revalidatePath("/dashboard/b2b");
   return { ok: true };
@@ -592,3 +633,135 @@ export async function linkConversion(inquiryId: string, orderRefNo: string): Pro
   revalidatePath("/dashboard/b2b");
   return { ok: true };
 }
+
+// ═══════════════════ Commercial documents (PI / CI / PL) ═════════════════
+// 2026-09-30b — "PI / commercial invoice / or commercial document — jo jo
+// chahiye ye section bhi to chahiye na". Issuing a document = one register
+// row (b2b_documents) with its own per-kind number PI/<quote_no>/01 — the
+// printable A4 view at /dashboard/b2b/documents/[id] renders from the
+// quotation + these rows. printed_count increments every time the print
+// view is opened, so the register shows real usage.
+
+export type B2BDocKind = "PI" | "CI" | "PL";
+export const B2B_DOC_KINDS: B2BDocKind[] = ["PI", "CI", "PL"];
+
+export async function issueDocument(
+  quotationId: string,
+  docKind: string,
+  docDate: string
+): Promise<{ ok: true; documentId: string } | { ok: false; error: string }> {
+  const me = await requireCapability("b2b_inquiry");
+  const supabase = createServiceRoleClient();
+
+  const kind = B2B_DOC_KINDS.includes(docKind as B2BDocKind) ? (docKind as B2BDocKind) : null;
+  if (!kind) return { ok: false, error: "Invalid document type." };
+  const date = docDate || todayIST();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "Invalid document date." };
+
+  const { data: quote, error: fetchError } = await supabase
+    .from("b2b_quotations")
+    .select("id, company_id, quote_no")
+    .eq("id", quotationId)
+    .in("company_id", me.companyIds)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: fetchError.message };
+  if (!quote) return { ok: false, error: "Quotation not found." };
+
+  // How many copies of this kind already exist → next copy suffix. The
+  // UNIQUE(quotation_id, doc_kind, copy_no) index plus this count in one
+  // action keeps double-clicks from double-numbering (a retry with the
+  // same count hits the unique index and errors visibly instead of
+  // silently renumbering).
+  const { count } = await supabase
+    .from("b2b_documents")
+    .select("id", { count: "exact", head: true })
+    .eq("quotation_id", quotationId)
+    .eq("doc_kind", kind);
+  const nextCopy = (count ?? 0) + 1;
+  const docNo = `${kind}/${quote.quote_no}/${String(nextCopy).padStart(2, "0")}`;
+
+  const { data: created, error } = await supabase
+    .from("b2b_documents")
+    .insert({
+      quotation_id: quotationId,
+      company_id: quote.company_id,
+      doc_kind: kind,
+      doc_no: docNo,
+      doc_date: date,
+      copy_no: nextCopy,
+      issued_by_employee_id: me.id,
+    })
+    .select("id")
+    .single();
+  if (error || !created) return { ok: false, error: error?.message ?? "Insert failed." };
+
+  await logAudit(supabase, {
+    companyId: quote.company_id,
+    employeeId: me.id,
+    employeeName: me.name,
+    action: "b2b_document.issued",
+    entityType: "b2b_document",
+    entityId: created.id,
+    entityLabel: docNo,
+    changes: { quotation: quote.quote_no, kind },
+  });
+
+  revalidatePath("/dashboard/b2b");
+  return { ok: true, documentId: created.id };
+}
+
+export async function deleteDocument(documentId: string): Promise<{ ok: boolean; error?: string }> {
+  const me = await requireCapability("b2b_inquiry");
+  const supabase = createServiceRoleClient();
+
+  const { data: doc, error: fetchError } = await supabase
+    .from("b2b_documents")
+    .select("id, company_id, doc_no")
+    .eq("id", documentId)
+    .in("company_id", me.companyIds)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: fetchError.message };
+  if (!doc) return { ok: false, error: "Document not found." };
+
+  const { error } = await supabase.from("b2b_documents").delete().eq("id", documentId);
+  if (error) return { ok: false, error: error.message };
+
+  await logAudit(supabase, {
+    companyId: doc.company_id,
+    employeeId: me.id,
+    employeeName: me.name,
+    action: "b2b_document.deleted",
+    entityType: "b2b_document",
+    entityId: doc.id,
+    entityLabel: doc.doc_no,
+  });
+
+  revalidatePath("/dashboard/b2b");
+  return { ok: true };
+}
+
+/** Print telemetry — increments printed_count; never blocks the print view. */
+export async function recordDocumentPrinted(documentId: string): Promise<{ ok: boolean }> {
+  try {
+    const me = await requireCapability("b2b_inquiry");
+    const supabase = createServiceRoleClient();
+    const { data: doc } = await supabase
+      .from("b2b_documents")
+      .select("id, company_id, printed_count")
+      .eq("id", documentId)
+      .in("company_id", me.companyIds)
+      .maybeSingle();
+    if (!doc) return { ok: false };
+    await supabase
+      .from("b2b_documents")
+      .update({ printed_count: (doc.printed_count ?? 0) + 1 })
+      .eq("id", documentId);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// ── print-page data loader: REMOVED — /documents/[id]/page.tsx loads its
+// own data inline (doc → quote → items/inquiry/company), so keeping a
+// second loader here was dead code that could drift out of sync.

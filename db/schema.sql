@@ -6040,6 +6040,47 @@ CREATE POLICY allow_authenticated_all ON b2b_quotations FOR ALL TO authenticated
 DROP POLICY IF EXISTS allow_authenticated_all ON b2b_payments;
 CREATE POLICY allow_authenticated_all ON b2b_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- ── 2026-09-30b (part 2, db/2026-09-30b-b2b-documents.sql): line items per
+-- quotation (PI/CI print itemized tables) + the commercial-documents
+-- register (Proforma Invoice / Commercial Invoice / Packing List), each
+-- copy-numbered per quotation.
+CREATE TABLE b2b_quotation_items (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  quotation_id  uuid NOT NULL REFERENCES b2b_quotations(id) ON DELETE CASCADE,
+  description   text NOT NULL,
+  hsn_code      text,
+  qty           numeric(12,3) NOT NULL CHECK (qty > 0),
+  unit          text DEFAULT 'pcs',
+  unit_price    numeric(14,2) NOT NULL CHECK (unit_price >= 0),
+  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
+  display_order integer NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_b2b_quotation_items_quotation ON b2b_quotation_items(quotation_id, display_order);
+
+CREATE TABLE b2b_documents (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  quotation_id  uuid NOT NULL REFERENCES b2b_quotations(id) ON DELETE CASCADE,
+  company_id    uuid NOT NULL REFERENCES companies(id),
+  doc_kind      text NOT NULL CHECK (doc_kind IN ('PI', 'CI', 'PL')),
+  doc_no        text NOT NULL,          -- PI/Q-26-27-0001/01 (app-reserved)
+  doc_date      date NOT NULL,
+  copy_no       integer NOT NULL DEFAULT 1,   -- duplicate/triplicate marks on print
+  printed_count integer NOT NULL DEFAULT 1,
+  issued_by_employee_id uuid REFERENCES employees(id),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (quotation_id, doc_kind, copy_no)
+);
+CREATE INDEX idx_b2b_documents_quotation ON b2b_documents(quotation_id);
+CREATE INDEX idx_b2b_documents_company   ON b2b_documents(company_id, doc_date DESC);
+
+ALTER TABLE b2b_quotation_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE b2b_documents       ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_quotation_items;
+CREATE POLICY allow_authenticated_all ON b2b_quotation_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_documents;
+CREATE POLICY allow_authenticated_all ON b2b_documents FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
 -- (Descriptions above are refreshed from the app''s live CAPABILITY_INFO
 -- registry by sync_capabilities() on every Roles & Permissions page load,
 -- so wording here is a bootstrap default only.)

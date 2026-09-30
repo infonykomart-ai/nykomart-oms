@@ -8,15 +8,20 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { downloadXLSX, type ExportColumn } from "@/lib/export/export-table";
+import { todayIST } from "@/lib/attendance/ist-date";
 import {
   addPayment,
   createInquiry,
   createQuotation,
+  deleteDocument,
   deleteInquiry,
   deletePayment,
+  issueDocument,
   linkConversion,
   markQuotationSent,
   updateInquiry,
+  updateQuotation,
+  type B2BDocKind,
   type B2BPaymentMode,
 } from "./actions";
 
@@ -31,6 +36,25 @@ export type B2BPaymentRow = {
   reference_date: string | null;
   realized: boolean;
   remark: string | null;
+};
+
+export type B2BQuoteItemRow = {
+  id: string;
+  description: string;
+  hsn_code: string | null;
+  qty: number;
+  unit: string | null;
+  unit_price: number;
+  line_total: number;
+};
+
+export type B2BDocRow = {
+  id: string;
+  doc_kind: "PI" | "CI" | "PL";
+  doc_no: string;
+  doc_date: string;
+  copy_no: number;
+  printed_count: number;
 };
 
 export type B2BQuoteRow = {
@@ -53,6 +77,8 @@ export type B2BQuoteRow = {
   notes: string | null;
   sent_at: string | null;
   payments: B2BPaymentRow[];
+  items: B2BQuoteItemRow[];
+  documents: B2BDocRow[];
 };
 
 export type B2BItemRow = {
@@ -92,6 +118,8 @@ export type B2BInquiryManagerProps = {
   companyId: string;
   companyName: string;
   canManage: boolean;
+  /** Server-side load failure (usually "table does not exist" — migration not run yet). */
+  loadError?: string | null;
 };
 
 const STATUSES = ["Open", "In Discussion", "Quotation Sent", "Won", "Lost", "Converted"] as const;
@@ -101,6 +129,13 @@ const PAYMENT_MODES: B2BPaymentMode[] = ["Cash", "Bank Transfer", "UPI", "Cheque
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500";
+
+// Editable quotation line — kept as STRINGS in UI state so typing "1." or
+// "" mid-edit never fights the number parser; the server action parses.
+type QuoteItemDraft = { description: string; hsnCode: string; qty: string; unit: string; unitPrice: string };
+function emptyQuoteItem(): QuoteItemDraft {
+  return { description: "", hsnCode: "", qty: "1", unit: "pcs", unitPrice: "" };
+}
 
 function fmtMoney(n: number, currency = "INR"): string {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
@@ -131,7 +166,7 @@ function priorityDot(priority: B2BInquiryRow["priority"]): string {
 }
 
 // ── root component ───────────────────────────────────────────────────────────
-export function B2BInquiryManager({ inquiries, companyId, companyName, canManage }: B2BInquiryManagerProps) {
+export function B2BInquiryManager({ inquiries, companyId, companyName, canManage, loadError }: B2BInquiryManagerProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [showForm, setShowForm] = useState(false);
@@ -150,6 +185,14 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, canManage
         .some((v) => (v as string).toLowerCase().includes(q));
     });
   }, [inquiries, query, statusFilter]);
+
+  // Setup notice: the B2B tables are created by one-time SQL migrations;
+  // before they run, the page's queries fail with "relation ... does not
+  // exist", which used to crash into the error boundary and offer a
+  // Sign-in button — read as "logout ho raha baar baar". The page no
+  // longer throws; instead a clear setup card explains the one missing
+  // step. (This is the visible half of the fix — page.tsx holds the other.)
+  const setupProblem = Boolean(loadError);
 
   // ── report numbers (KPI strip + mode breakdown) ──────────────────────────
   const report = useMemo(() => {
@@ -177,6 +220,12 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, canManage
   }, [inquiries]);
 
   const selected = inquiries.find((i) => i.id === selectedId) ?? null;
+
+  // Early, calm return while the one-time migrations haven't run yet —
+  // this is what replaces the old crash → "logout" loop.
+  if (setupProblem) {
+    return <SetupNotice error={loadError!} onRetry={() => window.location.reload()} />;
+  }
 
   return (
     <div className="pb-6">
@@ -426,6 +475,46 @@ const B2B_EXPORT_COLUMNS: ExportColumn<ExportRow>[] = [
   { key: "convertedOrder", label: "Converted Order", value: (r) => r.convertedOrder },
 ];
 
+// One-time setup gate: the B2B tables live behind two dated SQL migrations.
+// Shown INSTEAD of the register until they're run, so the page can never
+// crash-loop into the error boundary (the "logout ho raha baar baar" bug).
+function SetupNotice({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div className="pb-6">
+      <div className="mx-auto mt-10 max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+        <div className="flex items-start gap-3">
+          <div className="text-2xl">🛠️</div>
+          <div className="flex-1">
+            <h1 className="text-lg font-bold text-amber-900">B2B module — one-time database setup pending</h1>
+            <p className="mt-1 text-sm text-amber-800">
+              The B2B tables don&apos;t exist in the database yet. Run these two SQL files in Supabase
+              (Dashboard → SQL Editor → New query → paste file contents → Run):
+            </p>
+            <ol className="mt-3 space-y-1.5 text-sm">
+              {["db/2026-09-30-b2b-inquiries.sql", "db/2026-09-30b-b2b-documents.sql"].map((f, i) => (
+                <li key={f} className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-200 text-xs font-bold text-amber-900">{i + 1}</span>
+                  <code className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-800 ring-1 ring-amber-200">{f}</code>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-3 text-xs text-amber-700">
+              Then refresh this page — the register, quotations (PI / Commercial Invoice / Packing List documents)
+              and payments all light up together. No data was lost.
+            </p>
+            <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 font-mono text-xs text-slate-600 break-words ring-1 ring-amber-100">
+              {error}
+            </p>
+            <button type="button" onClick={onRetry} className="mt-4 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+              🔄 Retry now
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Kpi({ label, value, tone }: { label: string; value: string; tone: "sky" | "amber" | "green" | "red" | "slate" }) {
   const toneClass =
     tone === "sky" ? "bg-sky-50 text-sky-700" :
@@ -529,7 +618,7 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [mode, setMode] = useState<"details" | "quote" | "payments">("details");
+  const [mode, setMode] = useState<"details" | "quote" | "documents" | "payments">("details");
   const [showQuoteForm, setShowQuoteForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showConvert, setShowConvert] = useState(false);
@@ -569,14 +658,14 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
   return (
     <SimpleDialog title={`${inquiry.inquiry_no} — ${inquiry.buyer_name}`} subtitle={inquiry.buyer_company ?? undefined} onClose={onClose} wide>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {(["details", "quote", "payments"] as const).map((m) => (
+        {(["details", "quote", "documents", "payments"] as const).map((m) => (
           <button
             key={m}
             type="button"
             onClick={() => setMode(m)}
             className={`rounded-full px-3 py-1 text-xs font-semibold capitalize transition ${mode === m ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
           >
-            {m === "quote" ? "Quotation / Invoice" : m}
+            {m === "quote" ? "Quotation / Invoice" : m === "documents" ? "📄 Documents (PI / CI / PL)" : m}
           </button>
         ))}
         <span className={`ml-auto rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClass(inquiry.status)}`}>{inquiry.status}</span>
@@ -634,6 +723,14 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
 
       {mode === "quote" && <QuotePanel inquiry={inquiry} canManage={canManage} showForm={showQuoteForm} setShowForm={setShowQuoteForm} setError={setError} />}
 
+      {mode === "documents" && (
+        <DocumentsPanel
+          inquiry={inquiry}
+          canManage={canManage}
+          setError={setError}
+        />
+      )}
+
       {mode === "payments" && (
         <PaymentsPanel
           inquiry={inquiry}
@@ -676,29 +773,71 @@ function QuotePanel({
   const [localError, setLocalError] = useState<string | null>(null);
   const q = inquiry.quote;
 
-  function createQuote(formData: FormData) {
+  // Line items drive the money (server computes subtotal = Σ qty×rate);
+  // used by BOTH the create form and the edit form below.
+  const [items, setItems] = useState<QuoteItemDraft[]>([emptyQuoteItem()]);
+  const liveSubtotal = items.reduce(
+    (s, it) => s + (parseFloat(it.qty) || 0) * (parseFloat(it.unitPrice) || 0),
+    0
+  );
+
+  function buildPayload(formData: FormData) {
     const val = (k: string) => String(formData.get(k) ?? "");
+    return {
+      inquiryId: inquiry.id,
+      quotationId: q?.id,
+      quoteDate: val("quote_date"),
+      validUntil: val("valid_until"),
+      buyerName: val("buyer_name"),
+      buyerContactNo: val("buyer_contact_no"),
+      buyerEmail: val("buyer_email"),
+      buyerCountry: val("buyer_country"),
+      taxPercent: val("tax_percent"),
+      shippingAmount: val("shipping_amount"),
+      currency: val("currency"),
+      terms: val("terms"),
+      notes: val("notes"),
+      items: items.map((it) => ({
+        description: it.description,
+        hsnCode: it.hsnCode,
+        qty: it.qty,
+        unit: it.unit,
+        unitPrice: it.unitPrice,
+      })),
+    };
+  }
+
+  function saveQuote(formData: FormData) {
     setLocalError(null);
     setError(null);
+    if (!items.some((it) => it.description.trim())) {
+      setLocalError("Add at least one item with a description.");
+      return;
+    }
     startTransition(async () => {
-      const res = await createQuotation({
-        inquiryId: inquiry.id,
-        quoteDate: val("quote_date"),
-        validUntil: val("valid_until"),
-        buyerName: val("buyer_name"),
-        buyerContactNo: val("buyer_contact_no"),
-        buyerEmail: val("buyer_email"),
-        buyerCountry: val("buyer_country"),
-        subtotal: val("subtotal"),
-        taxPercent: val("tax_percent"),
-        shippingAmount: val("shipping_amount"),
-        currency: val("currency"),
-        terms: val("terms"),
-        notes: val("notes"),
-      });
-      if (res.ok) setShowForm(false);
-      else setLocalError(res.error ?? "Failed to create quotation.");
+      const payload = buildPayload(formData);
+      const res = q ? await updateQuotation({ ...payload, quotationId: q.id }) : await createQuotation(payload);
+      if (res.ok) {
+        setShowForm(false);
+        setItems([emptyQuoteItem()]);
+      } else {
+        setLocalError(res.error ?? "Failed to save quotation.");
+      }
     });
+  }
+
+  function openEditForm() {
+    if (!q) return;
+    setItems(
+      (q.items ?? []).map((it) => ({
+        description: it.description,
+        hsnCode: it.hsn_code ?? "",
+        qty: String(it.qty),
+        unit: it.unit ?? "pcs",
+        unitPrice: String(it.unit_price),
+      }))
+    );
+    setShowForm(true);
   }
 
   function send() {
@@ -711,7 +850,11 @@ function QuotePanel({
 
   const waText = q
     ? encodeURIComponent(
-        `Quotation ${q.quote_no}\nBuyer: ${q.buyer_name}\nSubtotal: ${fmtMoney(q.subtotal, q.currency)}\nTax (${q.tax_percent}%): ${fmtMoney(q.tax_amount, q.currency)}\nShipping: ${fmtMoney(q.shipping_amount, q.currency)}\nTOTAL: ${fmtMoney(q.total_amount, q.currency)}${q.valid_until ? `\nValid until: ${fmtDate(q.valid_until)}` : ""}\n\n— Nykomart`
+        `Quotation ${q.quote_no}\nBuyer: ${q.buyer_name}\n` +
+          (q.items ?? [])
+            .map((it, i) => `${i + 1}. ${it.description} — ${it.qty} ${it.unit ?? ""} @ ${fmtMoney(it.unit_price, q.currency)}`)
+            .join("\n") +
+          `\nSubtotal: ${fmtMoney(q.subtotal, q.currency)}\nTax (${q.tax_percent}%): ${fmtMoney(q.tax_amount, q.currency)}\nShipping: ${fmtMoney(q.shipping_amount, q.currency)}\nTOTAL: ${fmtMoney(q.total_amount, q.currency)}${q.valid_until ? `\nValid until: ${fmtDate(q.valid_until)}` : ""}\n\n— Nykomart`
       )
     : "";
 
@@ -748,6 +891,35 @@ function QuotePanel({
             </div>
             {q.terms && <p className="mt-2 text-xs text-slate-500"><strong>Terms:</strong> {q.terms}</p>}
             {q.notes && <p className="mt-1 text-xs text-slate-500"><strong>Notes:</strong> {q.notes}</p>}
+            {/* Itemized lines — the same rows PI/CI/PL print */}
+            {(q.items ?? []).length > 0 && (
+              <div className="mt-3 overflow-hidden rounded-lg border border-slate-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-1.5">Description</th>
+                      <th className="px-3 py-1.5">HSN</th>
+                      <th className="px-3 py-1.5 text-right">Qty</th>
+                      <th className="px-3 py-1.5">Unit</th>
+                      <th className="px-3 py-1.5 text-right">Rate</th>
+                      <th className="px-3 py-1.5 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(q.items ?? []).map((it) => (
+                      <tr key={it.id}>
+                        <td className="px-3 py-1.5 text-slate-800">{it.description}</td>
+                        <td className="px-3 py-1.5 text-slate-500">{it.hsn_code ?? "—"}</td>
+                        <td className="px-3 py-1.5 text-right">{it.qty}</td>
+                        <td className="px-3 py-1.5">{it.unit ?? "pcs"}</td>
+                        <td className="px-3 py-1.5 text-right">{fmtMoney(it.unit_price, q.currency)}</td>
+                        <td className="px-3 py-1.5 text-right font-medium">{fmtMoney(it.line_total, q.currency)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             {canManage && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {!q.sent_at && (
@@ -755,6 +927,14 @@ function QuotePanel({
                     Mark as Sent
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={openEditForm}
+                  disabled={isPending}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  ✎ Edit Quote &amp; Items
+                </button>
                 {q.buyer_contact_no && (
                   <a href={`https://wa.me/${q.buyer_contact_no.replace(/[^\d]/g, "")}?text=${waText}`} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100">
                     Share on WhatsApp
@@ -783,28 +963,253 @@ function QuotePanel({
           </table>
         </div>
       )}
-      {showForm && !q && (
-        <form action={createQuote} className="space-y-3 rounded-lg border border-slate-200 p-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Quote Date"><input name="quote_date" type="date" required className={inputClass} /></Field>
-            <Field label="Valid Until"><input name="valid_until" type="date" className={inputClass} /></Field>
-            <Field label="Buyer Name"><input name="buyer_name" defaultValue={inquiry.buyer_name} className={inputClass} /></Field>
-            <Field label="Contact No"><input name="buyer_contact_no" defaultValue={inquiry.buyer_contact_no ?? ""} className={inputClass} /></Field>
-            <Field label="Email"><input name="buyer_email" defaultValue={inquiry.buyer_email ?? ""} className={inputClass} /></Field>
-            <Field label="Country"><input name="buyer_country" defaultValue={inquiry.buyer_country ?? ""} className={inputClass} /></Field>
-            <Field label="Subtotal *"><input name="subtotal" inputMode="decimal" required className={inputClass} placeholder="0.00" /></Field>
-            <Field label="Tax %"><input name="tax_percent" inputMode="decimal" defaultValue="0" className={inputClass} /></Field>
-            <Field label="Shipping"><input name="shipping_amount" inputMode="decimal" defaultValue="0" className={inputClass} /></Field>
-            <Field label="Currency"><input name="currency" defaultValue="INR" maxLength={3} className={inputClass} /></Field>
+      {showForm && (
+        <form action={saveQuote} className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+            {q ? "Edit quotation — items replace the saved set on save" : "New quotation — subtotal is the sum of item rows"}
           </div>
-          <Field label="Terms"><input name="terms" className={inputClass} placeholder="50% advance, balance before dispatch…" /></Field>
-          <Field label="Notes"><textarea name="notes" rows={2} className={inputClass} /></Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {!q && (
+              <>
+                <Field label="Quote Date"><input name="quote_date" type="date" required className={inputClass} /></Field>
+                <Field label="Valid Until"><input name="valid_until" type="date" className={inputClass} /></Field>
+              </>
+            )}
+            <Field label="Buyer Name"><input name="buyer_name" defaultValue={q?.buyer_name ?? inquiry.buyer_name} className={inputClass} /></Field>
+            <Field label="Contact No"><input name="buyer_contact_no" defaultValue={q?.buyer_contact_no ?? inquiry.buyer_contact_no ?? ""} className={inputClass} /></Field>
+            <Field label="Email"><input name="buyer_email" defaultValue={q?.buyer_email ?? inquiry.buyer_email ?? ""} className={inputClass} /></Field>
+            <Field label="Country"><input name="buyer_country" defaultValue={q?.buyer_country ?? inquiry.buyer_country ?? ""} className={inputClass} /></Field>
+            <Field label="Tax %"><input name="tax_percent" inputMode="decimal" defaultValue={q ? String(q.tax_percent) : "0"} className={inputClass} /></Field>
+            <Field label="Shipping"><input name="shipping_amount" inputMode="decimal" defaultValue={q ? String(q.shipping_amount) : "0"} className={inputClass} /></Field>
+            <Field label="Currency"><input name="currency" defaultValue={q?.currency ?? "INR"} maxLength={3} className={inputClass} /></Field>
+          </div>
+          <Field label="Terms"><input name="terms" defaultValue={q?.terms ?? ""} className={inputClass} placeholder="50% advance, balance before dispatch…" /></Field>
+          <Field label="Notes"><textarea name="notes" rows={2} defaultValue={q?.notes ?? ""} className={inputClass} /></Field>
+
+          {/* ── the items grid (rate × qty lines drive the money) ── */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className={labelClass}>Quotation Items * (HSN / qty / unit / rate)</span>
+              <button type="button" onClick={() => setItems((v) => [...v, emptyQuoteItem()])} className="text-xs font-medium text-amber-600 hover:underline">
+                + Add item
+              </button>
+            </div>
+            <div className="space-y-2">
+              {items.map((it, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2">
+                  <input
+                    className={`${inputClass} col-span-4`}
+                    placeholder="Item description"
+                    value={it.description}
+                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
+                  />
+                  <input
+                    className={`${inputClass} col-span-2`}
+                    placeholder="HSN code"
+                    value={it.hsnCode}
+                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, hsnCode: e.target.value } : x)))}
+                  />
+                  <input
+                    className={`${inputClass} col-span-2`}
+                    placeholder="Qty"
+                    inputMode="decimal"
+                    value={it.qty}
+                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))}
+                  />
+                  <input
+                    className={`${inputClass} col-span-1`}
+                    placeholder="Unit"
+                    value={it.unit}
+                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))}
+                  />
+                  <input
+                    className={`${inputClass} col-span-2`}
+                    placeholder="Rate"
+                    inputMode="decimal"
+                    value={it.unitPrice}
+                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))}
+                  />
+                  <button
+                    type="button"
+                    className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50"
+                    onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))}
+                    aria-label="Remove item"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-slate-500">{items.filter((it) => it.description.trim()).length} item(s)</span>
+              <span className="font-semibold text-slate-900">Subtotal: {fmtMoney(liveSubtotal)}</span>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setShowForm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
-            <button type="submit" disabled={isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">{isPending ? "Creating…" : "Create Quotation"}</button>
+            <button type="submit" disabled={isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+              {isPending ? "Saving…" : q ? "Save Changes" : "Create Quotation"}
+            </button>
           </div>
         </form>
       )}
+    </div>
+  );
+}
+
+// ── Commercial documents: PI / Commercial Invoice / Packing List ────────────
+// 2026-09-30b — "PI / commercial invoice / or commercial document — jo jo
+// chahiye ye section bhi to chahiye na". Issue → register row + A4 print
+// view open. The quotation's item rows print on every kind (PL without
+// prices, per the document's real purpose); each issued copy gets its own
+// numbered register row (PI/Q-26-27-0001/01, copy 01 = ORIGINAL).
+function DocumentsPanel({
+  inquiry,
+  canManage,
+  setError,
+}: {
+  inquiry: B2BInquiryView;
+  canManage: boolean;
+  setError: (s: string | null) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [docDate, setDocDate] = useState(todayIST());
+  const q = inquiry.quote;
+
+  function issue(kind: B2BDocKind) {
+    if (!q) return;
+    setLocalError(null);
+    setError(null);
+    startTransition(async () => {
+      // Server assigns the next copy no (count + 1) and builds the doc no.
+      const res = await issueDocument(q.id, kind, docDate);
+      if (res.ok) {
+        // The server re-render brings the new register row; this opens the
+        // fresh A4 print view (which also counts as the first "print").
+        window.open(`/dashboard/b2b/documents/${res.documentId}`, "_blank");
+      } else {
+        setLocalError(res.error);
+        setError(res.error);
+        window.alert(res.error);
+      }
+    });
+  }
+
+  function remove(docId: string) {
+    if (!window.confirm("Delete this document? Its number is released (the next issue reuses the copy no).")) return;
+    startTransition(async () => {
+      const res = await deleteDocument(docId);
+      if (!res.ok) {
+        setLocalError(res.error ?? "Delete failed.");
+        setError(res.error ?? "Delete failed.");
+      }
+    });
+  }
+
+  if (!q) {
+    return (
+      <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-500">
+        Create the quotation first — PI / Commercial Invoice / Packing List are all issued against it.
+      </p>
+    );
+  }
+
+  const DOC_META: { kind: B2BDocKind; label: string; desc: string; btnClass: string }[] = [
+    { kind: "PI", label: "Proforma Invoice", desc: "Advance / buyer-bank use — priced, before the sale", btnClass: "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" },
+    { kind: "CI", label: "Commercial Invoice", desc: "Final bill of sale — the money document", btnClass: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" },
+    { kind: "PL", label: "Packing List", desc: "Package-wise contents — quantities only, no prices", btnClass: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100" },
+  ];
+
+  return (
+    <div className="space-y-3">
+      {localError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{localError}</p>}
+
+      {canManage && (
+        <div className="rounded-lg border border-slate-200 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-900">Issue Commercial Document</div>
+            <label className="flex items-center gap-2 text-xs text-slate-500">
+              Doc date
+              <input
+                type="date"
+                value={docDate}
+                onChange={(e) => setDocDate(e.target.value)}
+                className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
+              />
+            </label>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {DOC_META.map((m) => (
+              <button
+                key={m.kind}
+                type="button"
+                disabled={isPending}
+                onClick={() => issue(m.kind)}
+                className={`rounded-lg border px-3 py-2.5 text-left transition disabled:opacity-60 ${m.btnClass}`}
+              >
+                <div className="text-sm font-bold">+ {m.label} <span className="opacity-60">({m.kind})</span></div>
+                <div className="mt-0.5 text-xs opacity-80">{m.desc}</div>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-slate-400">
+            Each issue creates a numbered copy — e.g. PI/{q.quote_no}/01 (ORIGINAL), /02 (DUPLICATE) — and opens its A4 print view.
+          </p>
+        </div>
+      )}
+
+      {/* The register: every issued copy of every kind for this quotation */}
+      <div className="overflow-hidden rounded-lg border border-slate-200">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-2">Doc No</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">Date</th>
+              <th className="px-3 py-2">Copy</th>
+              <th className="px-3 py-2 text-right">Printed</th>
+              <th className="px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {(q.documents ?? []).map((d) => (
+              <tr key={d.id} className="hover:bg-slate-50/60">
+                <td className="px-3 py-2 font-medium text-slate-800">{d.doc_no}</td>
+                <td className="px-3 py-2">{d.doc_kind}</td>
+                <td className="px-3 py-2">{fmtDate(d.doc_date)}</td>
+                <td className="px-3 py-2 text-slate-500">{d.copy_no}</td>
+                <td className="px-3 py-2 text-right text-slate-500">{d.printed_count}×</td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex justify-end gap-2">
+                    <a
+                      href={`/dashboard/b2b/documents/${d.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      🖨 Open / Print
+                    </a>
+                    {canManage && (
+                      <button type="button" onClick={() => remove(d.id)} disabled={isPending} className="text-xs text-red-500 hover:underline disabled:opacity-60">
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {(q.documents ?? []).length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-4 text-center text-sm text-slate-400">
+                  No documents issued yet — use the buttons above to issue a PI, Commercial Invoice or Packing List.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

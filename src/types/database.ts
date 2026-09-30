@@ -309,6 +309,102 @@ export type Database = {
           },
         ];
       };
+      b2b_quotation_items: {
+        Row: {
+          id: string;
+          quotation_id: string;
+          description: string;
+          hsn_code: string | null;
+          qty: number;
+          unit: string | null;
+          unit_price: number;
+          line_total: number;
+          display_order: number;
+        };
+        Insert: {
+          id?: string;
+          quotation_id: string;
+          description: string;
+          hsn_code?: string | null;
+          qty?: number;
+          unit?: string | null;
+          unit_price: number;
+          display_order?: number;
+        };
+        Update: {
+          id?: string;
+          quotation_id?: string;
+          description?: string;
+          hsn_code?: string | null;
+          qty?: number;
+          unit?: string | null;
+          unit_price?: number;
+          display_order?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_quotation_items_quotation_id_fkey";
+            columns: ["quotation_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_quotations";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_documents: {
+        Row: {
+          id: string;
+          quotation_id: string;
+          company_id: string;
+          doc_kind: "PI" | "CI" | "PL";
+          doc_no: string;
+          doc_date: string;
+          copy_no: number;
+          printed_count: number;
+          issued_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          quotation_id: string;
+          company_id: string;
+          doc_kind: "PI" | "CI" | "PL";
+          doc_no: string;
+          doc_date: string;
+          copy_no?: number;
+          printed_count?: number;
+          issued_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          quotation_id?: string;
+          company_id?: string;
+          doc_kind?: "PI" | "CI" | "PL";
+          doc_no?: string;
+          doc_date?: string;
+          copy_no?: number;
+          printed_count?: number;
+          issued_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_documents_quotation_id_fkey";
+            columns: ["quotation_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_quotations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_documents_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       amazon_transactions: {
         Row: {
           id: string;
