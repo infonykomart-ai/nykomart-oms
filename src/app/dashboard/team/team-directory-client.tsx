@@ -6,6 +6,12 @@
 // View-only by design — no edit affordances exist here at all; admins
 // edit from the Employees page.
 import { useMemo, useState } from "react";
+// 2026-09-30 — wa.me links now resolve through the SAME normalizer the
+// punch-notification sender uses. Previously the link stripped non-digits
+// and shipped the raw result, so a 0-prefixed number produced a broken
+// wa.me URL (wa.me/09876543210) even though the directory "looked" fine —
+// exactly the shape-mismatch that made notifications partially deliver.
+import { normalizeWhatsappNumber } from "@/lib/whatsapp/normalize";
 
 export type DirectoryPerson = {
   id: string;
@@ -147,22 +153,25 @@ export function TeamDirectoryClient({ people }: { people: DirectoryPerson[] }) {
                       </dd>
                     </div>
                   )}
-                  {p.whatsapp && (
-                    <div className="flex items-center gap-1.5">
-                      <dt className="sr-only">WhatsApp</dt>
-                      <span aria-hidden>📞</span>
-                      <dd className="text-[var(--oms-text)]">
-                        <a
-                          href={`https://wa.me/${p.whatsapp.replace(/[^\d]/g, "")}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hover:underline"
-                        >
-                          {p.whatsapp}
-                        </a>
-                      </dd>
-                    </div>
-                  )}
+                  {(() => {
+                    const waTarget = p.whatsapp ? normalizeWhatsappNumber(p.whatsapp) : null;
+                    return waTarget ? (
+                      <div className="flex items-center gap-1.5">
+                        <dt className="sr-only">WhatsApp</dt>
+                        <span aria-hidden>📞</span>
+                        <dd className="text-[var(--oms-text)]">
+                          <a
+                            href={`https://wa.me/${waTarget}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                          >
+                            {p.whatsapp}
+                          </a>
+                        </dd>
+                      </div>
+                    ) : null;
+                  })()}
                   <div className="flex items-center gap-1.5">
                     <dt className="sr-only">Company</dt>
                     <span aria-hidden>🏢</span>

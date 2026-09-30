@@ -3,6 +3,10 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { EmployeesHeader } from "./employees-header";
 import { EmployeeForm } from "./employee-form";
 import { EmployeeRowActions } from "./employee-row-actions";
+// 2026-09-30 — per-row WhatsApp validity + one-click Test send, see
+// employee-whatsapp-cell.tsx (server-side validation via
+// isUsableWhatsappNumber, same normalizer the punch sender uses).
+import { EmployeeWhatsappCell } from "./employee-whatsapp-cell";
 
 // 2026-09-29 — FedEx-style upgrade: the bare "Employees" h1 row became a
 // card-style identity header for the whole ROSTER (Employee Roster, big
@@ -106,6 +110,7 @@ export default async function EmployeesAdminPage() {
                 <tr>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Role / Company</th>
+                  <th className="px-4 py-3">WhatsApp</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
@@ -120,6 +125,9 @@ export default async function EmployeesAdminPage() {
                     <td className="px-4 py-3 text-slate-600">
                       <div>{roleName.get(e.role_id) ?? "—"}</div>
                       <div className="text-xs text-slate-400">{companyName.get(e.company_id) ?? "—"}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <EmployeeWhatsappCell employeeId={e.id} raw={e.whatsapp_no} />
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -159,7 +167,7 @@ export default async function EmployeesAdminPage() {
                 ))}
                 {list.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-400">
+                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-400">
                       No employees yet.
                     </td>
                   </tr>

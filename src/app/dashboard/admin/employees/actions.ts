@@ -13,6 +13,12 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
+// 2026-09-30 — one-click WhatsApp Test per employee row (see
+// testEmployeeWhatsapp at the bottom of this file). The validity badges on
+// the page validate with the same shared normalizer, imported directly by
+// the client components from @/lib/whatsapp/normalize (this file is
+// "use server" — only async actions may be exported from it).
+import { sendTestWhatsapp } from "@/lib/attendance/whatsapp-notify";
 
 export type EmployeeFormState = {
   error: string | null;
@@ -488,4 +494,28 @@ export async function deleteEmployeeDocument(documentId: string): Promise<Docume
 
   revalidatePath("/dashboard/admin/employees");
   return { error: null, success: true };
+}
+
+// ── 2026-09-30 — WhatsApp reachability, made VISIBLE ───────────────────────
+// "sabhi employe ke whatsaap no update hai lekin kisi ke msg gaya hai kisi
+// ke nahi esa kyu check karo" — the punch-notification sender used to fail
+// silently on badly-shaped numbers, so nobody could tell why a particular
+// employee never got their message. Two fixes on this page:
+//   • a WhatsApp column with a per-row validity badge (checked with the
+//     EXACT same normalizeWhatsappNumber the sender uses — no drift), and
+//   • a one-click 🧪 Test button that fires a REAL Whapi message to the
+//     number as stored right now and returns what happened, verbatim.
+// If a number is bad the button tells the admin precisely why (missing /
+// unusable shape / Whapi's own rejection), so fixing it is a 10-second
+// edit in Edit Details instead of guesswork.
+export type WhatsappTestState = {
+  ok: boolean;
+  error?: string;
+  to?: string;
+};
+
+export async function testEmployeeWhatsapp(employeeId: string): Promise<WhatsappTestState> {
+  await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+  return sendTestWhatsapp({ supabase, employeeId });
 }

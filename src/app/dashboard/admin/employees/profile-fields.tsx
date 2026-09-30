@@ -48,7 +48,20 @@ export function ProfileFields({ defaults }: { defaults?: ProfileFieldDefaults })
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClass} htmlFor="whatsapp_no">WhatsApp No.</label>
-          <input id="whatsapp_no" name="whatsapp_no" defaultValue={defaults?.whatsapp_no ?? ""} className={inputClass} />
+          {/* 2026-09-30 — live guidance for the punch-notification sender:
+              9876543210 / 09876543210 / +91 98765 43210 all work; anything
+              else (short/garbage) is rejected by the sender BEFORE the API
+              call and shows as ✕ Invalid on the Employees page. */}
+          <input
+            id="whatsapp_no"
+            name="whatsapp_no"
+            defaultValue={defaults?.whatsapp_no ?? ""}
+            placeholder="9876543210 or 0987... or +91 98..."
+            className={inputClass}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            10-digit number (with or without 0 / +91) — used for automatic punch alerts.
+          </p>
         </div>
         <div>
           <EmployeePhotoField defaultValue={defaults?.photo_url} />
