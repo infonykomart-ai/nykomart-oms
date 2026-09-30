@@ -60,7 +60,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
   await recordDocumentPrinted(doc.id);
 
   const meta = DOC_TITLES[doc.doc_kind] ?? { title: doc.doc_kind, subtitle: "" };
-  const subtotal = (items ?? []).reduce((s, it) => s + it.line_total, 0);
+  const subtotal = (items ?? []).reduce((s, it) => s + (it.line_total ?? 0), 0);
   const taxAmount = Math.round(subtotal * quote.tax_percent) / 100;
   const total = Math.round((subtotal * (1 + quote.tax_percent / 100) + quote.shipping_amount) * 100) / 100;
   const totalQty = (items ?? []).reduce((s, it) => s + it.qty, 0);
@@ -135,7 +135,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                   <td className="px-2 py-1.5 text-right">{it.qty}</td>
                   <td className="px-2 py-1.5">{it.unit ?? "pcs"}</td>
                   {doc.doc_kind !== "PL" && <td className="px-2 py-1.5 text-right">{money(it.unit_price, quote.currency)}</td>}
-                  {doc.doc_kind !== "PL" && <td className="px-2 py-1.5 text-right">{money(it.line_total, quote.currency)}</td>}
+                  {doc.doc_kind !== "PL" && <td className="px-2 py-1.5 text-right">{money(it.line_total ?? 0, quote.currency)}</td>}
                 </tr>
               ))}
               {(items ?? []).length === 0 && (

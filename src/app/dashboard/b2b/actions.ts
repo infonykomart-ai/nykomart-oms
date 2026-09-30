@@ -33,11 +33,20 @@ import { todayIST } from "@/lib/attendance/ist-date";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
+// Local (non-exported) vocabularies for the guards below — exported consts
+// would break the "use server" async-only rule (see the NOTE above).
+const B2B_STATUS_LIST: B2BInquiryStatus[] = ["Open", "In Discussion", "Quotation Sent", "Won", "Lost", "Converted"];
+const B2B_PAYMENT_MODE_LIST: B2BPaymentMode[] = ["Cash", "Bank Transfer", "UPI", "Cheque", "Card", "Advance"];
+const B2B_DOC_KIND_LIST: B2BDocKind[] = ["PI", "CI", "PL"];
+
 export type B2BInquiryStatus = "Open" | "In Discussion" | "Quotation Sent" | "Won" | "Lost" | "Converted";
 export type B2BPaymentMode = "Cash" | "Bank Transfer" | "UPI" | "Cheque" | "Card" | "Advance";
 
-export const B2B_STATUSES: B2BInquiryStatus[] = ["Open", "In Discussion", "Quotation Sent", "Won", "Lost", "Converted"];
-export const B2B_PAYMENT_MODES: B2BPaymentMode[] = ["Cash", "Bank Transfer", "UPI", "Cheque", "Card", "Advance"];
+// NOTE: no non-async runtime exports here. This is a "use server" file —
+// Next.js/Turbopack requires every runtime export to be an async function
+// (type exports are fine, consts are not: "A 'use server' file can only
+// export async functions, found object"). The status/mode arrays live as
+// local consts below and the client derives its own lists.
 
 // ── formatting helpers (mirror format_order_ref_no / format_document_no) ────
 function formatB2BNo(prefix: string, fy: string, num: number): string {
@@ -211,7 +220,7 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
   if (input.followUpDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.followUpDate)) {
     return { ok: false, error: "Invalid follow-up date." };
   }
-  const status = B2B_STATUSES.includes(input.status as B2BInquiryStatus) ? (input.status as B2BInquiryStatus) : null;
+  const status = B2B_STATUS_LIST.includes(input.status as B2BInquiryStatus) ? (input.status as B2BInquiryStatus) : null;
   if (!status) return { ok: false, error: "Invalid status." };
   const priorityValue = ["Hot", "Warm", "Cold"].includes(input.priority) ? input.priority : "Warm";
 
@@ -515,7 +524,7 @@ export async function addPayment(input: PaymentInput): Promise<{ ok: boolean; er
   }
   const amount = parseFloat(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: "Enter a valid amount." };
-  const mode = B2B_PAYMENT_MODES.includes(input.paymentMode as B2BPaymentMode) ? (input.paymentMode as B2BPaymentMode) : null;
+  const mode = B2B_PAYMENT_MODE_LIST.includes(input.paymentMode as B2BPaymentMode) ? (input.paymentMode as B2BPaymentMode) : null;
   if (!mode) return { ok: false, error: "Choose a payment mode." };
 
   const { error } = await supabase.from("b2b_payments").insert({
@@ -642,8 +651,7 @@ export async function linkConversion(inquiryId: string, orderRefNo: string): Pro
 // quotation + these rows. printed_count increments every time the print
 // view is opened, so the register shows real usage.
 
-export type B2BDocKind = "PI" | "CI" | "PL";
-export const B2B_DOC_KINDS: B2BDocKind[] = ["PI", "CI", "PL"];
+export type B2BDocKind = "PI" | "CI" | "PL"; // const list lives in B2B_DOC_KIND_LIST above (async-only export rule)
 
 export async function issueDocument(
   quotationId: string,
@@ -653,7 +661,7 @@ export async function issueDocument(
   const me = await requireCapability("b2b_inquiry");
   const supabase = createServiceRoleClient();
 
-  const kind = B2B_DOC_KINDS.includes(docKind as B2BDocKind) ? (docKind as B2BDocKind) : null;
+  const kind = B2B_DOC_KIND_LIST.includes(docKind as B2BDocKind) ? (docKind as B2BDocKind) : null;
   if (!kind) return { ok: false, error: "Invalid document type." };
   const date = docDate || todayIST();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: "Invalid document date." };

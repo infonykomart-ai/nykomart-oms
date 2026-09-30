@@ -70,6 +70,11 @@
 import { requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+// 2026-09-30 — AWB→order helpers live in a PLAIN module (./awb-orders.ts):
+// every runtime export of a "use server" file must be an async function
+// (Turbopack build fails otherwise), and normalizeAwbList is sync. Imported
+// here for internal use; client code reaches it via resolveAwbOrders below.
+import { normalizeAwbList, fetchAwbOrderMap } from "./awb-orders";
 
 export type ApplyCreditNoteState = { error: string | null; success: boolean };
 
@@ -153,6 +158,36 @@ export async function listPartyBillsForCn(partyId: string): Promise<PartyAwbBill
   }));
 }
 
+// ── AWB → order (PO/RF/RG) resolution ───────────────────────────────
+// 2026-09-30 — user's two-kind clarification: "purchase party ka agar apan
+// debit katenge to uske against me credit note apn banayenge jo PO/RF/RG
+// ke against me banega. courier party ka credit note direct couriour se
+// aata hai jo freight & duty bill ke against me ho sakta hai lekin usme
+// kon konse order PO/RG/RF ke against me AWB hai."
+//
+// The helpers themselves (normalizeAwbList / fetchAwbOrderMap) live in
+// ./awb-orders.ts — a plain module, because this file is "use server" and
+// every runtime export here must be async. This action is the client's
+// only door into them (live preview under the CN panel's AWB fields),
+// while applyBillCreditNote and listCreditNoteRegister reuse the same
+// helpers server-side to bake "AWB → PO… (Company)" into the CN remark
+// and the register's "Orders (via AWB)" column.
+export type AwbOrderHit = {
+  awb: string;
+  found: boolean;
+  /** "PO-26-27-0123 (Nyko Mart)" — null when the AWB matched no shipment. */
+  ordersLine: string | null;
+};
+
+/** Live UI preview: type AWBs, see which PO/RF/RG orders they belong to. */
+export async function resolveAwbOrders(raw: string): Promise<AwbOrderHit[]> {
+  await requireAnyCapability("bill_payment", "doc_entry");
+  const supabase = createServiceRoleClient();
+  const awbs = normalizeAwbList(raw);
+  const map = await fetchAwbOrderMap(supabase, awbs);
+  return awbs.map((awb) => ({ awb, found: map.has(awb), ordersLine: map.get(awb) ?? null }));
+}
+
 /**
  * Mode "new": the dropdown/amount form the user asked for. Repeatable —
  * applying a second credit note just adds a second adjustment row and the
@@ -184,6 +219,19 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
     if (!(amount > 0)) return { error: "Credit note amount must be a positive number.", success: false };
     if (!cnDate) return { error: "Credit note date is required.", success: false };
 
+    // 2026-09-30 — courier CNs arrive AWB-wise: capture the AWB list on the
+    // document AND bake "AWB → PO/RF/RG (Company)" into the remark so the
+    // "kis order ke against me AWB hai" answer lives on the note itself,
+    // forever visible in the register (same resolver the live preview uses).
+    const awbInput = String(formData.get("awb_no") ?? "").trim() || null;
+    const awbList = normalizeAwbList(awbInput);
+    let awbOrdersLine: string | null = null;
+    if (awbList.length > 0) {
+      const awbMap = await fetchAwbOrderMap(supabase, awbList);
+      const lines = awbList.map((a) => (awbMap.get(a) ? `${a} → ${awbMap.get(a)}` : null)).filter((l): l is string => !!l);
+      awbOrdersLine = lines.length > 0 ? `AWB orders: ${lines.join("; ")}` : null;
+    }
+
     // Payment lock (admin-only once payments exist) — see
     // assertPaymentLockAllowed above for the user's exact rule.
     const { data: paidCheck } = await supabase
@@ -204,13 +252,20 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
         credit_note_date: cnDate,
         vendor_cn_no: vendorCnNo,
         cn_kind: "supplier" as const,
+        awb_no: awbInput,
         gst_rate_pct: gstRatePct,
         invoice_no: bill.vendor_invoice_no ?? bill.invoice_no ?? null,
         refund_amount: amount,
         party_id: bill.party_id,
         bill_pass_register_id: bill.id,
         credit_note_status: "Applied to bill",
-        remark: remark ? `Against ${bill.vendor_invoice_no ?? bill.invoice_no ?? "bill"} — ${remark}` : `Against ${bill.vendor_invoice_no ?? bill.invoice_no ?? "bill"}`,
+        remark: [
+          `Against ${bill.vendor_invoice_no ?? bill.invoice_no ?? "bill"}`,
+          awbOrdersLine,
+          remark,
+        ]
+          .filter(Boolean)
+          .join(" — "),
         created_by_employee_id: employee.id,
       })
       .select("id, cn_no")
@@ -344,6 +399,17 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
     if (!(baseTotal > 0)) return { error: "Credit note base amount must be positive.", success: false };
     if (!cnDate) return { error: "Credit note date is required.", success: false };
 
+    // 2026-09-30 — same AWB → order mapping on the multi-AWB document:
+    // resolve the typed AWBs to their PO/RF/RG orders and bake the lines
+    // into the remark next to the existing per-bill count.
+    const awbListMulti = normalizeAwbList(awbNos);
+    let awbOrdersLineMulti: string | null = null;
+    if (awbListMulti.length > 0) {
+      const awbMapMulti = await fetchAwbOrderMap(supabase, awbListMulti);
+      const linesMulti = awbListMulti.map((a) => (awbMapMulti.get(a) ? `${a} → ${awbMapMulti.get(a)}` : null)).filter((l): l is string => !!l);
+      awbOrdersLineMulti = linesMulti.length > 0 ? `AWB orders: ${linesMulti.join("; ")}` : null;
+    }
+
     // Per-bill split (must sum to the base amount).
     let splits: Record<string, number>;
     try {
@@ -388,7 +454,13 @@ export async function applyBillCreditNote(_prev: ApplyCreditNoteState, formData:
         refund_amount: gstTotal,
         party_id: partyId,
         credit_note_status: "Applied to bills",
-        remark: remark ? `Against ${splitEntries.length} AWB bill(s) — ${remark}` : `Against ${splitEntries.length} AWB bill(s)`,
+        remark: [
+          `Against ${splitEntries.length} AWB bill(s)`,
+          awbOrdersLineMulti,
+          remark,
+        ]
+          .filter(Boolean)
+          .join(" — "),
         created_by_employee_id: employee.id,
       })
       .select("id, cn_no")
@@ -495,6 +567,8 @@ export type RegisterCnRow = {
   company_id: string;
   party_id: string | null;
   party_name: string;
+  /** "AWB → PO/RF/RG (Company)" lines for the note's AWBs (empty when none/unknown). */
+  awb_orders: string[];
 };
 
 export type RegisterPartyGroup = {
@@ -526,6 +600,13 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
   ]);
   const nameById = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
+  // 2026-09-30 — resolve every note's AWBs to their orders (PO/RF/RG +
+  // company) in ONE pass: all AWBs across all notes → order_shipments →
+  // orders → companies. The register's new "Orders (via AWB)" column
+  // answers "kis order ke against me AWB hai" without opening anything.
+  const allAwbList = Array.from(new Set((notes ?? []).flatMap((n) => normalizeAwbList(n.awb_no))));
+  const awbOrderMap = await fetchAwbOrderMap(supabase, allAwbList);
+
   const groups = new Map<string, RegisterPartyGroup>();
   for (const n of notes ?? []) {
     const key = n.party_id ?? "__none__";
@@ -547,6 +628,9 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
       company_id: n.company_id,
       party_id: n.party_id,
       party_name: n.party_id ? nameById.get(n.party_id) ?? "—" : "(No party)",
+      awb_orders: normalizeAwbList(n.awb_no).map((a) =>
+        awbOrderMap.get(a) ? `${a} → ${awbOrderMap.get(a)}` : `${a} → ?`
+      ),
     });
     g.total += Number(n.refund_amount ?? 0);
   }

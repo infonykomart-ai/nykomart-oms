@@ -2082,6 +2082,22 @@ export async function updateFreightBillVendor(_prev: SimpleResult, formData: For
  * hai jaan-bujhkar — usi tarah jaise total_paid ko is session me payment-
  * reconciliation kaam me jaan-bujhkar nahi chheda (already-reviewed numbers
  * ko silently overwrite karna galat data bana sakta hai).
+ *
+ * 2026-09-30 — "nykome invoice no 276437655 me ek credit note adjust kiya
+ * hai jo awb no 876499947613 ke against me aaya hai lekin abhi tak ladger
+ * me reflect nahi hua kyu": ek cheez is "reviewed total" rule mein badal
+ * gayi jab bill finance me ja chuka tha — COURIER CREDIT NOTE ka amount.
+ * Ledger ka total_amt net-of-CN reviewed figure hai (send form ka default
+ * gross − CN), to CN baad me badalne par payable ka pura hisab hil jata
+ * hai — lekin mirror sync sirf invoice_no/date/vendor lekar gaya tha, CN
+ * nahi, isliye Party Ledger/Bill Payment kabhi nahi badle. Ab CN ke delta
+ * ko ledger total par apply karte hain: total_amt += (purana CN − naya
+ * CN). Ye DELTA hai, overwrite nahi — send ke waqt kiya gaya koi bhi
+ * manual review adjustment preserve hota hai, sirf CN ka farak jodta hai
+ * (CN badha → total ghatta; CN hataya → total wapas badhta). AWB-level
+ * notes (freight_bill_awb_assignments ka CN/DN) jaan-bujhkar sync NAHI
+ * hote — wo reconciliation/P&L netting ki apni alag layer hai aur bill-
+ * level CN ke saath same credit do baar katne ka risk hota hai.
  */
 export async function updateFreightBillDetails(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
   await requireCapability("doc_entry");
@@ -2093,6 +2109,14 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
   if (!invoiceNo) return { error: "Invoice No. is required.", success: false };
   const invoiceDate = strOrNull(formData, "invoice_date");
   const vendorPartyId = strOrNull(formData, "vendor_party_id");
+  const newCnAmt = numOrZero(formData, "credit_note_amt");
+
+  const { data: prevBill } = await supabase
+    .from("freight_bills")
+    .select("credit_note_amt")
+    .eq("id", freightBillId)
+    .maybeSingle();
+  const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
 
   const { error } = await supabase
     .from("freight_bills")
@@ -2114,13 +2138,34 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
     return { error: msg, success: false };
   }
 
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id, total_amt")
+    .eq("source", "freight_bill")
+    .eq("source_id", freightBillId)
+    .maybeSingle();
   await supabase
     .from("bill_pass_register")
     .update({ party_id: vendorPartyId, vendor_invoice_no: invoiceNo, invoice_date: invoiceDate, invoice_recv_date: invoiceDate })
     .eq("source", "freight_bill")
     .eq("source_id", freightBillId);
 
+  // 2026-09-30 — CN delta → ledger total (see the header comment above):
+  // the mirror's total_amt is the REVIEWED net figure, so the credit
+  // note's change must travel to it or the payable never moves. Delta,
+  // not overwrite — a manual review adjustment from send-time survives.
+  // (bpr.credit_note_amt stays untouched: the ledger total already nets
+  // the CN, writing it there too would double-reduce balance_due.)
+  if (mirror && prevCnAmt !== newCnAmt) {
+    const newLedgerTotal = Math.round((Number(mirror.total_amt) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+    if (syncError) {
+      return { error: `Bill saved, but the Finance ledger could not be updated with the credit note change: ${syncError.message}`, success: false };
+    }
+  }
+
   revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };
 }
 
@@ -2294,25 +2339,64 @@ export async function updateFreightAwbAssignmentNotes(_prev: SimpleResult, formD
   const id = str(formData, "id");
   if (!id) return { error: "Missing assignment.", success: false };
 
-  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: assignment } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("id, order_id, freight_bill_id, credit_note_amt, debit_note_amt")
+    .eq("id", id)
+    .maybeSingle();
   if (!assignment) return { error: "Assignment not found.", success: false };
   const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "That AWB is not accessible.", success: false };
   }
 
+  // 2026-09-30 — "nykome invoice no 276437655 me ek credit note adjust
+  // kiya hai jo awb no 876499947613 ke against me aaya hai lekin abhi tak
+  // ladger me reflect nahi hua kyu": per-AWB CN/DN notes were pure
+  // annotations — the Finance ledger row never heard about them, so the
+  // Party Ledger's payable never moved. Now the note's DELTA flows through
+  // to the bill's ledger row: ΔCN reduces it, ΔDN raises it. The ledger
+  // total is the reviewed net-of-CN figure (see sendFreightBillToFinance),
+  // so only the CHANGE travels — whatever was already baked in at send
+  // time is never double-counted, because a note recorded before the send
+  // produces no delta here unless it is edited afterwards.
+  // AWB CN = money back from the courier (payable down), AWB DN = the
+  // courier re-charging (payable back up).
+  const newCnAmt = numOrNull(formData, "credit_note_amt");
+  const newDnAmt = numOrNull(formData, "debit_note_amt");
+  const deltaCn = Math.round(((newCnAmt ?? 0) - Number(assignment.credit_note_amt ?? 0)) * 100) / 100;
+  const deltaDn = Math.round(((newDnAmt ?? 0) - Number(assignment.debit_note_amt ?? 0)) * 100) / 100;
+
   const { error } = await supabase
     .from("freight_bill_awb_assignments")
     .update({
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: numOrNull(formData, "credit_note_amt"),
+      credit_note_amt: newCnAmt,
       debit_note_no: strOrNull(formData, "debit_note_no"),
       debit_note_date: strOrNull(formData, "debit_note_date"),
-      debit_note_amt: numOrNull(formData, "debit_note_amt"),
+      debit_note_amt: newDnAmt,
     })
     .eq("id", id);
   if (error) return { error: error.message, success: false };
+
+  if (deltaCn !== 0 || deltaDn !== 0) {
+    const { data: mirror } = await supabase
+      .from("bill_pass_register")
+      .select("id, total_amt")
+      .eq("source", "freight_bill")
+      .eq("source_id", assignment.freight_bill_id)
+      .maybeSingle();
+    if (mirror) {
+      const newLedgerTotal = Math.round((Number(mirror.total_amt) - deltaCn + deltaDn) * 100) / 100;
+      const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+      if (syncError) {
+        return { error: `Note saved, but the Finance ledger could not be updated: ${syncError.message}`, success: false };
+      }
+      revalidatePath("/dashboard/bill-payment");
+    }
+  }
+
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -2513,6 +2597,14 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
   if (!invoiceNo) return { error: "Invoice No. is required.", success: false };
   const invoiceDate = strOrNull(formData, "invoice_date");
   const vendorPartyId = strOrNull(formData, "vendor_party_id");
+  const newCnAmt = numOrZero(formData, "credit_note_amt");
+
+  const { data: prevBill } = await supabase
+    .from("duty_tax_bills")
+    .select("credit_note_amt")
+    .eq("id", dutyTaxBillId)
+    .maybeSingle();
+  const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
 
   const { error } = await supabase
     .from("duty_tax_bills")
@@ -2536,13 +2628,34 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
     return { error: msg, success: false };
   }
 
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id, total_amt")
+    .eq("source", "duty_tax_bill")
+    .eq("source_id", dutyTaxBillId)
+    .maybeSingle();
   await supabase
     .from("bill_pass_register")
     .update({ party_id: vendorPartyId, vendor_invoice_no: invoiceNo, invoice_date: invoiceDate, invoice_recv_date: invoiceDate })
     .eq("source", "duty_tax_bill")
     .eq("source_id", dutyTaxBillId);
 
+  // 2026-09-30 — same credit-note delta sync as updateFreightBillDetails:
+  // the Finance ledger row's total_amt is the reviewed net-of-CN figure,
+  // so a later CN change must adjust it by the DELTA or the Party
+  // Ledger/Bill Payment never see the note. (bpr.credit_note_amt stays
+  // untouched — the ledger total already nets the CN; writing it there
+  // too would double-reduce balance_due.)
+  if (mirror && prevCnAmt !== newCnAmt) {
+    const newLedgerTotal = Math.round((Number(mirror.total_amt) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+    if (syncError) {
+      return { error: `Bill saved, but the Finance ledger could not be updated with the credit note change: ${syncError.message}`, success: false };
+    }
+  }
+
   revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };
 }
 
@@ -2685,25 +2798,57 @@ export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData
   const id = str(formData, "id");
   if (!id) return { error: "Missing assignment.", success: false };
 
-  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: assignment } = await supabase
+    .from("duty_bill_awb_assignments")
+    .select("id, order_id, duty_tax_bill_id, credit_note_amt, debit_note_amt")
+    .eq("id", id)
+    .maybeSingle();
   if (!assignment) return { error: "Assignment not found.", success: false };
   const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "That AWB is not accessible.", success: false };
   }
 
+  // 2026-09-30 — same credit/debit-note delta sync as the freight AWB
+  // notes above: per-AWB notes adjust the bill's Finance ledger total by
+  // their change (ΔCN down, ΔDN up), so Bill Payment and the Party
+  // Ledger reflect them immediately. No delta when nothing changed — a
+  // pre-send note's amount is already inside the reviewed total.
+  const newCnAmt = numOrNull(formData, "credit_note_amt");
+  const newDnAmt = numOrNull(formData, "debit_note_amt");
+  const deltaCn = Math.round(((newCnAmt ?? 0) - Number(assignment.credit_note_amt ?? 0)) * 100) / 100;
+  const deltaDn = Math.round(((newDnAmt ?? 0) - Number(assignment.debit_note_amt ?? 0)) * 100) / 100;
+
   const { error } = await supabase
     .from("duty_bill_awb_assignments")
     .update({
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: numOrNull(formData, "credit_note_amt"),
+      credit_note_amt: newCnAmt,
       debit_note_no: strOrNull(formData, "debit_note_no"),
       debit_note_date: strOrNull(formData, "debit_note_date"),
-      debit_note_amt: numOrNull(formData, "debit_note_amt"),
+      debit_note_amt: newDnAmt,
     })
     .eq("id", id);
   if (error) return { error: error.message, success: false };
+
+  if (deltaCn !== 0 || deltaDn !== 0) {
+    const { data: mirror } = await supabase
+      .from("bill_pass_register")
+      .select("id, total_amt")
+      .eq("source", "duty_tax_bill")
+      .eq("source_id", assignment.duty_tax_bill_id)
+      .maybeSingle();
+    if (mirror) {
+      const newLedgerTotal = Math.round((Number(mirror.total_amt) - deltaCn + deltaDn) * 100) / 100;
+      const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+      if (syncError) {
+        return { error: `Note saved, but the Finance ledger could not be updated: ${syncError.message}`, success: false };
+      }
+      revalidatePath("/dashboard/bill-payment");
+    }
+  }
+
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
