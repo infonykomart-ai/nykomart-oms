@@ -13,6 +13,302 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      // ── 2026-09-30: B2B Inquiry Management (db/2026-09-30-b2b-inquiries.sql) ──
+      // Hand-written until a local Postgres is available to re-run
+      // scripts/gen-types.mjs (README "Local schema checks"). Columns mirror
+      // db/schema.sql exactly, including the GENERATED columns.
+      b2b_inquiries: {
+        Row: {
+          id: string;
+          company_id: string;
+          inquiry_no: string;
+          inquiry_date: string;
+          buyer_name: string;
+          buyer_company: string | null;
+          buyer_contact_no: string | null;
+          buyer_email: string | null;
+          buyer_country: string | null;
+          source: string | null;
+          priority: "Hot" | "Warm" | "Cold";
+          requirement_notes: string | null;
+          remarks: string | null;
+          follow_up_date: string | null;
+          status: "Open" | "In Discussion" | "Quotation Sent" | "Won" | "Lost" | "Converted";
+          converted_order_id: string | null;
+          converted_order_ref: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          inquiry_no: string;
+          inquiry_date: string;
+          buyer_name: string;
+          buyer_company?: string | null;
+          buyer_contact_no?: string | null;
+          buyer_email?: string | null;
+          buyer_country?: string | null;
+          source?: string | null;
+          priority?: "Hot" | "Warm" | "Cold";
+          requirement_notes?: string | null;
+          remarks?: string | null;
+          follow_up_date?: string | null;
+          status?: "Open" | "In Discussion" | "Quotation Sent" | "Won" | "Lost" | "Converted";
+          converted_order_id?: string | null;
+          converted_order_ref?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          inquiry_no?: string;
+          inquiry_date?: string;
+          buyer_name?: string;
+          buyer_company?: string | null;
+          buyer_contact_no?: string | null;
+          buyer_email?: string | null;
+          buyer_country?: string | null;
+          source?: string | null;
+          priority?: "Hot" | "Warm" | "Cold";
+          requirement_notes?: string | null;
+          remarks?: string | null;
+          follow_up_date?: string | null;
+          status?: "Open" | "In Discussion" | "Quotation Sent" | "Won" | "Lost" | "Converted";
+          converted_order_id?: string | null;
+          converted_order_ref?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_inquiries_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_inquiries_converted_order_id_fkey";
+            columns: ["converted_order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_inquiries_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_inquiry_items: {
+        Row: {
+          id: string;
+          inquiry_id: string;
+          description: string;
+          qty: number;
+          unit: string | null;
+          unit_price: number | null;
+          remark: string | null;
+          display_order: number;
+        };
+        Insert: {
+          id?: string;
+          inquiry_id: string;
+          description: string;
+          qty?: number;
+          unit?: string | null;
+          unit_price?: number | null;
+          remark?: string | null;
+          display_order?: number;
+        };
+        Update: {
+          id?: string;
+          inquiry_id?: string;
+          description?: string;
+          qty?: number;
+          unit?: string | null;
+          unit_price?: number | null;
+          remark?: string | null;
+          display_order?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_inquiry_items_inquiry_id_fkey";
+            columns: ["inquiry_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_inquiries";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_quotations: {
+        Row: {
+          id: string;
+          inquiry_id: string;
+          company_id: string;
+          quote_no: string;
+          quote_date: string;
+          valid_until: string | null;
+          buyer_name: string;
+          buyer_contact_no: string | null;
+          buyer_email: string | null;
+          buyer_country: string | null;
+          subtotal: number;
+          tax_percent: number;
+          tax_amount: number;
+          shipping_amount: number;
+          total_amount: number;
+          currency: string;
+          terms: string | null;
+          notes: string | null;
+          sent_at: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          inquiry_id: string;
+          company_id: string;
+          quote_no: string;
+          quote_date: string;
+          valid_until?: string | null;
+          buyer_name: string;
+          buyer_contact_no?: string | null;
+          buyer_email?: string | null;
+          buyer_country?: string | null;
+          subtotal?: number;
+          tax_percent?: number;
+          shipping_amount?: number;
+          currency?: string;
+          terms?: string | null;
+          notes?: string | null;
+          sent_at?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          inquiry_id?: string;
+          company_id?: string;
+          quote_no?: string;
+          quote_date?: string;
+          valid_until?: string | null;
+          buyer_name?: string;
+          buyer_contact_no?: string | null;
+          buyer_email?: string | null;
+          buyer_country?: string | null;
+          subtotal?: number;
+          tax_percent?: number;
+          shipping_amount?: number;
+          currency?: string;
+          terms?: string | null;
+          notes?: string | null;
+          sent_at?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_quotations_inquiry_id_fkey";
+            columns: ["inquiry_id"];
+            isOneToOne: true;
+            referencedRelation: "b2b_inquiries";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_quotations_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_quotations_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_payments: {
+        Row: {
+          id: string;
+          quotation_id: string;
+          company_id: string;
+          payment_date: string;
+          amount: number;
+          payment_mode: "Cash" | "Bank Transfer" | "UPI" | "Cheque" | "Card" | "Advance";
+          reference_no: string | null;
+          reference_date: string | null;
+          realized: boolean;
+          remark: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          quotation_id: string;
+          company_id: string;
+          payment_date: string;
+          amount: number;
+          payment_mode: "Cash" | "Bank Transfer" | "UPI" | "Cheque" | "Card" | "Advance";
+          reference_no?: string | null;
+          reference_date?: string | null;
+          realized?: boolean;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          quotation_id?: string;
+          company_id?: string;
+          payment_date?: string;
+          amount?: number;
+          payment_mode?: "Cash" | "Bank Transfer" | "UPI" | "Cheque" | "Card" | "Advance";
+          reference_no?: string | null;
+          reference_date?: string | null;
+          realized?: boolean;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_payments_quotation_id_fkey";
+            columns: ["quotation_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_quotations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_payments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_payments_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       amazon_transactions: {
         Row: {
           id: string;

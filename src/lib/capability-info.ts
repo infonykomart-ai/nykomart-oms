@@ -146,6 +146,16 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // matrix can grant it to any role without any code change.
   { code: "team_directory", label: "Team Directory", icon: "📇", href: "/dashboard/team",
     description: "View-only company contact book — teammates' names, photos, designations, roles and contact details. No bank/statutory data." },
+  // 2026-09-30: B2B Inquiry Management — "B2B INQUIRY HANDLE / REPORT /
+  // INVOICE / AND RELATED SECTION PAYMENT MODE & MANY MORE". The full
+  // trade-buyer pipeline: register an inquiry, discuss, send a quotation
+  // (WhatsApp/email outside the app — sent_at records when), mark it won/
+  // lost, convert to a real order, and record money received mode-wise
+  // (Cash / Bank Transfer / UPI / Cheque / Card / Advance). MD/Admin to
+  // start — grant wider via the Roles & Permissions matrix, zero code
+  // change (see db/2026-09-30-b2b-inquiries.sql).
+  { code: "b2b_inquiry", label: "B2B Inquiries", icon: "🤝", href: "/dashboard/b2b",
+    description: "Handle trade-buyer inquiries end to end — register, follow up, quote, convert to an order, and track payments received mode-wise with reports." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

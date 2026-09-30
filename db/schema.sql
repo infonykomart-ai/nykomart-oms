@@ -5928,6 +5928,118 @@ SELECT r.id, 'team_directory'
 FROM roles r
 WHERE r.name IN ('MD', 'Admin');
 
+-- 2026-09-30: B2B Inquiry Management — see db/2026-09-30-b2b-inquiries.sql.
+-- Trade-buyer inquiry pipeline: b2b_inquiries (register, folio B2B-<FY>-####,
+-- follow-up dates, won/lost/converted outcome) → b2b_inquiry_items (the
+-- asked-for products, free-typed) → b2b_quotations (quote/invoice Q-<FY>-####
+-- with DB-computed totals) → b2b_payments (money received, payment_mode =
+-- Cash / Bank Transfer / UPI / Cheque / Card / Advance + reference). MD/Admin
+-- to start; grant to more roles via the matrix — zero code change.
+INSERT INTO capabilities (code, description) VALUES
+  ('b2b_inquiry', 'B2B Inquiry Management - handle trade-buyer inquiries end to end: register, quote, invoice, payments received (mode-wise), and reports');
+
+INSERT INTO role_capabilities (role_id, capability_code)
+SELECT r.id, 'b2b_inquiry'
+FROM roles r
+WHERE r.name IN ('MD', 'Admin');
+
+CREATE TABLE b2b_inquiries (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id          uuid NOT NULL REFERENCES companies(id),
+  inquiry_no          text NOT NULL,            -- B2B-26-27-0001 (app-reserved via reserve_next_number, scope 'B2B_INQ', no-FY sentinel on the counter + FY label from inquiry_date in the number itself)
+  inquiry_date        date NOT NULL,
+  buyer_name          text NOT NULL,
+  buyer_company       text,
+  buyer_contact_no    text,
+  buyer_email         text,
+  buyer_country       text,
+  source              text,                     -- walk-in / whatsapp / email / website / referral / exhibition — free text
+  priority            text NOT NULL DEFAULT 'Warm' CHECK (priority IN ('Hot', 'Warm', 'Cold')),
+  requirement_notes   text,
+  remarks             text,
+  follow_up_date      date,
+  status              text NOT NULL DEFAULT 'Open' CHECK (status IN ('Open', 'In Discussion', 'Quotation Sent', 'Won', 'Lost', 'Converted')),
+  converted_order_id  uuid REFERENCES orders(id) ON DELETE SET NULL,
+  converted_order_ref text,
+  entered_by_employee_id uuid REFERENCES employees(id),
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, inquiry_no)
+);
+CREATE INDEX idx_b2b_inquiries_company_date ON b2b_inquiries(company_id, inquiry_date DESC);
+CREATE INDEX idx_b2b_inquiries_status       ON b2b_inquiries(company_id, status);
+CREATE INDEX idx_b2b_inquiries_followup     ON b2b_inquiries(company_id, follow_up_date) WHERE follow_up_date IS NOT NULL AND status NOT IN ('Won', 'Lost', 'Converted');
+
+CREATE TABLE b2b_inquiry_items (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  inquiry_id      uuid NOT NULL REFERENCES b2b_inquiries(id) ON DELETE CASCADE,
+  description     text NOT NULL,
+  qty             numeric(12,2) NOT NULL DEFAULT 1 CHECK (qty > 0),
+  unit            text DEFAULT 'pcs',
+  unit_price      numeric(14,2),
+  remark          text,
+  display_order   integer NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_b2b_inquiry_items_inquiry ON b2b_inquiry_items(inquiry_id, display_order);
+
+CREATE TABLE b2b_quotations (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  inquiry_id        uuid NOT NULL UNIQUE REFERENCES b2b_inquiries(id) ON DELETE CASCADE,
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  quote_no          text NOT NULL,          -- Q-26-27-0001 (app-reserved, scope 'B2B_QUOTE')
+  quote_date        date NOT NULL,
+  valid_until       date,
+  buyer_name        text NOT NULL,
+  buyer_contact_no  text,
+  buyer_email       text,
+  buyer_country     text,
+  subtotal          numeric(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
+  tax_percent       numeric(5,2) NOT NULL DEFAULT 0 CHECK (tax_percent >= 0),
+  tax_amount        numeric(14,2) GENERATED ALWAYS AS (round(subtotal * tax_percent / 100.0, 2)) STORED,
+  shipping_amount   numeric(14,2) NOT NULL DEFAULT 0 CHECK (shipping_amount >= 0),
+  total_amount      numeric(14,2) GENERATED ALWAYS AS (round(subtotal * (1 + tax_percent / 100.0) + shipping_amount, 2)) STORED,
+  currency          varchar(3) NOT NULL DEFAULT 'INR' REFERENCES currencies(code),
+  terms             text,
+  notes             text,
+  sent_at           timestamptz,
+  entered_by_employee_id uuid REFERENCES employees(id),
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, quote_no)
+);
+CREATE INDEX idx_b2b_quotations_company ON b2b_quotations(company_id, quote_date DESC);
+
+CREATE TABLE b2b_payments (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  quotation_id    uuid NOT NULL REFERENCES b2b_quotations(id) ON DELETE CASCADE,
+  company_id      uuid NOT NULL REFERENCES companies(id),
+  payment_date    date NOT NULL,
+  amount          numeric(14,2) NOT NULL CHECK (amount > 0),
+  payment_mode    text NOT NULL CHECK (payment_mode IN ('Cash', 'Bank Transfer', 'UPI', 'Cheque', 'Card', 'Advance')),
+  reference_no    text,
+  reference_date  date,
+  realized        boolean NOT NULL DEFAULT true,
+  remark          text,
+  entered_by_employee_id uuid REFERENCES employees(id),
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_b2b_payments_quotation ON b2b_payments(quotation_id);
+CREATE INDEX idx_b2b_payments_company   ON b2b_payments(company_id, payment_date DESC);
+
+ALTER TABLE b2b_inquiries     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE b2b_inquiry_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE b2b_quotations    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE b2b_payments      ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_inquiries;
+CREATE POLICY allow_authenticated_all ON b2b_inquiries FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_inquiry_items;
+CREATE POLICY allow_authenticated_all ON b2b_inquiry_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_quotations;
+CREATE POLICY allow_authenticated_all ON b2b_quotations FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_payments;
+CREATE POLICY allow_authenticated_all ON b2b_payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
 -- (Descriptions above are refreshed from the app''s live CAPABILITY_INFO
 -- registry by sync_capabilities() on every Roles & Permissions page load,
 -- so wording here is a bootstrap default only.)
@@ -6100,5 +6212,7 @@ JOIN (VALUES
 -- P&L Dashboard                       -> pl_dashboard_by_company_view + pl_dashboard_by_month_view
 -- Attendance                          -> attendance
 -- Letter Log                          -> hr_letters
+-- B2B Inquiries (2026-09-30)           -> b2b_inquiries + b2b_inquiry_items
+--                                         + b2b_quotations + b2b_payments
 -- (CRM Dashboard alerts, getAlerts_)  -> data_quality_alerts_view
 -- =============================================================================
