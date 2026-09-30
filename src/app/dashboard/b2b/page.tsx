@@ -118,7 +118,7 @@ export default async function B2BPage() {
   const quoteItemsByQuote = new Map<string, NonNullable<B2BInquiryView["quote"]>["items"]>();
   for (const it of quoteItemsRes.data ?? []) {
     const list = quoteItemsByQuote.get(it.quotation_id) ?? [];
-    list.push(it);
+    list.push({ ...it, line_total: it.line_total ?? 0 });
     quoteItemsByQuote.set(it.quotation_id, list);
   }
   const docsByQuote = new Map<string, NonNullable<B2BInquiryView["quote"]>["documents"]>();
@@ -130,8 +130,14 @@ export default async function B2BPage() {
   for (const q of quotesRes.data ?? []) {
     quoteByInquiry.set(q.inquiry_id, {
       ...q,
+      // GENERATED columns come back nullable from the introspected types
+      // (Postgres catalogs report them nullable even though the app never
+      // writes null) — coalesce at the load boundary so the client keeps
+      // its non-null number contract.
+      tax_amount: q.tax_amount ?? 0,
+      total_amount: q.total_amount ?? 0,
       payments: paymentsByQuote.get(q.id) ?? [],
-      items: quoteItemsByQuote.get(q.id) ?? [],
+      items: (quoteItemsByQuote.get(q.id) ?? []).map((it) => ({ ...it, line_total: it.line_total ?? 0 })),
       documents: docsByQuote.get(q.id) ?? [],
     });
   }

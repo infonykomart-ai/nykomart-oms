@@ -70,6 +70,11 @@
 import { requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+// 2026-09-30 — AWB→order helpers live in a PLAIN module (./awb-orders.ts):
+// every runtime export of a "use server" file must be an async function
+// (Turbopack build fails otherwise), and normalizeAwbList is sync. Imported
+// here for internal use; client code reaches it via resolveAwbOrders below.
+import { normalizeAwbList, fetchAwbOrderMap } from "./awb-orders";
 
 export type ApplyCreditNoteState = { error: string | null; success: boolean };
 
@@ -153,60 +158,20 @@ export async function listPartyBillsForCn(partyId: string): Promise<PartyAwbBill
   }));
 }
 
-// ── AWB → order (PO/RF/RG) resolution ───────────────────────────────────
+// ── AWB → order (PO/RF/RG) resolution ───────────────────────────────
 // 2026-09-30 — user's two-kind clarification: "purchase party ka agar apan
 // debit katenge to uske against me credit note apn banayenge jo PO/RF/RG
 // ke against me banega. courier party ka credit note direct couriour se
 // aata hai jo freight & duty bill ke against me ho sakta hai lekin usme
 // kon konse order PO/RG/RF ke against me AWB hai."
 //
-// A courier CN cites AWBs; the business question is always WHICH orders
-// those AWBs were. One shared resolver: normalize a free-typed AWB list
-// (commas/spaces/newlines), look up order_shipments → orders (ref_no IS
-// the PO/RF/RG number) → companies, and return per-AWB hits for the live
-// UI preview. applyBillCreditNote reuses the same resolver server-side to
-// bake "AWB → PO… (Company)" into the CN's remark and the register shows
-// the same mapping — so "kis order ke against me AWB hai" is answered at
-// entry time AND afterwards, without anyone re-querying anything.
-export function normalizeAwbList(raw: string | null | undefined): string[] {
-  return Array.from(
-    new Set(
-      (raw ?? "")
-        .split(/[\s,;]+/)
-        .map((a) => a.trim())
-        .filter((a) => a.length >= 5)
-    )
-  ).slice(0, 50);
-}
-
-async function fetchAwbOrderMap(supabase: ReturnType<typeof createServiceRoleClient>, awbs: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (awbs.length === 0) return map;
-  const { data: ships } = await supabase
-    .from("order_shipments")
-    .select("awb_no, order_id")
-    .in("awb_no", awbs);
-  const orderIds = Array.from(new Set((ships ?? []).map((s) => s.order_id)));
-  const { data: ords } = orderIds.length
-    ? await supabase.from("orders").select("id, ref_no, company_id").in("id", orderIds)
-    : { data: [] };
-  const companyIds = Array.from(new Set((ords ?? []).map((o) => o.company_id)));
-  const { data: comps } = companyIds.length
-    ? await supabase.from("companies").select("id, name").in("id", companyIds)
-    : { data: [] };
-  const ordById = new Map((ords ?? []).map((o) => [o.id, o] as const));
-  const compName = new Map((comps ?? []).map((c) => [c.id, c.name] as const));
-  for (const s of ships ?? []) {
-    if (!s.awb_no) continue; // nullable column — rows without an AWB can't be matched
-    const o = ordById.get(s.order_id);
-    if (!o) continue;
-    const line = `${o.ref_no ?? "?"}${o.company_id ? ` (${compName.get(o.company_id) ?? "?"})` : ""}`;
-    const prev = map.get(s.awb_no);
-    map.set(s.awb_no, prev ? `${prev} / ${line}` : line);
-  }
-  return map;
-}
-
+// The helpers themselves (normalizeAwbList / fetchAwbOrderMap) live in
+// ./awb-orders.ts — a plain module, because this file is "use server" and
+// every runtime export here must be async. This action is the client's
+// only door into them (live preview under the CN panel's AWB fields),
+// while applyBillCreditNote and listCreditNoteRegister reuse the same
+// helpers server-side to bake "AWB → PO… (Company)" into the CN remark
+// and the register's "Orders (via AWB)" column.
 export type AwbOrderHit = {
   awb: string;
   found: boolean;
