@@ -4134,6 +4134,7 @@ export type Database = {
           created_at: string;
           companion_enabled: boolean;
           companion_name: string | null;
+          telegram_chat_id: string | null;
         };
         Insert: {
           id?: string;
@@ -4173,6 +4174,7 @@ export type Database = {
           created_at?: string;
           companion_enabled?: boolean;
           companion_name?: string | null;
+          telegram_chat_id?: string | null;
         };
         Update: {
           id?: string;
@@ -4212,6 +4214,7 @@ export type Database = {
           created_at?: string;
           companion_enabled?: boolean;
           companion_name?: string | null;
+          telegram_chat_id?: string | null;
         };
         Relationships: [
           {

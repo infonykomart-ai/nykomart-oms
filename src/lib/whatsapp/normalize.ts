@@ -1,9 +1,15 @@
-// 2026-09-30 — shared WhatsApp number normalizer. Extracted from
-// whatsapp-notify.ts so the punch notifications, the admin "Test" send,
-// and the Team Directory's wa.me links all validate the SAME way — before
-// this, the directory's links and the notification sender could disagree
-// about what a usable number is (the exact class of bug that made
-// "kisi ke msg gaya, kisi ke nahi" so hard to pin down).
+// 2026-09-30 — shared WhatsApp number normalizer. Originally extracted
+// from whatsapp-notify.ts so the punch notifications, the admin "Test"
+// send, and the Team Directory's wa.me links all validated the SAME way
+// — before that, the directory's links and the notification sender could
+// disagree about what a usable number is (the exact class of bug that
+// made "kisi ke msg gaya, kisi ke nahi" so hard to pin down).
+//
+// 2026-09-30 (later same day): punch notifications + the admin Test
+// button moved to Telegram (telegram-notify.ts) and whatsapp-notify.ts
+// was deleted — this file stays because the Team Directory's wa.me links
+// (and any other wa.me/whatsapp_no UI) still need the exact same
+// validation. Whapi itself is no longer called from anywhere in this flow.
 //
 // Whapi (gate.whapi.cloud) wants E.164 digits for a 1:1 chat, e.g.
 // "919876543210". The roster stores numbers the way people type them:

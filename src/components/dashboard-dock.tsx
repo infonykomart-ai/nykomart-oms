@@ -19,7 +19,7 @@ import { useNavStyle } from "@/components/nav-style-context";
  * REDESIGNED 2026-09-04 (same day, user feedback on the first cut):
  * 1. **Glass pill, not a solid bar** — the fill is fully transparent
  *    (`bg-transparent`, no tint at all — an earlier pass tried a 25%-opacity
- *    tint of `--oms-sidebar-bg` via Tailwind's `bg-[var(...)]/25` syntax,
+ *    tint of `--oms-sidebar-bg` via Tailwind's `bg-[var(--oms-sidebar-bg)]/25` syntax,
  *    but that still reads as a visible solid-colored box, which is exactly
  *    what the user asked to have removed). Only `backdrop-blur-2xl` (a
  *    frosted-glass distortion of whatever is behind the dock, not a color)

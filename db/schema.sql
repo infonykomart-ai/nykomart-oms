@@ -4668,6 +4668,16 @@ ALTER TABLE employees
 ALTER TABLE employees
   ADD COLUMN companion_name text;
 
+-- 2026-09-30: per-employee Telegram DM destination for punch in/out
+-- notifications (folded from db/2026-09-30c-employee-telegram-chat-id.sql)
+-- — the attendance page's self-serve connect flow writes it by reading the
+-- employee's own /start deep-link payload out of the bot's getUpdates
+-- queue. NULL = not connected; telegram-notify.ts then skips (and logs)
+-- that employee. Same role employees.whatsapp_no played for the (now
+-- retired) WhatsApp punch channel.
+ALTER TABLE employees
+  ADD COLUMN telegram_chat_id text;
+
 -- One row per reaction the companion should show (written server-side only).
 CREATE TABLE companion_events (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
