@@ -31,6 +31,18 @@ Environment variables are documented inline in `.env.example` — Supabase keys,
 cron secret, and per-courier tracking credentials (Delhivery, UPS, FedEx, Shiprocket, Aramex,
 Shipglobal, DHL), plus Whapi/Telegram order-notification tokens.
 
+**Telegram punch notifications (2026-09-30)** — punch in/out confirmations are sent as personal
+Telegram DMs, one per employee (the WhatsApp channel for this flow is OFF):
+
+- `TELEGRAM_BOT_TOKEN` — bot token from @BotFather; shared with the order-photo Telegram sends
+  (`src/app/api/telegram-send-order/route.ts`).
+- `TELEGRAM_BOT_USERNAME` — the bot's @handle without `@`; used to build the deep link
+  `https://t.me/<username>?start=<employee id>` that employees open from the Attendance page to
+  connect their own Telegram (pressing Start is what lets the app capture their chat id into
+  `employees.telegram_chat_id`).
+- Sending code: `src/lib/attendance/telegram-notify.ts`; connect/Test actions live in
+  `src/app/dashboard/attendance/actions.ts`; admin Test button on the Employees page.
+
 ## Database & schema workflow (important)
 
 - `db/schema.sql` is the **only** thing needed to stand up a fresh database — every dated

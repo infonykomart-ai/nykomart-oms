@@ -5,6 +5,11 @@ import { requireCapability, getAuthedEmployee } from "@/lib/auth/require-capabil
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { recordPunchIn, recordPunchOut } from "@/lib/attendance/punch";
 import { todayIST, addDaysToDateStr } from "@/lib/attendance/ist-date";
+// 2026-09-30 — punch notifications moved WhatsApp → personal Telegram DM
+// (user: "EMPLOYEE KO JO MSG WHATSAPP SE THA USKO WHATSAPP KI JAGAH
+// TELEGRAM SE CONNECT KARO"). These two actions back the self-serve
+// connect/Test card on this page (telegram-connect-card.tsx).
+import { connectEmployeeTelegram, sendTestTelegram } from "@/lib/attendance/telegram-notify";
 
 export type SimpleActionState = { error: string | null; success: boolean };
 
@@ -553,4 +558,36 @@ export async function setMyRecurringItemActive(id: string, active: boolean): Pro
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/attendance");
   return { error: null, success: true };
+}
+
+// ============================================================================
+// 2026-09-30 — Telegram punch notifications, self-serve connect (employee's
+// OWN account only — no special capability beyond being signed in, same as
+// the Daily Work Report above). The employee opens the t.me deep link
+// (bot?start=<their employee id>), presses Start inside the bot chat, then
+// clicks Connect: connectMyTelegram reads that exact /start payload out of
+// the bot's getUpdates queue and saves message.from.id to the caller's own
+// row (employees.telegram_chat_id). From then on every punch in/out DMs
+// them directly (src/lib/attendance/telegram-notify.ts). WhatsApp for this
+// flow is OFF — user's explicit choice.
+// ============================================================================
+
+export type TelegramConnectState = { error: string | null; connected: boolean; chatId?: string };
+
+export async function connectMyTelegram(): Promise<TelegramConnectState> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  const result = await connectEmployeeTelegram({ supabase, employeeId: employee.id });
+  if (!result.ok) return { error: result.error ?? "Could not connect.", connected: false };
+  revalidatePath("/dashboard/attendance");
+  return { error: null, connected: true, chatId: result.chatId };
+}
+
+export type TelegramTestState = { ok: boolean; error?: string; to?: string };
+
+/** One-click real test DM — the employee's own mirror of the admin Test button. */
+export async function testMyTelegram(): Promise<TelegramTestState> {
+  const employee = await getAuthedEmployee();
+  const supabase = createServiceRoleClient();
+  return sendTestTelegram({ supabase, employeeId: employee.id });
 }

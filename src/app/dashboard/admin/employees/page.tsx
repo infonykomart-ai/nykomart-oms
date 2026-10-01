@@ -3,10 +3,10 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { EmployeesHeader } from "./employees-header";
 import { EmployeeForm } from "./employee-form";
 import { EmployeeRowActions } from "./employee-row-actions";
-// 2026-09-30 — per-row WhatsApp validity + one-click Test send, see
-// employee-whatsapp-cell.tsx (server-side validation via
-// isUsableWhatsappNumber, same normalizer the punch sender uses).
-import { EmployeeWhatsappCell } from "./employee-whatsapp-cell";
+// 2026-09-30 — per-row Telegram connection status + one-click Test send,
+// see employee-telegram-cell.tsx (replaced the WhatsApp cell the same day
+// punch notifications switched to Telegram DMs).
+import { EmployeeTelegramCell } from "./employee-telegram-cell";
 
 // 2026-09-29 — FedEx-style upgrade: the bare "Employees" h1 row became a
 // card-style identity header for the whole ROSTER (Employee Roster, big
@@ -32,7 +32,7 @@ export default async function EmployeesAdminPage() {
       supabase
         .from("employees")
         .select(
-          "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
+          "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
         )
         .order("created_at", { ascending: false }),
       supabase.from("roles").select("id, name").order("name"),
@@ -110,7 +110,7 @@ export default async function EmployeesAdminPage() {
                 <tr>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Role / Company</th>
-                  <th className="px-4 py-3">WhatsApp</th>
+                  <th className="px-4 py-3">Telegram</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
@@ -127,7 +127,7 @@ export default async function EmployeesAdminPage() {
                       <div className="text-xs text-slate-400">{companyName.get(e.company_id) ?? "—"}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <EmployeeWhatsappCell employeeId={e.id} raw={e.whatsapp_no} />
+                      <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} />
                     </td>
                     <td className="px-4 py-3">
                       <span

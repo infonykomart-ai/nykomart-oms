@@ -15,6 +15,7 @@ import {
   growthPct,
 } from "@/lib/performance/score";
 import { PunchButtons } from "./punch-buttons";
+import { TelegramConnectCard } from "./telegram-connect-card";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
 import { IncompleteWorkSection, type IncompleteLogRow } from "./incomplete-work-section";
@@ -132,7 +133,7 @@ export default async function AttendancePage({
         // (already imported at the top of this file) — this was the one
         // remaining call site still using the old hardcoded day.
         .lte("holiday_date", `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth(year, month)).padStart(2, "0")}`),
-      supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
+      supabase.from("employees").select("date_of_joining, telegram_chat_id").eq("id", employee.id).single(),
       dwlSupabase
         .from("daily_work_logs")
         .select("id, log_date, category, description, target_qty, qty_done, work_status, remark_sku, updated_at, time_spent_seconds, estimated_time_minutes, carried_from_log_id, submitted_at, priority, carried_to_date, source_template_id")
@@ -504,6 +505,18 @@ export default async function AttendancePage({
             ))}
           </div>
         </div>
+      </div>
+
+      {/* 2026-09-30 — punch confirmations now go to a personal Telegram DM
+          (WhatsApp is off for this flow); employee self-serve connect +
+          Test — see telegram-connect-card.tsx / attendance actions. */}
+      <div className="mb-6">
+        <TelegramConnectCard
+          employeeId={employee.id}
+          connected={!!emp?.telegram_chat_id}
+          botUsername={process.env.TELEGRAM_BOT_USERNAME ?? null}
+          botTokenSet={!!process.env.TELEGRAM_BOT_TOKEN}
+        />
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
