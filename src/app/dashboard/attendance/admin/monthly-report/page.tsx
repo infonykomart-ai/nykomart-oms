@@ -3,7 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
 import { buildMonthlyReport, REPORT_TYPES, type ReportKey, type ReportEmployee, type AttendanceRow } from "@/lib/attendance/monthly-report";
 import { MonthlyReportFilters } from "./monthly-report-filters";
-import { MonthlyReportResults } from "./monthly-report-results";
+// 2026-10-01 — the results renderer moved to a shared component used by
+// the Daily/Periodic/Yearly pages too (admin/report-results.tsx).
+import { ReportResults } from "../report-results";
 
 // 2026-09-23 — "apne oms me bhi to chahiye na report ... inme se jo apne ko
 // chahiye": a TeamOffice biometric attendance software screenshot (Monthly
@@ -135,7 +137,7 @@ export default async function MonthlyReportPage({
         selectedEmployeeIds={requestedEmployeeIds}
       />
 
-      <MonthlyReportResults title={`${reportLabel} — ${month}`} columns={columns} rows={rows} />
+      <ReportResults title={`${reportLabel} — ${month}`} columns={columns} rows={rows} />
     </div>
   );
 }

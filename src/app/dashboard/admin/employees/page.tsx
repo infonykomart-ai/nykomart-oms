@@ -127,7 +127,7 @@ export default async function EmployeesAdminPage() {
                       <div className="text-xs text-slate-400">{companyName.get(e.company_id) ?? "—"}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} />
+                      <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} botUsername={process.env.TELEGRAM_BOT_USERNAME ?? null} />
                     </td>
                     <td className="px-4 py-3">
                       <span

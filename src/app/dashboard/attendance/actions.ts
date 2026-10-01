@@ -51,6 +51,32 @@ export async function punchOutOnLogout(): Promise<void> {
   }
 }
 
+/**
+ * 2026-10-01 — "SAAM KO COMPUTER SHUT DOWN KARE TO OMS KI TRAF SE LOGOUT
+ * KARNE KA OPTION AAJE JIS SE PUNCH OUT HO JAYE; AGAR LOGOUT NAHI KARE
+ * TO PUNCH OUT NAHI HOYE": logout ALREADY punches out (punchOutOnLogout
+ * above, wired since 2026-08-11) — this tiny read-only probe lets the
+ * LogoutButton show an explicit confirm ("Punch Out record ho jayega")
+ * ONLY when today's punch is still open, so the evening shutdown flow is
+ * a deliberate, visible choice instead of a silent side effect. If the
+ * employee never logs out, nothing punches out — exactly as asked.
+ */
+export async function hasOpenPunchToday(): Promise<boolean> {
+  try {
+    const employee = await getAuthedEmployee();
+    const supabase = createServiceRoleClient();
+    const { data } = await supabase
+      .from("attendance")
+      .select("id, punch_out")
+      .eq("employee_id", employee.id)
+      .eq("attendance_date", todayIST())
+      .maybeSingle();
+    return !!data && !data.punch_out;
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // Daily Work Report — auto-saves as the employee types (see
 // daily-report-form.tsx). No capability required beyond being signed in

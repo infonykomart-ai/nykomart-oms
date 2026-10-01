@@ -555,13 +555,48 @@ export default async function AttendanceAdminPage({
         {/* 2026-09-23 — "apne oms me bhi to chahiye na report": Month
             Summary/IN-OUT/Absent/Late In/Early In-Out/Overtime/Half Day/
             Mis Punch reports, filterable by company/employee, exportable
-            to PDF/Excel/Word — see monthly-report/page.tsx. */}
-        <Link
-          href="/dashboard/attendance/admin/monthly-report"
-          className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-400"
-        >
-          📊 Monthly Report
-        </Link>
+            to PDF/Excel/Word — see monthly-report/page.tsx.
+            2026-10-01 — the rest of the TeamOffice Report menu joined in
+            (Dashboard, Daily, Periodic, Yearly + the punch-import screen):
+            one nav cluster for the whole attendance reporting suite. */}
+        <nav className="flex flex-wrap items-center gap-2 text-sm">
+          <Link
+            href="/dashboard/attendance/admin/overview"
+            className="rounded-lg bg-amber-500 px-3 py-2 font-semibold text-white transition hover:bg-amber-400"
+          >
+            📊 Dashboard
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/daily-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            📅 Daily
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/monthly-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            📆 Monthly
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/periodic-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            🗓️ Periodic
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/yearly-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            📈 Yearly
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/import"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            ⬆️ Import
+          </Link>
+        </nav>
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">

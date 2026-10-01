@@ -20,8 +20,13 @@
 // route uses — no new signup; only the destination chat differs (a private
 // DM instead of the company group).
 //
-// Setup (see .env.example): TELEGRAM_BOT_TOKEN + TELEGRAM_BOT_USERNAME
-// (needed to build the t.me deep link the employee presses Start on).
+// Setup: TELEGRAM_BOT_TOKEN + TELEGRAM_BOT_USERNAME (needed to build
+// the t.me deep link the employee presses Start on), plus — 2026-10-01 —
+// the optional destination switch TELEGRAM_ATTENDANCE_MODE=group with
+// TELEGRAM_ATTENDANCE_CHAT_ID=<group chat id> to post every punch to ONE
+// shared Telegram group (employee name prefixed) instead of per-employee
+// DMs: group mode needs no per-employee connect step at all. Default
+// (unset) = personal DM per employee, unchanged.
 //
 // Connect flow (self-serve, attendance page): the employee opens
 // https://t.me/<botusername>?start=<employee_id> and presses Start — the
@@ -47,6 +52,29 @@ import type { Database } from "@/types/database";
 const SEND_TIMEOUT_MS = 5_000;
 
 type SendResult = { ok: true } | { ok: false; error: string };
+
+// 2026-10-01 — destination MODE, chosen purely by env config (no schema
+// change, no admin table): "dm" (default — a personal DM per employee,
+// exactly the flow verified in the 21-check E2E run) or "group" (one
+// shared Telegram group/company chat — every punch posted there prefixed
+// with the employee's name, so NO per-employee connect/Start step is
+// needed at all; the bot must simply be a member of that group).
+//
+//   TELEGRAM_ATTENDANCE_MODE=group
+//   TELEGRAM_ATTENDANCE_CHAT_ID=-1001234567890   (the group's chat id)
+//
+// Anything else, or a missing group id, falls back to "dm" — an unset or
+// typo'd config can never silently redirect messages to nowhere.
+export function telegramAttendanceMode(): "dm" | "group" {
+  const mode = (process.env.TELEGRAM_ATTENDANCE_MODE ?? "").trim().toLowerCase();
+  const groupId = (process.env.TELEGRAM_ATTENDANCE_CHAT_ID ?? "").trim();
+  return mode === "group" && groupId ? "group" : "dm";
+}
+
+function attendanceGroupId(): string | null {
+  if (telegramAttendanceMode() !== "group") return null;
+  return (process.env.TELEGRAM_ATTENDANCE_CHAT_ID ?? "").trim() || null;
+}
 
 async function sendTelegramText(token: string, chatId: string, text: string): Promise<SendResult> {
   const controller = new AbortController();
@@ -110,11 +138,23 @@ async function notifyEmployee(
 
     const { data: employee, error } = await supabase
       .from("employees")
-      .select("telegram_chat_id")
+      .select("telegram_chat_id, name")
       .eq("id", employeeId)
       .maybeSingle();
     if (error) {
       console.error(`[telegram] punch notification skipped — DB lookup failed for employee ${employeeId}: ${error.message}`);
+      return;
+    }
+
+    // 2026-10-01 — GROUP mode: post to the shared group chat (employee
+    // name prefixed so everyone knows whose punch it is); the employee's
+    // own telegram_chat_id / connect step is irrelevant here.
+    const groupId = attendanceGroupId();
+    if (groupId) {
+      const result = await sendTelegramText(token, groupId, `👤 ${employee?.name ?? employeeId}\n\n${message}`);
+      if (!result.ok) {
+        console.error(`[telegram] punch notification FAILED for employee ${employeeId} (group ${groupId}): ${result.error}`);
+      }
       return;
     }
 
@@ -216,27 +256,35 @@ export async function sendTestTelegram(params: {
 
     const { data: employee, error } = await supabase
       .from("employees")
-      .select("telegram_chat_id")
+      .select("telegram_chat_id, name")
       .eq("id", employeeId)
       .maybeSingle();
     if (error) return { ok: false, error: `DB lookup failed: ${error.message}` };
+
+    const testText = [
+      "✅ Test Message — Nykomart OMS",
+      "",
+      "This is a test confirmation that Telegram alerts are working for your account.",
+      "You'll receive automatic messages here when your attendance is marked (punch in / punch out).",
+      "",
+      footer(),
+    ].join("\n");
+
+    // GROUP mode: the test goes to the shared group, tagged with whose
+    // test it is — proves the whole path (bot in group → send) end to end.
+    const groupId = attendanceGroupId();
+    if (groupId) {
+      const result = await sendTelegramText(token, groupId, `🧪 Test for ${employee?.name ?? employeeId}\n\n${testText}`);
+      if (!result.ok) return { ok: false, error: `Telegram rejected the message (group ${groupId}): ${result.error}`, to: groupId };
+      return { ok: true, to: groupId };
+    }
+
     const chatId = employee?.telegram_chat_id;
     if (!chatId || !chatId.trim()) {
       return { ok: false, error: "Telegram not connected yet — open the Connect link on the Attendance page and press Start in the bot first." };
     }
 
-    const result = await sendTelegramText(
-      token,
-      chatId.trim(),
-      [
-        "✅ Test Message — Nykomart OMS",
-        "",
-        "This is a test confirmation that Telegram alerts are working for your account.",
-        "You'll receive automatic messages here when your attendance is marked (punch in / punch out).",
-        "",
-        footer(),
-      ].join("\n")
-    );
+    const result = await sendTelegramText(token, chatId.trim(), testText);
     if (!result.ok) return { ok: false, error: `Telegram rejected the message (chat ${chatId.trim()}): ${result.error}`, to: chatId.trim() };
     return { ok: true, to: chatId.trim() };
   } catch (err) {

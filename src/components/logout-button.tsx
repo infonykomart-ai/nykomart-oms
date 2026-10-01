@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { punchOutOnLogout } from "@/app/dashboard/attendance/actions";
+import { hasOpenPunchToday, punchOutOnLogout } from "@/app/dashboard/attendance/actions";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -16,6 +16,21 @@ export function LogoutButton() {
         // regardless of what this does (see punchOutOnLogout's own
         // comment) — attendance must never trap someone in a signed-in
         // state just because a write failed.
+        //
+        // 2026-10-01: "SAAM KO ... LOGOUT KARNE KA OPTION AAJE JIS SE PUNCH
+        // OUT HO JAYE; AGAR LOGOUT NAHI KARE TO PUNCH OUT NAHI HOYE" —
+        // when today's punch is still open, ask FIRST (explicit evening
+        // punch-out option); cancelling logs out WITHOUT punching out.
+        // No open punch → straight logout, no nagging dialog.
+        const openPunch = await hasOpenPunchToday().catch(() => false);
+        if (
+          openPunch &&
+          !window.confirm(
+            "Aaj ka Punch In abhi open hai.\nLogout karne par abhi ka Punch Out (time abhi) record ho jayega.\n\nContinue?"
+          )
+        ) {
+          return;
+        }
         await punchOutOnLogout().catch(() => {});
         await supabase.auth.signOut();
         router.push("/login");

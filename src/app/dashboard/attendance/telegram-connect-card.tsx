@@ -21,11 +21,18 @@ export function TelegramConnectCard({
   connected: initialConnected,
   botUsername,
   botTokenSet,
+  mode = "dm",
 }: {
   employeeId: string;
   connected: boolean;
   botUsername: string | null;
   botTokenSet: boolean;
+  // 2026-10-01 — "dm" = personal DM per employee (default), "group" =
+  // every punch posted to one shared Telegram group (set via
+  // TELEGRAM_ATTENDANCE_MODE=group + TELEGRAM_ATTENDANCE_CHAT_ID). In
+  // group mode the personal connect/Start steps are pointless, so this
+  // card shows the group status instead of the two-step flow.
+  mode?: "dm" | "group";
 }) {
   const [connected, setConnected] = useState(initialConnected);
   const [isPending, startTransition] = useTransition();
@@ -60,6 +67,40 @@ export function TelegramConnectCard({
           Not configured yet — ask admin to set <code className="rounded bg-slate-100 px-1">TELEGRAM_BOT_TOKEN</code> (and{" "}
           <code className="rounded bg-slate-100 px-1">TELEGRAM_BOT_USERNAME</code>) on the server, then reload.
         </p>
+      </div>
+    );
+  }
+
+  // 2026-10-01 — GROUP mode: punches go to one shared Telegram group with
+  // your name prefixed, so there is no personal chat to connect. The Test
+  // button still works (it posts a test message to the group).
+  if (mode === "group") {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold text-slate-700">📱 Telegram Punch Notifications</h2>
+          <span
+            title="Admin enabled group mode: every punch in/out is posted to a shared Telegram group — no personal connect needed"
+            className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700"
+          >
+            📨 Group mode
+          </span>
+        </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Punch In/Out alerts ab ek shared Telegram group me jaate hain (aapke naam ke saath) — koi personal connect ki zaroorat nahi.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={runTest}
+            disabled={isPending}
+            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+          >
+            {isPending ? "Sending…" : "🧪 Test"}
+          </button>
+          {testResult?.ok && <span className="text-xs text-green-700">✓ Test sent — check the Telegram group</span>}
+          {testResult && !testResult.ok && <span className="text-xs text-red-600">{testResult.error}</span>}
+        </div>
       </div>
     );
   }

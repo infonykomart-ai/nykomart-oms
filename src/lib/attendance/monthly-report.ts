@@ -66,16 +66,21 @@ export type ReportEmployee = {
 
 const OFFICE_START_MIN = 9 * 60 + 30; // 9:30 AM
 const OFFICE_END_MIN = 18 * 60 + 30; // 6:30 PM
+// 2026-10-01 — exported for range-report.ts (the Daily/Periodic/Yearly
+// sibling of this module): same IST time labels + same 9:30/18:30 shift
+// anchors, so all four report families measure Late IN / Early OUT
+// identically.
+export { OFFICE_START_MIN, OFFICE_END_MIN };
 
 // Converts a timestamptz instant to IST minutes-since-midnight / a
 // "h:mm AM/PM" label — small local helpers rather than pulling in a date
 // library, same convention as ist-date.ts's own istShiftedNow() trick.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-function istMinutesOfDay(iso: string): number {
+export function istMinutesOfDay(iso: string): number {
   const shifted = new Date(new Date(iso).getTime() + IST_OFFSET_MS);
   return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
 }
-function istTimeLabel(iso: string | null): string {
+export function istTimeLabel(iso: string | null): string {
   if (!iso) return "—";
   const mins = istMinutesOfDay(iso);
   let h = Math.floor(mins / 60);
@@ -85,10 +90,10 @@ function istTimeLabel(iso: string | null): string {
   if (h === 0) h = 12;
   return `${h}:${String(m).padStart(2, "0")} ${ampm}`;
 }
-function weekdayLabel(dateStr: string): string {
+export function weekdayLabel(dateStr: string): string {
   return new Date(dateStr + "T12:00:00Z").toLocaleDateString("en-IN", { weekday: "short", timeZone: "UTC" });
 }
-function fmtDate(dateStr: string): string {
+export function fmtDate(dateStr: string): string {
   const [y, m, d] = dateStr.split("-");
   return `${d}-${m}-${y}`;
 }

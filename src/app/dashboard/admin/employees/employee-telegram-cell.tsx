@@ -19,11 +19,39 @@
 import { useState, useTransition } from "react";
 import { testEmployeeTelegram, type TelegramTestState } from "./actions";
 
-export function EmployeeTelegramCell({ employeeId, raw }: { employeeId: string; raw: string | null }) {
+export function EmployeeTelegramCell({
+  employeeId,
+  raw,
+  botUsername,
+}: {
+  employeeId: string;
+  raw: string | null;
+  // 2026-10-01 — "Copy connect link": the admin hands each employee THEIR
+  // OWN deep link (t.me/<bot>?start=<employee id>) over WhatsApp/SMS so
+  // the employee only has to press Start once — no typing, no guessing.
+  // null = TELEGRAM_BOT_USERNAME not set on the server → button hidden.
+  botUsername?: string | null;
+}) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<TelegramTestState | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const connected = !!raw && raw.trim().length > 0;
+  const connectLink = botUsername ? `https://t.me/${botUsername}?start=${employeeId}` : null;
+
+  function copyLink() {
+    if (!connectLink) return;
+    void navigator.clipboard
+      .writeText(connectLink)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        setCopied(false);
+        window.prompt("Copy this connect link:", connectLink);
+      });
+  }
 
   function runTest() {
     setResult(null);
@@ -53,7 +81,7 @@ export function EmployeeTelegramCell({ employeeId, raw }: { employeeId: string; 
           </span>
         )}
       </div>
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-1 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={runTest}
@@ -62,6 +90,16 @@ export function EmployeeTelegramCell({ employeeId, raw }: { employeeId: string; 
         >
           {isPending ? "Sending…" : "🧪 Test"}
         </button>
+        {connectLink && (
+          <button
+            type="button"
+            onClick={copyLink}
+            title="Copy this employee's personal Telegram connect link — WhatsApp it to them; they only need to press Start once"
+            className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100"
+          >
+            {copied ? "✓ Copied" : "🔗 Copy link"}
+          </button>
+        )}
         {result && result.ok && (
           <span className="text-xs text-green-700">
             ✓ Sent{result.to ? ` to ${result.to}` : ""} — check Telegram

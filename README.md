@@ -42,6 +42,24 @@ Telegram DMs, one per employee (the WhatsApp channel for this flow is OFF):
   `employees.telegram_chat_id`).
 - Sending code: `src/lib/attendance/telegram-notify.ts`; connect/Test actions live in
   `src/app/dashboard/attendance/actions.ts`; admin Test button on the Employees page.
+- Destination mode (2026-10-01): default is a **personal DM per employee**. Set
+  `TELEGRAM_ATTENDANCE_MODE=group` + `TELEGRAM_ATTENDANCE_CHAT_ID=<group chat id>` (the bot
+  must be a member of that group) to post every punch to ONE shared Telegram group instead,
+  employee name prefixed — group mode needs **no per-employee connect/Start step** at all.
+  Unset/typo'd config always falls back to DM.
+- The Employees page's Telegram cell has a **🔗 Copy link** button that copies that
+  employee's personal `t.me/<bot>?start=<id>` deep link so admins can WhatsApp it to them.
+
+**Attendance reporting suite (2026-10-01)** — TeamOffice-style reports under
+`/dashboard/attendance/admin` (nav strip in its header): **Dashboard** (today's stat cards +
+daily-status donut + present-per-day bar chart), **Daily / Monthly / Periodic / Yearly
+reports** (company/employee filters, PDF/Excel/Word/CSV export via the shared ExportBar),
+and **Import Punch Report** (`.../admin/import`) — drop in a TeamOffice (or any
+Empcode/Date/IN/OUT) CSV/XLSX to backfill punches recorded outside the app; imported rows
+land in `attendance` (source `TeamOffice Import`, device columns + match/mismatch flags)
+so reports and the salary pipeline count those days like any web punch. Logout still
+records the evening Punch Out (with an explicit confirm dialog when today's punch is open);
+not logging out means no punch out.
 
 ## Database & schema workflow (important)
 
