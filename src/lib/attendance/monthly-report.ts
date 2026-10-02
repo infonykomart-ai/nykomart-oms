@@ -53,6 +53,17 @@ export type AttendanceRow = {
   punch_out: string | null;
   work_hours: number | null;
   status: DayCategory | null;
+  // 2026-10-02 (TeamOffice parity round) — OPTIONAL extras only the range
+  // report loader (range-report-data.ts) selects; the Monthly report's own
+  // query stays lean and simply leaves them undefined.
+  store_id?: string | null;
+  source?: string | null;
+  punch_in_lat?: number | null;
+  punch_in_lng?: number | null;
+  punch_out_lat?: number | null;
+  punch_out_lng?: number | null;
+  leave_type_id?: string | null;
+  leave_unpaid?: boolean | null;
 };
 
 export type ReportEmployee = {
@@ -62,6 +73,9 @@ export type ReportEmployee = {
   company_id: string;
   company_name: string;
   date_of_joining: string | null;
+  // 2026-10-02 — TeamOffice parity: free-text department on employees
+  // (db/2026-10-02-employee-department.sql); NULL renders as "—".
+  department: string | null;
 };
 
 const OFFICE_START_MIN = 9 * 60 + 30; // 9:30 AM
@@ -131,6 +145,13 @@ export function buildMonthlyReport({
   const rows: ReportRow[] = [];
 
   for (const emp of employees) {
+    // 2026-10-02 — every row pushed below belongs to THIS employee, so
+    // stamp the Department column once per employee instead of at each of
+    // the ~15 push sites (a forgotten site would silently drop it).
+    const rowStart = rows.length;
+    const stampDepartment = () => {
+      for (let i = rowStart; i < rows.length; i++) rows[i].department = emp.department;
+    };
     const attByDate = byEmployeeDate.get(emp.id) ?? new Map<string, AttendanceRow>();
     const categorized = categorizeMonth({
       year,
@@ -160,6 +181,7 @@ export function buildMonthlyReport({
         week_off: counts["Week Off"],
         total_days: categorized.length,
       });
+      stampDepartment();
       continue;
     }
 
@@ -211,72 +233,71 @@ export function buildMonthlyReport({
         rows.push({ date: fmtDate(d.date), employee: emp.name, company: emp.company_name, punch_in: istTimeLabel(att.punch_in) });
       }
     }
+    stampDepartment();
   }
 
   return { columns: columnsFor(reportKey), rows };
-}
-
-function columnsFor(reportKey: ReportKey): ReportColumnDef[] {
+}function columnsFor(reportKey: ReportKey): ReportColumnDef[] {
   switch (reportKey) {
     case "summary":
       return [
-        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "company", label: "Company" },
+        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "present", label: "Present" }, { key: "late", label: "Late" }, { key: "half_day", label: "Half Day" },
         { key: "leave", label: "Leave" }, { key: "absent", label: "Absent" }, { key: "holiday", label: "Holiday" },
         { key: "week_off", label: "Week Off" }, { key: "total_days", label: "Total Days" },
       ];
     case "datewise":
       return [
-        { key: "date", label: "Date" }, { key: "day", label: "Day" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "day", label: "Day" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "status", label: "Status" }, { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "work_hours", label: "Work Hours" },
       ];
     case "inout":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "status", label: "Status" }, { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "work_hours", label: "Work Hours" },
       ];
     case "absent":
     case "half_day":
       return [
         { key: "date", label: "Date" }, { key: "day", label: "Day" }, { key: "employee", label: "Employee" },
-        { key: "employee_code", label: "Code" }, { key: "company", label: "Company" },
+        { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
       ];
     case "late_in":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_in", label: "Punch In" }, { key: "minutes_late", label: "Minutes Late" },
       ];
     case "early_in":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_in", label: "Punch In" }, { key: "minutes_early", label: "Minutes Early" },
       ];
     case "early_out":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_out", label: "Punch Out" }, { key: "minutes_early", label: "Minutes Early" },
       ];
     case "overtime":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
-        { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "work_hours", label: "Work Hours" }, { key: "overtime_minutes", label: "Overtime (min)" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "work_hours", label: "Work Hours" },
+        { key: "overtime_minutes", label: "Overtime (min)" },
       ];
     case "mis_punch":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" }, { key: "punch_in", label: "Punch In (no Punch Out)" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "punch_in", label: "Punch In (no Punch Out)" },
       ];
   }
 }
 
-// Not built this round — flagged, not silently skipped:
-//  - Department filter/grouping: `employees` has no department field in
-//    this schema at all (only role_id/designation) — TeamOffice's
-//    Company/Department/Employee 3-level filter is Company/Employee here,
-//    2 levels.
-//  - GPS Approve/Pending/Rejected reports: this app's Web Punch has no GPS
-//    capture anywhere (confirmed — no gps/location column on `attendance`),
-//    so there is nothing to report on.
-//  - COFF (Compensatory Off) report: not a concept this system tracks
-//    (categorizeMonth's DayCategory has no COFF state).
-//  - "Month Special Report": TeamOffice-specific, not a defined report
-//    shape here to replicate.
+// NOT built as report TYPES this round (2026-10-02) — flagged, not
+// silently skipped:
+//  - "Month Special Report": TeamOffice-specific, no defined report shape
+//    here to replicate.
+// Department column + filter, GPS punch coordinates (Location/GPS report
+// pages) and COFF all ARRIVED this round (free-text employees.department,
+// attendance.punch_in/out_lat,lng captured by the Web Punch buttons, and
+// COFF derived from week-off/holiday days actually worked) — they live in
+// the range-report family (range-report.ts + the Daily/Periodic/Location/
+// Leave/GPS/COFF pages) rather than duplicated here.

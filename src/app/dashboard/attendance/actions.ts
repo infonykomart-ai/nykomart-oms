@@ -13,21 +13,42 @@ import { connectEmployeeTelegram, sendTestTelegram } from "@/lib/attendance/tele
 
 export type SimpleActionState = { error: string | null; success: boolean };
 
-/** Manual Punch In button — backup for the automatic login punch-in. */
-export async function manualPunchIn(): Promise<SimpleActionState> {
+// 2026-10-02 — Web-Punch GPS: PunchButtons collects a one-shot browser
+// geolocation fix BEFORE dispatching the action and stuffs it into the
+// FormData as lat/lng. Parsed defensively here (server never trusts a
+// client payload): missing / non-numeric / out-of-range → null → the
+// punch stores no coordinates, exactly like a denied permission would.
+function parsePunchGeo(formData?: FormData): { lat: number; lng: number } | null {
+  const rawLat = formData?.get("lat");
+  const rawLng = formData?.get("lng");
+  if (typeof rawLat !== "string" || typeof rawLng !== "string") return null;
+  const lat = Number(rawLat);
+  const lng = Number(rawLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+/**
+ * Manual Punch In button — backup for the automatic login punch-in.
+ * `formData` is REQUIRED (not optional) on purpose: with an optional 2nd
+ * param, useActionState's types resolve to its zero-payload overload and
+ * the dispatch rejects the FormData we pass.
+ */
+export async function manualPunchIn(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
   const employee = await requireCapability("attendance_punch");
   const supabase = createServiceRoleClient();
-  const result = await recordPunchIn(supabase, employee.id, employee.currentCompanyId, "Manual Entry");
+  const result = await recordPunchIn(supabase, employee.id, employee.currentCompanyId, "Manual Entry", parsePunchGeo(formData));
   if (!result.ok) return { error: result.error, success: false };
   revalidatePath("/dashboard/attendance");
   return { error: null, success: true };
 }
 
-/** Manual Punch Out button. */
-export async function manualPunchOut(): Promise<SimpleActionState> {
+/** Manual Punch Out button — payload contract identical to manualPunchIn. */
+export async function manualPunchOut(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
   const employee = await requireCapability("attendance_punch");
   const supabase = createServiceRoleClient();
-  const result = await recordPunchOut(supabase, employee.id);
+  const result = await recordPunchOut(supabase, employee.id, parsePunchGeo(formData));
   if (!result.ok) return { error: result.error, success: false };
   if (result.noPunchInFound) return { error: "Punch in first before punching out.", success: false };
   revalidatePath("/dashboard/attendance");

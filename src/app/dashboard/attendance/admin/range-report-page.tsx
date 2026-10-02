@@ -90,6 +90,8 @@ export async function RangeReportPage({
         reportTypes={reportTypes}
         companies={data.companies}
         employees={data.allEmployees}
+        departments={data.departments}
+        department={data.scope.department}
         companyScope={data.scope.companyScope}
         selectedCompanyIds={data.scope.companyScope === "few" ? data.scope.requestedCompanyIds : data.scope.effectiveCompanyIds}
         employeeScope={data.scope.employeeScope}

@@ -61,6 +61,37 @@ so reports and the salary pipeline count those days like any web punch. Logout s
 records the evening Punch Out (with an explicit confirm dialog when today's punch is open);
 not logging out means no punch out.
 
+**TeamOffice parity round 2 (2026-10-02)** — the rest of the Report menu + the data it
+needs (all under the same nav strip):
+
+- **📍 Location Report** (`.../admin/location-report`) — per-day work location: the
+  `attendance.store_id` store name when set, else the Web-Punch GPS fix, else "—".
+- **📡 GPS Report** (`.../admin/gps-report`) — punch-wise coordinates + Google Maps link;
+  rows without coords still list, so it doubles as a missing-location audit. Coordinates
+  come from the **Web Punch buttons**, which now ask the browser for a one-shot
+  geolocation fix (best-effort — denied/timeout punches WITHOUT coords, never blocked;
+  server-side login/logout punches and imports have no browser, so they stay NULL).
+- **🌴 Leave Report** (`.../admin/leave-report`) — per-employee leave days (paid/unpaid
+  split + leave-type breakdown) and Approved/Pending/Rejected `leave_requests` counts
+  for the period.
+- **🏖️ COFF Report** (`.../admin/coff-report`) — compensatory off, DERIVED not stored:
+  days actually worked on a weekly-off day/holiday minus Leave days under a leave type
+  named COFF/Comp Off (balance can go negative, shown as-is).
+- **💰 Salary Report** (`.../admin/salary-report`, gated `salary_admin`) — month-wise
+  per-employee table (attendance counts, gross, attendance deduction, PF/ESI/PT, net,
+  paid status). Every figure reuses the exact payroll functions `/dashboard/salary`
+  uses, so the two can never disagree; paying still happens on `/dashboard/salary`.
+- **📒 Month Summary** (`.../admin/month-summary`) — the calendar-style sheet: one
+  employee × one month as a Mon-first wall calendar (per-day status badge + IN/OUT),
+  totals strip, day-wise table, Print/PDF + export.
+- **Department column + filter** — `employees.department` is a new free-text field
+  (Employees → Create/Edit Details). Every report row now carries a Department column,
+  and the Monthly/Daily/Periodic/Yearly filters gained a Department dropdown (all
+  report types ride the shared `range-report.ts` engine + `ReportResults` renderer).
+- Migrations to run once on the live DB: `db/2026-10-02-employee-department.sql` and
+  `db/2026-10-02-attendance-punch-geo.sql` (both idempotent; already folded into
+  `db/schema.sql`, types regenerated).
+
 ## Database & schema workflow (important)
 
 - `db/schema.sql` is the **only** thing needed to stand up a fresh database — every dated

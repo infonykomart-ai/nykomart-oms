@@ -12,6 +12,8 @@ const labelClass = "mb-1 block text-sm font-medium text-slate-700";
 export type EmployeeDetails = ProfileFieldDefaults & {
   id: string;
   designation: string | null;
+  // 2026-10-02 — TeamOffice parity: department column/filter on reports.
+  department: string | null;
   employee_code: string | null;
   date_of_joining: string | null;
   // 2026-09-11 (Payroll Phase 3) — org chart.
@@ -53,6 +55,10 @@ export function EmployeeDetailsForm({
         <div>
           <label className={labelClass} htmlFor="designation">Designation</label>
           <input id="designation" name="designation" defaultValue={employee.designation ?? ""} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="department">Department</label>
+          <input id="department" name="department" defaultValue={employee.department ?? ""} placeholder="e.g. Sales, Accounts" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="employee_code">Employee Code</label>

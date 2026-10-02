@@ -93,6 +93,10 @@ export type Database = {
           entered_on: string;
           leave_type_id: string | null;
           leave_unpaid: boolean;
+          punch_in_lat: number | null;
+          punch_in_lng: number | null;
+          punch_out_lat: number | null;
+          punch_out_lng: number | null;
         };
         Insert: {
           id?: string;
@@ -114,6 +118,10 @@ export type Database = {
           entered_on?: string;
           leave_type_id?: string | null;
           leave_unpaid?: boolean;
+          punch_in_lat?: number | null;
+          punch_in_lng?: number | null;
+          punch_out_lat?: number | null;
+          punch_out_lng?: number | null;
         };
         Update: {
           id?: string;
@@ -135,6 +143,10 @@ export type Database = {
           entered_on?: string;
           leave_type_id?: string | null;
           leave_unpaid?: boolean;
+          punch_in_lat?: number | null;
+          punch_in_lng?: number | null;
+          punch_out_lat?: number | null;
+          punch_out_lng?: number | null;
         };
         Relationships: [
           {
@@ -4135,6 +4147,7 @@ export type Database = {
           companion_enabled: boolean;
           companion_name: string | null;
           telegram_chat_id: string | null;
+          department: string | null;
         };
         Insert: {
           id?: string;
@@ -4175,6 +4188,7 @@ export type Database = {
           companion_enabled?: boolean;
           companion_name?: string | null;
           telegram_chat_id?: string | null;
+          department?: string | null;
         };
         Update: {
           id?: string;
@@ -4215,6 +4229,7 @@ export type Database = {
           companion_enabled?: boolean;
           companion_name?: string | null;
           telegram_chat_id?: string | null;
+          department?: string | null;
         };
         Relationships: [
           {
