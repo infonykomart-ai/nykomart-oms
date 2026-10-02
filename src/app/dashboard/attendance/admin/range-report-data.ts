@@ -10,7 +10,7 @@
 // worse than no report at all.
 import { createClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
-import { buildRangeReport, type RangeReportKey } from "@/lib/attendance/range-report";
+import { buildRangeReport, type RangeReportKey, type RangeLeaveRequest } from "@/lib/attendance/range-report";
 import type { AttendanceRow, ReportColumnDef, ReportEmployee, ReportRow } from "@/lib/attendance/monthly-report";
 import type { requireCapability } from "@/lib/auth/require-capability";
 
@@ -23,6 +23,9 @@ export type RangeScope = {
   requestedCompanyIds: string[];
   employeeScope: "all" | "few";
   requestedEmployeeIds: string[];
+  // 2026-10-02 — TeamOffice parity: Department filter (free-text
+  // employees.department). "" = all departments.
+  department: string;
 };
 
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -31,7 +34,11 @@ export function validDate(s: unknown, fallback: string): string {
   return typeof s === "string" && DATE_RE.test(s) ? s : fallback;
 }
 
-const ATT_SELECT = "employee_id, attendance_date, punch_in, punch_out, work_hours, status";
+// 2026-10-02 — extended for the Location/GPS/Leave/COFF report types:
+// store/source + the four punch-geo columns + the leave day's type/paid
+// flag. The day-level report types ignore the extras.
+const ATT_SELECT =
+  "employee_id, attendance_date, punch_in, punch_out, work_hours, status, store_id, source, punch_in_lat, punch_in_lng, punch_out_lat, punch_out_lng, leave_type_id, leave_unpaid";
 const PAGE = 1000;
 
 async function fetchAttendancePaged(
@@ -77,6 +84,7 @@ export async function loadRangeReport({
   error: string | null;
   companies: { id: string; name: string }[];
   allEmployees: { id: string; name: string; company_id: string }[];
+  departments: string[];
   scope: RangeScope;
   columns: ReportColumnDef[];
   rows: ReportRow[];
@@ -102,7 +110,7 @@ export async function loadRangeReport({
   const { data: employeesRaw } = effectiveCompanyIds.length
     ? await supabase
         .from("employees")
-        .select("id, name, employee_code, company_id, date_of_joining")
+        .select("id, name, employee_code, company_id, date_of_joining, department")
         .in("company_id", effectiveCompanyIds)
         .eq("active", true)
         .order("name")
@@ -112,10 +120,16 @@ export async function loadRangeReport({
   const employeeScope: "all" | "few" = sp.employeeScope === "few" ? "few" : "all";
   const requestedEmployeeIds = typeof sp.employeeIds === "string" && sp.employeeIds ? sp.employeeIds.split(",").filter(Boolean) : [];
   const effectiveEmployeeIdSet = employeeScope === "few" && requestedEmployeeIds.length > 0 ? new Set(requestedEmployeeIds) : null;
+  // 2026-10-02 — Department filter: exact, case-insensitive match on the
+  // free-text employees.department (""/absent = no filter). Applied AFTER
+  // the company/employee scope so the checkbox counts stay truthful.
+  const department = typeof sp.department === "string" ? sp.department.trim() : "";
+  const departmentLower = department.toLowerCase();
 
   const companyNameMap = new Map(companies.map((c) => [c.id, c.name]));
   const reportEmployees: ReportEmployee[] = allEmployeesRaw
     .filter((e) => effectiveEmployeeIdSet === null || effectiveEmployeeIdSet.has(e.id))
+    .filter((e) => !departmentLower || (e.department ?? "").trim().toLowerCase() === departmentLower)
     .map((e) => ({
       id: e.id,
       name: e.name,
@@ -123,7 +137,14 @@ export async function loadRangeReport({
       company_id: e.company_id,
       company_name: companyNameMap.get(e.company_id) ?? "—",
       date_of_joining: e.date_of_joining,
+      department: e.department,
     }));
+
+  // Distinct department values across the accessible companies — the
+  // filter dropdown's options (sorted, blanks dropped).
+  const departments = Array.from(
+    new Set(allEmployeesRaw.map((e) => (e.department ?? "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
 
   const scope: RangeScope = {
     reportKey,
@@ -132,10 +153,11 @@ export async function loadRangeReport({
     requestedCompanyIds,
     employeeScope,
     requestedEmployeeIds,
+    department,
   };
 
   const employeeIdsForQuery = reportEmployees.map((e) => e.id);
-  const [attResult, { data: companyHolidaysRaw }, { data: globalHolidaysRaw }] = await Promise.all([
+  const [attResult, { data: companyHolidaysRaw }, { data: globalHolidaysRaw }, { data: storesRaw }, { data: leaveTypesRaw }, { data: leaveRequestsRaw }] = await Promise.all([
     employeeIdsForQuery.length
       ? fetchAttendancePaged(employeeIdsForQuery, startDate, endDate)
       : Promise.resolve({ rows: [] as AttendanceRow[], error: null }),
@@ -143,9 +165,32 @@ export async function loadRangeReport({
       ? supabase.from("holidays").select("company_id, holiday_date").in("company_id", effectiveCompanyIds).gte("holiday_date", startDate).lte("holiday_date", endDate)
       : Promise.resolve({ data: [] as { company_id: string | null; holiday_date: string }[] }),
     supabase.from("holidays").select("holiday_date").is("company_id", null).gte("holiday_date", startDate).lte("holiday_date", endDate),
+    // 2026-10-02 — only what the selected report type actually reads:
+    // Location → store names; Leave/COFF → leave type names; Leave alone
+    // → leave requests overlapping the range. Extra queries for other
+    // report types would just be wasted round-trips.
+    reportKey === "location" && effectiveCompanyIds.length
+      ? supabase.from("stores").select("id, name").in("company_id", effectiveCompanyIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    (reportKey === "leave" || reportKey === "coff") && effectiveCompanyIds.length
+      ? supabase.from("leave_types").select("id, name").in("company_id", effectiveCompanyIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    reportKey === "leave" && effectiveCompanyIds.length
+      ? supabase
+          .from("leave_requests")
+          .select("employee_id, from_date, to_date, status, leave_type_id")
+          .in("company_id", effectiveCompanyIds)
+          .lte("from_date", endDate)
+          .gte("to_date", startDate)
+      : Promise.resolve({ data: [] as RangeLeaveRequest[] }),
   ]);
 
-  const base = { companies, allEmployees: allEmployeesRaw.map((e) => ({ id: e.id, name: e.name, company_id: e.company_id })), scope };
+  const base = {
+    companies,
+    allEmployees: allEmployeesRaw.map((e) => ({ id: e.id, name: e.name, company_id: e.company_id })),
+    departments,
+    scope,
+  };
   if (attResult.error) return { error: `Could not load attendance: ${attResult.error}`, columns: [], rows: [], ...base };
 
   const globalHolidayDates = new Set((globalHolidaysRaw ?? []).map((h) => h.holiday_date));
@@ -167,7 +212,20 @@ export async function loadRangeReport({
     // categorizeMonth needs IST "today" (days after it = Future, not
     // Absent) — todayIST() is the same IST clock every other page uses.
     todayStr: todayIST(),
+    storeNamesById: new Map((storesRaw ?? []).map((s) => [s.id, s.name])),
+    leaveTypeNamesById: new Map((leaveTypesRaw ?? []).map((t) => [t.id, t.name])),
+    leaveRequestsByEmployee: groupLeaveRequests(leaveRequestsRaw ?? []),
   });
 
   return { error: null, columns, rows, ...base };
+}
+
+function groupLeaveRequests(reqs: RangeLeaveRequest[]): Map<string, RangeLeaveRequest[]> {
+  const byEmployee = new Map<string, RangeLeaveRequest[]>();
+  for (const r of reqs) {
+    const list = byEmployee.get(r.employee_id) ?? [];
+    list.push(r);
+    byEmployee.set(r.employee_id, list);
+  }
+  return byEmployee;
 }

@@ -17,6 +17,8 @@ type EmployeeOpt = { id: string; name: string; company_id: string };
 export function MonthlyReportFilters({
   companies,
   employees,
+  departments,
+  department,
   month,
   reportKey,
   companyScope,
@@ -26,6 +28,9 @@ export function MonthlyReportFilters({
 }: {
   companies: Company[];
   employees: EmployeeOpt[];
+  /** Distinct employees.department values (2026-10-02 TeamOffice parity). */
+  departments: string[];
+  department: string;
   month: string;
   reportKey: ReportKey;
   companyScope: "all" | "few";
@@ -36,6 +41,7 @@ export function MonthlyReportFilters({
   const router = useRouter();
   const [localMonth, setLocalMonth] = useState(month);
   const [localReport, setLocalReport] = useState<ReportKey>(reportKey);
+  const [localDepartment, setLocalDepartment] = useState(department);
   const [localCompanyScope, setLocalCompanyScope] = useState(companyScope);
   const [localCompanyIds, setLocalCompanyIds] = useState<Set<string>>(new Set(selectedCompanyIds));
   const [localEmployeeScope, setLocalEmployeeScope] = useState(employeeScope);
@@ -52,6 +58,7 @@ export function MonthlyReportFilters({
     const params = new URLSearchParams();
     params.set("month", localMonth);
     params.set("report", localReport);
+    if (localDepartment) params.set("department", localDepartment);
     params.set("companyScope", localCompanyScope);
     if (localCompanyScope === "few") params.set("companyIds", Array.from(localCompanyIds).join(","));
     params.set("employeeScope", localEmployeeScope);
@@ -76,6 +83,26 @@ export function MonthlyReportFilters({
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
         </div>
+      </div>
+
+      {/* 2026-10-02 — Department filter (TeamOffice's 3-level
+          Company/Department/Employee filter). Options = distinct
+          employees.department values the loader found. */}
+      <div className="mt-4">
+        <label className="mb-1 block text-xs font-medium text-slate-600">Department</label>
+        <select
+          value={localDepartment}
+          onChange={(e) => setLocalDepartment(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="">All Departments</option>
+          {departments.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        {departments.length === 0 && (
+          <p className="mt-1 text-xs text-slate-400">No departments set yet — add one from Employees → Edit Details.</p>
+        )}
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -164,7 +191,7 @@ export function MonthlyReportFilters({
         ⬇️ Generate Report
       </button>
       <p className="mt-2 text-xs text-slate-400">
-        Department filter isn&apos;t available — this system doesn&apos;t have a department field on employees yet (only role/designation).
+        Department comes from the free-text field on each employee (Employees → Edit Details); leave it empty for &quot;—&quot;.
       </p>
     </div>
   );

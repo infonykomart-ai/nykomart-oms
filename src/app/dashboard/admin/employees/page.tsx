@@ -32,7 +32,7 @@ export default async function EmployeesAdminPage() {
       supabase
         .from("employees")
         .select(
-          "id, name, email, active, designation, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
+          "id, name, email, active, designation, department, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
         )
         .order("created_at", { ascending: false }),
       supabase.from("roles").select("id, name").order("name"),
@@ -125,6 +125,9 @@ export default async function EmployeesAdminPage() {
                     <td className="px-4 py-3 text-slate-600">
                       <div>{roleName.get(e.role_id) ?? "—"}</div>
                       <div className="text-xs text-slate-400">{companyName.get(e.company_id) ?? "—"}</div>
+                      {/* 2026-10-02 — TeamOffice parity: department badge
+                          (edited from the row&apos;s Edit Details panel). */}
+                      <div className="text-xs text-slate-400">{e.department ?? "—"}</div>
                     </td>
                     <td className="px-4 py-3">
                       <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} botUsername={process.env.TELEGRAM_BOT_USERNAME ?? null} />

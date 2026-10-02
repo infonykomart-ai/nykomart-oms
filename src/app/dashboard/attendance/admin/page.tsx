@@ -596,6 +596,45 @@ export default async function AttendanceAdminPage({
           >
             ⬆️ Import
           </Link>
+          {/* 2026-10-02 — TeamOffice parity round 2: the rest of the
+              Report menu (Location / Leave / Salary / Yearly siblings) +
+              the calendar Month Summary sheet. */}
+          <Link
+            href="/dashboard/attendance/admin/month-summary"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            📒 Month Summary
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/location-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            📍 Location
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/gps-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            📡 GPS
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/leave-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            🌴 Leave
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/coff-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            🏖️ COFF
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/salary-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            💰 Salary
+          </Link>
         </nav>
       </div>
 

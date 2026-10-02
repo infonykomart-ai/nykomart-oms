@@ -14,11 +14,26 @@
 // (Apr 1 → Mar 31) with the Performance summary — all three pages are
 // thin wrappers around buildRangeReport() below.
 //
-// Departments / GPS / COFF are still intentionally absent (same "Not
-// built" reasoning as monthly-report.ts — this schema has no department,
-// no GPS capture and no COFF concept to report on).
+// 2026-10-02 (TeamOffice parity round 2) — the report types that were
+// "intentionally absent" above now exist, all riding this same engine:
+//   - Department: a stamped column on EVERY row type (+ filter upstream
+//     in range-report-data.ts) off the new free-text employees.department.
+//   - Location Report: per-day site per employee — attendance.store_id's
+//     store name when set, else the Web-Punch GPS fix, else "—".
+//   - GPS Report: punch-wise coordinates with a Google Maps link
+//     (attendance.punch_in/out_lat,lng — captured best-effort by the Web
+//     Punch buttons; server-side paths never have coords, render "—").
+//   - Leave Report: leave days (paid/unpaid split + leave-type breakdown)
+//     plus Approved/Pending/Rejected request counts for the period.
+//   - COFF Report: compensatory-off credit DERIVED, not stored — days
+//     actually worked on your weekly-off/holiday (explicit status wins in
+//     categorizeMonth, so a Present on Sunday is visible here) minus
+//     Leave days under a leave type whose name matches COFF/Comp Off.
+//     There is no COFF state in DayCategory by design; this report is the
+//     whole representation of the concept.
 import { categorizeMonth, type DayCategory } from "./payroll";
 import { EXPECTED_WORK_MINUTES } from "./work-hours";
+import { istDayOfWeek } from "./ist-date";
 import {
   OFFICE_START_MIN,
   OFFICE_END_MIN,
@@ -43,7 +58,11 @@ export type RangeReportKey =
   | "early_out"
   | "overtime"
   | "half_day"
-  | "mis_punch";
+  | "mis_punch"
+  | "location"
+  | "gps"
+  | "leave"
+  | "coff";
 
 export const RANGE_REPORT_TYPES: { key: RangeReportKey; label: string }[] = [
   { key: "day", label: "Day Performance (per employee, with Late IN / Early OUT)" },
@@ -57,7 +76,21 @@ export const RANGE_REPORT_TYPES: { key: RangeReportKey; label: string }[] = [
   { key: "overtime", label: "Over Time Report" },
   { key: "half_day", label: "Half Day Report" },
   { key: "mis_punch", label: "Mis Punch Report (IN but no OUT)" },
+  { key: "location", label: "Location Report (day-wise store / GPS)" },
+  { key: "gps", label: "GPS Report (punch-wise coordinates)" },
+  { key: "leave", label: "Leave Report (days + requests)" },
+  { key: "coff", label: "COFF Report (week-off/holiday work credit)" },
 ];
+
+// 2026-10-02 — Leave Report input: one row per leave_requests entry
+// overlapping the selected range (the loader pre-filters the overlap).
+export type RangeLeaveRequest = {
+  employee_id: string;
+  from_date: string;
+  to_date: string;
+  status: string; // leave_request_status: Pending / Approved / Rejected
+  leave_type_id: string | null;
+};
 
 const YEARLY_TYPES: { key: RangeReportKey; label: string }[] = [
   { key: "performance", label: "Yearly Performance Report" },
@@ -96,6 +129,9 @@ export function buildRangeReport({
   holidayDatesByCompany,
   weeklyOffDaysByCompany,
   todayStr,
+  storeNamesById = new Map<string, string>(),
+  leaveTypeNamesById = new Map<string, string>(),
+  leaveRequestsByEmployee = new Map<string, RangeLeaveRequest[]>(),
 }: {
   reportKey: RangeReportKey;
   startDate: string; // YYYY-MM-DD, inclusive
@@ -105,6 +141,12 @@ export function buildRangeReport({
   holidayDatesByCompany: Map<string, Set<string>>;
   weeklyOffDaysByCompany: Map<string, number[]>;
   todayStr: string;
+  /** location report: attendance.store_id → store name. */
+  storeNamesById?: Map<string, string>;
+  /** coff/leave reports: leave_types.id → name (for breakdowns/COFF matching). */
+  leaveTypeNamesById?: Map<string, string>;
+  /** leave report: employee → leave_requests already overlapping [startDate..endDate]. */
+  leaveRequestsByEmployee?: Map<string, RangeLeaveRequest[]>;
 }): { columns: ReportColumnDef[]; rows: ReportRow[] } {
   const byEmployeeDate = new Map<string, Map<string, AttendanceRow>>();
   for (const row of attendanceRows) {
@@ -120,6 +162,13 @@ export function buildRangeReport({
   const rows: ReportRow[] = [];
 
   for (const emp of employees) {
+    // 2026-10-02 — every row pushed below belongs to THIS employee: stamp
+    // the Department column once per employee instead of at each push
+    // site (a forgotten site would silently drop it).
+    const rowStart = rows.length;
+    const stampDepartment = () => {
+      for (let i = rowStart; i < rows.length; i++) rows[i].department = emp.department;
+    };
     const attByDate = byEmployeeDate.get(emp.id) ?? new Map<string, AttendanceRow>();
 
     // Every in-range day for this employee, classified by the shared engine.
@@ -167,6 +216,87 @@ export function buildRangeReport({
         week_off: counts["Week Off"],
         work_hours: Math.round(workHours * 100) / 100,
         ot_hours: Math.round((otMinutes / 60) * 100) / 100,
+      });
+      stampDepartment();
+      continue;
+    }
+
+    // 2026-10-02 — COFF (compensatory off): per-employee summary over the
+    // range. Earned = actually worked (Present/Late/Half Day) on a
+    // weekly-off day or a holiday; availed = Leave days under a leave type
+    // named COFF/Comp Off. Balance can legitimately go negative when more
+    // was availed than earned — shown as-is, not clamped, so the record
+    // stays honest.
+    if (reportKey === "coff") {
+      const weeklyOff = weeklyOffDaysByCompany.get(emp.company_id) ?? [];
+      const holidays = holidayDatesByCompany.get(emp.company_id) ?? new Set<string>();
+      const weekOffDates: string[] = [];
+      const holidayDates: string[] = [];
+      let availed = 0;
+      for (const d of days) {
+        const att = attByDate.get(d.date);
+        const worked = d.category === "Present" || d.category === "Late" || d.category === "Half Day";
+        if (worked && weeklyOff.includes(istDayOfWeek(d.date))) weekOffDates.push(fmtDate(d.date));
+        else if (worked && holidays.has(d.date)) holidayDates.push(fmtDate(d.date));
+        if (d.category === "Leave") {
+          const typeName = (att?.leave_type_id && leaveTypeNamesById.get(att.leave_type_id)) || "";
+          if (/coff|comp/i.test(typeName)) availed++;
+        }
+      }
+      const earned = weekOffDates.length + holidayDates.length;
+      rows.push({
+        employee: emp.name,
+        employee_code: emp.employee_code,
+        department: emp.department,
+        company: emp.company_name,
+        week_off_worked: weekOffDates.length,
+        week_off_dates: weekOffDates.join(", ") || "—",
+        holiday_worked: holidayDates.length,
+        holiday_dates: holidayDates.join(", ") || "—",
+        earned,
+        availed,
+        balance: earned - availed,
+      });
+      continue;
+    }
+
+    // 2026-10-02 — Leave Report: per-employee summary for the range.
+    // leave_days comes from categorizeMonth's Leave category (explicit
+    // attendance status — the same source payroll deducts from), the
+    // paid/unpaid split + type breakdown from that day's attendance row,
+    // and the request counts from leave_requests overlapping the range.
+    if (reportKey === "leave") {
+      let paidDays = 0;
+      let unpaidDays = 0;
+      const byType = new Map<string, number>();
+      for (const d of days) {
+        if (d.category !== "Leave") continue;
+        const att = attByDate.get(d.date);
+        if (att?.leave_unpaid) unpaidDays++;
+        else paidDays++;
+        const typeName = (att?.leave_type_id && leaveTypeNamesById.get(att.leave_type_id)) || "Unspecified";
+        byType.set(typeName, (byType.get(typeName) ?? 0) + 1);
+      }
+      let approved = 0;
+      let pending = 0;
+      let rejected = 0;
+      for (const req of leaveRequestsByEmployee.get(emp.id) ?? []) {
+        if (req.status === "Approved") approved++;
+        else if (req.status === "Pending") pending++;
+        else rejected++;
+      }
+      rows.push({
+        employee: emp.name,
+        employee_code: emp.employee_code,
+        department: emp.department,
+        company: emp.company_name,
+        leave_days: paidDays + unpaidDays,
+        paid_days: paidDays,
+        unpaid_days: unpaidDays,
+        leave_types: Array.from(byType, ([name, n]) => `${name}: ${n}`).join(", ") || "—",
+        approved_req: approved,
+        pending_req: pending,
+        rejected_req: rejected,
       });
       continue;
     }
@@ -250,8 +380,62 @@ export function buildRangeReport({
         }
       } else if (reportKey === "mis_punch" && att?.punch_in && !att.punch_out && d.date < todayStr) {
         rows.push({ date: fmtDate(d.date), employee: emp.name, company: emp.company_name, punch_in: istTimeLabel(att.punch_in) });
+      } else if (reportKey === "location" && att) {
+        // 2026-10-02 — Location Report: which site was this employee at
+        // that day. Store name wins when attendance.store_id is set; else
+        // the Web-Punch GPS fix; else "—" (server-side punches/import have
+        // neither). Only days WITH an attendance row are listed — a day
+        // nobody punched has no location to report.
+        const gps =
+          att.punch_in_lat != null && att.punch_in_lng != null
+            ? `📍 ${att.punch_in_lat.toFixed(5)}, ${att.punch_in_lng.toFixed(5)}`
+            : att.punch_out_lat != null && att.punch_out_lng != null
+              ? `📍 ${att.punch_out_lat.toFixed(5)}, ${att.punch_out_lng.toFixed(5)}`
+              : null;
+        const location = (att.store_id && storeNamesById.get(att.store_id)) || gps || "—";
+        rows.push({
+          date: fmtDate(d.date),
+          day: weekdayLabel(d.date),
+          employee: emp.name,
+          employee_code: emp.employee_code,
+          department: emp.department,
+          company: emp.company_name,
+          status: d.category,
+          location,
+          punch_in: istTimeLabel(att.punch_in ?? null),
+          punch_out: istTimeLabel(att.punch_out ?? null),
+          source: att.source ?? "—",
+        });
+      } else if (reportKey === "gps" && att?.punch_in) {
+        // 2026-10-02 — GPS Report: one row per punch, coordinates + a
+        // Google Maps deep link (IN fix preferred, OUT fix as fallback).
+        // Rows without coords still list ("—" + no link) so this doubles
+        // as an audit of punches missing a location.
+        const inGps =
+          att.punch_in_lat != null && att.punch_in_lng != null
+            ? `${att.punch_in_lat.toFixed(5)}, ${att.punch_in_lng.toFixed(5)}`
+            : null;
+        const outGps =
+          att.punch_out_lat != null && att.punch_out_lng != null
+            ? `${att.punch_out_lat.toFixed(5)}, ${att.punch_out_lng.toFixed(5)}`
+            : null;
+        const link = inGps ?? outGps;
+        rows.push({
+          date: fmtDate(d.date),
+          employee: emp.name,
+          employee_code: emp.employee_code,
+          department: emp.department,
+          company: emp.company_name,
+          status: d.category,
+          punch_in: istTimeLabel(att.punch_in),
+          in_gps: inGps ?? "—",
+          punch_out: istTimeLabel(att.punch_out ?? null),
+          out_gps: outGps ?? "—",
+          map: link ? `https://maps.google.com/?q=${encodeURIComponent(link)}` : "—",
+        });
       }
     }
+    stampDepartment();
   }
 
   return { columns: rangeColumnsFor(reportKey), rows };
@@ -262,13 +446,13 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
     case "day":
       return [
         { key: "date", label: "Date" }, { key: "day", label: "Day" }, { key: "employee", label: "Employee" },
-        { key: "employee_code", label: "Code" }, { key: "company", label: "Company" }, { key: "status", label: "Status" },
+        { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" }, { key: "status", label: "Status" },
         { key: "punch_in", label: "IN" }, { key: "punch_out", label: "OUT" }, { key: "work_hours", label: "Work Hrs" },
         { key: "late_in", label: "Late IN" }, { key: "early_out", label: "Early OUT" },
       ];
     case "performance":
       return [
-        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "company", label: "Company" },
+        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "present", label: "Present" }, { key: "late", label: "Late" }, { key: "half_day", label: "Half Day" },
         { key: "leave", label: "Leave" }, { key: "absent", label: "Absent" }, { key: "holiday", label: "Holiday" },
         { key: "week_off", label: "Week Off" }, { key: "work_hours", label: "Work Hrs" }, { key: "ot_hours", label: "OT Hrs" },
@@ -276,12 +460,13 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
     case "present":
       return [
         { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" },
+        { key: "department", label: "Department" },
         { key: "status", label: "Status" }, { key: "punch_in", label: "IN" }, { key: "punch_out", label: "OUT" },
         { key: "work_hours", label: "Work Hrs" },
       ];
     case "inout":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "status", label: "Status" }, { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" },
         { key: "work_hours", label: "Work Hours" },
       ];
@@ -289,33 +474,62 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
     case "half_day":
       return [
         { key: "date", label: "Date" }, { key: "day", label: "Day" }, { key: "employee", label: "Employee" },
-        { key: "employee_code", label: "Code" }, { key: "company", label: "Company" },
+        { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
       ];
     case "late_in":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_in", label: "Punch In" }, { key: "minutes_late", label: "Minutes Late" },
       ];
     case "early_in":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_in", label: "Punch In" }, { key: "minutes_early", label: "Minutes Early" },
       ];
     case "early_out":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_out", label: "Punch Out" }, { key: "minutes_early", label: "Minutes Early" },
       ];
     case "overtime":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "work_hours", label: "Work Hours" },
         { key: "overtime_minutes", label: "Overtime (min)" },
       ];
     case "mis_punch":
       return [
-        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "company", label: "Company" },
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "punch_in", label: "Punch In (no Punch Out)" },
+      ];
+    case "location":
+      return [
+        { key: "date", label: "Date" }, { key: "day", label: "Day" }, { key: "employee", label: "Employee" },
+        { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "status", label: "Status" }, { key: "location", label: "Location" },
+        { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "source", label: "Source" },
+      ];
+    case "gps":
+      return [
+        { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" },
+        { key: "department", label: "Department" }, { key: "company", label: "Company" }, { key: "status", label: "Status" },
+        { key: "punch_in", label: "Punch In" }, { key: "in_gps", label: "In GPS" },
+        { key: "punch_out", label: "Punch Out" }, { key: "out_gps", label: "Out GPS" },
+        { key: "map", label: "Map Link" },
+      ];
+    case "leave":
+      return [
+        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "leave_days", label: "Leave Days" }, { key: "paid_days", label: "Paid" }, { key: "unpaid_days", label: "Unpaid" },
+        { key: "leave_types", label: "Leave Types" },
+        { key: "approved_req", label: "Approved Req" }, { key: "pending_req", label: "Pending Req" }, { key: "rejected_req", label: "Rejected Req" },
+      ];
+    case "coff":
+      return [
+        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "week_off_worked", label: "Week Off Worked" }, { key: "week_off_dates", label: "Week Off Dates" },
+        { key: "holiday_worked", label: "Holiday Worked" }, { key: "holiday_dates", label: "Holiday Dates" },
+        { key: "earned", label: "COFF Earned" }, { key: "availed", label: "COFF Availed" }, { key: "balance", label: "Balance" },
       ];
   }
 }

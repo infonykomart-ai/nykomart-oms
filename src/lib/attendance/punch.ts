@@ -30,11 +30,20 @@ import { notifyPunchInTelegram, notifyPunchOutTelegram } from "./telegram-notify
 // 9:45 AM IST now shows Present; only strictly after 9:45 shows Late.
 const LATE_CUTOFF_HHMM = "09:45";
 
+// 2026-10-02 — Web-Punch GPS capture (TeamOffice parity): the manual
+// Punch In/Out buttons send a one-shot browser geolocation fix along with
+// the punch; best-effort by contract — a denied/timeout fix arrives as
+// null and the punch proceeds WITHOUT coordinates, never blocked. Server
+// paths (login-hook auto punch, logout punch-out, TeamOffice import) have
+// no browser to ask and simply don't pass this.
+export type PunchGeo = { lat: number; lng: number };
+
 export async function recordPunchIn(
   supabase: SupabaseClient<Database>,
   employeeId: string,
   companyId: string,
-  source: "Web Punch" | "Manual Entry" = "Web Punch"
+  source: "Web Punch" | "Manual Entry" = "Web Punch",
+  geo: PunchGeo | null = null
 ): Promise<{ ok: true; alreadyPunchedIn: boolean; status?: string } | { ok: false; error: string }> {
   const date = todayIST();
   const { data: existing, error: selectError } = await supabase
@@ -54,7 +63,10 @@ export async function recordPunchIn(
   const status = nowISTTime() > LATE_CUTOFF_HHMM ? "Late" : "Present";
 
   if (existing) {
-    const { error } = await supabase.from("attendance").update({ punch_in: nowISOInstant(), status }).eq("id", existing.id);
+    const { error } = await supabase
+      .from("attendance")
+      .update({ punch_in: nowISOInstant(), status, ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng } : {}) })
+      .eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
   } else {
     const { error } = await supabase.from("attendance").insert({
@@ -64,6 +76,7 @@ export async function recordPunchIn(
       punch_in: nowISOInstant(),
       status,
       source,
+      ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng } : {}),
     });
     if (error) return { ok: false, error: error.message };
   }
@@ -98,7 +111,8 @@ export async function recordPunchIn(
 
 export async function recordPunchOut(
   supabase: SupabaseClient<Database>,
-  employeeId: string
+  employeeId: string,
+  geo: PunchGeo | null = null
 ): Promise<{ ok: true; noPunchInFound: boolean; alreadyPunchedOut: boolean } | { ok: false; error: string }> {
   const date = todayIST();
   // 2026-09-29 — punch_in is now selected too: the punch confirmation
@@ -113,7 +127,10 @@ export async function recordPunchOut(
   if (!existing) return { ok: true, noPunchInFound: true, alreadyPunchedOut: false };
   if (existing.punch_out) return { ok: true, noPunchInFound: false, alreadyPunchedOut: true };
 
-  const { error } = await supabase.from("attendance").update({ punch_out: nowISOInstant() }).eq("id", existing.id);
+  const { error } = await supabase
+    .from("attendance")
+    .update({ punch_out: nowISOInstant(), ...(geo ? { punch_out_lat: geo.lat, punch_out_lng: geo.lng } : {}) })
+    .eq("id", existing.id);
   if (error) return { ok: false, error: error.message };
 
   // 2026-09-29 — punch-out confirmation, same best-effort contract as the

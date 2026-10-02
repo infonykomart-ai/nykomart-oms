@@ -207,6 +207,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   const homeCompanyId = str(formData, "home_company_id");
   const roleId = str(formData, "role_id");
   const designation = str(formData, "designation") || null;
+  const department = str(formData, "department") || null;
   const employeeCode = str(formData, "employee_code") || null;
   const dateOfJoining = str(formData, "date_of_joining") || null;
   const extraCompanyIds = formData.getAll("company_access").map(String).filter(Boolean);
@@ -244,6 +245,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
       email,
       role_id: roleId,
       designation,
+      department,
       employee_code: employeeCode,
       date_of_joining: dateOfJoining,
       active: true,
@@ -347,6 +349,9 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
     .from("employees")
     .update({
       designation: strOrNull(formData, "designation"),
+      // 2026-10-02 — TeamOffice parity: department shown as a column +
+      // filter across the attendance report suite.
+      department: strOrNull(formData, "department"),
       employee_code: strOrNull(formData, "employee_code"),
       date_of_joining: strOrNull(formData, "date_of_joining"),
       reports_to_employee_id: reportsToEmployeeId as never,

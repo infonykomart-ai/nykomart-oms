@@ -53,7 +53,7 @@ export default async function MonthlyReportPage({
   const { data: employeesRaw } = effectiveCompanyIds.length
     ? await supabase
         .from("employees")
-        .select("id, name, employee_code, company_id, date_of_joining")
+        .select("id, name, employee_code, company_id, date_of_joining, department")
         .in("company_id", effectiveCompanyIds)
         .eq("active", true)
         .order("name")
@@ -63,10 +63,15 @@ export default async function MonthlyReportPage({
   const employeeScope: "all" | "few" = sp.employeeScope === "few" ? "few" : "all";
   const requestedEmployeeIds = typeof sp.employeeIds === "string" && sp.employeeIds ? sp.employeeIds.split(",").filter(Boolean) : [];
   const effectiveEmployeeIdSet = employeeScope === "few" && requestedEmployeeIds.length > 0 ? new Set(requestedEmployeeIds) : null; // null = everyone in effectiveCompanyIds
+  // 2026-10-02 — Department filter (TeamOffice parity): exact,
+  // case-insensitive match on employees.department; "" = no filter.
+  const department = typeof sp.department === "string" ? sp.department.trim() : "";
+  const departmentLower = department.toLowerCase();
 
   const companyNameMap = new Map(companies.map((c) => [c.id, c.name]));
   const reportEmployees: ReportEmployee[] = allEmployees
     .filter((e) => effectiveEmployeeIdSet === null || effectiveEmployeeIdSet.has(e.id))
+    .filter((e) => !departmentLower || (e.department ?? "").trim().toLowerCase() === departmentLower)
     .map((e) => ({
       id: e.id,
       name: e.name,
@@ -74,7 +79,13 @@ export default async function MonthlyReportPage({
       company_id: e.company_id,
       company_name: companyNameMap.get(e.company_id) ?? "—",
       date_of_joining: e.date_of_joining,
+      department: e.department,
     }));
+
+  // Distinct department values for the filter dropdown (blanks dropped).
+  const departments = Array.from(
+    new Set(allEmployees.map((e) => (e.department ?? "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
 
   const monthStart = `${month}-01`;
   // Same trap fixed previously in salary/admin's own month-range queries —
@@ -129,6 +140,8 @@ export default async function MonthlyReportPage({
       <MonthlyReportFilters
         companies={companies.map((c) => ({ id: c.id, name: c.name }))}
         employees={allEmployees.map((e) => ({ id: e.id, name: e.name, company_id: e.company_id }))}
+        departments={departments}
+        department={department}
         month={month}
         reportKey={reportKey}
         companyScope={companyScope}

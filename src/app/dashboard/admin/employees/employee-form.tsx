@@ -109,6 +109,13 @@ export function EmployeeForm({
           <label className={labelClass} htmlFor="designation">Designation</label>
           <input id="designation" name="designation" className={inputClass} />
         </div>
+        {/* 2026-10-02 — TeamOffice parity: department column/filter on the
+            attendance report suite. Free text (Sales, Accounts, ...), same
+            admin-typed convention as designation. */}
+        <div>
+          <label className={labelClass} htmlFor="department">Department</label>
+          <input id="department" name="department" placeholder="e.g. Sales, Accounts, Warehouse" className={inputClass} />
+        </div>
         <div>
           <label className={labelClass} htmlFor="employee_code">Employee Code (biometric)</label>
           <input id="employee_code" name="employee_code" className={inputClass} />

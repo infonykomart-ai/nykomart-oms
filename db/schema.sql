@@ -6213,6 +6213,38 @@ JOIN (VALUES
 
 
 -- =============================================================================
+-- SECTION 17j — 2026-10-02: TeamOffice report-parity columns
+-- (folded from db/2026-10-02-employee-department.sql +
+--  db/2026-10-02-attendance-punch-geo.sql — dated files are one-time
+--  patches for the LIVE Supabase DB, never replayed on a fresh schema.)
+-- =============================================================================
+-- Department column + filter on the attendance report suite
+-- (Daily/Monthly/Periodic/Yearly/Location/Leave/Salary). Free text on
+-- purpose — same admin-typed convention as employees.designation.
+ALTER TABLE employees
+  ADD COLUMN department text;
+COMMENT ON COLUMN employees.department IS
+  'Free-text department/team label (Sales, Accounts, ...). Shown as the Department column and filter on the attendance report suite (/dashboard/attendance/admin/*). NULL = not filled in yet (renders as "—").';
+
+-- Web-Punch GPS capture (best-effort browser geolocation at Punch In/Out;
+-- server-side paths — login-hook auto punch, logout punch-out, TeamOffice
+-- import — have no browser to ask and stay NULL). Powers the Location and
+-- GPS report pages. numeric(9,6) ≈ 0.11 m precision.
+ALTER TABLE attendance
+  ADD COLUMN punch_in_lat numeric(9,6);
+ALTER TABLE attendance
+  ADD COLUMN punch_in_lng numeric(9,6);
+ALTER TABLE attendance
+  ADD COLUMN punch_out_lat numeric(9,6);
+ALTER TABLE attendance
+  ADD COLUMN punch_out_lng numeric(9,6);
+COMMENT ON COLUMN attendance.punch_in_lat IS
+  'Browser geolocation at Punch In (best-effort, NULL when unavailable/denied). Pairs with punch_in_lng — rendered as a maps link by the GPS report.';
+COMMENT ON COLUMN attendance.punch_out_lat IS
+  'Browser geolocation at Punch Out (best-effort, NULL when unavailable/denied). Pairs with punch_out_lng.';
+
+
+-- =============================================================================
 -- OLD SHEET NAME -> NEW TABLE/VIEW MAPPING  (see SCHEMA_NOTES.md for full detail)
 -- =============================================================================
 -- README                              -> (n/a — this file + SCHEMA_NOTES.md)

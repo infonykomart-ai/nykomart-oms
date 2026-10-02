@@ -22,6 +22,8 @@ export function RangeReportFilters({
   reportTypes,
   companies,
   employees,
+  departments,
+  department,
   companyScope,
   selectedCompanyIds,
   employeeScope,
@@ -36,6 +38,9 @@ export function RangeReportFilters({
   reportTypes: { key: string; label: string }[];
   companies: Company[];
   employees: EmployeeOpt[];
+  /** Distinct employees.department values (2026-10-02 TeamOffice parity). */
+  departments: string[];
+  department: string;
   companyScope: "all" | "few";
   selectedCompanyIds: string[];
   employeeScope: "all" | "few";
@@ -46,6 +51,7 @@ export function RangeReportFilters({
   const [localFrom, setLocalFrom] = useState(from);
   const [localTo, setLocalTo] = useState(to);
   const [localReport, setLocalReport] = useState(reportKey);
+  const [localDepartment, setLocalDepartment] = useState(department);
   const [localCompanyScope, setLocalCompanyScope] = useState(companyScope);
   const [localCompanyIds, setLocalCompanyIds] = useState<Set<string>>(new Set(selectedCompanyIds));
   const [localEmployeeScope, setLocalEmployeeScope] = useState(employeeScope);
@@ -67,6 +73,7 @@ export function RangeReportFilters({
       params.set("to", localTo);
     }
     params.set("report", localReport);
+    if (localDepartment) params.set("department", localDepartment);
     params.set("companyScope", localCompanyScope);
     if (localCompanyScope === "few") params.set("companyIds", Array.from(localCompanyIds).join(","));
     params.set("employeeScope", localEmployeeScope);
@@ -101,6 +108,23 @@ export function RangeReportFilters({
               <input type="date" value={localTo} onChange={(e) => setLocalTo(e.target.value)} className={inputClass} />
             </div>
           </div>
+        )}
+      </div>
+
+      {/* 2026-10-02 — Department filter (TeamOffice's 3-level
+          Company/Department/Employee filter). Options are the distinct
+          employees.department values the loader found; an empty list =
+          nobody has a department filled in yet. */}
+      <div className="mt-4">
+        <label className="mb-1 block text-xs font-medium text-slate-600">Department</label>
+        <select value={localDepartment} onChange={(e) => setLocalDepartment(e.target.value)} className={inputClass}>
+          <option value="">All Departments</option>
+          {departments.map((d) => (
+            <option key={d} value={d}>{d}</option>
+          ))}
+        </select>
+        {departments.length === 0 && (
+          <p className="mt-1 text-xs text-slate-400">No departments set yet — add one from Employees → Edit Details.</p>
         )}
       </div>
 
@@ -190,7 +214,7 @@ export function RangeReportFilters({
         ⬇️ Generate Report
       </button>
       <p className="mt-2 text-xs text-slate-400">
-        Department filter isn&apos;t available — this system doesn&apos;t have a department field on employees yet (only role/designation).
+        Department comes from the free-text field on each employee (Employees → Edit Details); leave it empty for &quot;—&quot;.
         Export CSV/Excel/Word/PDF from the toolbar above the results.
       </p>
     </div>
