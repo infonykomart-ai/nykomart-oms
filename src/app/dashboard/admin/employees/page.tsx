@@ -7,6 +7,7 @@ import { EmployeeRowActions } from "./employee-row-actions";
 // see employee-telegram-cell.tsx (replaced the WhatsApp cell the same day
 // punch notifications switched to Telegram DMs).
 import { EmployeeTelegramCell } from "./employee-telegram-cell";
+import Link from "next/link";
 
 // 2026-09-29 — FedEx-style upgrade: the bare "Employees" h1 row became a
 // card-style identity header for the whole ROSTER (Employee Roster, big
@@ -27,12 +28,12 @@ export default async function EmployeesAdminPage() {
   // salary page), so read it via the service-role client.
   const finSupabase = createServiceRoleClient();
 
-  const [{ data: employees }, { data: roles }, { data: companies }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }] =
+  const [{ data: employees }, { data: roles }, { data: companies }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }] =
     await Promise.all([
       supabase
         .from("employees")
         .select(
-          "id, name, email, active, designation, department, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
+          "id, name, email, active, designation, department_id, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
         )
         .order("created_at", { ascending: false }),
       supabase.from("roles").select("id, name").order("name"),
@@ -46,6 +47,9 @@ export default async function EmployeesAdminPage() {
         .from("employee_documents")
         .select("id, employee_id, doc_type, file_name, file_size, notes, uploaded_at")
         .order("uploaded_at", { ascending: false }),
+      // 2026-10-02b — structured department master (all companies this
+      // admin can see; per-company filtering happens at each usage).
+      supabase.from("departments").select("id, name, company_id, active").order("name"),
     ]);
 
   const outstandingAdvanceByEmployee = new Map<string, number>();
@@ -56,6 +60,15 @@ export default async function EmployeesAdminPage() {
 
   const roleName = new Map((roles ?? []).map((r) => [r.id, r.name]));
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  // 2026-10-02b — resolve employees.department_id -> name for the table,
+  // and group departments by company for the Edit Details select.
+  const departmentName = new Map((departments ?? []).map((d) => [d.id, d.name]));
+  const departmentsByCompany = new Map<string, { id: string; name: string }[]>();
+  for (const d of departments ?? []) {
+    const list = departmentsByCompany.get(d.company_id) ?? [];
+    list.push({ id: d.id, name: d.name });
+    departmentsByCompany.set(d.company_id, list);
+  }
   const storeIdsByEmployee = new Map<string, string[]>();
   for (const row of storeAccess ?? []) {
     const list = storeIdsByEmployee.get(row.employee_id) ?? [];
@@ -100,7 +113,16 @@ export default async function EmployeesAdminPage() {
           @3xl instead of clipping under overflow-hidden. */}
       <div className="mt-6 grid grid-cols-1 gap-6 @lg:grid-cols-3">
         <div className="@lg:col-span-1">
-          <EmployeeForm roles={roles ?? []} companies={companies ?? []} stores={stores ?? []} />
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Department master</span>
+            <Link
+              href="/dashboard/admin/departments"
+              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              🏢 Manage Departments
+            </Link>
+          </div>
+          <EmployeeForm roles={roles ?? []} companies={companies ?? []} stores={stores ?? []} departments={departments ?? []} />
         </div>
 
         <div className="@lg:col-span-2">
@@ -125,9 +147,9 @@ export default async function EmployeesAdminPage() {
                     <td className="px-4 py-3 text-slate-600">
                       <div>{roleName.get(e.role_id) ?? "—"}</div>
                       <div className="text-xs text-slate-400">{companyName.get(e.company_id) ?? "—"}</div>
-                      {/* 2026-10-02 — TeamOffice parity: department badge
-                          (edited from the row&apos;s Edit Details panel). */}
-                      <div className="text-xs text-slate-400">{e.department ?? "—"}</div>
+                      {/* 2026-10-02b — resolved from the departments
+                          master (structured entity, not free text). */}
+                      <div className="text-xs text-slate-400">{(e.department_id && departmentName.get(e.department_id)) ?? "—"}</div>
                     </td>
                     <td className="px-4 py-3">
                       <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} botUsername={process.env.TELEGRAM_BOT_USERNAME ?? null} />
@@ -163,6 +185,7 @@ export default async function EmployeesAdminPage() {
                         stores={stores ?? []}
                         currentStoreIds={storeIdsByEmployee.get(e.id) ?? []}
                         reportsToOptions={(employeesByCompany.get(e.company_id) ?? []).filter((o) => o.id !== e.id)}
+                        departments={departmentsByCompany.get(e.company_id) ?? []}
                         documents={documentsByEmployee.get(e.id) ?? []}
                       />
                     </td>

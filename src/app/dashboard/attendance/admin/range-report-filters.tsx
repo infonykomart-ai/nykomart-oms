@@ -38,7 +38,7 @@ export function RangeReportFilters({
   reportTypes: { key: string; label: string }[];
   companies: Company[];
   employees: EmployeeOpt[];
-  /** Distinct employees.department values (2026-10-02 TeamOffice parity). */
+  /** Distinct department names resolved from employees.department_id. */
   departments: string[];
   department: string;
   companyScope: "all" | "few";
@@ -113,8 +113,8 @@ export function RangeReportFilters({
 
       {/* 2026-10-02 — Department filter (TeamOffice's 3-level
           Company/Department/Employee filter). Options are the distinct
-          employees.department values the loader found; an empty list =
-          nobody has a department filled in yet. */}
+          departments table's names the loader found; an empty list =
+          no departments are defined for these companies yet. */}
       <div className="mt-4">
         <label className="mb-1 block text-xs font-medium text-slate-600">Department</label>
         <select value={localDepartment} onChange={(e) => setLocalDepartment(e.target.value)} className={inputClass}>

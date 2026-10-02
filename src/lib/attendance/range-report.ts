@@ -17,7 +17,7 @@
 // 2026-10-02 (TeamOffice parity round 2) — the report types that were
 // "intentionally absent" above now exist, all riding this same engine:
 //   - Department: a stamped column on EVERY row type (+ filter upstream
-//     in range-report-data.ts) off the new free-text employees.department.
+//     in range-report-data.ts) off the departments entity (employees.department_id).
 //   - Location Report: per-day site per employee — attendance.store_id's
 //     store name when set, else the Web-Punch GPS fix, else "—".
 //   - GPS Report: punch-wise coordinates with a Google Maps link
@@ -62,7 +62,10 @@ export type RangeReportKey =
   | "location"
   | "gps"
   | "leave"
-  | "coff";
+  | "coff"
+  | "source"
+  | "dept_rollup"
+  | "hours";
 
 export const RANGE_REPORT_TYPES: { key: RangeReportKey; label: string }[] = [
   { key: "day", label: "Day Performance (per employee, with Late IN / Early OUT)" },
@@ -80,6 +83,18 @@ export const RANGE_REPORT_TYPES: { key: RangeReportKey; label: string }[] = [
   { key: "gps", label: "GPS Report (punch-wise coordinates)" },
   { key: "leave", label: "Leave Report (days + requests)" },
   { key: "coff", label: "COFF Report (week-off/holiday work credit)" },
+  { key: "source", label: "Punch Source Summary (Web / Manual / Import)" },
+  { key: "dept_rollup", label: "Department Rollup (totals per department)" },
+  { key: "hours", label: "Working Hours Summary (total / avg / OT)" },
+];
+
+// 2026-10-02 — the "Other Report" menu entry (TeamOffice's miscellaneous
+// bucket) = the three report types that don't fit the per-employee day
+// lists above. All three still ride this engine + the shared filters.
+export const OTHER_REPORT_TYPES: { key: RangeReportKey; label: string }[] = [
+  { key: "source", label: "Punch Source Summary (Web / Manual / Import)" },
+  { key: "dept_rollup", label: "Department Rollup (totals per department)" },
+  { key: "hours", label: "Working Hours Summary (total / avg / OT)" },
 ];
 
 // 2026-10-02 — Leave Report input: one row per leave_requests entry
@@ -160,6 +175,22 @@ export function buildRangeReport({
 
   const chunks = monthChunks(startDate, endDate);
   const rows: ReportRow[] = [];
+  // 2026-10-02 — Department Rollup accumulates ACROSS employees, so its
+  // rows are emitted once after the employee loop, grouped by department.
+  const deptRollup = new Map<
+    string,
+    {
+      employees: number;
+      present: number;
+      late: number;
+      half_day: number;
+      leave: number;
+      absent: number;
+      week_off: number;
+      holiday: number;
+      work_hours: number;
+    }
+  >();
 
   for (const emp of employees) {
     // 2026-10-02 — every row pushed below belongs to THIS employee: stamp
@@ -218,6 +249,98 @@ export function buildRangeReport({
         ot_hours: Math.round((otMinutes / 60) * 100) / 100,
       });
       stampDepartment();
+      continue;
+    }
+
+    // 2026-10-02 — "Other Report" trio. Punch Source Summary: where the
+    // punches in this range came from (Web Punch vs manual button vs the
+    // TeamOffice import) + how many had a GPS fix captured.
+    if (reportKey === "source") {
+      let punchRows = 0;
+      let webPunch = 0;
+      let manualEntry = 0;
+      let teamImport = 0;
+      let gpsDays = 0;
+      for (const d of days) {
+        const att = attByDate.get(d.date);
+        if (!att) continue;
+        punchRows++;
+        const src = att.source ?? "—";
+        if (src === "Web Punch") webPunch++;
+        else if (src === "Manual Entry") manualEntry++;
+        else if (src === "TeamOffice Import") teamImport++;
+        if (att.punch_in_lat != null || att.punch_out_lat != null) gpsDays++;
+      }
+      rows.push({
+        employee: emp.name,
+        employee_code: emp.employee_code,
+        company: emp.company_name,
+        punch_rows: punchRows,
+        web_punch: webPunch,
+        manual_entry: manualEntry,
+        team_import: teamImport,
+        gps_days: gpsDays,
+      });
+      stampDepartment();
+      continue;
+    }
+
+    // 2026-10-02 — Working Hours Summary: total/average hours actually
+    // recorded, OT (same >15-min-over-expected rule the Overtime report
+    // uses) and "short days" (worked but ≥15 min under expected).
+    if (reportKey === "hours") {
+      let workedDays = 0;
+      let totalHours = 0;
+      let otMinutes = 0;
+      let shortDays = 0;
+      for (const d of days) {
+        const att = attByDate.get(d.date);
+        const worked = d.category === "Present" || d.category === "Late" || d.category === "Half Day";
+        if (!worked || att?.work_hours == null) continue;
+        workedDays++;
+        totalHours += att.work_hours;
+        const delta = Math.round(att.work_hours * 60 - EXPECTED_WORK_MINUTES);
+        if (delta > 0) otMinutes += delta;
+        else if (delta < -15) shortDays++;
+      }
+      rows.push({
+        employee: emp.name,
+        employee_code: emp.employee_code,
+        company: emp.company_name,
+        worked_days: workedDays,
+        total_hours: Math.round(totalHours * 100) / 100,
+        avg_hours: workedDays ? Math.round((totalHours / workedDays) * 100) / 100 : 0,
+        ot_hours: Math.round((otMinutes / 60) * 100) / 100,
+        short_days: shortDays,
+      });
+      stampDepartment();
+      continue;
+    }
+
+    // 2026-10-02 — Department Rollup: fold this employee's day counts into
+    // their department's bucket (NULL department groups under "—"); rows
+    // are pushed after the loop below.
+    if (reportKey === "dept_rollup") {
+      const key = emp.department ?? "—";
+      let acc = deptRollup.get(key);
+      if (!acc) {
+        acc = { employees: 0, present: 0, late: 0, half_day: 0, leave: 0, absent: 0, week_off: 0, holiday: 0, work_hours: 0 };
+        deptRollup.set(key, acc);
+      }
+      acc.employees++;
+      for (const d of days) {
+        if (d.category === "Present") acc.present++;
+        else if (d.category === "Late") acc.late++;
+        else if (d.category === "Half Day") acc.half_day++;
+        else if (d.category === "Leave") acc.leave++;
+        else if (d.category === "Absent") acc.absent++;
+        else if (d.category === "Week Off") acc.week_off++;
+        else if (d.category === "Holiday") acc.holiday++;
+        const att = attByDate.get(d.date);
+        if (att?.work_hours != null && (d.category === "Present" || d.category === "Late" || d.category === "Half Day")) {
+          acc.work_hours += att.work_hours;
+        }
+      }
       continue;
     }
 
@@ -431,11 +554,34 @@ export function buildRangeReport({
           in_gps: inGps ?? "—",
           punch_out: istTimeLabel(att.punch_out ?? null),
           out_gps: outGps ?? "—",
+          // 2026-10-02c — review workflow state, decided on the GPS
+          // Approvals screen ('None' = nothing to review).
+          gps_status: att.gps_status ?? "None",
           map: link ? `https://maps.google.com/?q=${encodeURIComponent(link)}` : "—",
         });
       }
     }
     stampDepartment();
+  }
+
+  // 2026-10-02 — Department Rollup rows are GROUPED (one per department,
+  // sorted by name), not per employee — emitted once here, outside any
+  // stampDepartment window.
+  if (reportKey === "dept_rollup") {
+    for (const [dept, acc] of Array.from(deptRollup).sort(([a], [b]) => a.localeCompare(b))) {
+      rows.push({
+        department: dept,
+        employees: acc.employees,
+        present: acc.present,
+        late: acc.late,
+        half_day: acc.half_day,
+        leave: acc.leave,
+        absent: acc.absent,
+        week_off: acc.week_off,
+        holiday: acc.holiday,
+        work_hours: Math.round(acc.work_hours * 100) / 100,
+      });
+    }
   }
 
   return { columns: rangeColumnsFor(reportKey), rows };
@@ -515,6 +661,7 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
         { key: "department", label: "Department" }, { key: "company", label: "Company" }, { key: "status", label: "Status" },
         { key: "punch_in", label: "Punch In" }, { key: "in_gps", label: "In GPS" },
         { key: "punch_out", label: "Punch Out" }, { key: "out_gps", label: "Out GPS" },
+        { key: "gps_status", label: "GPS Review" },
         { key: "map", label: "Map Link" },
       ];
     case "leave":
@@ -530,6 +677,26 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
         { key: "week_off_worked", label: "Week Off Worked" }, { key: "week_off_dates", label: "Week Off Dates" },
         { key: "holiday_worked", label: "Holiday Worked" }, { key: "holiday_dates", label: "Holiday Dates" },
         { key: "earned", label: "COFF Earned" }, { key: "availed", label: "COFF Availed" }, { key: "balance", label: "Balance" },
+      ];
+    case "source":
+      return [
+        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "punch_rows", label: "Punch Rows" }, { key: "web_punch", label: "Web Punch" },
+        { key: "manual_entry", label: "Manual Entry" }, { key: "team_import", label: "TeamOffice Import" },
+        { key: "gps_days", label: "GPS Captured" },
+      ];
+    case "dept_rollup":
+      return [
+        { key: "department", label: "Department" }, { key: "employees", label: "Employees" },
+        { key: "present", label: "Present" }, { key: "late", label: "Late" }, { key: "half_day", label: "Half Day" },
+        { key: "leave", label: "Leave" }, { key: "absent", label: "Absent" },
+        { key: "week_off", label: "Week Off" }, { key: "holiday", label: "Holiday" }, { key: "work_hours", label: "Work Hrs" },
+      ];
+    case "hours":
+      return [
+        { key: "employee", label: "Employee" }, { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
+        { key: "worked_days", label: "Worked Days" }, { key: "total_hours", label: "Total Hrs" },
+        { key: "avg_hours", label: "Avg Hrs/Day" }, { key: "ot_hours", label: "OT Hrs" }, { key: "short_days", label: "Short Days" },
       ];
   }
 }

@@ -28,7 +28,7 @@ export function MonthlyReportFilters({
 }: {
   companies: Company[];
   employees: EmployeeOpt[];
-  /** Distinct employees.department values (2026-10-02 TeamOffice parity). */
+  /** Distinct department names resolved from employees.department_id. */
   departments: string[];
   department: string;
   month: string;
@@ -87,7 +87,7 @@ export function MonthlyReportFilters({
 
       {/* 2026-10-02 — Department filter (TeamOffice's 3-level
           Company/Department/Employee filter). Options = distinct
-          employees.department values the loader found. */}
+          departments table's names the loader found. */}
       <div className="mt-4">
         <label className="mb-1 block text-xs font-medium text-slate-600">Department</label>
         <select

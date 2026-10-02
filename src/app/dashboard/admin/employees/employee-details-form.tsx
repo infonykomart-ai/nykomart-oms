@@ -12,8 +12,8 @@ const labelClass = "mb-1 block text-sm font-medium text-slate-700";
 export type EmployeeDetails = ProfileFieldDefaults & {
   id: string;
   designation: string | null;
-  // 2026-10-02 — TeamOffice parity: department column/filter on reports.
-  department: string | null;
+  // 2026-10-02b — structured department entity (departments table).
+  department_id: string | null;
   employee_code: string | null;
   date_of_joining: string | null;
   // 2026-09-11 (Payroll Phase 3) — org chart.
@@ -28,12 +28,17 @@ export type EmployeeDetails = ProfileFieldDefaults & {
 export function EmployeeDetailsForm({
   employee,
   reportsToOptions,
+  departments,
   onDone,
 }: {
   employee: EmployeeDetails;
   // 2026-09-11 (Payroll Phase 3) — same-company employees this one could
   // report to; self already excluded by the caller (page.tsx).
   reportsToOptions: { id: string; name: string }[];
+  // 2026-10-02b — THIS employee's home company's departments (inactive ones
+  // included so a previously assigned department still renders in the
+  // select instead of silently showing "— None —").
+  departments: { id: string; name: string }[];
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updateEmployeeDetails, initialState);
@@ -57,8 +62,13 @@ export function EmployeeDetailsForm({
           <input id="designation" name="designation" defaultValue={employee.designation ?? ""} className={inputClass} />
         </div>
         <div>
-          <label className={labelClass} htmlFor="department">Department</label>
-          <input id="department" name="department" defaultValue={employee.department ?? ""} placeholder="e.g. Sales, Accounts" className={inputClass} />
+          <label className={labelClass} htmlFor="department_id">Department</label>
+          <select id="department_id" name="department_id" defaultValue={employee.department_id ?? ""} className={inputClass}>
+            <option value="">— None —</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className={labelClass} htmlFor="employee_code">Employee Code</label>

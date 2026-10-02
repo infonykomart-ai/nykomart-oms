@@ -55,12 +55,17 @@ export default async function MonthSummaryPage({
   // (same fix as every other month-range query in this app).
   const monthEnd = `${month}-${String(daysInMonth(year, monthNum)).padStart(2, "0")}`;
 
-  const { data: employees } = await supabase
-    .from("employees")
-    .select("id, name, employee_code, department, date_of_joining")
-    .eq("company_id", selectedCompanyId)
-    .eq("active", true)
-    .order("name");
+  const [{ data: employees }, { data: departments }] = await Promise.all([
+    supabase
+      .from("employees")
+      .select("id, name, employee_code, department_id, date_of_joining")
+      .eq("company_id", selectedCompanyId)
+      .eq("active", true)
+      .order("name"),
+    // 2026-10-02b — resolve department_id -> name for the sheet header.
+    supabase.from("departments").select("id, name").eq("company_id", selectedCompanyId),
+  ]);
+  const departmentName = new Map((departments ?? []).map((d) => [d.id, d.name]));
 
   const employeeList = employees ?? [];
   const employee =
@@ -149,7 +154,9 @@ export default async function MonthSummaryPage({
         <h2 className="text-base font-semibold text-slate-900">{employee?.name ?? "No employees"}</h2>
         <p className="text-xs text-slate-500">
           {employee?.employee_code ? `Code ${employee.employee_code}` : "—"}
-          {employee?.department ? ` · ${employee.department}` : ""} · {selectedCompany?.name ?? "—"} ·{" "}
+          {employee?.department_id && departmentName.get(employee.department_id)
+            ? ` · ${departmentName.get(employee.department_id)}`
+            : ""} · {selectedCompany?.name ?? "—"} ·{" "}
           {new Date(Date.UTC(year, monthNum - 1, 1)).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" })}
         </p>
       </div>
