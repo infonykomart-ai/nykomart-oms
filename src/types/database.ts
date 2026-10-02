@@ -358,6 +358,145 @@ export type Database = {
           },
         ];
       };
+      b2b_bom_items: {
+        Row: {
+          id: string;
+          company_id: string;
+          product_id: string;
+          material: string;
+          consumption: number;
+          unit: string;
+          wastage_percent: number;
+          display_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          product_id: string;
+          material: string;
+          consumption: number;
+          unit?: string;
+          wastage_percent?: number;
+          display_order?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          product_id?: string;
+          material?: string;
+          consumption?: number;
+          unit?: string;
+          wastage_percent?: number;
+          display_order?: number;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_bom_items_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_bom_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_buyers: {
+        Row: {
+          id: string;
+          company_id: string;
+          name: string;
+          contact_person: string | null;
+          email: string | null;
+          phone: string | null;
+          country: string | null;
+          city: string | null;
+          website: string | null;
+          buyer_type: "Retailer" | "Wholesaler" | "Importer" | "Distributor";
+          currency: string;
+          payment_terms: string | null;
+          shipping_terms: string | null;
+          salesperson: string | null;
+          notes: string | null;
+          active: boolean;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          name: string;
+          contact_person?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          country?: string | null;
+          city?: string | null;
+          website?: string | null;
+          buyer_type?: "Retailer" | "Wholesaler" | "Importer" | "Distributor";
+          currency?: string;
+          payment_terms?: string | null;
+          shipping_terms?: string | null;
+          salesperson?: string | null;
+          notes?: string | null;
+          active?: boolean;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          name?: string;
+          contact_person?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          country?: string | null;
+          city?: string | null;
+          website?: string | null;
+          buyer_type?: "Retailer" | "Wholesaler" | "Importer" | "Distributor";
+          currency?: string;
+          payment_terms?: string | null;
+          shipping_terms?: string | null;
+          salesperson?: string | null;
+          notes?: string | null;
+          active?: boolean;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_buyers_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_buyers_currency_fkey";
+            columns: ["currency"];
+            isOneToOne: false;
+            referencedRelation: "currencies";
+            referencedColumns: ["code"];
+          },
+          {
+            foreignKeyName: "b2b_buyers_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       b2b_documents: {
         Row: {
           id: string;
@@ -419,6 +558,63 @@ export type Database = {
           },
         ];
       };
+      b2b_followups: {
+        Row: {
+          id: string;
+          company_id: string;
+          entity_type: "Buyer" | "Inquiry" | "Quotation" | "Order" | "Shipment";
+          entity_id: string;
+          entity_label: string | null;
+          due_date: string;
+          note: string | null;
+          done: boolean;
+          done_at: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          entity_type: "Buyer" | "Inquiry" | "Quotation" | "Order" | "Shipment";
+          entity_id: string;
+          entity_label?: string | null;
+          due_date: string;
+          note?: string | null;
+          done?: boolean;
+          done_at?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          entity_type?: "Buyer" | "Inquiry" | "Quotation" | "Order" | "Shipment";
+          entity_id?: string;
+          entity_label?: string | null;
+          due_date?: string;
+          note?: string | null;
+          done?: boolean;
+          done_at?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_followups_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_followups_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       b2b_inquiries: {
         Row: {
           id: string;
@@ -441,6 +637,7 @@ export type Database = {
           entered_by_employee_id: string | null;
           created_at: string;
           updated_at: string;
+          buyer_id: string | null;
         };
         Insert: {
           id?: string;
@@ -463,6 +660,7 @@ export type Database = {
           entered_by_employee_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          buyer_id?: string | null;
         };
         Update: {
           id?: string;
@@ -485,8 +683,16 @@ export type Database = {
           entered_by_employee_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          buyer_id?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "b2b_inquiries_buyer_id_fkey";
+            columns: ["buyer_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_buyers";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "b2b_inquiries_company_id_fkey";
             columns: ["company_id"];
@@ -520,6 +726,7 @@ export type Database = {
           unit_price: number | null;
           remark: string | null;
           display_order: number;
+          product_id: string | null;
         };
         Insert: {
           id?: string;
@@ -530,6 +737,7 @@ export type Database = {
           unit_price?: number | null;
           remark?: string | null;
           display_order?: number;
+          product_id?: string | null;
         };
         Update: {
           id?: string;
@@ -540,6 +748,7 @@ export type Database = {
           unit_price?: number | null;
           remark?: string | null;
           display_order?: number;
+          product_id?: string | null;
         };
         Relationships: [
           {
@@ -547,6 +756,73 @@ export type Database = {
             columns: ["inquiry_id"];
             isOneToOne: false;
             referencedRelation: "b2b_inquiries";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_inquiry_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_order_payments: {
+        Row: {
+          id: string;
+          company_id: string;
+          order_id: string;
+          label: string;
+          due_date: string;
+          amount: number;
+          received_amount: number;
+          received_date: string | null;
+          payment_mode: string | null;
+          reference_no: string | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          order_id: string;
+          label?: string;
+          due_date: string;
+          amount: number;
+          received_amount?: number;
+          received_date?: string | null;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          order_id?: string;
+          label?: string;
+          due_date?: string;
+          amount?: number;
+          received_amount?: number;
+          received_date?: string | null;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_order_payments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_order_payments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_sales_orders";
             referencedColumns: ["id"];
           },
         ];
@@ -614,6 +890,304 @@ export type Database = {
             columns: ["quotation_id"];
             isOneToOne: false;
             referencedRelation: "b2b_quotations";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_productions: {
+        Row: {
+          id: string;
+          company_id: string;
+          production_no: string;
+          order_id: string | null;
+          product_id: string | null;
+          description: string;
+          planned_qty: number;
+          produced_qty: number;
+          start_date: string | null;
+          due_date: string | null;
+          status: "Planned" | "In Progress" | "Completed" | "Delayed";
+          current_stage: string;
+          stages: Json;
+          priority: "High" | "Normal" | "Low";
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          production_no: string;
+          order_id?: string | null;
+          product_id?: string | null;
+          description: string;
+          planned_qty: number;
+          produced_qty?: number;
+          start_date?: string | null;
+          due_date?: string | null;
+          status?: "Planned" | "In Progress" | "Completed" | "Delayed";
+          current_stage?: string;
+          stages?: Json;
+          priority?: "High" | "Normal" | "Low";
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          production_no?: string;
+          order_id?: string | null;
+          product_id?: string | null;
+          description?: string;
+          planned_qty?: number;
+          produced_qty?: number;
+          start_date?: string | null;
+          due_date?: string | null;
+          status?: "Planned" | "In Progress" | "Completed" | "Delayed";
+          current_stage?: string;
+          stages?: Json;
+          priority?: "High" | "Normal" | "Low";
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_productions_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_productions_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_sales_orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_productions_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_products: {
+        Row: {
+          id: string;
+          company_id: string;
+          sku: string;
+          name: string;
+          product_type: "Cotton Dhurrie" | "Carpet" | "Jute Rug" | "Cotton Kurti" | "Table Cover";
+          category: string | null;
+          collection: string | null;
+          material: string | null;
+          design: string | null;
+          color: string | null;
+          size_label: string | null;
+          length_cm: number | null;
+          width_cm: number | null;
+          gsm: number | null;
+          piece_weight_kg: number | null;
+          specs: Json;
+          unit: string;
+          moq: number;
+          production_days: number;
+          packing_type: string | null;
+          pieces_per_carton: number;
+          carton_length_cm: number | null;
+          carton_width_cm: number | null;
+          carton_height_cm: number | null;
+          fob_price: number;
+          exw_price: number;
+          wholesale_price: number;
+          cost_price: number;
+          stock_qty: number;
+          min_stock_qty: number;
+          active: boolean;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          sku: string;
+          name: string;
+          product_type: "Cotton Dhurrie" | "Carpet" | "Jute Rug" | "Cotton Kurti" | "Table Cover";
+          category?: string | null;
+          collection?: string | null;
+          material?: string | null;
+          design?: string | null;
+          color?: string | null;
+          size_label?: string | null;
+          length_cm?: number | null;
+          width_cm?: number | null;
+          gsm?: number | null;
+          piece_weight_kg?: number | null;
+          specs?: Json;
+          unit?: string;
+          moq?: number;
+          production_days?: number;
+          packing_type?: string | null;
+          pieces_per_carton?: number;
+          carton_length_cm?: number | null;
+          carton_width_cm?: number | null;
+          carton_height_cm?: number | null;
+          fob_price?: number;
+          exw_price?: number;
+          wholesale_price?: number;
+          cost_price?: number;
+          stock_qty?: number;
+          min_stock_qty?: number;
+          active?: boolean;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          sku?: string;
+          name?: string;
+          product_type?: "Cotton Dhurrie" | "Carpet" | "Jute Rug" | "Cotton Kurti" | "Table Cover";
+          category?: string | null;
+          collection?: string | null;
+          material?: string | null;
+          design?: string | null;
+          color?: string | null;
+          size_label?: string | null;
+          length_cm?: number | null;
+          width_cm?: number | null;
+          gsm?: number | null;
+          piece_weight_kg?: number | null;
+          specs?: Json;
+          unit?: string;
+          moq?: number;
+          production_days?: number;
+          packing_type?: string | null;
+          pieces_per_carton?: number;
+          carton_length_cm?: number | null;
+          carton_width_cm?: number | null;
+          carton_height_cm?: number | null;
+          fob_price?: number;
+          exw_price?: number;
+          wholesale_price?: number;
+          cost_price?: number;
+          stock_qty?: number;
+          min_stock_qty?: number;
+          active?: boolean;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_products_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_products_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_qc_inspections: {
+        Row: {
+          id: string;
+          company_id: string;
+          qc_no: string;
+          order_id: string | null;
+          production_id: string | null;
+          product_id: string | null;
+          inspected_qty: number;
+          passed_qty: number;
+          rejected_qty: number;
+          rework_qty: number;
+          inspection_date: string;
+          inspector: string | null;
+          remarks: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          qc_no: string;
+          order_id?: string | null;
+          production_id?: string | null;
+          product_id?: string | null;
+          inspected_qty: number;
+          passed_qty?: number;
+          rejected_qty?: number;
+          rework_qty?: number;
+          inspection_date: string;
+          inspector?: string | null;
+          remarks?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          qc_no?: string;
+          order_id?: string | null;
+          production_id?: string | null;
+          product_id?: string | null;
+          inspected_qty?: number;
+          passed_qty?: number;
+          rejected_qty?: number;
+          rework_qty?: number;
+          inspection_date?: string;
+          inspector?: string | null;
+          remarks?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_qc_inspections_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_qc_inspections_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_qc_inspections_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_sales_orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_qc_inspections_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_products";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_qc_inspections_production_id_fkey";
+            columns: ["production_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_productions";
             referencedColumns: ["id"];
           },
         ];
@@ -686,6 +1260,15 @@ export type Database = {
           entered_by_employee_id: string | null;
           created_at: string;
           updated_at: string;
+          buyer_id: string | null;
+          incoterm: string | null;
+          exchange_rate: number;
+          discount_amount: number;
+          packing_costs: number;
+          freight_amount: number;
+          other_costs: number;
+          cost_amount: number;
+          valid_from: string | null;
         };
         Insert: {
           id?: string;
@@ -710,6 +1293,15 @@ export type Database = {
           entered_by_employee_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          buyer_id?: string | null;
+          incoterm?: string | null;
+          exchange_rate?: number;
+          discount_amount?: number;
+          packing_costs?: number;
+          freight_amount?: number;
+          other_costs?: number;
+          cost_amount?: number;
+          valid_from?: string | null;
         };
         Update: {
           id?: string;
@@ -734,8 +1326,24 @@ export type Database = {
           entered_by_employee_id?: string | null;
           created_at?: string;
           updated_at?: string;
+          buyer_id?: string | null;
+          incoterm?: string | null;
+          exchange_rate?: number;
+          discount_amount?: number;
+          packing_costs?: number;
+          freight_amount?: number;
+          other_costs?: number;
+          cost_amount?: number;
+          valid_from?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "b2b_quotations_buyer_id_fkey";
+            columns: ["buyer_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_buyers";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "b2b_quotations_company_id_fkey";
             columns: ["company_id"];
@@ -762,6 +1370,308 @@ export type Database = {
             columns: ["inquiry_id"];
             isOneToOne: false;
             referencedRelation: "b2b_inquiries";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_sales_order_items: {
+        Row: {
+          id: string;
+          order_id: string;
+          product_id: string | null;
+          description: string;
+          qty: number;
+          unit: string;
+          unit_price: number;
+          unit_cost: number;
+          line_total: number | null;
+          line_cost: number | null;
+          display_order: number;
+        };
+        Insert: {
+          id?: string;
+          order_id: string;
+          product_id?: string | null;
+          description: string;
+          qty: number;
+          unit?: string;
+          unit_price?: number;
+          unit_cost?: number;
+          line_total?: number | null;
+          line_cost?: number | null;
+          display_order?: number;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          product_id?: string | null;
+          description?: string;
+          qty?: number;
+          unit?: string;
+          unit_price?: number;
+          unit_cost?: number;
+          line_total?: number | null;
+          line_cost?: number | null;
+          display_order?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_sales_order_items_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_sales_orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_sales_order_items_product_id_fkey";
+            columns: ["product_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_products";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_sales_orders: {
+        Row: {
+          id: string;
+          company_id: string;
+          order_no: string;
+          buyer_id: string | null;
+          inquiry_id: string | null;
+          quotation_id: string | null;
+          order_date: string;
+          delivery_date: string | null;
+          destination_country: string | null;
+          incoterm: string | null;
+          payment_terms: string | null;
+          currency: string;
+          exchange_rate: number;
+          status: "Confirmed" | "In Production" | "QC" | "Packing" | "Ready to Dispatch" | "Booked" | "In Transit" | "Delivered" | "Closed" | "Cancelled";
+          sales_value: number;
+          product_cost: number;
+          labour_cost: number;
+          packing_cost: number;
+          freight_cost: number;
+          documentation_cost: number;
+          bank_charges: number;
+          other_costs: number;
+          pack_pcs_per_carton: number | null;
+          pack_cartons: number | null;
+          pack_net_weight_kg: number | null;
+          pack_gross_weight_kg: number | null;
+          pack_cbm: number | null;
+          notes: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          order_no: string;
+          buyer_id?: string | null;
+          inquiry_id?: string | null;
+          quotation_id?: string | null;
+          order_date: string;
+          delivery_date?: string | null;
+          destination_country?: string | null;
+          incoterm?: string | null;
+          payment_terms?: string | null;
+          currency?: string;
+          exchange_rate?: number;
+          status?: "Confirmed" | "In Production" | "QC" | "Packing" | "Ready to Dispatch" | "Booked" | "In Transit" | "Delivered" | "Closed" | "Cancelled";
+          sales_value?: number;
+          product_cost?: number;
+          labour_cost?: number;
+          packing_cost?: number;
+          freight_cost?: number;
+          documentation_cost?: number;
+          bank_charges?: number;
+          other_costs?: number;
+          pack_pcs_per_carton?: number | null;
+          pack_cartons?: number | null;
+          pack_net_weight_kg?: number | null;
+          pack_gross_weight_kg?: number | null;
+          pack_cbm?: number | null;
+          notes?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          order_no?: string;
+          buyer_id?: string | null;
+          inquiry_id?: string | null;
+          quotation_id?: string | null;
+          order_date?: string;
+          delivery_date?: string | null;
+          destination_country?: string | null;
+          incoterm?: string | null;
+          payment_terms?: string | null;
+          currency?: string;
+          exchange_rate?: number;
+          status?: "Confirmed" | "In Production" | "QC" | "Packing" | "Ready to Dispatch" | "Booked" | "In Transit" | "Delivered" | "Closed" | "Cancelled";
+          sales_value?: number;
+          product_cost?: number;
+          labour_cost?: number;
+          packing_cost?: number;
+          freight_cost?: number;
+          documentation_cost?: number;
+          bank_charges?: number;
+          other_costs?: number;
+          pack_pcs_per_carton?: number | null;
+          pack_cartons?: number | null;
+          pack_net_weight_kg?: number | null;
+          pack_gross_weight_kg?: number | null;
+          pack_cbm?: number | null;
+          notes?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_sales_orders_buyer_id_fkey";
+            columns: ["buyer_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_buyers";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_sales_orders_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_sales_orders_currency_fkey";
+            columns: ["currency"];
+            isOneToOne: false;
+            referencedRelation: "currencies";
+            referencedColumns: ["code"];
+          },
+          {
+            foreignKeyName: "b2b_sales_orders_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_sales_orders_inquiry_id_fkey";
+            columns: ["inquiry_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_inquiries";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_sales_orders_quotation_id_fkey";
+            columns: ["quotation_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_quotations";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      b2b_shipments: {
+        Row: {
+          id: string;
+          company_id: string;
+          shipment_no: string;
+          order_id: string | null;
+          status: "Booking" | "Ready" | "Stuffed" | "Departed" | "In Transit" | "Arrived" | "Delivered";
+          destination_country: string | null;
+          port_of_loading: string | null;
+          port_of_discharge: string | null;
+          forwarder: string | null;
+          shipping_line: string | null;
+          container_no: string | null;
+          seal_no: string | null;
+          bl_awb: string | null;
+          etd: string | null;
+          eta: string | null;
+          actual_departure: string | null;
+          actual_arrival: string | null;
+          freight_cost: number;
+          insurance_cost: number;
+          notes: string | null;
+          entered_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          shipment_no: string;
+          order_id?: string | null;
+          status?: "Booking" | "Ready" | "Stuffed" | "Departed" | "In Transit" | "Arrived" | "Delivered";
+          destination_country?: string | null;
+          port_of_loading?: string | null;
+          port_of_discharge?: string | null;
+          forwarder?: string | null;
+          shipping_line?: string | null;
+          container_no?: string | null;
+          seal_no?: string | null;
+          bl_awb?: string | null;
+          etd?: string | null;
+          eta?: string | null;
+          actual_departure?: string | null;
+          actual_arrival?: string | null;
+          freight_cost?: number;
+          insurance_cost?: number;
+          notes?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          shipment_no?: string;
+          order_id?: string | null;
+          status?: "Booking" | "Ready" | "Stuffed" | "Departed" | "In Transit" | "Arrived" | "Delivered";
+          destination_country?: string | null;
+          port_of_loading?: string | null;
+          port_of_discharge?: string | null;
+          forwarder?: string | null;
+          shipping_line?: string | null;
+          container_no?: string | null;
+          seal_no?: string | null;
+          bl_awb?: string | null;
+          etd?: string | null;
+          eta?: string | null;
+          actual_departure?: string | null;
+          actual_arrival?: string | null;
+          freight_cost?: number;
+          insurance_cost?: number;
+          notes?: string | null;
+          entered_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_shipments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_shipments_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "b2b_shipments_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "b2b_sales_orders";
             referencedColumns: ["id"];
           },
         ];

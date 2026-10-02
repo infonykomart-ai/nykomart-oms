@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { B2BInquiryManager, type B2BInquiryView } from "./b2b-client";
+import { B2BNav } from "./b2b-nav";
 
 // 2026-09-30 — B2B Inquiry Management ("B2B INQUIRY HANDLE / REPORT /
 // INVOICE / AND RELATED SECTION PAYMENT MODE & MANY MORE"). One page, four
@@ -149,12 +150,17 @@ export default async function B2BPage() {
   }));
 
   return (
-    <B2BInquiryManager
-      inquiries={inquiries}
-      companyId={companyId}
-      companyName={companyRes.data?.name ?? ""}
-      canManage
-      loadError={loadError}
-    />
+    <>
+      {/* 2026-10-02d — the register keeps working exactly as before; the
+          nav strip above it just links out to the new ERP pages. */}
+      <B2BNav />
+      <B2BInquiryManager
+        inquiries={inquiries}
+        companyId={companyId}
+        companyName={companyRes.data?.name ?? ""}
+        canManage
+        loadError={loadError}
+      />
+    </>
   );
 }

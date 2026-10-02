@@ -155,7 +155,7 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // start — grant wider via the Roles & Permissions matrix, zero code
   // change (see db/2026-09-30-b2b-inquiries.sql).
   { code: "b2b_inquiry", label: "B2B Inquiries", icon: "🤝", href: "/dashboard/b2b",
-    description: "Handle trade-buyer inquiries end to end — register, follow up, quote, convert to an order, and track payments received mode-wise with reports." },
+    description: "B2B export ERP end to end — inquiry register, buyer CRM, product master (auto-SKU + BOM), quotation costing engine, sales orders, production/QC, shipments, payments and the Control Center dashboard with automatic alerts." },
 ];
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {

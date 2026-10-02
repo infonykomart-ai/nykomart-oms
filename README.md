@@ -122,6 +122,67 @@ approval workflow, and the last two report menus:
   `db/2026-10-02c-attendance-gps-approval.sql` (both idempotent, safe whether or not the
   round-2 migrations already ran; folded into `db/schema.sql`, types regenerated).
 
+**B2B Export ERP (2026-10-02)** — the gaps in the existing `/dashboard/b2b`
+register filled in as a full export ERP (the register, its PI/CI/PL documents
+and its mode-wise payments keep working unchanged — a nav strip links the
+whole suite). Same gate: `b2b_inquiry` capability, company-scoped, audited.
+All formulas live in one shared module, `src/lib/b2b/erp.ts`, used by both
+server pages and client previews so they can never disagree.
+
+- **🎛️ Control Center** (`.../b2b/control-center`) — the spec's home screen:
+  sales month/quarter/FY, orders, new enquiries, pending quotations,
+  production pending/in-progress, QC pending, ready/in-transit/delivered,
+  receivable + overdue, stock value + raw-material value (average-cost
+  valuation), gross/net profit, plus the 🟡🔴🟢 **automatic-alert panel**
+  (overdue payments, delayed shipments, production deadlines near, stock
+  below minimum, QC rejections, follow-ups due, buyers not responding,
+  orders ready to dispatch), monthly-sales line, pipeline donut, product &
+  country bars, Top-5 buyers/products, country-wise dashboard.
+- **👥 Buyers** (`.../b2b/buyers`) — customer/buyer CRM with the spec's
+  profile fields; lifetime value, outstanding and overdue are COMPUTED
+  from orders + payment schedules (never stored), per-buyer dashboard
+  modal with AOV, paid, last order and follow-up scheduling.
+- **📦 Products** (`.../b2b/products`) — product master for the five export
+  types with **auto-SKU** (`CD-1001` Cotton Dhurrie / `CR-` Carpet / `JR-`
+  Jute Rug / `CK-` Cotton Kurti / `TC-` Table Cover — prefix per type,
+  counter starts 1001), type-specific spec fields (jsonb), 4 price points
+  with live margin, stock + min-stock reorder alerts, and a **BOM editor**
+  with the live requirement engine (qty × consumption × 1+wastage%).
+- **🧮 Quotation Engine** (`.../b2b/engine`) — pick an open inquiry +
+  product lines; product cost, packing, freight, other costs, discount,
+  total cost, net selling, gross profit and margin % compute live, with a
+  target-margin **suggested price** for enquiries. Freight/incoterm are
+  always entered values — the system never guesses a rate. Save writes the
+  engine columns onto the inquiry's 1:1 quotation; **Convert to Sales
+  Order** runs the §7 step (SO-<FY>-####, auto payment schedule from
+  `50/50` / `Net 30` / advance terms, inquiry marked Converted).
+- **🧾 Sales Orders** (`.../b2b/orders`) — the status pipeline (Confirmed →
+  In Production → QC → Packing → Ready to Dispatch → Booked → In Transit →
+  Delivered/Closed), per-line price vs cost, the order P&L with the
+  **"why is profit low?" drill-down** (each cost bucket as % of sales,
+  editable buckets), the **packing calculator** (cartons = CEILING(qty ÷
+  pcs/carton), net/gross weight, CBM) and the payment schedule with
+  receive/overdue tracking.
+- **🏭 Production & QC** (`.../b2b/production`) — PRD/QC numbering, planned
+  vs produced with auto completion %, configurable stage routing
+  (defaults = the spec's 10 stages, overridable per plan), due-date/late
+  badges; QC inspections with pass/reject/rework and auto defect %.
+- **🚢 Shipments** (`.../b2b/shipments`) — SHP-<FY>-#### with the full
+  export fields (ports, forwarder, container/seal, BL/AWB, ETD/ETA,
+  freight/insurance), status ladder and the derived 🔴 delayed badge.
+- **📊 Reports** (`.../b2b/reports`) — finance strip (revenue/cost/gross/
+  expenses/net/receivable FY), month-wise sales, product + customer +
+  salesperson profitability, production summary, export value by country
+  with shipment counts.
+- The auto-workflow triggers live in the server actions: creating
+  production advances the order to In Production, completing it → QC, a
+  spotless inspection → Packing, shipment movement → Booked/In
+  Transit/Delivered.
+- Migration to run once on the live DB: `db/2026-10-02d-b2b-export-erp.sql`
+  (idempotent — 10 new tables + costing-engine columns on
+  `b2b_quotations`/`b2b_inquiries`; folded into `db/schema.sql`, types
+  regenerated, 146 tables/views).
+
 ## Database & schema workflow (important)
 
 - `db/schema.sql` is the **only** thing needed to stand up a fresh database — every dated
