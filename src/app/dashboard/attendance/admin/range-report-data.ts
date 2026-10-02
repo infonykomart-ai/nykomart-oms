@@ -38,7 +38,7 @@ export function validDate(s: unknown, fallback: string): string {
 // store/source + the four punch-geo columns + the leave day's type/paid
 // flag. The day-level report types ignore the extras.
 const ATT_SELECT =
-  "employee_id, attendance_date, punch_in, punch_out, work_hours, status, store_id, source, punch_in_lat, punch_in_lng, punch_out_lat, punch_out_lng, leave_type_id, leave_unpaid";
+  "employee_id, attendance_date, punch_in, punch_out, work_hours, status, store_id, source, punch_in_lat, punch_in_lng, punch_out_lat, punch_out_lng, leave_type_id, leave_unpaid, gps_status";
 const PAGE = 1000;
 
 async function fetchAttendancePaged(
@@ -103,6 +103,13 @@ export async function loadRangeReport({
 
   const { data: companiesRaw } = await supabase.from("companies").select("id, name, weekly_off_days").in("id", effectiveCompanyIds);
   const companies = (companiesRaw ?? []).map((c) => ({ id: c.id, name: c.name }));
+  // 2026-10-02b — department master: resolves employees.department_id to a
+  // name for the Department column AND feeds the filter dropdown (an empty
+  // list here = no departments defined yet for these companies).
+  const { data: departmentsRaw } = effectiveCompanyIds.length
+    ? await supabase.from("departments").select("id, name").in("company_id", effectiveCompanyIds)
+    : { data: [] as { id: string; name: string }[] };
+  const departmentNameById = new Map((departmentsRaw ?? []).map((d) => [d.id, d.name]));
   const weeklyOffDaysByCompany = new Map<string, number[]>(
     (companiesRaw ?? []).map((c) => [c.id, (c.weekly_off_days as number[] | null) ?? []])
   );
@@ -110,7 +117,7 @@ export async function loadRangeReport({
   const { data: employeesRaw } = effectiveCompanyIds.length
     ? await supabase
         .from("employees")
-        .select("id, name, employee_code, company_id, date_of_joining, department")
+        .select("id, name, employee_code, company_id, date_of_joining, department_id")
         .in("company_id", effectiveCompanyIds)
         .eq("active", true)
         .order("name")
@@ -121,15 +128,19 @@ export async function loadRangeReport({
   const requestedEmployeeIds = typeof sp.employeeIds === "string" && sp.employeeIds ? sp.employeeIds.split(",").filter(Boolean) : [];
   const effectiveEmployeeIdSet = employeeScope === "few" && requestedEmployeeIds.length > 0 ? new Set(requestedEmployeeIds) : null;
   // 2026-10-02 — Department filter: exact, case-insensitive match on the
-  // free-text employees.department (""/absent = no filter). Applied AFTER
+  // resolved department NAME (structured departments entity; ""/absent =
+  // no filter). Applied AFTER
   // the company/employee scope so the checkbox counts stay truthful.
   const department = typeof sp.department === "string" ? sp.department.trim() : "";
   const departmentLower = department.toLowerCase();
+  // Resolved department NAME per employee (2026-10-02b: structured entity).
+  const resolveDepartment = (departmentId: string | null): string | null =>
+    (departmentId && departmentNameById.get(departmentId)) || null;
 
   const companyNameMap = new Map(companies.map((c) => [c.id, c.name]));
   const reportEmployees: ReportEmployee[] = allEmployeesRaw
     .filter((e) => effectiveEmployeeIdSet === null || effectiveEmployeeIdSet.has(e.id))
-    .filter((e) => !departmentLower || (e.department ?? "").trim().toLowerCase() === departmentLower)
+    .filter((e) => !departmentLower || (resolveDepartment(e.department_id) ?? "").trim().toLowerCase() === departmentLower)
     .map((e) => ({
       id: e.id,
       name: e.name,
@@ -137,14 +148,14 @@ export async function loadRangeReport({
       company_id: e.company_id,
       company_name: companyNameMap.get(e.company_id) ?? "—",
       date_of_joining: e.date_of_joining,
-      department: e.department,
+      department: resolveDepartment(e.department_id),
     }));
 
-  // Distinct department values across the accessible companies — the
-  // filter dropdown's options (sorted, blanks dropped).
-  const departments = Array.from(
-    new Set(allEmployeesRaw.map((e) => (e.department ?? "").trim()).filter(Boolean))
-  ).sort((a, b) => a.localeCompare(b));
+  // Filter dropdown options: every department defined for the accessible
+  // companies (sorted, deduped by name across companies).
+  const departments = Array.from(new Set((departmentsRaw ?? []).map((d) => d.name.trim()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b)
+  );
 
   const scope: RangeScope = {
     reportKey,

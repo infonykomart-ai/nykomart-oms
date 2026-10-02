@@ -65,7 +65,14 @@ export async function recordPunchIn(
   if (existing) {
     const { error } = await supabase
       .from("attendance")
-      .update({ punch_in: nowISOInstant(), status, ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng } : {}) })
+      .update({
+        punch_in: nowISOInstant(),
+        status,
+        // 2026-10-02c — a captured GPS fix starts the Approve/Pending/
+        // Rejected review workflow (admin decides on the GPS Approvals
+        // screen). No geo → status untouched ('None' = nothing to review).
+        ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng, gps_status: "Pending" as const } : {}),
+      })
       .eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
   } else {
@@ -76,7 +83,7 @@ export async function recordPunchIn(
       punch_in: nowISOInstant(),
       status,
       source,
-      ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng } : {}),
+      ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng, gps_status: "Pending" as const } : {}),
     });
     if (error) return { ok: false, error: error.message };
   }
@@ -119,7 +126,7 @@ export async function recordPunchOut(
   // reports the day's total work duration (punch_out − punch_in).
   const { data: existing, error: selectError } = await supabase
     .from("attendance")
-    .select("id, punch_in, punch_out")
+    .select("id, punch_in, punch_out, gps_status")
     .eq("employee_id", employeeId)
     .eq("attendance_date", date)
     .maybeSingle();
@@ -129,7 +136,20 @@ export async function recordPunchOut(
 
   const { error } = await supabase
     .from("attendance")
-    .update({ punch_out: nowISOInstant(), ...(geo ? { punch_out_lat: geo.lat, punch_out_lng: geo.lng } : {}) })
+    .update({
+      punch_out: nowISOInstant(),
+      // 2026-10-02c — punch-out GPS joins the review workflow too, but only
+      // when the IN side had nothing to review ('None'): an already
+      // Approved/Rejected IN decision is never silently re-opened by the
+      // evening punch.
+      ...(geo
+        ? {
+            punch_out_lat: geo.lat,
+            punch_out_lng: geo.lng,
+            ...(existing.gps_status === "None" ? { gps_status: "Pending" as const } : {}),
+          }
+        : {}),
+    })
     .eq("id", existing.id);
   if (error) return { ok: false, error: error.message };
 

@@ -64,6 +64,8 @@ export type AttendanceRow = {
   punch_out_lng?: number | null;
   leave_type_id?: string | null;
   leave_unpaid?: boolean | null;
+  // 2026-10-02c — GPS review workflow (None/Pending/Approved/Rejected).
+  gps_status?: string | null;
 };
 
 export type ReportEmployee = {
@@ -296,7 +298,8 @@ export function buildMonthlyReport({
 //  - "Month Special Report": TeamOffice-specific, no defined report shape
 //    here to replicate.
 // Department column + filter, GPS punch coordinates (Location/GPS report
-// pages) and COFF all ARRIVED this round (free-text employees.department,
+// pages) and COFF all ARRIVED this round (department resolved from
+// employees.department_id,
 // attendance.punch_in/out_lat,lng captured by the Web Punch buttons, and
 // COFF derived from week-off/holiday days actually worked) — they live in
 // the range-report family (range-report.ts + the Daily/Periodic/Location/

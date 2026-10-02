@@ -6219,12 +6219,26 @@ JOIN (VALUES
 --  patches for the LIVE Supabase DB, never replayed on a fresh schema.)
 -- =============================================================================
 -- Department column + filter on the attendance report suite
--- (Daily/Monthly/Periodic/Yearly/Location/Leave/Salary). Free text on
--- purpose — same admin-typed convention as employees.designation.
+-- (Daily/Monthly/Periodic/Yearly/Location/Leave/Salary).
+-- 2026-10-02b: promoted to a structured org entity — the free-text column
+-- (db/2026-10-02-employee-department.sql, same day) is migrated into the
+-- departments table below and dropped there; fresh databases only ever
+-- see the structured form.
+CREATE TABLE departments (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id  uuid NOT NULL REFERENCES companies(id),
+  name        text NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, name)
+);
+CREATE INDEX idx_departments_company ON departments(company_id);
+COMMENT ON TABLE departments IS
+  'Structured org departments per company (TeamOffice parity). employees.department_id points here; reports join for the Department column/filter. Manage from /dashboard/admin/departments.';
 ALTER TABLE employees
-  ADD COLUMN department text;
-COMMENT ON COLUMN employees.department IS
-  'Free-text department/team label (Sales, Accounts, ...). Shown as the Department column and filter on the attendance report suite (/dashboard/attendance/admin/*). NULL = not filled in yet (renders as "—").';
+  ADD COLUMN department_id uuid REFERENCES departments(id);
+COMMENT ON COLUMN employees.department_id IS
+  'Department this employee belongs to (NULL = unassigned, renders as "—"). Formerly free-text employees.department.';
 
 -- Web-Punch GPS capture (best-effort browser geolocation at Punch In/Out;
 -- server-side paths — login-hook auto punch, logout punch-out, TeamOffice
@@ -6242,6 +6256,23 @@ COMMENT ON COLUMN attendance.punch_in_lat IS
   'Browser geolocation at Punch In (best-effort, NULL when unavailable/denied). Pairs with punch_in_lng — rendered as a maps link by the GPS report.';
 COMMENT ON COLUMN attendance.punch_out_lat IS
   'Browser geolocation at Punch Out (best-effort, NULL when unavailable/denied). Pairs with punch_out_lng.';
+
+-- 2026-10-02c — GPS Approve/Pending/Rejected review workflow: every
+-- captured Web-Punch fix starts Pending; admins decide from
+-- /dashboard/attendance/admin/gps-approvals. None = no coords to review.
+ALTER TABLE attendance
+  ADD COLUMN gps_status text NOT NULL DEFAULT 'None'
+  CHECK (gps_status IN ('None', 'Pending', 'Approved', 'Rejected'));
+ALTER TABLE attendance
+  ADD COLUMN gps_decided_by_employee_id uuid REFERENCES employees(id);
+ALTER TABLE attendance
+  ADD COLUMN gps_decided_at timestamptz;
+ALTER TABLE attendance
+  ADD COLUMN gps_decision_remark text;
+COMMENT ON COLUMN attendance.gps_status IS
+  'Web-Punch GPS review workflow: None (no coords to review) / Pending / Approved / Rejected. Set to Pending when punch_in/out_lat,lng is captured; decided from /dashboard/attendance/admin/gps-approvals.';
+COMMENT ON COLUMN attendance.gps_decision_remark IS
+  'Admin remark recorded with the Approve/Rejected decision (optional).';
 
 
 -- =============================================================================

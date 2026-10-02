@@ -97,6 +97,10 @@ export type Database = {
           punch_in_lng: number | null;
           punch_out_lat: number | null;
           punch_out_lng: number | null;
+          gps_status: "None" | "Pending" | "Approved" | "Rejected";
+          gps_decided_by_employee_id: string | null;
+          gps_decided_at: string | null;
+          gps_decision_remark: string | null;
         };
         Insert: {
           id?: string;
@@ -122,6 +126,10 @@ export type Database = {
           punch_in_lng?: number | null;
           punch_out_lat?: number | null;
           punch_out_lng?: number | null;
+          gps_status?: "None" | "Pending" | "Approved" | "Rejected";
+          gps_decided_by_employee_id?: string | null;
+          gps_decided_at?: string | null;
+          gps_decision_remark?: string | null;
         };
         Update: {
           id?: string;
@@ -147,6 +155,10 @@ export type Database = {
           punch_in_lng?: number | null;
           punch_out_lat?: number | null;
           punch_out_lng?: number | null;
+          gps_status?: "None" | "Pending" | "Approved" | "Rejected";
+          gps_decided_by_employee_id?: string | null;
+          gps_decided_at?: string | null;
+          gps_decision_remark?: string | null;
         };
         Relationships: [
           {
@@ -166,6 +178,13 @@ export type Database = {
           {
             foreignKeyName: "attendance_entered_by_employee_id_fkey";
             columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "attendance_gps_decided_by_employee_id_fkey";
+            columns: ["gps_decided_by_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
             referencedColumns: ["id"];
@@ -2560,6 +2579,38 @@ export type Database = {
           },
         ];
       };
+      departments: {
+        Row: {
+          id: string;
+          company_id: string;
+          name: string;
+          active: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          name: string;
+          active?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          name?: string;
+          active?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "departments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       direct_messages: {
         Row: {
           id: string;
@@ -4147,7 +4198,7 @@ export type Database = {
           companion_enabled: boolean;
           companion_name: string | null;
           telegram_chat_id: string | null;
-          department: string | null;
+          department_id: string | null;
         };
         Insert: {
           id?: string;
@@ -4188,7 +4239,7 @@ export type Database = {
           companion_enabled?: boolean;
           companion_name?: string | null;
           telegram_chat_id?: string | null;
-          department?: string | null;
+          department_id?: string | null;
         };
         Update: {
           id?: string;
@@ -4229,7 +4280,7 @@ export type Database = {
           companion_enabled?: boolean;
           companion_name?: string | null;
           telegram_chat_id?: string | null;
-          department?: string | null;
+          department_id?: string | null;
         };
         Relationships: [
           {
@@ -4237,6 +4288,13 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "employees_department_id_fkey";
+            columns: ["department_id"];
+            isOneToOne: false;
+            referencedRelation: "departments";
             referencedColumns: ["id"];
           },
           {

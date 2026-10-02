@@ -635,6 +635,26 @@ export default async function AttendanceAdminPage({
           >
             💰 Salary
           </Link>
+          {/* 2026-10-02 (round 3) — Salary Details master, the Other
+              Report bucket and the GPS review queue. */}
+          <Link
+            href="/dashboard/attendance/admin/salary-details"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            🧾 Salary Details
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/other-report"
+            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
+          >
+            🧩 Other
+          </Link>
+          <Link
+            href="/dashboard/attendance/admin/gps-approvals"
+            className="rounded-lg bg-emerald-600 px-3 py-2 font-semibold text-white transition hover:bg-emerald-500"
+          >
+            🛰️ GPS Approvals
+          </Link>
         </nav>
       </div>
 

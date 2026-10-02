@@ -84,13 +84,43 @@ needs (all under the same nav strip):
 - **📒 Month Summary** (`.../admin/month-summary`) — the calendar-style sheet: one
   employee × one month as a Mon-first wall calendar (per-day status badge + IN/OUT),
   totals strip, day-wise table, Print/PDF + export.
-- **Department column + filter** — `employees.department` is a new free-text field
-  (Employees → Create/Edit Details). Every report row now carries a Department column,
+- **Department column + filter** — every report row now carries a Department column,
   and the Monthly/Daily/Periodic/Yearly filters gained a Department dropdown (all
   report types ride the shared `range-report.ts` engine + `ReportResults` renderer).
+  Originally a free-text field; superseded by the structured departments entity in
+  round 3 below.
 - Migrations to run once on the live DB: `db/2026-10-02-employee-department.sql` and
   `db/2026-10-02-attendance-punch-geo.sql` (both idempotent; already folded into
   `db/schema.sql`, types regenerated).
+
+**TeamOffice parity round 3 (2026-10-02)** — Department as a real entity, the GPS
+approval workflow, and the last two report menus:
+
+- **🏢 Department master** (`/dashboard/admin/departments`, gated `employee_admin`) —
+  structured `departments` table (unique per company) with add / rename /
+  activate-deactivate; delete is intentionally not offered so history keeps pointing
+  at a real row. Employees now pick a department from a select — `employees.department_id`
+  FK replaces the free-text `employees.department` column, and existing free-text values
+  are migrated into departments rows by `db/2026-10-02b-departments-entity.sql`. Every
+  report resolves the FK to the department name, so renames propagate everywhere.
+- **🛰️ GPS Approvals** (`.../admin/gps-approvals`, gated `attendance_admin`) —
+  workflow over the Web-Punch coordinates: a punch with a GPS fix lands as **Pending**,
+  the queue shows IN/OUT times + a 🗺️ map link, and an admin approves or rejects with an
+  optional remark (who decided + when are recorded). Approved/Rejected rows are never
+  re-opened by later punches (a punch-out only flips `None → Pending`); the GPS Report
+  gained a GPS Review status column.
+- **🧾 Salary Details** (`.../admin/salary-details`, gated `salary_admin`) — the salary
+  *master* sheet: each employee's salary structure as of a chosen month (CTC split,
+  live PF/ESI/PT, preview net). Read-only by design — attendance-based payroll figures
+  live in the Salary Report, and paying still happens on `/dashboard/salary`.
+- **🧩 Other Report** (`.../admin/other-report`) — the three odds-and-ends reports on
+  the shared range engine: **Source Report** (punch counts per `attendance_source` +
+  GPS-captured days per employee), **Department rollup** (day counts folded per
+  department), and **Hours report** (worked days, total/average hours, OT > 15 min,
+  short days).
+- Migrations to run once on the live DB: `db/2026-10-02b-departments-entity.sql` and
+  `db/2026-10-02c-attendance-gps-approval.sql` (both idempotent, safe whether or not the
+  round-2 migrations already ran; folded into `db/schema.sql`, types regenerated).
 
 ## Database & schema workflow (important)
 

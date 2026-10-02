@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useEffect } from "react";
+import { useActionState, useRef, useEffect, useState } from "react";
 import { createEmployee, type EmployeeFormState } from "./actions";
 import { ProfileFields } from "./profile-fields";
 
@@ -27,14 +27,21 @@ export function EmployeeForm({
   roles,
   companies,
   stores,
+  departments,
 }: {
   roles: { id: string; name: string }[];
   companies: { id: string; name: string }[];
   stores: { id: string; name: string; company_id: string }[];
+  /** Full department master (all companies) — filtered to the picked company below. 2026-10-02b. */
+  departments: { id: string; name: string; company_id: string; active: boolean }[];
 }) {
   const [state, formAction, pending] = useActionState(createEmployee, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  // Controlled so the Department dropdown can follow the picked company
+  // (departments are per-company — see departments master page).
+  const [homeCompanyId, setHomeCompanyId] = useState("");
+  const companyDepartments = departments.filter((d) => d.company_id === homeCompanyId && d.active);
 
   useEffect(() => {
     if (state.success) {
@@ -98,7 +105,14 @@ export function EmployeeForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="home_company_id">Home Company *</label>
-          <select id="home_company_id" name="home_company_id" required className={inputClass} defaultValue="">
+          <select
+            id="home_company_id"
+            name="home_company_id"
+            required
+            className={inputClass}
+            value={homeCompanyId}
+            onChange={(e) => setHomeCompanyId(e.target.value)}
+          >
             <option value="" disabled>Select company</option>
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -109,12 +123,20 @@ export function EmployeeForm({
           <label className={labelClass} htmlFor="designation">Designation</label>
           <input id="designation" name="designation" className={inputClass} />
         </div>
-        {/* 2026-10-02 — TeamOffice parity: department column/filter on the
-            attendance report suite. Free text (Sales, Accounts, ...), same
-            admin-typed convention as designation. */}
+        {/* 2026-10-02b — Department is a structured entity now (master at
+            /dashboard/admin/departments); dropdown filtered to the picked
+            company's own departments. */}
         <div>
-          <label className={labelClass} htmlFor="department">Department</label>
-          <input id="department" name="department" placeholder="e.g. Sales, Accounts, Warehouse" className={inputClass} />
+          <label className={labelClass} htmlFor="department_id">Department</label>
+          <select id="department_id" name="department_id" className={inputClass} defaultValue="">
+            <option value="">— None —</option>
+            {companyDepartments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+          {homeCompanyId && companyDepartments.length === 0 && (
+            <p className="mt-1 text-xs text-slate-400">No departments for this company yet — add one from Employees → Departments.</p>
+          )}
         </div>
         <div>
           <label className={labelClass} htmlFor="employee_code">Employee Code (biometric)</label>

@@ -70,10 +70,11 @@ export default async function SalaryReportPage({
     { data: attendanceRows },
     { data: holidays },
     { data: salaryPayments },
+    { data: departments },
   ] = await Promise.all([
     supabase
       .from("employees")
-      .select("id, name, employee_code, department, date_of_joining")
+      .select("id, name, employee_code, department_id, date_of_joining")
       .eq("company_id", selectedCompanyId)
       .eq("active", true)
       .order("name"),
@@ -100,7 +101,10 @@ export default async function SalaryReportPage({
       .select("employee_id, net_paid_amount, payment_date")
       .eq("company_id", selectedCompanyId)
       .eq("pay_month", monthStart),
+    // 2026-10-02b — resolve department_id -> name for the Department column.
+    supabase.from("departments").select("id, name").eq("company_id", selectedCompanyId),
   ]);
+  const departmentName = new Map((departments ?? []).map((d) => [d.id, d.name]));
 
   // Latest salary row per employee with effective_from <= end of the month
   // — "which value was in effect back then", same lookup as the payroll
@@ -183,7 +187,7 @@ export default async function SalaryReportPage({
     return {
       employee: e.name,
       employee_code: e.employee_code,
-      department: e.department,
+      department: (e.department_id && departmentName.get(e.department_id)) ?? null,
       company: companyName,
       present: counts.Present,
       late: counts.Late,

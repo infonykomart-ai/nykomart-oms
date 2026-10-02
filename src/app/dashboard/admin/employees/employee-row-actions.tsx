@@ -18,6 +18,7 @@ export function EmployeeRowActions({
   stores,
   currentStoreIds,
   reportsToOptions,
+  departments,
   documents,
 }: {
   employeeId: string;
@@ -33,6 +34,9 @@ export function EmployeeRowActions({
   // 2026-09-11 (Payroll Phase 3) — same-company employees this one could
   // report to (self already excluded by the caller).
   reportsToOptions: { id: string; name: string }[];
+  // 2026-10-02b — this employee's home company's departments for the Edit
+  // Details select (caller filters by company).
+  departments: { id: string; name: string }[];
   documents: EmployeeDocumentRow[];
 }) {
   const [isPending, startTransition] = useTransition();
@@ -132,7 +136,14 @@ export function EmployeeRowActions({
         </button>
       </div>
       {resetOpen && <ResetPasswordInline employeeId={employeeId} onDone={() => setResetOpen(false)} />}
-      {detailsOpen && <EmployeeDetailsForm employee={details} reportsToOptions={reportsToOptions} onDone={() => setDetailsOpen(false)} />}
+      {detailsOpen && (
+        <EmployeeDetailsForm
+          employee={details}
+          reportsToOptions={reportsToOptions}
+          departments={departments}
+          onDone={() => setDetailsOpen(false)}
+        />
+      )}
       {storeAccessOpen && (
         <EmployeeStoreAccessForm
           employeeId={employeeId}

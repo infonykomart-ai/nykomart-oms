@@ -207,7 +207,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   const homeCompanyId = str(formData, "home_company_id");
   const roleId = str(formData, "role_id");
   const designation = str(formData, "designation") || null;
-  const department = str(formData, "department") || null;
+  const departmentId = str(formData, "department_id") || null;
   const employeeCode = str(formData, "employee_code") || null;
   const dateOfJoining = str(formData, "date_of_joining") || null;
   const extraCompanyIds = formData.getAll("company_access").map(String).filter(Boolean);
@@ -221,6 +221,18 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
   }
   if (!/^\S+@\S+\.\S+$/.test(email)) {
     return { error: "Email is not in a valid format.", success: null };
+  }
+  // 2026-10-02b — departments are per-company: reject a department id that
+  // belongs to some other company before creating the auth user (the form
+  // only offers the right ones; this guards a crafted submission).
+  if (departmentId) {
+    const { data: dept } = await supabase
+      .from("departments")
+      .select("id")
+      .eq("id", departmentId)
+      .eq("company_id", homeCompanyId)
+      .maybeSingle();
+    if (!dept) return { error: "Selected department doesn't belong to the home company.", success: null };
   }
 
   const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
@@ -245,7 +257,7 @@ export async function createEmployee(_prev: EmployeeFormState, formData: FormDat
       email,
       role_id: roleId,
       designation,
-      department,
+      department_id: departmentId,
       employee_code: employeeCode,
       date_of_joining: dateOfJoining,
       active: true,
@@ -338,6 +350,25 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
   const employeeId = str(formData, "employee_id");
   if (!employeeId) return { error: "Employee missing.", success: false };
 
+  // 2026-10-02b — fetch the employee's home company so the selected
+  // department can be validated against it (departments are per-company).
+  const { data: employeeRow } = await supabase
+    .from("employees")
+    .select("company_id")
+    .eq("id", employeeId)
+    .maybeSingle();
+  if (!employeeRow) return { error: "Employee missing.", success: false };
+  const departmentId = strOrNull(formData, "department_id");
+  if (departmentId) {
+    const { data: dept } = await supabase
+      .from("departments")
+      .select("id")
+      .eq("id", departmentId)
+      .eq("company_id", employeeRow.company_id)
+      .maybeSingle();
+    if (!dept) return { error: "Selected department doesn't belong to this employee's company.", success: false };
+  }
+
   // 2026-09-11 (Payroll Phase 3) — org chart. An employee can't report to
   // themselves (the form's own dropdown already excludes their own row,
   // but a crafted submission could still try it) — a self-reference would
@@ -349,9 +380,8 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
     .from("employees")
     .update({
       designation: strOrNull(formData, "designation"),
-      // 2026-10-02 — TeamOffice parity: department shown as a column +
-      // filter across the attendance report suite.
-      department: strOrNull(formData, "department"),
+      // 2026-10-02b — structured department entity (validated above).
+      department_id: departmentId,
       employee_code: strOrNull(formData, "employee_code"),
       date_of_joining: strOrNull(formData, "date_of_joining"),
       reports_to_employee_id: reportsToEmployeeId as never,
