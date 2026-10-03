@@ -18,7 +18,7 @@ import { PunchButtons } from "./punch-buttons";
 import { TelegramConnectCard } from "./telegram-connect-card";
 // 2026-10-01 — destination mode ("dm" | "group") for the punch alerts —
 // env-driven, see telegram-notify.ts's telegramAttendanceMode().
-import { telegramAttendanceMode } from "@/lib/attendance/telegram-notify";
+import { telegramAttendanceMode, resolveTelegramBotUsername } from "@/lib/attendance/telegram-notify";
 import { DailyReportForm } from "./daily-report-form";
 import { RecentReportsList } from "./recent-reports-list";
 import { IncompleteWorkSection, type IncompleteLogRow } from "./incomplete-work-section";
@@ -517,7 +517,7 @@ export default async function AttendancePage({
         <TelegramConnectCard
           employeeId={employee.id}
           connected={!!emp?.telegram_chat_id}
-          botUsername={process.env.TELEGRAM_BOT_USERNAME ?? null}
+          botUsername={await resolveTelegramBotUsername()}
           botTokenSet={!!process.env.TELEGRAM_BOT_TOKEN}
           mode={telegramAttendanceMode()}
         />

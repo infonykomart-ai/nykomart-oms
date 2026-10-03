@@ -217,8 +217,9 @@ export function TelegramConnectCard({
           </div>
         ) : (
           <p className="text-xs text-amber-600">
-            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_USERNAME</code> is not set on the server — ask admin to set it, then
-            reload.
+            Bot ka deep link abhi auto-resolve nahi ho paya — server pe{" "}
+            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_USERNAME</code> set karwayein (ya{" "}
+            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_TOKEN</code> check karein), phir reload karein.
           </p>
         )
       ) : (

@@ -7,6 +7,10 @@ import { EmployeeRowActions } from "./employee-row-actions";
 // see employee-telegram-cell.tsx (replaced the WhatsApp cell the same day
 // punch notifications switched to Telegram DMs).
 import { EmployeeTelegramCell } from "./employee-telegram-cell";
+// 2026-10-03 — the @handle for the copy-link deep link resolves from the
+// token (getMe) when TELEGRAM_BOT_USERNAME isn't configured — see
+// telegram-notify.ts.
+import { resolveTelegramBotUsername } from "@/lib/attendance/telegram-notify";
 import Link from "next/link";
 
 // 2026-09-29 — FedEx-style upgrade: the bare "Employees" h1 row became a
@@ -51,6 +55,11 @@ export default async function EmployeesAdminPage() {
       // admin can see; per-company filtering happens at each usage).
       supabase.from("departments").select("id, name, company_id, active").order("name"),
     ]);
+
+  // 2026-10-03 — resolved ONCE for the whole page (the row map is a sync
+  // callback, so it can't await): the bot's @handle for the copy-link deep
+  // link, from env or auto via getMe — see telegram-notify.ts.
+  const botUsername = await resolveTelegramBotUsername();
 
   const outstandingAdvanceByEmployee = new Map<string, number>();
   for (const a of advances ?? []) {
@@ -152,7 +161,7 @@ export default async function EmployeesAdminPage() {
                       <div className="text-xs text-slate-400">{(e.department_id && departmentName.get(e.department_id)) ?? "—"}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} botUsername={process.env.TELEGRAM_BOT_USERNAME ?? null} />
+                      <EmployeeTelegramCell employeeId={e.id} raw={e.telegram_chat_id} botUsername={botUsername} />
                     </td>
                     <td className="px-4 py-3">
                       <span
