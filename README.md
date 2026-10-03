@@ -39,7 +39,9 @@ Telegram DMs, one per employee (the WhatsApp channel for this flow is OFF):
 - `TELEGRAM_BOT_USERNAME` — the bot's @handle without `@`; used to build the deep link
   `https://t.me/<username>?start=<employee id>` that employees open from the Attendance page to
   connect their own Telegram (pressing Start is what lets the app capture their chat id into
-  `employees.telegram_chat_id`).
+  `employees.telegram_chat_id`). **Optional since 2026-10-03**: if unset, the app resolves the
+  handle from `TELEGRAM_BOT_TOKEN` itself via the Bot API's `getMe` (cached per server
+  instance), so an unconfigured username can no longer block the connect flow.
 - Sending code: `src/lib/attendance/telegram-notify.ts`; connect/Test actions live in
   `src/app/dashboard/attendance/actions.ts`; admin Test button on the Employees page.
   Every message greets `Hello <Name>,` with the employee's own name (2026-10-03), and the

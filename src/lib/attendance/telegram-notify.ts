@@ -76,6 +76,52 @@ function attendanceGroupId(): string | null {
   return (process.env.TELEGRAM_ATTENDANCE_CHAT_ID ?? "").trim() || null;
 }
 
+// 2026-10-03 — "TELEGRAM_BOT_USERNAME is not set on the server — ask admin
+// to set it, then reload": the Attendance connect card AND the Employees
+// page's copy-link button both need the bot's @handle to build the t.me
+// deep link, but only TELEGRAM_BOT_TOKEN had been configured on the live
+// site — a second env var nobody had set was blocking the whole connect
+// flow. The handle is PUBLIC bot data, so resolve it from the token via
+// getMe instead: env still wins when set (zero network), otherwise one
+// 4s call per server instance, cached forever after success. Failures
+// (bad token, Telegram blip) cache a negative result for 60s and return
+// null — every caller keeps its "ask admin" fallback, nothing ever throws.
+let cachedBotUsername: string | null | undefined;
+let botUsernameRetryAfter = 0;
+
+export async function resolveTelegramBotUsername(): Promise<string | null> {
+  const fromEnv = (process.env.TELEGRAM_BOT_USERNAME ?? "").trim().replace(/^@/, "");
+  if (fromEnv) return fromEnv;
+  if (cachedBotUsername) return cachedBotUsername;
+  const token = (process.env.TELEGRAM_BOT_TOKEN ?? "").trim();
+  if (!token) return null;
+  if (Date.now() < botUsernameRetryAfter) return null; // recent failure — don't stall the page again
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4_000);
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      result?: { username?: string };
+    } | null;
+    const username = res.ok && json?.ok ? (json.result?.username ?? null) : null;
+    if (username) {
+      cachedBotUsername = username;
+      return username;
+    }
+    botUsernameRetryAfter = Date.now() + 60_000;
+    return null;
+  } catch {
+    botUsernameRetryAfter = Date.now() + 60_000;
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function sendTelegramText(token: string, chatId: string, text: string): Promise<SendResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
