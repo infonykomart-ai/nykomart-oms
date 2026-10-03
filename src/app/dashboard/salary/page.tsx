@@ -3,7 +3,7 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, summarizeCategories, summarizeLeaveDetail, computeDeduction } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
-import { SalaryForm } from "./salary-form";
+import { SalaryForm, type CurrentSalary } from "./salary-form";
 import { PayrollRow } from "./payroll-row";
 import { AdvanceSection, type AdvanceRow } from "./advance-section";
 import { FinanceLedger, type LedgerRow } from "./finance-ledger";
@@ -105,6 +105,36 @@ export default async function SalaryPage({
   for (const row of salaryRows ?? []) {
     if (row.effective_from > monthEnd) continue;
     if (!salaryAsOf.has(row.employee_id)) salaryAsOf.set(row.employee_id, row); // rows are already newest-first
+  }
+
+  // 2026-10-03 — "employee ki salary decide karne or feed karne ka ek
+  // proper form nahi hai": the Set/Update form used to be a blind
+  // dropdown + blank number — you could never SEE what was already
+  // decided for the employee you were editing. salaryRows is already
+  // fetched newest-first across ALL months, so the FIRST row seen per
+  // employee is simply their latest decided salary — that's what feeds
+  // SalaryForm's prefill so editing starts from the real current values.
+  const latestSalaryByEmployee = new Map<string, NonNullable<typeof salaryRows>[number]>();
+  for (const row of salaryRows ?? []) {
+    if (!latestSalaryByEmployee.has(row.employee_id)) latestSalaryByEmployee.set(row.employee_id, row);
+  }
+  const currentSalaryByEmployee: Record<string, CurrentSalary> = {};
+  for (const [id, row] of latestSalaryByEmployee) {
+    currentSalaryByEmployee[id] = {
+      monthly_salary: Number(row.monthly_salary),
+      allowed_leaves_per_month: Number(row.allowed_leaves_per_month),
+      effective_from: row.effective_from,
+      ctc_annual: row.ctc_annual === null ? null : Number(row.ctc_annual),
+      basic_percent_of_ctc: Number(row.basic_percent_of_ctc),
+      hra_percent_of_basic: Number(row.hra_percent_of_basic),
+      employer_pf_percent: Number(row.employer_pf_percent),
+      employee_pf_percent: Number(row.employee_pf_percent),
+      pf_wage_ceiling: Number(row.pf_wage_ceiling),
+      esi_applicable: row.esi_applicable,
+      esi_employee_percent: Number(row.esi_employee_percent),
+      esi_employer_percent: Number(row.esi_employer_percent),
+      professional_tax_amount: Number(row.professional_tax_amount),
+    };
   }
 
   const holidayDates = new Set((holidays ?? []).map((h) => h.holiday_date));
@@ -287,8 +317,13 @@ export default async function SalaryPage({
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Set / Update Salary</h2>
-        <SalaryForm employees={teamEmployees ?? []} today={today} />
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-700">Employee Salary — Decide &amp; Feed</h2>
+          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
+            {(teamEmployees ?? []).filter((e) => currentSalaryByEmployee[e.id]).length} of {" "}{(teamEmployees ?? []).length} employees have a salary decided
+          </span>
+        </div>
+        <SalaryForm employees={teamEmployees ?? []} today={today} current={currentSalaryByEmployee} />
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">

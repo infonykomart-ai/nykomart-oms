@@ -123,11 +123,16 @@ function footer(): string {
  * freeze the function mid-send), but this function itself never throws
  * and never takes longer than one 5s Telegram call. Every skip and every
  * failure is logged with the employee id.
+ *
+ * 2026-10-03 — "Hello ke sath employee ka naam bhi to jana chahiye na":
+ * the message is now a BUILDER that receives the employee's real name
+ * (fetched once, right here) — every confirmation greets
+ * "Hello <Name>," instead of a nameless "Hello,".
  */
 async function notifyEmployee(
   supabase: SupabaseClient<Database>,
   employeeId: string,
-  message: string
+  buildMessage: (employeeName: string) => string
 ): Promise<void> {
   try {
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -146,12 +151,15 @@ async function notifyEmployee(
       return;
     }
 
+    const employeeName = employee?.name?.trim() || employeeId;
+    const message = buildMessage(employeeName);
+
     // 2026-10-01 — GROUP mode: post to the shared group chat (employee
     // name prefixed so everyone knows whose punch it is); the employee's
     // own telegram_chat_id / connect step is irrelevant here.
     const groupId = attendanceGroupId();
     if (groupId) {
-      const result = await sendTelegramText(token, groupId, `👤 ${employee?.name ?? employeeId}\n\n${message}`);
+      const result = await sendTelegramText(token, groupId, `👤 ${employeeName}\n\n${message}`);
       if (!result.ok) {
         console.error(`[telegram] punch notification FAILED for employee ${employeeId} (group ${groupId}): ${result.error}`);
       }
@@ -189,13 +197,11 @@ export async function notifyPunchInTelegram(params: {
     status === "Late"
       ? "• Status: Late (recorded after the 9:45 AM cut-off)"
       : "• Status: Present";
-  await notifyEmployee(
-    supabase,
-    employeeId,
+  await notifyEmployee(supabase, employeeId, (name) =>
     [
       "✅ Attendance Marked — Nykomart OMS",
       "",
-      "Hello,",
+      `Hello ${name},`,
       "",
       "Your attendance has been recorded successfully.",
       `• Date: ${fmtDay(punchInAtIso)}`,
@@ -217,13 +223,11 @@ export async function notifyPunchOutTelegram(params: {
   punchOutAtIso: string;
 }): Promise<void> {
   const { supabase, employeeId, punchInAtIso, punchOutAtIso } = params;
-  await notifyEmployee(
-    supabase,
-    employeeId,
+  await notifyEmployee(supabase, employeeId, (name) =>
     [
       "🕘 Punch Out Recorded — Nykomart OMS",
       "",
-      "Hello,",
+      `Hello ${name},`,
       "",
       "Your punch out has been recorded successfully.",
       `• Date: ${fmtDay(punchOutAtIso)}`,
@@ -263,6 +267,8 @@ export async function sendTestTelegram(params: {
 
     const testText = [
       "✅ Test Message — Nykomart OMS",
+      "",
+      `Hello ${employee?.name?.trim() || employeeId},`,
       "",
       "This is a test confirmation that Telegram alerts are working for your account.",
       "You'll receive automatic messages here when your attendance is marked (punch in / punch out).",

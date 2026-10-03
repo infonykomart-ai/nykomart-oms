@@ -9,6 +9,27 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const smallLabelClass = "mb-0.5 block text-[11px] font-medium text-slate-500";
 
+/**
+ * The salary structure ALREADY decided for an employee (their newest
+ * employee_salary row — see salary/page.tsx) — exactly the fields
+ * setEmployeeSalary writes, so the form can prefill every one of them.
+ */
+export type CurrentSalary = {
+  monthly_salary: number;
+  allowed_leaves_per_month: number;
+  effective_from: string;
+  ctc_annual: number | null;
+  basic_percent_of_ctc: number;
+  hra_percent_of_basic: number;
+  employer_pf_percent: number;
+  employee_pf_percent: number;
+  pf_wage_ceiling: number;
+  esi_applicable: boolean;
+  esi_employee_percent: number;
+  esi_employer_percent: number;
+  professional_tax_amount: number;
+};
+
 // 2026-09-11 — Payroll Phase 1: this form used to only ever take a flat
 // "Monthly Salary" number. It now offers an OPTIONAL "CTC Structure" mode
 // that auto-computes Basic/HRA/Special Allowance + Employer/Employee PF +
@@ -20,9 +41,32 @@ const smallLabelClass = "mb-0.5 block text-[11px] font-medium text-slate-500";
 // submitSalaryPayment() to also work out statutory deductions at payment
 // time. Flat mode (the checkbox off) behaves 100% identically to before
 // this round.
-export function SalaryForm({ employees, today }: { employees: { id: string; name: string }[]; today: string }) {
+//
+// 2026-10-03 — "employee ki salary decide karne or feed karne ka ek proper
+// form nahi hai": upgraded from a blind dropdown + empty number to a real
+// decide/feed form. Every field is now CONTROLLED and picking an employee
+// PREFILLS their current structure (flat or CTC) with a live "currently
+// decided" banner above the form — so an admin edits what's actually there
+// instead of retyping from memory, and can see at a glance whether this
+// person has a salary decided at all. Saving still inserts a NEW versioned
+// row effective from the chosen date (setEmployeeSalary) — history is
+// never rewritten.
+export function SalaryForm({
+  employees,
+  today,
+  current,
+}: {
+  employees: { id: string; name: string }[];
+  today: string;
+  current: Record<string, CurrentSalary>;
+}) {
   const [state, formAction, pending] = useActionState(setEmployeeSalary, initialState);
   const [ctcMode, setCtcMode] = useState(false);
+
+  const [employeeId, setEmployeeId] = useState("");
+  const [monthlySalary, setMonthlySalary] = useState<number>(0);
+  const [allowedLeaves, setAllowedLeaves] = useState<number>(1);
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(today);
 
   const [ctcAnnual, setCtcAnnual] = useState(0);
   const [basicPct, setBasicPct] = useState<number>(DEFAULT_CTC_STRUCTURE.basicPercentOfCtc);
@@ -34,6 +78,49 @@ export function SalaryForm({ employees, today }: { employees: { id: string; name
   const [esiEmployeePct, setEsiEmployeePct] = useState<number>(DEFAULT_CTC_STRUCTURE.esiEmployeePercent);
   const [esiEmployerPct, setEsiEmployerPct] = useState<number>(DEFAULT_CTC_STRUCTURE.esiEmployerPercent);
   const [ptAmount, setPtAmount] = useState(0);
+
+  const selected = employeeId ? current[employeeId] : undefined;
+  const selectedName = employees.find((e) => e.id === employeeId)?.name ?? "";
+
+  // Event-handler setState (never in an effect) — selecting an employee
+  // loads that person's real decided salary into every field at once.
+  function pickEmployee(id: string) {
+    setEmployeeId(id);
+    const cur = current[id];
+    // New decision always starts from today; the old row keeps its own
+    // effective_from (salary history stays versioned, see actions.ts).
+    setEffectiveFrom(today);
+    if (!cur) {
+      // Never had a salary decided — start from clean defaults.
+      setMonthlySalary(0);
+      setAllowedLeaves(1);
+      setCtcMode(false);
+      setCtcAnnual(0);
+      setEsiApplicable(false);
+      setPtAmount(0);
+      setBasicPct(DEFAULT_CTC_STRUCTURE.basicPercentOfCtc);
+      setHraPct(DEFAULT_CTC_STRUCTURE.hraPercentOfBasic);
+      setEmployerPfPct(DEFAULT_CTC_STRUCTURE.employerPfPercent);
+      setEmployeePfPct(DEFAULT_CTC_STRUCTURE.employeePfPercent);
+      setPfCeiling(DEFAULT_CTC_STRUCTURE.pfWageCeiling);
+      setEsiEmployeePct(DEFAULT_CTC_STRUCTURE.esiEmployeePercent);
+      setEsiEmployerPct(DEFAULT_CTC_STRUCTURE.esiEmployerPercent);
+      return;
+    }
+    setMonthlySalary(cur.monthly_salary);
+    setAllowedLeaves(cur.allowed_leaves_per_month);
+    setCtcMode(cur.ctc_annual !== null);
+    setCtcAnnual(cur.ctc_annual ?? 0);
+    setBasicPct(cur.basic_percent_of_ctc);
+    setHraPct(cur.hra_percent_of_basic);
+    setEmployerPfPct(cur.employer_pf_percent);
+    setEmployeePfPct(cur.employee_pf_percent);
+    setPfCeiling(cur.pf_wage_ceiling);
+    setEsiApplicable(cur.esi_applicable);
+    setEsiEmployeePct(cur.esi_employee_percent);
+    setEsiEmployerPct(cur.esi_employer_percent);
+    setPtAmount(cur.professional_tax_amount);
+  }
 
   const breakdown = useMemo(
     () =>
@@ -58,7 +145,9 @@ export function SalaryForm({ employees, today }: { employees: { id: string; name
     <form action={formAction} className="space-y-3">
       {state.error && <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
       {state.success && (
-        <p className="rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">✓ Saved — applies from the Effective From date onward.</p>
+        <p className="rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">
+          ✓ Saved for {selectedName || "employee"} — applies from {effectiveFrom} onward (earlier months keep their old salary).
+        </p>
       )}
 
       <input type="hidden" name="ctc_mode" value={ctcMode ? "true" : "false"} />
@@ -66,23 +155,94 @@ export function SalaryForm({ employees, today }: { employees: { id: string; name
       {ctcMode && <input type="hidden" name="monthly_salary" value={breakdown?.grossMonthly ?? 0} />}
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-5">
-        <select name="employee_id" required defaultValue="" className={inputClass}>
-          <option value="" disabled>Employee</option>
+        <select
+          name="employee_id"
+          required
+          value={employeeId}
+          onChange={(e) => pickEmployee(e.target.value)}
+          className={inputClass}
+        >
+          <option value="" disabled>
+            Employee…
+          </option>
           {employees.map((e) => (
-            <option key={e.id} value={e.id}>{e.name}</option>
+            <option key={e.id} value={e.id}>
+              {e.name}
+              {current[e.id]
+                ? ` — ₹${current[e.id].monthly_salary.toLocaleString("en-IN")}/mo`
+                : " (no salary set)"}
+            </option>
           ))}
         </select>
-        {!ctcMode && <input type="number" name="monthly_salary" step="0.01" min="0" required placeholder="Monthly Salary" className={inputClass} />}
+        {!ctcMode && (
+          <input
+            type="number"
+            name="monthly_salary"
+            step="0.01"
+            min="0"
+            required
+            placeholder="Monthly Salary"
+            value={monthlySalary || ""}
+            onChange={(e) => setMonthlySalary(Number(e.target.value) || 0)}
+            className={inputClass}
+          />
+        )}
         {ctcMode && (
           <div className={`${inputClass} flex items-center bg-slate-50 text-slate-500`}>
             Gross: ₹{(breakdown?.grossMonthly ?? 0).toFixed(2)}
           </div>
         )}
-        <input type="number" name="allowed_leaves_per_month" step="0.5" min="0" defaultValue={1} placeholder="Allowed Leave/mo" className={inputClass} />
-        <input type="date" name="effective_from" required defaultValue={today} className={inputClass} />
-        <button type="submit" disabled={pending} className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+        <input
+          type="number"
+          name="allowed_leaves_per_month"
+          step="0.5"
+          min="0"
+          value={allowedLeaves}
+          onChange={(e) => setAllowedLeaves(Number(e.target.value) || 0)}
+          placeholder="Allowed Leave/mo"
+          className={inputClass}
+        />
+        <input
+          type="date"
+          name="effective_from"
+          required
+          value={effectiveFrom}
+          onChange={(e) => setEffectiveFrom(e.target.value)}
+          className={inputClass}
+        />
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+        >
           {pending ? "Saving..." : "Save Salary"}
         </button>
+      </div>
+
+      {/* Live "what's decided right now" banner for the selected employee. */}
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        {!employeeId ? (
+          <span>Select an employee above to see their current salary and edit it.</span>
+        ) : selected ? (
+          <span>
+            <strong>{selectedName}</strong> — currently ₹{selected.monthly_salary.toLocaleString("en-IN")}/month
+            {selected.ctc_annual !== null && (
+              <>
+                {" "}
+                (CTC ₹{selected.ctc_annual.toLocaleString("en-IN")}/yr, Basic {selected.basic_percent_of_ctc}% of CTC,
+                Employee PF {selected.employee_pf_percent}%, ESI {selected.esi_applicable ? "applicable" : "not applicable"})
+              </>
+            )}
+            , {selected.allowed_leaves_per_month} paid leave/mo, effective from{" "}
+            <strong>{selected.effective_from}</strong>. Saving above creates a new version effective{" "}
+            <strong>{effectiveFrom}</strong> — earlier payroll never changes.
+          </span>
+        ) : (
+          <span>
+            <strong>{selectedName}</strong> — ⚠️ no salary decided yet. Enter the monthly salary (or switch to CTC
+            Structure below) and Save to decide it.
+          </span>
+        )}
       </div>
 
       <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
