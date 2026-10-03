@@ -31,15 +31,44 @@ export type ModuleTab = { href: string; label: string; icon: string };
 const STORAGE_KEY = "oms_module_tabs_v1";
 const HOME_TAB: ModuleTab = { href: "/dashboard", label: "Home", icon: "🏠" };
 
-/** Longest-prefix module match over CAPABILITY_INFO — /dashboard/orders/123 → the Orders module. */
+// 2026-10-03 — "control center par jitni window open hoti hai utni hi
+// register vali window honi chahiye or baki ke page bhi": the B2B Export
+// ERP is one top-level capability (b2b_inquiry, one sidebar tile), so
+// every /dashboard/b2b/* page used to collapse into the single "B2B
+// Inquiries" tab — visiting Register, Control Center, Buyers… never
+// opened a window of its own the way top-level modules do. These
+// sub-entries are checked BEFORE CAPABILITY_INFO on an href-length TIE
+// (they carry the exact same hrefs for some entries), so each suite page
+// now gets its own closable window in the strip, labelled exactly like
+// the B2B nav cluster names it. Deep links under a sub-page
+// (/dashboard/b2b/documents/<id>) still resolve to their nearest suite
+// window by longest prefix, same rule as before.
+const SUBMODULES: ModuleTab[] = [
+  { href: "/dashboard/b2b/control-center", label: "Control Center", icon: "🎛️" },
+  { href: "/dashboard/b2b", label: "Register", icon: "📋" },
+  { href: "/dashboard/b2b/buyers", label: "Buyers", icon: "👥" },
+  { href: "/dashboard/b2b/products", label: "Products", icon: "📦" },
+  { href: "/dashboard/b2b/engine", label: "Quotation Engine", icon: "🧮" },
+  { href: "/dashboard/b2b/orders", label: "Sales Orders", icon: "🧾" },
+  { href: "/dashboard/b2b/production", label: "Production & QC", icon: "🏭" },
+  { href: "/dashboard/b2b/shipments", label: "Shipments", icon: "🚢" },
+  { href: "/dashboard/b2b/reports", label: "B2B Reports", icon: "📊" },
+];
+
+/** Longest-prefix module match over SUBMODULES + CAPABILITY_INFO — /dashboard/orders/123 → the Orders module. */
 function moduleForPath(pathname: string): ModuleTab {
-  let best: { href: string; label: string; icon: string } | null = null;
+  let best: ModuleTab | null = null;
+  const matches = (href: string) => pathname === href || pathname.startsWith(href + "/");
+  for (const t of SUBMODULES) {
+    if (matches(t.href) && (!best || t.href.length >= best.href.length)) best = t;
+  }
+  if (best) return best;
   for (const c of CAPABILITY_INFO) {
-    if (pathname === c.href || pathname.startsWith(c.href + "/")) {
-      if (!best || c.href.length > best.href.length) best = c;
+    if (matches(c.href) && (!best || c.href.length > best.href.length)) {
+      best = { href: c.href, label: c.label, icon: c.icon };
     }
   }
-  if (best) return { href: best.href, label: best.label, icon: best.icon };
+  if (best) return best;
   return HOME_TAB;
 }
 
@@ -171,6 +200,12 @@ export function ModuleTabBar() {
       {tabs.map((t) => {
         const active = t.href === activeHref;
         const closable = t.href !== HOME_TAB.href;
+        // Stored label/icon, re-resolved against the live registry (a
+        // restored tab opened before this deploy keeps working either way).
+        const current =
+          t.href === HOME_TAB.href ? HOME_TAB : { ...moduleForPath(t.href), href: t.href };
+        const label = current.href === t.href ? current.label : t.label;
+        const icon = current.href === t.href ? current.icon : t.icon;
         return (
           <div key={t.href} className="relative flex shrink-0 items-center">
             <Link
@@ -185,8 +220,8 @@ export function ModuleTabBar() {
                   : "border-transparent text-[var(--oms-sidebar-text-muted)] hover:bg-[var(--oms-sidebar-tile-bg)]/60 hover:text-[var(--oms-sidebar-text)]"
               }`}
             >
-              <span className="text-sm leading-none">{t.icon}</span>
-              <span className="whitespace-nowrap">{t.label}</span>
+              <span className="text-sm leading-none">{icon}</span>
+              <span className="whitespace-nowrap">{label}</span>
             </Link>
             {closable && (
               <button

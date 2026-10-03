@@ -13,8 +13,22 @@
 // (src/lib/attendance/telegram-notify.ts) — plus a 🧪 Test button here,
 // the employee's own mirror of the admin-side Test, so "msg aa raha hai
 // ya nahi" is checkable in one click.
-import { useState, useTransition } from "react";
+//
+// 2026-10-03 — "telegram ka setup karna thoda tough ho raha hai": the old
+// flow made people click "Open Telegram & Start", come BACK to this page,
+// then click "Connect" again — three actions across two tabs, and nobody
+// remembered step 2. Now ONE button does it: it opens the deep link in a
+// new tab AND starts auto-polling connectMyTelegram right here (every
+// ~2.5s for up to 30s), so the employee just presses Start in Telegram —
+// when they return, the card has already flipped to ✓ Connected. The
+// manual retry button stays as a fallback for the slow/absent case.
+import { useRef, useState } from "react";
 import { connectMyTelegram, testMyTelegram, type TelegramConnectState, type TelegramTestState } from "./actions";
+
+const POLL_INTERVAL_MS = 2_500;
+const POLL_MAX_ATTEMPTS = 12; // 12 × 2.5s ≈ 30s of automatic checking
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export function TelegramConnectCard({
   employeeId,
@@ -35,28 +49,65 @@ export function TelegramConnectCard({
   mode?: "dm" | "group";
 }) {
   const [connected, setConnected] = useState(initialConnected);
-  const [isPending, startTransition] = useTransition();
+  const [polling, setPolling] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [pollNote, setPollNote] = useState<string | null>(null);
   const [connectResult, setConnectResult] = useState<TelegramConnectState | null>(null);
   const [testResult, setTestResult] = useState<TelegramTestState | null>(null);
+  const pollingRef = useRef(false);
 
   const deepLink = botUsername ? `https://t.me/${botUsername}?start=${employeeId}` : null;
 
-  function runConnect() {
+  // Auto-connect loop — called from click handlers ONLY (never from an
+  // effect, per the repo's react-hooks/set-state-in-effect rule), because
+  // the polling only makes sense once the employee has been sent to
+  // Telegram. Each attempt reads the bot's getUpdates queue for THIS
+  // employee's "/start <employee id>" payload (strict match, own row only
+  // — see connectEmployeeTelegram).
+  async function runAutoConnect() {
+    if (pollingRef.current) return;
+    pollingRef.current = true;
+    setPolling(true);
     setConnectResult(null);
-    setTestResult(null);
-    startTransition(async () => {
-      const res = await connectMyTelegram();
-      setConnectResult(res);
-      if (res.connected) setConnected(true);
-    });
+    setPollNote("Telegram kholein aur bot chat me START dabayein — hum yahin connect kar rahe hain…");
+    try {
+      for (let attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
+        const res = await connectMyTelegram();
+        if (res.connected) {
+          setConnected(true);
+          setConnectResult(res);
+          setPollNote(null);
+          return;
+        }
+        setPollNote(`Start ka wait kar rahe hain… (${attempt}/${POLL_MAX_ATTEMPTS}) — Telegram me bot ko START zaroor dabayein.`);
+        if (attempt < POLL_MAX_ATTEMPTS) await wait(POLL_INTERVAL_MS);
+      }
+      setPollNote(null);
+      setConnectResult({
+        connected: false,
+        error:
+          "Abhi tak Start message nahi mila — neeche wala 'Connect (retry)' button dabakar dobara try karein (Telegram me bot chat zaroor khol kar START dabana hai).",
+      });
+    } finally {
+      pollingRef.current = false;
+      setPolling(false);
+    }
   }
 
-  function runTest() {
+  // 1. Opens the deep link (new tab — this page keeps polling right here)
+  //    and starts the auto-connect loop in the same click.
+  function openTelegram() {
+    runAutoConnect();
+  }
+
+  async function runTest() {
     setTestResult(null);
-    startTransition(async () => {
-      const res = await testMyTelegram();
-      setTestResult(res);
-    });
+    setTesting(true);
+    try {
+      setTestResult(await testMyTelegram());
+    } finally {
+      setTesting(false);
+    }
   }
 
   if (!botTokenSet) {
@@ -93,10 +144,10 @@ export function TelegramConnectCard({
           <button
             type="button"
             onClick={runTest}
-            disabled={isPending}
+            disabled={testing}
             className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
           >
-            {isPending ? "Sending…" : "🧪 Test"}
+            {testing ? "Sending…" : "🧪 Test"}
           </button>
           {testResult?.ok && <span className="text-xs text-green-700">✓ Test sent — check the Telegram group</span>}
           {testResult && !testResult.ok && <span className="text-xs text-red-600">{testResult.error}</span>}
@@ -126,30 +177,43 @@ export function TelegramConnectCard({
         )}
       </div>
       <p className="mb-3 text-xs text-slate-500">
-        Get a personal Telegram message every time your Punch In / Punch Out is recorded (English confirmation, same as the old WhatsApp
-        alert). WhatsApp is off for this — Telegram only.
+        Get a personal Telegram message every time your Punch In / Punch Out is recorded — <strong>Hello + your name</strong>, date,
+        time and status. WhatsApp is off for this — Telegram only.
       </p>
 
       {!connected ? (
         botUsername ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={deepLink ?? undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-700"
-            >
-              1. Open Telegram &amp; Start
-            </a>
-            <button
-              type="button"
-              onClick={runConnect}
-              disabled={isPending}
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
-            >
-              {isPending ? "Connecting…" : "2. Connect"}
-            </button>
-            {connectResult?.error && <span className="text-xs text-red-600">{connectResult.error}</span>}
+          <div className="space-y-2">
+            <p className="text-xs text-slate-600">
+              Bas <strong>1 click</strong>: neeche button se Telegram khulega → bot chat me <strong>START</strong> dabayein →
+              wapas yahan aate hi connect ho jayega.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={deepLink ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={openTelegram}
+                className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-700"
+              >
+                🔗 Open Telegram &amp; Start
+              </a>
+              <button
+                type="button"
+                onClick={runAutoConnect}
+                disabled={polling}
+                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+              >
+                {polling ? "Connecting…" : "🔄 Connect (retry)"}
+              </button>
+            </div>
+            {pollNote && (
+              <p className="flex items-center gap-1.5 text-xs text-sky-700">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-sky-500" aria-hidden="true" />
+                {pollNote}
+              </p>
+            )}
+            {connectResult?.error && <p className="text-xs text-red-600">{connectResult.error}</p>}
           </div>
         ) : (
           <p className="text-xs text-amber-600">
@@ -162,10 +226,10 @@ export function TelegramConnectCard({
           <button
             type="button"
             onClick={runTest}
-            disabled={isPending}
+            disabled={testing}
             className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
           >
-            {isPending ? "Sending…" : "🧪 Test"}
+            {testing ? "Sending…" : "🧪 Test"}
           </button>
           {testResult?.ok && <span className="text-xs text-green-700">✓ Test sent — check your Telegram</span>}
           {testResult && !testResult.ok && <span className="text-xs text-red-600">{testResult.error}</span>}

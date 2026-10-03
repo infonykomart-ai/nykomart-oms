@@ -42,6 +42,9 @@ Telegram DMs, one per employee (the WhatsApp channel for this flow is OFF):
   `employees.telegram_chat_id`).
 - Sending code: `src/lib/attendance/telegram-notify.ts`; connect/Test actions live in
   `src/app/dashboard/attendance/actions.ts`; admin Test button on the Employees page.
+  Every message greets `Hello <Name>,` with the employee's own name (2026-10-03), and the
+  Attendance page's connect card auto-detects the Start press — one click, no manual
+  "Connect" step to remember.
 - Destination mode (2026-10-01): default is a **personal DM per employee**. Set
   `TELEGRAM_ATTENDANCE_MODE=group` + `TELEGRAM_ATTENDANCE_CHAT_ID=<group chat id>` (the bot
   must be a member of that group) to post every punch to ONE shared Telegram group instead,
@@ -182,6 +185,52 @@ server pages and client previews so they can never disagree.
   (idempotent — 10 new tables + costing-engine columns on
   `b2b_quotations`/`b2b_inquiries`; folded into `db/schema.sql`, types
   regenerated, 146 tables/views).
+
+**Round 4 — fix pass (2026-10-03)** — five reported gaps, all fixed:
+
+- **💰 Proper salary decide/feed form** (`/dashboard/salary`) — the
+  Set/Update card is no longer a blind dropdown + empty number: picking an
+  employee PREFILLS their current structure (flat or full CTC mode, all
+  PF/ESI/PT fields) into controlled inputs, a live banner shows "currently
+  ₹X/month … effective from …" (or "no salary decided yet"), the dropdown
+  lists every employee with their salary or "(no salary set)", and the
+  card header counts how many of the team have a salary decided. Saving
+  still inserts a new versioned row effective from the chosen date —
+  earlier payroll months are never rewritten.
+- **🗂️ Window/tab parity for the B2B suite** (module-tabs.tsx) — each
+  `/dashboard/b2b/*` page (Control Center, Register, Buyers, Products,
+  Quotation Engine, Sales Orders, Production & QC, Shipments, Reports)
+  now opens its OWN closable window in the top module-tab strip, exactly
+  like top-level modules do; they used to all collapse into the single
+  "B2B Inquiries" tab. Restored tabs re-resolve their label/icon against
+  the live registry so old saved sets keep working.
+- **🔓 No more fake logouts** — two failure modes used to land on the
+  dashboard error boundary and read as "session expired → Sign in":
+  (a) `ForbiddenError` when the role lacks the page's capability (deep
+  links/nav strips aren't capability-filtered like sidebar tiles), and
+  (b) any page/data error while still signed in. The boundary now
+  re-derives the path's required capabilities (CAPABILITY_INFO
+  longest-prefix + known cross-module overrides) and asks
+  `/api/auth-check?capability=…` — a 403 renders a real **Access Denied**
+  card (module name + role, Go Home / Go back, no sign-in prompt), and
+  every other error gets copy that says out loud you are **still signed
+  in — this is not a logout**, with Try again / Go Home primary and
+  "Sign in again" demoted to a quiet link.
+- **📱 Telegram made simple + personal** — every punch confirmation now
+  greets `Hello <Name>,` (DM and group), and the Attendance page's
+  Connect card is one click: it opens the bot deep link AND auto-polls
+  the connect (~2.5s × 30s) so the employee only has to press **Start**
+  in Telegram — the card flips to ✓ Connected on its own; a retry button
+  stays for the slow case.
+- **🗓️ Attendance Admin suite nav on every report** — the report nav
+  cluster used to live only inside the suite root's header, so every
+  sub-report (Daily/Monthly/…/GPS Approvals) was a dead end. It is now a
+  shared component (`attendance/admin/admin-nav.tsx`) rendered inline on
+  the root header AND as a strip via `attendance/admin/layout.tsx` on
+  every sub-report.
+- Also: `sku-country-size` report's composite key no longer embeds raw
+  NUL bytes in source (same runtime value via `\u0000` escape — the raw
+  bytes made grep treat the file as binary).
 
 ## Database & schema workflow (important)
 

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -17,6 +16,7 @@ import {
   taskCompletionSummary,
 } from "@/lib/performance/score";
 import { HolidayForm } from "./holiday-form";
+import { AttendanceAdminNav } from "./admin-nav";
 import { WeeklyOffForm } from "./weekly-off-form";
 import { ManualAttendanceForm } from "./manual-attendance-form";
 import { RemoveHolidayButton } from "./remove-holiday-button";
@@ -552,110 +552,13 @@ export default async function AttendanceAdminPage({
             </p>
           </div>
         </div>
-        {/* 2026-09-23 — "apne oms me bhi to chahiye na report": Month
-            Summary/IN-OUT/Absent/Late In/Early In-Out/Overtime/Half Day/
-            Mis Punch reports, filterable by company/employee, exportable
-            to PDF/Excel/Word — see monthly-report/page.tsx.
-            2026-10-01 — the rest of the TeamOffice Report menu joined in
-            (Dashboard, Daily, Periodic, Yearly + the punch-import screen):
-            one nav cluster for the whole attendance reporting suite. */}
-        <nav className="flex flex-wrap items-center gap-2 text-sm">
-          <Link
-            href="/dashboard/attendance/admin/overview"
-            className="rounded-lg bg-amber-500 px-3 py-2 font-semibold text-white transition hover:bg-amber-400"
-          >
-            📊 Dashboard
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/daily-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            📅 Daily
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/monthly-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            📆 Monthly
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/periodic-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            🗓️ Periodic
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/yearly-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            📈 Yearly
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/import"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            ⬆️ Import
-          </Link>
-          {/* 2026-10-02 — TeamOffice parity round 2: the rest of the
-              Report menu (Location / Leave / Salary / Yearly siblings) +
-              the calendar Month Summary sheet. */}
-          <Link
-            href="/dashboard/attendance/admin/month-summary"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            📒 Month Summary
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/location-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            📍 Location
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/gps-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            📡 GPS
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/leave-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            🌴 Leave
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/coff-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            🏖️ COFF
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/salary-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            💰 Salary
-          </Link>
-          {/* 2026-10-02 (round 3) — Salary Details master, the Other
-              Report bucket and the GPS review queue. */}
-          <Link
-            href="/dashboard/attendance/admin/salary-details"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            🧾 Salary Details
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/other-report"
-            className="rounded-lg border border-white/20 px-3 py-2 font-medium text-slate-100 transition hover:bg-white/10"
-          >
-            🧩 Other
-          </Link>
-          <Link
-            href="/dashboard/attendance/admin/gps-approvals"
-            className="rounded-lg bg-emerald-600 px-3 py-2 font-semibold text-white transition hover:bg-emerald-500"
-          >
-            🛰️ GPS Approvals
-          </Link>
-        </nav>
+        {/* 2026-10-03 — the suite's nav cluster moved into the shared
+            AttendanceAdminNav component: it renders right here in the
+            header (inline variant, exactly as before) AND — via this
+            segment's layout.tsx — as a strip on every sub-report page,
+            which used to be a dead end with no way to jump between
+            reports. Same entries, same amber-active/emerald-queue look. */}
+        <AttendanceAdminNav />
       </div>
 
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
