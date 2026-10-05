@@ -625,7 +625,13 @@ export async function connectMyTelegram(): Promise<TelegramConnectState> {
   const employee = await getAuthedEmployee();
   const supabase = createServiceRoleClient();
   const result = await connectEmployeeTelegram({ supabase, employeeId: employee.id });
-  if (!result.ok) return { error: result.error ?? "Could not connect.", connected: false };
+  if (!result.ok) {
+    // error is optional: "no fresh Start in the queue yet" returns no error
+    // (waiting state) — pass it through as null so the card keeps its own
+    // polling copy; REAL failures (bad token, getUpdates 4xx, ambiguity)
+    // surface verbatim instead of being hidden.
+    return { error: result.error ?? null, connected: false };
+  }
   revalidatePath("/dashboard/attendance");
   return { error: null, connected: true, chatId: result.chatId };
 }

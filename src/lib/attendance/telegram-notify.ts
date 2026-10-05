@@ -38,6 +38,21 @@
 // could save SOMEONE ELSE's chat id if two employees clicked around the
 // same time — a wrong chat id silently DMs the wrong person.
 //
+// 2026-10-05 — "same error not resolve yet": TWO things were silently
+// breaking the live connect: (1) connectEmployeeTelegram hard-required the
+// TELEGRAM_BOT_USERNAME ENV var even though connect never needs the handle
+// (getUpdates only needs the token) — PR #7 had made the handle optional
+// for the deep link via getMe, but this function still bailed before ever
+// reading the queue; (2) Telegram desktop does NOT pre-fill the deep-link
+// payload, so people end up typing a plain "/start" (no <employee id>) —
+// the strict match can never hit that. Fix: accept a payload-less "/start"
+// as a FALLBACK only when it is FRESH (last 15 min), private, non-bot,
+// there is exactly ONE such candidate chat, and that chat id is not
+// already saved on a DIFFERENT employee's row — so the wrong-person risk
+// above still cannot happen. Best-effort deleteWebhook also runs when
+// getUpdates fails/looks empty, in case an externally-registered webhook
+// is draining the queue.
+//
 // Contract (identical to whatsapp-notify.ts's): called AFTER the real
 // write already succeeded, wrapped so it can NEVER throw, with a hard 5s
 // abort timeout so a slow Telegram call can never stretch the employee's
@@ -353,6 +368,11 @@ type ConnectResult = { ok: boolean; error?: string; chatId?: string };
  * is a private chat from a non-bot account, and saves message.from.id to
  * the employee's own row. Strictly scoped: can only ever write to
  * employeeId's row; the payload must match exactly or nothing is saved.
+ *
+ * 2026-10-05 — plus a guarded fallback for a payload-less "/start" (see the
+ * header comment): fresh ≤15 min, one distinct candidate only, chat id not
+ * owned by another employee. Returns { ok: false } with NO error when
+ * nobody's Start is queued yet — that's a waiting state, not a failure.
  */
 export async function connectEmployeeTelegram(params: {
   supabase: SupabaseClient<Database>;
@@ -362,32 +382,60 @@ export async function connectEmployeeTelegram(params: {
   try {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) return { ok: false, error: "TELEGRAM_BOT_TOKEN is not configured on the server — ask admin to set it." };
-    if (!process.env.TELEGRAM_BOT_USERNAME) {
-      return { ok: false, error: "TELEGRAM_BOT_USERNAME is not configured on the server — ask admin to set it." };
-    }
-
+    // 2026-10-05 — the TELEGRAM_BOT_USERNAME env check that used to live
+    // here is GONE: reading getUpdates needs only the token, and requiring
+    // an optional env var meant connect failed on EVERY attempt while the
+    // card's auto-poll hid that error behind its generic timeout message.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
-    let updates: {
-      message?: {
-        text?: string;
-        chat?: { type?: string };
-        from?: { id?: number; is_bot?: boolean };
-      };
-    }[] = [];
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, { signal: controller.signal });
-      const json = (await res.json().catch(() => null)) as { ok?: boolean; result?: typeof updates; description?: string } | null;
-      if (!res.ok || !json?.ok) {
-        return { ok: false, error: `getUpdates failed: ${json?.description || res.statusText || `HTTP ${res.status}`}` };
+    type TgMessage = {
+      text?: string;
+      date?: number; // unix seconds — needed to ignore stale manual /starts
+      chat?: { type?: string };
+      from?: { id?: number; is_bot?: boolean };
+    };
+    let updates: { message?: TgMessage }[] = [];
+
+    const fetchUpdates = async (): Promise<{ list: typeof updates; failed: string | null }> => {
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, { signal: controller.signal });
+        const json = (await res.json().catch(() => null)) as { ok?: boolean; result?: typeof updates; description?: string } | null;
+        if (!res.ok || !json?.ok) {
+          return { list: [], failed: `getUpdates failed: ${json?.description || res.statusText || `HTTP ${res.status}`}` };
+        }
+        return { list: json.result ?? [], failed: null };
+      } catch {
+        return { list: [], failed: "Could not reach Telegram (timeout) — try again in a moment." };
       }
-      updates = json.result ?? [];
-    } catch {
-      return { ok: false, error: "Could not reach Telegram (timeout) — try again in a moment." };
+    };
+
+    try {
+      const first = await fetchUpdates();
+      if (first.failed) {
+        // 2026-10-05 — if a webhook is registered on this bot (nothing in
+        // this repo ever sets one, but it can be set from outside), updates
+        // are pushed there instead and getUpdates errors or drains. Remove
+        // any webhook (pending updates are KEPT) and try once more.
+        await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { signal: controller.signal }).catch(() => null);
+        const retry = await fetchUpdates();
+        if (retry.failed) return { ok: false, error: retry.failed };
+        updates = retry.list;
+      } else if (first.list.length === 0) {
+        // Same defence for the silent variant (webhook set → queue looks
+        // empty): clear it and re-read once before concluding "nobody
+        // pressed Start yet".
+        await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { signal: controller.signal }).catch(() => null);
+        const retry = await fetchUpdates();
+        updates = retry.failed ? [] : retry.list;
+      } else {
+        updates = first.list;
+      }
     } finally {
       clearTimeout(timer);
     }
 
+    // 1) STRICT — the deep-link payload "/start <employee_id>": identity is
+    //    proven by the payload itself, so age doesn't matter.
     const expectedText = `/start ${employeeId}`;
     const match = updates.find(
       (u) =>
@@ -397,13 +445,52 @@ export async function connectEmployeeTelegram(params: {
         u.message.from.is_bot !== true &&
         typeof u.message.from.id === "number"
     );
-    const chatId = match?.message?.from?.id;
+    let chatId = match?.message?.from?.id;
+
+    // 2) FALLBACK — a plain "/start" typed in the bot chat (no payload:
+    //    Telegram desktop doesn't pre-fill the deep link's argument).
+    //    Accepted only when ALL of these hold, so it can never attach the
+    //    wrong person's chat id:
+    //      • private chat, sender not a bot
+    //      • text is exactly "/start" or "/start@<bot>" (no payload)
+    //      • message is FRESH (last 15 min) — old manual /starts don't count
+    //      • exactly ONE distinct candidate (2+ = refuse, ask for the
+    //        personal deep link instead)
+    //      • that chat id isn't already saved on ANOTHER employee's row
+    if (typeof chatId !== "number") {
+      const cutoff = Math.floor(Date.now() / 1000) - 15 * 60;
+      const candidates: number[] = [];
+      for (const u of updates) {
+        const m = u.message;
+        if (!m || m.chat?.type !== "private" || !m.from || m.from.is_bot === true || typeof m.from.id !== "number") continue;
+        if (!/^\/start(@[A-Za-z0-9_]+)?$/.test((m.text ?? "").trim())) continue;
+        if (typeof m.date !== "number" || m.date < cutoff) continue;
+        if (!candidates.includes(m.from.id)) candidates.push(m.from.id);
+      }
+      if (candidates.length > 1) {
+        return {
+          ok: false,
+          error:
+            "Aur ek Telegram account se bhi plain Start aaya hai — galat connect hone se bachne ke liye ruka. Har employee apna personal 'Open Telegram & Start' link (Attendance page se) use kare, phir dobara Connect kare.",
+        };
+      }
+      if (candidates.length === 1) {
+        const candidate = String(candidates[0]);
+        const { data: owner } = await supabase
+          .from("employees")
+          .select("id")
+          .eq("telegram_chat_id", candidate)
+          .neq("id", employeeId)
+          .maybeSingle();
+        if (!owner) chatId = candidates[0];
+      }
+    }
+
     if (!chatId) {
-      return {
-        ok: false,
-        error:
-          "No Start message found from you yet — open the Connect link above, press Start inside the bot chat, then click Connect again.",
-      };
+      // Not a FAILURE — nobody's (fresh) Start is in the queue yet. Return
+      // no error so the connect card keeps showing its own polling/guidance
+      // copy instead of a scary red string on every 2.5s attempt.
+      return { ok: false };
     }
 
     // Own-row write only (defense in depth: employeeId is the caller's own id).

@@ -70,6 +70,7 @@ export function TelegramConnectCard({
     setPolling(true);
     setConnectResult(null);
     setPollNote("Telegram kholein aur bot chat me START dabayein — hum yahin connect kar rahe hain…");
+    let lastServerError: string | null = null; // plain local — not state (no render churn per attempt)
     try {
       for (let attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
         const res = await connectMyTelegram();
@@ -79,14 +80,23 @@ export function TelegramConnectCard({
           setPollNote(null);
           return;
         }
-        setPollNote(`Start ka wait kar rahe hain… (${attempt}/${POLL_MAX_ATTEMPTS}) — Telegram me bot ko START zaroor dabayein.`);
+        // 2026-10-05 — earlier this was SWALLOWED: every real server error
+        // (unset token, getUpdates failure…) was replaced by the generic
+        // timeout copy, so the actual cause never reached the screen.
+        if (res.error) lastServerError = res.error;
+        setPollNote(
+          res.error
+            ? `Checking… (${attempt}/${POLL_MAX_ATTEMPTS}) — server: ${res.error}`
+            : `Start ka wait kar rahe hain… (${attempt}/${POLL_MAX_ATTEMPTS}) — Telegram me bot ko START zaroor dabayein.`
+        );
         if (attempt < POLL_MAX_ATTEMPTS) await wait(POLL_INTERVAL_MS);
       }
       setPollNote(null);
       setConnectResult({
         connected: false,
         error:
-          "Abhi tak Start message nahi mila — neeche wala 'Connect (retry)' button dabakar dobara try karein (Telegram me bot chat zaroor khol kar START dabana hai).",
+          lastServerError ??
+          "Abhi tak Start message nahi mila — neeche wala 'Connect (retry)' button dabakar dobara try karein. Telegram me bot chat khol kar ya to 'Open Telegram & Start' link dubara kholein (payload wala /start aata hai), ya fresh /start bhejein — 15 minute se purana /start count nahi hota.",
       });
     } finally {
       pollingRef.current = false;
