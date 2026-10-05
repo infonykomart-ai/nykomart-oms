@@ -47,6 +47,14 @@ Telegram DMs, one per employee (the WhatsApp channel for this flow is OFF):
   Every message greets `Hello <Name>,` with the employee's own name (2026-10-03), and the
   Attendance page's connect card auto-detects the Start press — one click, no manual
   "Connect" step to remember.
+- **Connect robustness (2026-10-05)** — "same error not resolve yet": the connect action no
+  longer requires the optional `TELEGRAM_BOT_USERNAME` env var (reading `getUpdates` only
+  needs the token, and the missing-env failure was hidden behind the card's generic
+  timeout message); it accepts a **fresh (≤15 min) plain `/start`** typed directly in the
+  bot chat when Telegram doesn't carry the deep-link payload (exactly one candidate only,
+  and that chat id must not already belong to another employee); it best-effort calls
+  `deleteWebhook` before reading the queue (an externally-registered webhook drains the
+  update queue); and the card now surfaces the real server error instead of swallowing it.
 - Destination mode (2026-10-01): default is a **personal DM per employee**. Set
   `TELEGRAM_ATTENDANCE_MODE=group` + `TELEGRAM_ATTENDANCE_CHAT_ID=<group chat id>` (the bot
   must be a member of that group) to post every punch to ONE shared Telegram group instead,
