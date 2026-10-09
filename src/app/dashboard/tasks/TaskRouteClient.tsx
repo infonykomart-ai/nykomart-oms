@@ -84,8 +84,8 @@ export function TaskRouteClient({
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-slate-900">Task Work</h1>
         <p className="mt-1 text-sm text-slate-500">
-          My assigned tasks, the timer that runs while I work, and today's
-          pending work with the minutes already committed to today's Daily
+          My assigned tasks, the timer that runs while I work, and today&apos;s
+          pending work with the minutes already committed to today&apos;s Daily
           Work Report.
         </p>
       </div>
@@ -160,7 +160,7 @@ export function TaskRouteClient({
           <span className="text-xs text-slate-400">Open (Pending / In Progress) items, task time counted today</span>
         </div>
         {myTasks.filter((t) => t.status !== "Done").length === 0 ? (
-          <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">Nothing pending — every task you are assigned is Done or wasn't assigned.</p>
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">Nothing pending — every task you are assigned is Done or wasn&apos;t assigned.</p>
         ) : (
           <div className="mt-2 rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -185,7 +185,7 @@ export function TaskRouteClient({
         </div>
         <div className="mt-2 rounded-xl border border-slate-200 bg-white p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <div className="text-sm font-semibold text-slate-800">Today's task time</div>
+            <div className="text-sm font-semibold text-slate-800">Today&apos;s task time</div>
             <div className="text-xs text-slate-400">{formatDuration(Array.from(todaySecondsByTaskId.values()).reduce((a, b) => a + b, 0))}</div>
           </div>
         </div>
