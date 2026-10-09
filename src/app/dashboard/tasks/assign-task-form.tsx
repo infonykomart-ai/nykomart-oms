@@ -1,7 +1,8 @@
-"use client";
-
 import { useActionState } from "react";
 import { assignTask, type SimpleActionState } from "./actions";
+// NOTE: assignTask is imported from the consolidated ./actions (server
+// actions). The original actions.ts re-export stub was removed, so this
+// is the single source of truth.
 
 const initialState: SimpleActionState = { error: null, success: false };
 const inputClass =
@@ -19,17 +20,26 @@ export function AssignTaskForm({
 
   return (
     <form key={state.success ? "sent" : "idle"} action={formAction} className="grid grid-cols-1 gap-2 md:grid-cols-3">
-      {state.error && <p className="col-span-full rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
-      {state.success && <p className="col-span-full rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">✓ Task assigned.</p>}
+      {state.error && (
+        <p className="col-span-full rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>
+      )}
+      {state.success && (
+        <p className="col-span-full rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">
+          ✓ Task assigned.
+        </p>
+      )}
 
-      {/* 2026-08-11 (round 4): "koi bhi kisi ko assign kar sakta hai phir
-          company chahe koi bhi ho" — this list spans every active employee
-          across all 3 companies, not just ones the assigner has access to,
-          so the company name is shown alongside each name for clarity. */}
-      <select name="assigned_to_employee_id" required defaultValue="" className={inputClass}>
+      <select
+        name="assigned_to_employee_id"
+        required
+        defaultValue=""
+        className={inputClass}
+      >
         <option value="" disabled>Assign To…</option>
         {employees.map((e) => (
-          <option key={e.id} value={e.id}>{e.name} — {e.companyName}</option>
+          <option key={e.id} value={e.id}>
+            {e.name} — {e.companyName}
+          </option>
         ))}
       </select>
 
@@ -50,12 +60,22 @@ export function AssignTaskForm({
 
       <input type="date" name="deadline" className={inputClass} />
 
-      <button type="submit" disabled={pending} className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+      >
         {pending ? "Assigning..." : "Assign Task"}
       </button>
 
       <div className="md:col-span-3">
-        <textarea name="description" required rows={2} placeholder="Task description…" className={inputClass} />
+        <textarea
+          name="description"
+          required
+          rows={2}
+          placeholder="Task description…"
+          className={inputClass}
+        />
       </div>
     </form>
   );

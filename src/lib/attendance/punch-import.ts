@@ -144,13 +144,41 @@ export function parsePunchRows(aoa: unknown[][], fallbackDate: string | null): P
   let map = mapColumns(dataRows[0] as (string | null)[]);
   let bodyStart = 1;
   if (!map) {
-    // No header — assume the compact positional layout:
-    //   code, date, in, out          (4 cols)
-    //   code, name, date, in, out    (5+ cols)
+    // No header — assume a positional layout. The positions are guessed
+    // from the first data row and VERIFIED against it, otherwise a leading
+    // column (e.g. a row number or a stray Status column) silently shifts
+    // every column and drops most rows as "no IN/OUT time" / "no employee".
     const first = dataRows[0];
-    const pos = first.length >= 5 && parseDateCell(first[2]) ? { code: 0, name: 1, date: 2, in: 3, out: 4 } : { code: 0, name: -1, date: 1, in: 2, out: 3 };
-    map = { ...pos };
-    bodyStart = 0;
+    const candidates: ColumnMap[] = [];
+    if (first.length >= 5) {
+      // code,name,date,in,out
+      candidates.push({ code: 0, name: 1, date: 2, in: 3, out: 4 });
+    }
+    if (first.length >= 4) {
+      // code,date,in,out
+      candidates.push({ code: 0, name: -1, date: 1, in: 2, out: 3 });
+    }
+    const valid = candidates.filter((c) => {
+      const row = dataRows[0] as (string | null)[];
+      const dateOK = parseDateCell(row[c.date]) !== null;
+      const inOK = parseTimeCell(row[c.in]) !== null;
+      const outOK = parseTimeCell(row[c.out]) !== null;
+      return dateOK && inOK && outOK;
+    });
+    if (valid.length > 0) {
+      // Prefer the 5-column layout (TeamOffice exports include the
+      // employee name); otherwise the 4-column compact layout.
+      map = valid[0];
+      bodyStart = 0;
+    } else {
+      // Neither candidate validates — do not silently shift columns and
+      // report the mismatch to the user with the exact fix.
+      pushIssue(
+        `No header row found and the first data row does not match a positional layout (code,date,in,out or code,name,date,in,out). A leading column or shifted cells mean the columns need to be re-ordered, or paste a header row (Empcode, Name, Date, IN, OUT).`
+      );
+      map = { code: 0, name: -1, date: 1, in: 2, out: 3 };
+      bodyStart = 0;
+    }
   }
 
   let usedFallback = false;
