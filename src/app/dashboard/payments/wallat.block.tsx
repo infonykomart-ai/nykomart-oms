@@ -143,6 +143,30 @@ export function WallatRechargeForm({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
+              <label className={labelClass} htmlFor="party_id">
+                Courier party
+              </label>
+              <select
+                id="party_id"
+                name="party_id"
+                required
+                defaultValue=""
+                className={inputClass}
+              >
+                <option value="" disabled>
+                  Select a courier party…
+                </option>
+                {parties.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                The recharge posts to this courier&apos;s prepaid wallet.
+              </p>
+            </div>
+            <div>
               <label className={labelClass} htmlFor="payment_material">
                 Recharge from
               </label>
