@@ -1,3 +1,5 @@
+"use client";
+
 import { useActionState, useEffect, useState } from "react";
 import { wallatRecharge, type WallatRechargeResult } from "./wallat.actions";
 

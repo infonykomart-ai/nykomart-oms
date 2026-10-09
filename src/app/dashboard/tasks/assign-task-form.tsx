@@ -1,3 +1,5 @@
+"use client";
+
 import { useActionState } from "react";
 import { assignTask, type SimpleActionState } from "./actions";
 // NOTE: assignTask is imported from the consolidated ./actions (server

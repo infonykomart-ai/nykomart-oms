@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from "react";
 import { startTaskTimer, pauseTaskTimer, markTaskDone } from "./actions";
 import { formatDuration } from "@/lib/attendance/timer";

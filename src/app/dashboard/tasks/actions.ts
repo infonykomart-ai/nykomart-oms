@@ -1,3 +1,5 @@
+"use server";
+
 // 2026-10-07: Consolidate the task server actions so both the
 // Attendance page and the new /dashboard/tasks route use the same
 // functions. Keep this as THE source of truth for task_assignment /
