@@ -18,6 +18,8 @@ export function TaskRouteClient({
   tasks,
   todaySecondsByTaskId,
   assigners,
+  assignTaskEmployees,
+  taskWebsites,
 }: {
   tasks: {
     id: string;
@@ -37,47 +39,71 @@ export function TaskRouteClient({
   }[];
   todaySecondsByTaskId: Map<string, number>;
   assigners: Map<string, string>;
+  // 2026-10-10: the Assign Task form below was imported but never rendered
+  // (dead "Assign Task" button in the empty state, unused-import warning).
+  // Same two props its Attendance-page twin takes.
+  assignTaskEmployees: { id: string; name: string; companyName: string }[];
+  taskWebsites: string[];
 }) {
   const [myTasks, setMyTasks] = useState(tasks);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
-  async function handleStart(id: string) {
-    const result = await startTaskTimer(id);
-    if (!result.error) {
-      setMyTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, firstStartedAt: result.firstStartedAt, status: result.status ?? t.status }
-            : t
-        )
-      );
+  async function withPending(id: string, run: () => Promise<void>) {
+    setPendingIds((prev) => new Set(prev).add(id));
+    try {
+      await run();
+    } finally {
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
+  }
+
+  async function handleStart(id: string) {
+    await withPending(id, async () => {
+      const result = await startTaskTimer(id);
+      if (!result.error) {
+        setMyTasks((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, firstStartedAt: result.firstStartedAt, status: result.status ?? t.status }
+              : t
+          )
+        );
+      }
+    });
   }
 
   async function handlePause(id: string) {
-    const result = await pauseTaskTimer(id);
-    if (!result.error) {
-      setMyTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, lastPausedAt: result.lastPausedAt, status: result.status ?? t.status }
-            : t
-        )
-      );
-    }
+    await withPending(id, async () => {
+      const result = await pauseTaskTimer(id);
+      if (!result.error) {
+        setMyTasks((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, lastPausedAt: result.lastPausedAt, status: result.status ?? t.status }
+              : t
+          )
+        );
+      }
+    });
   }
 
   async function handleDone(id: string) {
-    const result = await markTaskDone(id);
-    if (!result.error) {
-      setMyTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, status: "Done", timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, lastPausedAt: result.lastPausedAt }
-            : t
-        )
-      );
-    }
+    await withPending(id, async () => {
+      const result = await markTaskDone(id);
+      if (!result.error) {
+        setMyTasks((prev) =>
+          prev.map((t) =>
+            t.id === id
+              ? { ...t, status: "Done", timerStartedAt: result.timerStartedAt, timeSpentSeconds: result.timeSpentSeconds, lastPausedAt: result.lastPausedAt }
+              : t
+          )
+        );
+      }
+    });
   }
 
   return (
@@ -99,11 +125,8 @@ export function TaskRouteClient({
         </div>
         {myTasks.length === 0 ? (
           <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
-            No tasks assigned to you. Ask a manager to assign one with
-            <button type="button" className="font-medium text-sky-700 hover:underline">
-              Assign Task
-            </button>
-            .
+            No tasks assigned to you yet — assign one below (to yourself or
+            a teammate) and it will show up here with the timer.
           </p>
         ) : (
           <div className="space-y-2">
@@ -113,7 +136,11 @@ export function TaskRouteClient({
             {sortTasksByPriority(myTasks).map((t) => (
               <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-slate-900">{t.id}</h3>
+                  {/* 2026-10-10: heading was the raw task UUID — meant nothing
+                      to the employee. Description is the real title; the
+                      assigner (the previously-unused `assigners` map) shows
+                      below it. */}
+                  <h3 className="min-w-0 flex-1 text-sm font-semibold text-slate-900">{t.description}</h3>
                   <div className="flex items-center gap-1.5">
                     {isCarriedForwardTask(t) && (
                       <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700" title="Not finished yesterday — carried forward, work on this first">
@@ -123,7 +150,11 @@ export function TaskRouteClient({
                     <span className="text-xs text-slate-400">{t.status}</span>
                   </div>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">{t.description}</p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  From {assigners.get(t.assigned_by_employee_id) ?? "—"}
+                  {t.category ? ` · ${t.category}` : ""}
+                  {t.website ? ` · 🌐 ${t.website}` : ""}
+                </p>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                   <span>Created {new Date(t.created_at).toLocaleString()}</span>
                   {t.timerStartedAt ? (
@@ -162,6 +193,17 @@ export function TaskRouteClient({
             ))}
           </div>
         )}
+      </section>
+
+      {/* ── Assign Task ── */}
+      <section aria-label="Assign task" className="mt-8">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-700">Assign Task</h2>
+          <span className="text-xs text-slate-400">To yourself or any teammate — shows up on their My Tasks instantly</span>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <AssignTaskForm employees={assignTaskEmployees} websites={taskWebsites} />
+        </div>
       </section>
 
       {/* ── Pending Work ── */}

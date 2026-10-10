@@ -1,6 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
+import { todayIST } from "@/lib/attendance/ist-date";
 import { TaskRouteClient } from "./TaskRouteClient";
 
 // 2026-10-07: Dedicated /dashboard/tasks route carrying the pending work
@@ -14,10 +14,20 @@ export default async function TasksPage() {
   const employee = await requireCapability("task_management");
   const supabase = createServiceRoleClient();
 
-  const [{ data: employees }, { data: tasks }] = await Promise.all([
+  const [{ data: employees }, { data: allCompanies }, { data: stores }, { data: tasks }] = await Promise.all([
     supabase
       .from("employees")
       .select("id, name, company_id")
+      .eq("active", true)
+      .order("name"),
+    // 2026-10-10: companies + stores feed the Assign Task form below (same
+    // data the Attendance page's copy of the form gets) — the dead "Assign
+    // Task" button in the empty state is now wired to this real form.
+    supabase.from("companies").select("id, name"),
+    supabase
+      .from("stores")
+      .select("name")
+      .in("company_id", employee.companyIds)
       .eq("active", true)
       .order("name"),
     supabase
@@ -33,6 +43,11 @@ export default async function TasksPage() {
   const assigners = new Map(
     (employees ?? []).map((e) => [e.id, e.name])
   );
+  const companyName = new Map((allCompanies ?? []).map((c) => [c.id, c.name]));
+  const assignTaskEmployees = (employees ?? [])
+    .filter((e) => e.id !== employee.id)
+    .map((e) => ({ id: e.id, name: e.name, companyName: companyName.get(e.company_id) ?? "—" }));
+  const taskWebsites = Array.from(new Set((stores ?? []).map((s) => s.name)));
 
   type TaskRow = {
     id: string;
@@ -77,7 +92,11 @@ export default async function TasksPage() {
     supabase
       .from("task_daily_time_log")
       .select("task_id, log_date, seconds_spent")
-      .eq("log_date", new Date().toISOString().slice(0, 10)),
+      // 2026-10-10: was `new Date().toISOString().slice(0, 10)` — UTC, which
+      // is the PREVIOUS day for the first 5.5h of every IST day, so "today"
+      // task time read as 0 (or showed yesterday's) after midnight IST.
+      // Same IST helper every timer action already uses.
+      .eq("log_date", todayIST()),
   ]);
   const todaySecondsByTaskId = new Map<string, number>();
   for (const l of timeLogs ?? []) {
@@ -89,6 +108,8 @@ export default async function TasksPage() {
       tasks={taskRows}
       todaySecondsByTaskId={todaySecondsByTaskId}
       assigners={assigners}
+      assignTaskEmployees={assignTaskEmployees}
+      taskWebsites={taskWebsites}
     />
   );
 }

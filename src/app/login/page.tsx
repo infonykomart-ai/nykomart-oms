@@ -1,8 +1,18 @@
 "use client";
 
 import { useActionState } from "react";
+import dynamic from "next/dynamic";
 import { login, type LoginState } from "./actions";
-import { LoginHero3D } from "@/components/login/login-hero-3d";
+
+// 2026-10-10 — "page load hone me time le raha": the decorative 3D hero
+// statically pulled three.js (~600KB min) into /login's critical bundle on
+// every visit, delaying the sign-in form itself. It's pure decoration, so
+// it now streams in as a separate lazy chunk AFTER the page renders —
+// ssr:false because WebGL only exists in the browser anyway.
+const LoginHero3D = dynamic(
+  () => import("@/components/login/login-hero-3d").then((m) => m.LoginHero3D),
+  { ssr: false }
+);
 
 const initialState: LoginState = { error: null };
 
@@ -27,6 +37,8 @@ export default function LoginPage() {
           <img
             src="/logo.png"
             alt="Nyko Mart · Rugara · CASA ARRA"
+            width={64}
+            height={64}
             className="mx-auto mb-4 h-16 w-16 rounded-full object-contain shadow-lg"
           />
           <h1 className="text-xl font-semibold text-white">Order Management System</h1>

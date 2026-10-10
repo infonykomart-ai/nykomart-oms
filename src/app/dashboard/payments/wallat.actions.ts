@@ -20,7 +20,6 @@ export async function wallatRecharge(
   const partyId = String(formData.get("party_id") || "");
   const amount = Number(formData.get("amount") || "0");
   const paymentMaterial = String(formData.get("payment_material") || "bank");
-  const confirmSubstep = String(formData.get("confirm_substep") || "");
 
   if (!employee.companyIds.includes(companyId)) {
     return { error: "You don't have access to this company.", success: false };
@@ -58,7 +57,10 @@ export async function wallatRecharge(
   });
   if (error) return { error: error.message, success: false };
 
-  revalidatePath(`/dashboard/payments/wallat`);
+  // 2026-10-10 — was revalidating a stale `/dashboard/payments/wallat`
+  // path from before the route.ts → page.tsx move; the real page is
+  // /dashboard/payments.
+  revalidatePath("/dashboard/payments");
   revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };
 }

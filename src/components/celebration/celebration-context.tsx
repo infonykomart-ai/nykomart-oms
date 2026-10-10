@@ -11,8 +11,18 @@
 // in the dashboard layout, and pops the same full-screen fireworks
 // overlay at (near) the same instant.
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
-import { FireworksOverlay } from "./fireworks-overlay";
+
+// 2026-08-07's overlay — now lazy. canvas-confetti used to be statically
+// in EVERY dashboard page's client bundle via this provider; the overlay
+// only ever renders when a celebration actually fires, so its chunk (and
+// confetti with it) loads on first celebration instead of on every page
+// load ("page load hone me time le raha" pass, 2026-10-10).
+const FireworksOverlay = dynamic(
+  () => import("./fireworks-overlay").then((m) => m.FireworksOverlay),
+  { ssr: false }
+);
 
 export type CelebrationPayload = {
   name: string;
