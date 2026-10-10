@@ -386,8 +386,12 @@ export default async function AttendancePage({
         .from("tasks")
         .select("id, website, category, priority, deadline, status, description, created_at, timer_started_at, time_spent_seconds, first_started_at, last_paused_at, assigned_by_employee_id")
         .eq("assigned_to_employee_id", employee.id)
-        .order("status", { ascending: true })
-        .order("created_at", { ascending: false }),
+        // 2026-10-09 — base order only; TaskList re-sorts into the
+        // assignment-order priority list (carried-forward first, earliest
+        // assigned on top, Done last — see tasks/priority-order.ts). Was
+        // status ASC + created_at DESC, which floated Done tasks to the top
+        // and newest-first — the opposite of the priority rule.
+        .order("created_at", { ascending: true }),
       taskSupabase
         .from("tasks")
         .select("id, category, priority, status, description, deadline, time_spent_seconds, timer_started_at, assigned_to_employee_id")

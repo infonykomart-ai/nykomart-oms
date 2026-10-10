@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { startTaskTimer, pauseTaskTimer, markTaskDone } from "./actions";
 import { formatDuration } from "@/lib/attendance/timer";
+import { sortTasksByPriority, isCarriedForwardTask } from "./priority-order";
 import { AssignTaskForm } from "./assign-task-form";
 
 // /dashboard/tasks Client component. Three blocks:
@@ -94,7 +95,7 @@ export function TaskRouteClient({
       <section aria-label="My tasks">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700">My Tasks</h2>
-          <span className="text-xs text-slate-400">Earlier assigned = already on top</span>
+          <span className="text-xs text-slate-400">Carried-forward tasks first, then earliest assigned on top</span>
         </div>
         {myTasks.length === 0 ? (
           <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
@@ -106,11 +107,21 @@ export function TaskRouteClient({
           </p>
         ) : (
           <div className="space-y-2">
-            {myTasks.map((t) => (
+            {/* 2026-10-09 — shared priority ordering (see ./priority-order.ts):
+                carried-forward incomplete tasks on top, then by assignment
+                order (earliest first), Done at the bottom. */}
+            {sortTasksByPriority(myTasks).map((t) => (
               <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="text-sm font-semibold text-slate-900">{t.id}</h3>
-                  <span className="text-xs text-slate-400">{t.status}</span>
+                  <div className="flex items-center gap-1.5">
+                    {isCarriedForwardTask(t) && (
+                      <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700" title="Not finished yesterday — carried forward, work on this first">
+                        ↪ Carried forward
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-400">{t.status}</span>
+                  </div>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">{t.description}</p>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">

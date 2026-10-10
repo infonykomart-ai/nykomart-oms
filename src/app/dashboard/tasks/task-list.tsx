@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { startTaskTimer, pauseTaskTimer, markTaskDone } from "./actions";
 import { liveElapsedSeconds, liveElapsedSecondsForToday, formatDuration, formatISTTime } from "@/lib/attendance/timer";
+import { sortTasksByPriority, isCarriedForwardTask } from "./priority-order";
 
 export type TaskRow = {
   id: string;
@@ -101,11 +102,20 @@ export function TaskList({ tasks }: { tasks: TaskRow[] }) {
 
   return (
     <div className="space-y-2">
-      {rows.map((t) => (
+      {/* 2026-10-09 — assignment-order priority list (see
+          ./priority-order.ts): carried-forward incomplete tasks on top,
+          then today's/not-yet-finished in assignment order (earliest
+          first), Done at the bottom. */}
+      {sortTasksByPriority(rows).map((t) => (
         <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                {isCarriedForwardTask(t) && (
+                  <span className="rounded-full bg-purple-100 px-2 py-0.5 font-medium text-purple-700" title="Not finished yesterday — carried forward, work on this first">
+                    ↪ Carried forward
+                  </span>
+                )}
                 <span className={`rounded-full px-2 py-0.5 font-medium ${PRIORITY_BADGE[t.priority] ?? "bg-slate-100 text-slate-500"}`}>{t.priority}</span>
                 <span className={`rounded-full px-2 py-0.5 font-medium ${STATUS_BADGE[t.status] ?? "bg-slate-100 text-slate-500"}`}>{t.status}</span>
                 {t.category && <span className="text-slate-400">[{t.category}]</span>}
