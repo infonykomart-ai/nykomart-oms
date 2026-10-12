@@ -8,6 +8,7 @@ import { LedgerExportBar } from "./ledger-export-bar";
 import type { LedgerPdfInput } from "@/lib/ledger-pdf";
 import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAdminActions } from "./admin-row-actions";
 import { BillStatementDialog } from "@/components/bill-statement-dialog";
+import { buildWalletLedgerLines, walletSettlementNote, type WalletSettlement } from "@/lib/ledger/wallet-ledger-lines";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
 // MERE HISAB SE". Investigated first (see db/2026-08-17-freight-duty-bills-
@@ -176,27 +177,31 @@ async function PartyLedgerInner(
   // 2026-09-15 — "kuch kuch courier me shipment bhejne se pehle wallet
   // recharge karna padta hai phir baad me adjust hota hai jab uska invoice
   // aata hai": the party's prepaid courier wallet txns belong in THIS
-  // passbook too. Recharge = we gave the courier money (CREDIT — our
-  // receivable from them rises, exactly like a payment TO us in spirit;
-  // convention: ledger balance > 0 = we owe the party, so a recharge
-  // pushes the balance DOWN as a debit… but wallet money is the OPPOSITE
-  // of a payable — it's prepaid). Simplest true-to-cash model: recharge
-  // lines post as CREDIT (courier owes us that money back in service),
-  // consume lines post as DEBIT (their invoice settled against it) — the
-  // running balance then shows a positive figure while wallet credit is
-  // unused and crosses to the payable side as invoices eat it. Refund =
-  // DEBIT (courier handed cash back, wallet credit consumed).
+  // passbook too.
+  //
+  // 2026-10-12 — the sign convention that produced is FIXED (see
+  // src/lib/ledger/wallet-ledger-lines.ts for the full reasoning): a
+  // recharge is our cash going OUT to them, so it posts as DEBIT (what we
+  // owe them falls) — the old code posted it as CREDIT, which made "amount
+  // payable" go UP by the recharge amount at the very moment we PAID them.
+  // And a wallet SETTLEMENT now posts as NO line at all: the bill was
+  // already posted as a Credit line when it was raised, and the money had
+  // already left our bank at recharge time, so a second line double-counted
+  // the same rupee. Settlements come back per-bill and are printed inside
+  // the bill's own Particulars instead.
   const { data: walletRaw } = await supabase
     .from("party_wallet_txns")
     .select("id, company_id, txn_type, direction, amount, txn_date, payment_mode, reference_no, remark, bill_pass_register_id")
     .eq("party_id", id)
     .in("company_id", scopedCompanyIds)
     .order("txn_date", { ascending: true });
-  const walletBillIds = (walletRaw ?? []).map((w) => w.bill_pass_register_id).filter((v): v is string => !!v);
-  const { data: walletBills } = walletBillIds.length
-    ? await supabase.from("bill_pass_register").select("id, invoice_no, vendor_invoice_no").in("id", walletBillIds)
-    : { data: [] };
-  const walletBillLabel = new Map((walletBills ?? []).map((b) => [b.id, b.vendor_invoice_no || b.invoice_no || b.id.slice(0, 8)] as const));
+  // 2026-10-12 — built HERE, not down where the other ledger lines are
+  // pushed: the bill-grouping loop below needs `settledByBill` to annotate
+  // each bill row with what the prepaid wallet paid against it.
+  // (The batched bill-label lookup that used to sit above this is gone too —
+  // settlements no longer post their own line, so nothing needs the invoice
+  // label resolved separately; the bill row already carries its own.)
+  const { lines: walletLines, settledByBill } = buildWalletLedgerLines(walletRaw ?? []);
   type LedgerPayment = { id: string; amount: number; payment_date: string; payment_mode: string | null; reference_no: string | null; remark: string | null };
   const paymentsByBill = new Map<string, LedgerPayment[]>();
   for (const p of paymentsRaw ?? []) {
@@ -328,9 +333,21 @@ async function PartyLedgerInner(
       (eg.isCrossCompanyMerge ? ` (${Array.from(new Set(eg.bills.map((b) => companyName.get(b.company_id) ?? ""))).filter(Boolean).join(", ")})` : "");
 
     if (totalAmt !== 0) {
+      // 2026-10-12 — merge every wallet settlement against this bill GROUP
+      // so Particulars says how much the prepaid wallet paid and when, without
+      // posting it as a second ledger line (which double-counted the rupee).
+      const settled: WalletSettlement = { amount: 0, dates: [] };
+      for (const b of eg.bills) {
+        const s = settledByBill.get(b.id);
+        if (!s) continue;
+        settled.amount += s.amount;
+        for (const d of s.dates) if (!settled.dates.includes(d)) settled.dates.push(d);
+      }
+      settled.dates.sort();
+
       txns.push({
         date: billDate,
-        particulars: `${label}${groupSuffix}`,
+        particulars: `${label}${groupSuffix}${walletSettlementNote(settled.amount > 0.005 ? settled : undefined)}`,
         type: "Credit",
         debit: 0,
         credit: totalAmt,
@@ -430,32 +447,12 @@ async function PartyLedgerInner(
       });
     }
   }
-  // 2026-09-15 — wallet txns as their own dated lines (see the fetch-side
-  // comment above for the credit/debit convention). sortKey tier "1c"
-  // slots them same-day before payments ("_2").
-  for (const w of walletRaw ?? []) {
-    const isRecharge = w.txn_type === "recharge";
-    const isConsume = w.txn_type === "consume";
-    const billRef = w.bill_pass_register_id ? walletBillLabel.get(w.bill_pass_register_id) ?? "" : "";
-    const label = isRecharge
-      ? `Wallet recharge${w.payment_mode ? ` via ${w.payment_mode}` : ""}`
-      : isConsume
-        ? `Wallet paid invoice ${billRef || ""}`.trim()
-        : `Wallet refund to us`;
-    txns.push({
-      date: w.txn_date,
-      particulars: label,
-      type: isRecharge ? "Credit" : "Debit",
-      debit: isRecharge ? 0 : Number(w.amount),
-      credit: isRecharge ? Number(w.amount) : 0,
-      sortKey: `${w.txn_date}_1c_${w.id}`,
-      billIds: w.bill_pass_register_id ? [w.bill_pass_register_id] : [],
-      invoiceNo: billRef,
-      paymentMode: w.payment_mode,
-      referenceNo: w.reference_no ?? w.remark,
-      paymentItems: [],
-      status: null,
-    });
+  // 2026-10-12 — wallet lines built back at the wallet fetch (settledByBill
+  // had to be available earlier, to the bill loop). Recharge = Debit,
+  // refund = Credit, settlements post no line at all — see
+  // src/lib/ledger/wallet-ledger-lines.ts.
+  for (const wl of walletLines) {
+    txns.push({ ...wl, paymentItems: [], status: null });
   }
   txns.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 
