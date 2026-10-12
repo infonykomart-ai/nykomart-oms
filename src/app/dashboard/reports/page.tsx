@@ -162,6 +162,17 @@ export default async function ReportsPage({
           >
             🧾 Store Expense Report
           </Link>
+          {/* 2026-10-12 — Performance & KPIs: the PEOPLE report to balance
+              all the money reports above. Built on the new shared KPI engine
+              (src/lib/reports/kpi.ts) + IST period resolver (src/lib/reports/
+              period.ts). Highlighted the same way as the Finance Dashboard
+              because it's the other "dashboard-shaped" report on this hub. */}
+          <Link
+            href="/dashboard/reports/performance"
+            className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-800 hover:bg-teal-100"
+          >
+            📈 Performance &amp; KPIs
+          </Link>
           {/* 2026-09-18 (later) — "esa desboard banega P&L ka": full Finance
               Dashboard (KPI cards, Profit & Loss/Expense Breakdown/Trend
               charts, Shipping/Payment/Advertising/Returns transaction
