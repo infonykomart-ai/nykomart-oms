@@ -12,32 +12,11 @@ import type { ExportColumn } from "@/lib/export/export-table";
 import { BarChart, DonutChart, LineChart } from "@/components/simple-charts";
 import type { PeriodKpis } from "@/lib/reports/kpi";
 import { PERIOD_OPTIONS, type PeriodKey } from "@/lib/reports/period";
+// Types come from the shared server builder (the same module the PDF route
+// uses) so the screen and the PDF can't drift into disagreeing shapes.
+import type { EmployeePerfRow, TrendPoint } from "@/lib/reports/build-performance-report";
 
-export type TrendPoint = { date: string; assigned: number; completed: number };
-
-export type EmployeePerfRow = {
-  id: string;
-  name: string;
-  designation: string;
-  active: boolean;
-  assigned: number;
-  completed: number;
-  completionRate: number | null;
-  inProgress: number;
-  pending: number;
-  cancelled: number;
-  overdue: number;
-  onTimeRate: number | null;
-  completedLate: number;
-  avgTurnaroundHours: number | null;
-  taskHours: number | null;
-  logs: number;
-  submittedLogs: number;
-  draftLogs: number;
-  plannedQty: number;
-  actualQty: number;
-  achievementRate: number | null;
-};
+export type { EmployeePerfRow, TrendPoint };
 
 const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)}%`);
 const qty = (v: number) => v.toLocaleString("en-IN", { maximumFractionDigits: 1 });
@@ -496,6 +475,14 @@ export function PerformanceReportClient({
             filenameBase={`performance-report-${periodFrom}-to-${periodTo}`}
             columns={exportColumns}
             rows={visibleRows}
+            // 2026-10-12 — real A4 PDF (company logo header, KPI cards, trend,
+            // the table with repeated headers, approval block). Only the
+            // FILTERS go over the wire: the route re-derives every figure from
+            // the database under this user's own permissions, so the file can
+            // never show more (or different) numbers than the screen.
+            pdfEndpoint="/api/performance-report-pdf"
+            pdfPayload={{ companyId, period, from, to }}
+            pdfFilename={`performance-report-${periodFrom}-to-${periodTo}.pdf`}
           />
         </div>
       </div>
