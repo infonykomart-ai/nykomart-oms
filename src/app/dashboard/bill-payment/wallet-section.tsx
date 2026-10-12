@@ -7,8 +7,17 @@
 import { useState } from "react";
 import { WalletPanel } from "./wallet-panel";
 import type { WalletOverview } from "./wallet-actions";
+import type { PartyOption } from "../documents/party-options";
 
-export function WalletSection({ overview, companies }: { overview: WalletOverview; companies: { id: string; name: string }[] }) {
+export function WalletSection({
+  overview,
+  companies,
+  parties,
+}: {
+  overview: WalletOverview;
+  companies: { id: string; name: string }[];
+  parties: PartyOption[];
+}) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-4">
@@ -23,7 +32,7 @@ export function WalletSection({ overview, companies }: { overview: WalletOvervie
       >
         {open ? "✕ Close Wallets" : "💳 Courier Wallets"}
       </button>
-      {open && <div className="mt-3"><WalletPanel overview={overview} companies={companies} /></div>}
+      {open && <div className="mt-3"><WalletPanel overview={overview} companies={companies} parties={parties} /></div>}
     </div>
   );
 }

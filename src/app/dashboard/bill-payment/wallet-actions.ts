@@ -25,6 +25,7 @@
 
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { autoSettleWalletBills } from "@/lib/wallet/auto-settle";
 import { revalidatePath } from "next/cache";
 
 export type WalletTxnRow = {
@@ -140,6 +141,23 @@ export async function walletRecharge(_prev: WalletActionState, formData: FormDat
     entered_by: employee.id,
   });
   if (error) return { error: error.message, success: false };
+
+  // 2026-10-12 — "daal diya delhivery me 50000 to jo bill aayenge vo
+  // usme auto adjust hote jayenge": settle whatever this party already
+  // owes against the fresh balance right away (oldest due first). New
+  // bills settle at their own send-to-ledger step (see
+  // documents/actions.ts). Best-effort — the recharge above already
+  // succeeded, so a settle failure must not turn it into an error; any
+  // remainder is still payable with the per-bill "Pay from Wallet" button.
+  try {
+    await autoSettleWalletBills(supabase, {
+      companyId,
+      partyId,
+      employeeId: employee.id,
+    });
+  } catch {
+    // tolerated — see header comment
+  }
 
   revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };

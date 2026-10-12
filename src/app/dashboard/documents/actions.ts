@@ -40,6 +40,7 @@ import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
 import { validateDateFields } from "@/lib/fy-date";
 import { saveOrderRefundCore } from "../orders/actions";
+import { autoSettleWalletBills } from "@/lib/wallet/auto-settle";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -2477,6 +2478,19 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
   // 2026-08-29 (evening) — auto-generate a Journal Voucher, same as
   // Purchase Bill above; best-effort, never blocks the send.
   if (bprData) await createJournalVoucherForBill(supabase, bprData.id);
+  // 2026-10-12 — courier wallet auto-settle: the newly-passed bill joins the
+  // queue. If this (company, courier party) already has prepaid balance,
+  // consume it oldest-first right now (see auto-settle.ts for the rules).
+  // Best-effort, exactly like the JV call above — a wallet problem never
+  // blocks the Finance hand-off; the bill simply stays in the queue for the
+  // next recharge to pick up.
+  if (bprData && bill?.vendor_party_id) {
+    await autoSettleWalletBills(supabase, {
+      companyId,
+      partyId: bill.vendor_party_id,
+      employeeId: employee.id,
+    });
+  }
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -2912,6 +2926,15 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
   // 2026-08-29 (evening) — auto-generate a Journal Voucher, same as
   // Purchase Bill / Courier Bill above; best-effort, never blocks the send.
   if (bprData) await createJournalVoucherForBill(supabase, bprData.id);
+  // 2026-10-12 — same courier wallet auto-settle as the Courier Bill send
+  // above: best-effort, never blocks the send.
+  if (bprData && bill?.vendor_party_id) {
+    await autoSettleWalletBills(supabase, {
+      companyId,
+      partyId: bill.vendor_party_id,
+      employeeId: employee.id,
+    });
+  }
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }

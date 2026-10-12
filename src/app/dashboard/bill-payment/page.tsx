@@ -236,7 +236,10 @@ export default async function BillPaymentPage({
         <a href="/dashboard/bill-payment" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
-      <WalletSection overview={walletOverview} companies={walletCompanies} />
+      {/* 2026-10-12 — parties go in too: the wallet's Courier-party select
+          used to be built ONLY from existing wallet history, so a first
+          recharge had an empty dropdown ("—") and could never be submitted. */}
+      <WalletSection overview={walletOverview} companies={walletCompanies} parties={parties ?? []} />
 
       <BillPaymentList
         bills={rows}

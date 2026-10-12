@@ -16,6 +16,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 import { walletRecharge, walletRefund, type WalletActionState, type WalletOverview } from "./wallet-actions";
+import { groupPartyOptions, type PartyOption } from "../documents/party-options";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -26,24 +27,47 @@ function inr(n: number): string {
   return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function WalletPanel({ overview, companies }: { overview: WalletOverview; companies: { id: string; name: string }[] }) {
+export function WalletPanel({
+  overview,
+  companies,
+  parties,
+}: {
+  overview: WalletOverview;
+  companies: { id: string; name: string }[];
+  parties: PartyOption[];
+}) {
   const [rechargeState, rechargeAction, rechargePending] = useActionState(walletRecharge, initialWalletState);
   const [refundState, refundAction, refundPending] = useActionState(walletRefund, initialWalletState);
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
-  const firstParty = overview.balances[0]?.party_id ?? "";
-  const [partyId, setPartyId] = useState(firstParty);
   const today = new Date().toISOString().slice(0, 10);
+
+  // 2026-10-12 — dead-dropdown fix: the party list was built ONLY from
+  // existing wallet history (overview.balances), so on the very first
+  // recharge there was no history yet → the select rendered a lone "—",
+  // required validation could never pass and Recharge stayed unusable.
+  // It now comes from the page's full parties list, grouped Courier-first
+  // by the same helper every other form uses; wallet history only decides
+  // which party starts out selected.
+  const partyGroups = groupPartyOptions(parties);
+  const hasParties = partyGroups.length > 0;
+  const firstParty = overview.balances[0]?.party_id ?? partyGroups[0]?.parties[0]?.id ?? "";
+  const [partyId, setPartyId] = useState(firstParty);
 
   useEffect(() => {
     if (rechargeState.success || refundState.success) window.location.reload();
   }, [rechargeState.success, refundState.success]);
 
-  const partyOptions =
-    overview.balances.length > 0
-      ? overview.balances
-      : // No wallet history yet — offer a free-text party pick from the
-        // bill rows passed via the parent page's parties (see page.tsx).
-        [];
+  const partySelect = hasParties ? (
+    partyGroups.map((g) => (
+      <optgroup key={g.label} label={g.label}>
+        {g.parties.map((p) => (
+          <option key={p.id} value={p.id}>{p.name}</option>
+        ))}
+      </optgroup>
+    ))
+  ) : (
+    <option value="">—</option>
+  );
 
   return (
     <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -91,10 +115,7 @@ export function WalletPanel({ overview, companies }: { overview: WalletOverview;
             <div>
               <label className={labelClass}>Courier party</label>
               <select name="party_id" value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputClass} required>
-                {partyOptions.length === 0 && <option value="">—</option>}
-                {partyOptions.map((p) => (
-                  <option key={p.party_id} value={p.party_id}>{p.party_name}</option>
-                ))}
+                {partySelect}
               </select>
             </div>
             <div>
@@ -138,10 +159,7 @@ export function WalletPanel({ overview, companies }: { overview: WalletOverview;
             <div>
               <label className={labelClass}>Courier party</label>
               <select name="party_id" className={inputClass} required>
-                {partyOptions.length === 0 && <option value="">—</option>}
-                {partyOptions.map((p) => (
-                  <option key={p.party_id} value={p.party_id}>{p.party_name}</option>
-                ))}
+                {partySelect}
               </select>
             </div>
             <div>
@@ -160,7 +178,7 @@ export function WalletPanel({ overview, companies }: { overview: WalletOverview;
           {refundState.error && <p className="mt-1.5 text-xs font-medium text-rose-600">{refundState.error}</p>}
           <button
             type="submit"
-            disabled={refundPending || partyOptions.length === 0}
+            disabled={refundPending || !hasParties}
             className="mt-2 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 disabled:opacity-40"
           >
             {refundPending ? "Saving…" : "↩️ Record Refund"}
