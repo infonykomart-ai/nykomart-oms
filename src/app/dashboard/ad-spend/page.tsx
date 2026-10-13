@@ -3,6 +3,9 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { AdSpendEntrySection } from "./ad-spend-entry-section";
 import { AdSpendReportTable, type AdSpendDailyRow, type AdSpendMonthlyRow } from "./ad-spend-report-table";
+// 2026-10-13 — Daily Order Sheet (third tab) + the PO-date month rule.
+import { DailyOrderSheet, type DailyOrderSheetData } from "./daily-order-sheet";
+import { todayIST } from "@/lib/attendance/ist-date";
 
 // Store-level Daily Spend tracking (pending item 3, 2026-08-08 —
 // "STORE KI REPORT NIKALENGE TO EASY WAY MIL JAYEGI SABHI CHIJE EK DUSRE SE
@@ -22,8 +25,11 @@ export default async function AdSpendPage({
   const supabase = createServiceRoleClient();
   const sp = await searchParams;
 
-  const tab = sp.tab === "report" ? "report" : "entry";
+  const tab = sp.tab === "report" ? "report" : sp.tab === "sheet" ? "sheet" : "entry";
   const companyFilter = typeof sp.company === "string" && sp.company ? sp.company : "";
+  // Daily Order Sheet's date: ?date=YYYY-MM-DD, defaulting to today (IST).
+  const dateParam = typeof sp.date === "string" ? sp.date : "";
+  const sheetDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayIST();
 
   // 2026-08-08: "AD SPEND VALI JO ENTRY HAI VO SIRF UTNI HI ENTRY DIKHNI
   // CHAHIYE JIS BANDE KO JIS STORE PAR KAAM KAR RAHA HAI, BAKI JISKO APN
@@ -55,6 +61,7 @@ export default async function AdSpendPage({
 
   let dailyRows: AdSpendDailyRow[] = [];
   let monthlyRows: AdSpendMonthlyRow[] = [];
+  let sheet: DailyOrderSheetData | null = null;
   const now = new Date(); // fine here — server-render time, not inside a workflow script
   const defaultMonth = now.toISOString().slice(0, 7);
   const month = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : defaultMonth;
@@ -86,12 +93,19 @@ export default async function AdSpendPage({
     const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of month
 
     const [{ data: orders }, { data: spend }] = await Promise.all([
+      // 2026-10-13 — "order date ki bajaye po date se clear ho": an order
+      // belongs to the month its PO DATE falls in (blank PO date falls
+      // back to the entry/order date — the effective date below). The
+      // fetch is widened to EITHER date inside the month, then filtered on
+      // the effective date in the loop — so an order entered in October
+      // but PO'd in September lands in SEPTEMBER's roll-up, never both.
       supabase
         .from("orders")
-        .select("store_id, order_date, order_value_usd")
+        .select("store_id, order_date, po_date, order_value_usd")
         .in("store_id", relevantStoreIds)
-        .gte("order_date", monthStart)
-        .lte("order_date", monthEnd),
+        .or(
+          `and(po_date.gte.${monthStart},po_date.lte.${monthEnd}),and(order_date.gte.${monthStart},order_date.lte.${monthEnd})`
+        ),
       supabase
         .from("store_ad_spend")
         .select("id, store_id, spend_date, budget_usd, spend_usd")
@@ -115,7 +129,10 @@ export default async function AdSpendPage({
     }
 
     for (const o of orders ?? []) {
-      const dKey = `${o.store_id}__${o.order_date}`;
+      // Effective date = PO date when filled, else the order/entry date.
+      const effDate = o.po_date ?? o.order_date;
+      if (effDate < monthStart || effDate > monthEnd) continue; // PO landed in a different month
+      const dKey = `${o.store_id}__${effDate}`;
       bump(dailyMap, dKey, { qty: 1, usd: Number(o.order_value_usd ?? 0) });
       bump(monthlyMap, o.store_id, { qty: 1, usd: Number(o.order_value_usd ?? 0) });
     }
@@ -159,6 +176,67 @@ export default async function AdSpendPage({
       .sort((a, b) => b.usd - a.usd);
   }
 
+  // 2026-10-13 — "DAILY ORDER SHEET ... AAJ SABHI STORE PAR KITNE ORDER
+  // AMMOUNT QTY ... COUNTRY WISE, SKU WISE, SIZE WISE (AGAR NAHI BANA
+  // HUA TO BANAO ISME)": one day, same store scoping as the Report tab,
+  // headline totals + store/country/SKU/size breakdowns. Same effective-
+  // date rule as the Monthly Roll-up (PO date, fallback order date) so
+  // the two views can never disagree about which day an order belongs to.
+  if (tab === "sheet" && relevantStoreIds.length > 0) {
+    const { data: sheetOrders } = await supabase
+      .from("orders")
+      .select("store_id, order_date, po_date, qty, order_value_usd, sku_label, size_label, buyer_country, destination_country")
+      .in("store_id", relevantStoreIds)
+      .or(`po_date.eq.${sheetDate},order_date.eq.${sheetDate}`);
+
+    type Bucket = { orders: number; qty: number; usd: number };
+    const bumpBucket = (m: Map<string, Bucket>, key: string, qty: number, usd: number) => {
+      const cur = m.get(key) ?? { orders: 0, qty: 0, usd: 0 };
+      cur.orders += 1;
+      cur.qty += qty;
+      cur.usd += usd;
+      m.set(key, cur);
+    };
+    const totals: Bucket = { orders: 0, qty: 0, usd: 0 };
+    const storeMap = new Map<string, Bucket>();
+    const countryMap = new Map<string, Bucket>();
+    const skuMap = new Map<string, Bucket>();
+    const sizeMap = new Map<string, Bucket>();
+
+    for (const o of sheetOrders ?? []) {
+      // The other half of the OR: order_date today but PO'd on another
+      // day belongs to THAT day's sheet, not this one.
+      const effDate = o.po_date ?? o.order_date;
+      if (effDate !== sheetDate) continue;
+      const qty = Number(o.qty ?? 0);
+      const usd = Number(o.order_value_usd ?? 0);
+      totals.orders += 1;
+      totals.qty += qty;
+      totals.usd += usd;
+      bumpBucket(storeMap, o.store_id, qty, usd);
+      bumpBucket(countryMap, o.buyer_country || o.destination_country || "—", qty, usd);
+      bumpBucket(skuMap, o.sku_label || "—", qty, usd);
+      bumpBucket(sizeMap, o.size_label || "—", qty, usd);
+    }
+
+    const byUsdDesc = <T extends { usd: number }>(a: T, b: T) => b.usd - a.usd;
+    sheet = {
+      date: sheetDate,
+      totals,
+      storeRows: [...storeMap.entries()]
+        .map(([storeId, b]) => ({
+          storeId,
+          storeName: storeName.get(storeId) ?? "—",
+          companyName: companyName.get(storeCompanyId.get(storeId) ?? "") ?? "—",
+          ...b,
+        }))
+        .sort(byUsdDesc),
+      countryRows: [...countryMap.entries()].map(([label, b]) => ({ label, ...b })).sort(byUsdDesc),
+      skuRows: [...skuMap.entries()].map(([label, b]) => ({ label, ...b })).sort(byUsdDesc),
+      sizeRows: [...sizeMap.entries()].map(([label, b]) => ({ label, ...b })).sort(byUsdDesc),
+    };
+  }
+
   const tabClass = (active: boolean) =>
     `rounded-lg px-3 py-1.5 text-xs font-semibold transition ${active ? "bg-amber-500 text-white" : "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`;
 
@@ -183,13 +261,16 @@ export default async function AdSpendPage({
         </Link>
       </div>
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         <Link href="/dashboard/ad-spend?tab=entry" className={tabClass(tab === "entry")}>Daily Entry</Link>
         <Link href="/dashboard/ad-spend?tab=report" className={tabClass(tab === "report")}>Report</Link>
+        <Link href="/dashboard/ad-spend?tab=sheet" className={tabClass(tab === "sheet")}>🧾 Daily Order Sheet</Link>
       </div>
 
       {tab === "entry" ? (
         <AdSpendEntrySection companies={companies ?? []} stores={stores ?? []} recentEntries={recentEntries} />
+      ) : tab === "sheet" ? (
+        <DailyOrderSheet companies={companies ?? []} filters={{ date: sheetDate, companyId: companyFilter }} data={sheet} />
       ) : (
         <AdSpendReportTable
           companies={companies ?? []}

@@ -95,6 +95,13 @@ export function AdSpendReportTable({
         <a href="/dashboard/ad-spend?tab=report" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 
+      {/* 2026-10-13 — "order date ki bajaye po date se clear ho": both the
+          roll-up and the daily master count an order in the month/day its
+          PO DATE falls in; a blank PO date falls back to the entry date. */}
+      <p className="-mt-3 text-[11px] text-slate-400">
+        Orders are counted in the month their <b>PO date</b> falls in — orders without a PO date fall back to their order (entry) date.
+      </p>
+
       <PrintArea id="ad-spend-print-area"><div className="space-y-8">
         <section>
           <div className="mb-2 flex items-center justify-between print:hidden">
