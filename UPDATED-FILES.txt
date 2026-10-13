@@ -1,0 +1,12 @@
+UPDATED FILES in commit 4734ea3 (new: A, modified: M)
+================================================
+A	db/2026-10-13-b2b-pi-export-details.sql
+M	db/schema.sql
+M	src/app/dashboard/b2b/actions.ts
+M	src/app/dashboard/b2b/b2b-client.tsx
+M	src/app/dashboard/b2b/documents/[id]/page.tsx
+M	src/app/dashboard/b2b/page.tsx
+A	src/lib/b2b/money-format.ts
+M	src/types/database.ts
+
+NOTE: db/2026-10-13-b2b-pi-export-details.sql ko Supabase SQL Editor me run karna zaroori hai.

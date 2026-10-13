@@ -98,6 +98,7 @@ export type InquiryInput = {
   inquiryDate: string;
   buyerName: string;
   buyerCompany: string;
+  buyerAddress: string;
   buyerContactNo: string;
   buyerEmail: string;
   buyerCountry: string;
@@ -138,6 +139,7 @@ export async function createInquiry(input: InquiryInput): Promise<SaveInquiryRes
       inquiry_date: inquiryDate,
       buyer_name: buyerName,
       buyer_company: input.buyerCompany.trim() || null,
+      buyer_address: input.buyerAddress?.trim() || null,
       buyer_contact_no: input.buyerContactNo.trim() || null,
       buyer_email: input.buyerEmail.trim() || null,
       buyer_country: input.buyerCountry.trim() || null,
@@ -195,8 +197,10 @@ function errorImpossibleGuard(err: string | null): err is string {
 
 export type UpdateInquiryInput = {
   inquiryId: string;
+  inquiryDate?: string;
   buyerName: string;
   buyerCompany: string;
+  buyerAddress: string;
   buyerContactNo: string;
   buyerEmail: string;
   buyerCountry: string;
@@ -206,6 +210,11 @@ export type UpdateInquiryInput = {
   remarks: string;
   followUpDate: string;
   status: string;
+  // 2026-10-13 — full edit ("enquiry edit, modify, delete bhi honi
+  // chahiye"): when provided, the asked-for items are replaced wholesale
+  // (same delete+insert model updateQuotation uses). When omitted, the
+  // existing item rows are left untouched.
+  items?: { description: string; qty: string; unit: string; unitPrice: string; remark: string }[];
 };
 
 export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: boolean; error?: string }> {
@@ -217,6 +226,9 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
 
   const buyerName = input.buyerName.trim();
   if (!buyerName) return { ok: false, error: "Buyer name is required." };
+  if (input.inquiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.inquiryDate)) {
+    return { ok: false, error: "Invalid inquiry date." };
+  }
   if (input.followUpDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.followUpDate)) {
     return { ok: false, error: "Invalid follow-up date." };
   }
@@ -229,6 +241,7 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
     .update({
       buyer_name: buyerName,
       buyer_company: input.buyerCompany.trim() || null,
+      buyer_address: input.buyerAddress?.trim() || null,
       buyer_contact_no: input.buyerContactNo.trim() || null,
       buyer_email: input.buyerEmail.trim() || null,
       buyer_country: input.buyerCountry.trim() || null,
@@ -237,11 +250,33 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
       requirement_notes: input.requirementNotes.trim() || null,
       remarks: input.remarks.trim() || null,
       follow_up_date: input.followUpDate || null,
+      ...(input.inquiryDate ? { inquiry_date: input.inquiryDate } : {}),
       status,
       updated_at: new Date().toISOString(),
     })
     .eq("id", input.inquiryId);
   if (error) return { ok: false, error: error.message };
+
+  // Asked-for items replace (only when the form sent them — lets older
+  // callers edit the header without touching the item rows).
+  if (input.items) {
+    const items = (input.items ?? [])
+      .map((it, idx) => ({
+        inquiry_id: owned.inquiry.id,
+        description: it.description.trim(),
+        qty: it.qty ? Math.max(0.01, parseFloat(it.qty) || 0) : 1,
+        unit: it.unit.trim() || "pcs",
+        unit_price: it.unitPrice ? Math.max(0, parseFloat(it.unitPrice) || 0) : null,
+        remark: it.remark.trim() || null,
+        display_order: idx,
+      }))
+      .filter((it) => it.description);
+    await supabase.from("b2b_inquiry_items").delete().eq("inquiry_id", owned.inquiry.id);
+    if (items.length > 0) {
+      const { error: itemError } = await supabase.from("b2b_inquiry_items").insert(items);
+      if (itemError) console.error(`[b2b] inquiry ${owned.inquiry.inquiry_no} item replace failed: ${itemError.message}`);
+    }
+  }
 
   // Status transitions are the interesting part of the audit trail.
   if (status !== owned.inquiry.status) {
@@ -301,6 +336,17 @@ export type QuotationInput = {
   currency: string;
   terms: string;
   notes: string;
+  // 2026-10-13 — the labeled PI/CI sections the print view was missing
+  // (buyer address, product specs, payment terms, shipping terms, bank
+  // details). Multiline free text: the server stores exactly what was
+  // typed (trimmed) and the print view falls back to "To be confirmed" /
+  // "To be provided" when empty — the app never invents trade terms.
+  buyerAddress?: string;
+  productSpecs?: string;
+  paymentTerms?: string;
+  shippingTerms?: string;
+  bankDetails?: string;
+  incoterm?: string;
   items: { description: string; hsnCode: string; qty: string; unit: string; unitPrice: string }[];
 };
 
@@ -367,6 +413,12 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
       currency,
       terms: input.terms.trim() || null,
       notes: input.notes.trim() || null,
+      buyer_address: (input.buyerAddress ?? "").trim() || owned.inquiry.buyer_address || null,
+      product_specs: input.productSpecs?.trim() || null,
+      payment_terms: input.paymentTerms?.trim() || null,
+      shipping_terms: input.shippingTerms?.trim() || null,
+      bank_details: input.bankDetails?.trim() || null,
+      incoterm: input.incoterm?.trim() || null,
       entered_by_employee_id: me.id,
     })
     .select("id, quote_no")
@@ -474,6 +526,12 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
       currency: (input.currency || "INR").trim().toUpperCase().slice(0, 3),
       terms: input.terms.trim() || null,
       notes: input.notes.trim() || null,
+      buyer_address: (input.buyerAddress ?? "").trim() || null,
+      product_specs: input.productSpecs?.trim() || null,
+      payment_terms: input.paymentTerms?.trim() || null,
+      shipping_terms: input.shippingTerms?.trim() || null,
+      bank_details: input.bankDetails?.trim() || null,
+      incoterm: input.incoterm?.trim() || null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", input.quotationId);
@@ -768,6 +826,60 @@ export async function recordDocumentPrinted(documentId: string): Promise<{ ok: b
   } catch {
     return { ok: false };
   }
+}
+
+// ═══════════════════════════ Seller / Exporter profile ════════════════════
+// 2026-10-13 — "Seller ki complete details missing hain": the printed PI's
+// SELLER / EXPORTER DETAILS block reads from the company row (address, IEC,
+// PAN, GSTIN where applicable, business email/phone). Edited from the B2B
+// register (the module the PI is issued from), company-scoped through the
+// caller's own companyIds like every other action here. Empty input stores
+// NULL — the print view shows "To be provided" instead of a stale guess.
+
+export type CompanyExportProfileInput = {
+  companyId: string;
+  businessAddress: string;
+  iecNo: string;
+  panNo: string;
+  gstin: string;
+  businessEmail: string;
+  businessPhone: string;
+};
+
+export async function updateCompanyExportProfile(
+  input: CompanyExportProfileInput
+): Promise<{ ok: boolean; error?: string }> {
+  const me = await requireCapability("b2b_inquiry");
+  if (!me.companyIds.includes(input.companyId)) {
+    return { ok: false, error: "You don't have access to this company." };
+  }
+  const supabase = createServiceRoleClient();
+
+  const { error } = await supabase
+    .from("companies")
+    .update({
+      business_address: input.businessAddress.trim() || null,
+      iec_no: input.iecNo.trim() || null,
+      pan_no: input.panNo.trim() || null,
+      gstin: input.gstin.trim() || null,
+      business_email: input.businessEmail.trim() || null,
+      business_phone: input.businessPhone.trim() || null,
+    })
+    .eq("id", input.companyId);
+  if (error) return { ok: false, error: error.message };
+
+  await logAudit(supabase, {
+    companyId: input.companyId,
+    employeeId: me.id,
+    employeeName: me.name,
+    action: "b2b_seller_profile.updated",
+    entityType: "company",
+    entityId: input.companyId,
+    entityLabel: "Seller / Exporter details",
+  });
+
+  revalidatePath("/dashboard/b2b");
+  return { ok: true };
 }
 
 // ── print-page data loader: REMOVED — /documents/[id]/page.tsx loads its

@@ -231,6 +231,15 @@ CREATE TABLE companies (
   -- for one-off calendar-date holidays, which this is deliberately kept
   -- separate from.
   weekly_off_days int[] NOT NULL DEFAULT '{0}',
+  -- 2026-10-13 (B2B PI export details) — the SELLER / EXPORTER DETAILS
+  -- block on printed B2B documents (address, IEC, PAN, GSTIN where
+  -- applicable, business email/phone). NULL prints "To be provided".
+  business_address text,
+  iec_no            text,
+  pan_no            text,
+  gstin             text,
+  business_email    text,
+  business_phone    text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE companies IS
@@ -6056,6 +6065,9 @@ CREATE TABLE b2b_inquiries (
   inquiry_date        date NOT NULL,
   buyer_name          text NOT NULL,
   buyer_company       text,
+  -- 2026-10-13 — full buyer address (PO-matching), prefills the quotation's
+  -- buyer address printed on PI/CI.
+  buyer_address       text,
   buyer_contact_no    text,
   buyer_email         text,
   buyer_country       text,
@@ -6114,6 +6126,16 @@ CREATE TABLE b2b_quotations (
   currency          varchar(3) NOT NULL DEFAULT 'INR' REFERENCES currencies(code),
   terms             text,
   notes             text,
+  -- 2026-10-13 (B2B PI export details) — the labeled PI/CI sections the
+  -- print view was missing: buyer address, product specifications,
+  -- payment terms, shipping & delivery terms and seller bank details.
+  -- Multiline free text (the app never invents trade terms); NULL prints
+  -- "To be confirmed" / "To be provided" on the document.
+  buyer_address      text,
+  product_specs      text,
+  payment_terms      text,
+  shipping_terms     text,
+  bank_details       text,
   sent_at           timestamptz,
   entered_by_employee_id uuid REFERENCES employees(id),
   created_at        timestamptz NOT NULL DEFAULT now(),

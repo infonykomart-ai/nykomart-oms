@@ -9,6 +9,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { downloadXLSX, type ExportColumn } from "@/lib/export/export-table";
 import { todayIST } from "@/lib/attendance/ist-date";
+import { formatDocMoney } from "@/lib/b2b/money-format";
 import {
   addPayment,
   createInquiry,
@@ -19,6 +20,7 @@ import {
   issueDocument,
   linkConversion,
   markQuotationSent,
+  updateCompanyExportProfile,
   updateInquiry,
   updateQuotation,
   type B2BDocKind,
@@ -67,6 +69,14 @@ export type B2BQuoteRow = {
   buyer_contact_no: string | null;
   buyer_email: string | null;
   buyer_country: string | null;
+  // 2026-10-13 — the labeled PI/CI sections (nullable: older quotations
+  // predate them and the print view falls back to "To be confirmed").
+  buyer_address: string | null;
+  product_specs: string | null;
+  payment_terms: string | null;
+  shipping_terms: string | null;
+  bank_details: string | null;
+  incoterm: string | null;
   subtotal: number;
   tax_percent: number;
   tax_amount: number;
@@ -95,6 +105,7 @@ export type B2BInquiryRow = {
   inquiry_date: string;
   buyer_name: string;
   buyer_company: string | null;
+  buyer_address: string | null;
   buyer_contact_no: string | null;
   buyer_email: string | null;
   buyer_country: string | null;
@@ -113,10 +124,21 @@ export type B2BInquiryView = B2BInquiryRow & {
   quote: B2BQuoteRow | null;
 };
 
+/** The company row's SELLER / EXPORTER DETAILS columns (2026-10-13). */
+export type B2BCompanyProfile = {
+  business_address: string | null;
+  iec_no: string | null;
+  pan_no: string | null;
+  gstin: string | null;
+  business_email: string | null;
+  business_phone: string | null;
+};
+
 export type B2BInquiryManagerProps = {
   inquiries: B2BInquiryView[];
   companyId: string;
   companyName: string;
+  companyProfile: B2BCompanyProfile | null;
   canManage: boolean;
   /** Server-side load failure (usually "table does not exist" — migration not run yet). */
   loadError?: string | null;
@@ -138,7 +160,9 @@ function emptyQuoteItem(): QuoteItemDraft {
 }
 
 function fmtMoney(n: number, currency = "INR"): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
+  // 2026-10-13 — export currencies print international format (USD
+  // 2,800,000.00); INR keeps the domestic ₹28,00,000.00 convention.
+  return formatDocMoney(n, currency);
 }
 function fmtDate(v: string | null): string {
   if (!v) return "—";
@@ -166,11 +190,25 @@ function priorityDot(priority: B2BInquiryRow["priority"]): string {
 }
 
 // ── root component ───────────────────────────────────────────────────────────
-export function B2BInquiryManager({ inquiries, companyId, companyName, canManage, loadError }: B2BInquiryManagerProps) {
+export function B2BInquiryManager({ inquiries, companyId, companyName, companyProfile, canManage, loadError }: B2BInquiryManagerProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [showForm, setShowForm] = useState(false);
+  const [showSeller, setShowSeller] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  // 2026-10-13 — register-level delete ("enquiry edit, modify, delete
+  // bhi honi chahiye"): the detail dialog keeps its own Delete, this adds
+  // a visible one-click row action. Same server action + audit trail.
+  function deleteInquiryRow(i: B2BInquiryRow) {
+    if (!window.confirm(`Delete ${i.inquiry_no} (${i.buyer_name})? This also removes its quotation, documents and payment records.`)) return;
+    startTransition(async () => {
+      const res = await deleteInquiry(i.id);
+      if (!res.ok) window.alert(res.error ?? "Delete failed.");
+      else if (selectedId === i.id) setSelectedId(null);
+    });
+  }
 
   void companyId;
   void companyName; // (kept for future per-company theming)
@@ -269,6 +307,14 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, canManage
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
               >
                 ⬇ Report (Excel)
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSeller(true)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+                title="Seller / Exporter details printed on every PI / Commercial Invoice"
+              >
+                🏢 Seller Details
               </button>
               <button
                 type="button"
@@ -403,13 +449,36 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, canManage
                       <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeClass(i.status)}`}>{i.status}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedId(i.id)}
-                        className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
-                      >
-                        Open
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedId(i.id)}
+                          className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                        >
+                          Open
+                        </button>
+                        {canManage && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedId(i.id)}
+                              title="Edit inquiry"
+                              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteInquiryRow(i)}
+                              disabled={isPending}
+                              title="Delete inquiry"
+                              className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-500 hover:bg-red-100 disabled:opacity-60"
+                            >
+                              🗑
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -428,6 +497,11 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, canManage
 
       {/* ── New-inquiry modal ──────────────────────────────────────────── */}
       {showForm && <NewInquiryModal onClose={() => setShowForm(false)} />}
+
+      {/* ── Seller / Exporter details (printed on every PI / CI) ───────── */}
+      {showSeller && (
+        <SellerDetailsDialog companyId={companyId} profile={companyProfile} onClose={() => setShowSeller(false)} />
+      )}
 
       {/* ── Inquiry detail dialog ──────────────────────────────────────── */}
       {selected && (
@@ -487,11 +561,11 @@ function SetupNotice({ error, onRetry }: { error: string; onRetry: () => void })
           <div className="flex-1">
             <h1 className="text-lg font-bold text-amber-900">B2B module — one-time database setup pending</h1>
             <p className="mt-1 text-sm text-amber-800">
-              The B2B tables don&apos;t exist in the database yet. Run these two SQL files in Supabase
-              (Dashboard → SQL Editor → New query → paste file contents → Run):
+              Some B2B tables/columns don&apos;t exist in the database yet. Run these SQL files in Supabase
+              (Dashboard → SQL Editor → New query → paste file contents → Run), in order:
             </p>
             <ol className="mt-3 space-y-1.5 text-sm">
-              {["db/2026-09-30-b2b-inquiries.sql", "db/2026-09-30b-b2b-documents.sql"].map((f, i) => (
+              {["db/2026-09-30-b2b-inquiries.sql", "db/2026-09-30b-b2b-documents.sql", "db/2026-10-13-b2b-pi-export-details.sql"].map((f, i) => (
                 <li key={f} className="flex items-center gap-2">
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-200 text-xs font-bold text-amber-900">{i + 1}</span>
                   <code className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-800 ring-1 ring-amber-200">{f}</code>
@@ -499,8 +573,8 @@ function SetupNotice({ error, onRetry }: { error: string; onRetry: () => void })
               ))}
             </ol>
             <p className="mt-3 text-xs text-amber-700">
-              Then refresh this page — the register, quotations (PI / Commercial Invoice / Packing List documents)
-              and payments all light up together. No data was lost.
+              Then refresh this page — the register, quotations (PI / Commercial Invoice / Packing List documents),
+              seller details and payments all light up together. No data was lost.
             </p>
             <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 font-mono text-xs text-slate-600 break-words ring-1 ring-amber-100">
               {error}
@@ -543,6 +617,7 @@ function NewInquiryModal({ onClose }: { onClose: () => void }) {
         inquiryDate: val("inquiry_date"),
         buyerName: val("buyer_name"),
         buyerCompany: val("buyer_company"),
+        buyerAddress: val("buyer_address"),
         buyerContactNo: val("buyer_contact_no"),
         buyerEmail: val("buyer_email"),
         buyerCountry: val("buyer_country"),
@@ -570,6 +645,11 @@ function NewInquiryModal({ onClose }: { onClose: () => void }) {
           </Field>
           <Field label="Buyer Name *"><input name="buyer_name" required className={inputClass} /></Field>
           <Field label="Buyer Company"><input name="buyer_company" className={inputClass} /></Field>
+          <div className="sm:col-span-2">
+            <Field label="Buyer Address">
+              <textarea name="buyer_address" rows={2} className={inputClass} placeholder="Full address as per the buyer&apos;s purchase order (prints on the PI)…" />
+            </Field>
+          </div>
           <Field label="Contact No"><input name="buyer_contact_no" className={inputClass} placeholder="+91…" /></Field>
           <Field label="Email"><input name="buyer_email" type="email" className={inputClass} /></Field>
           <Field label="Country"><input name="buyer_country" className={inputClass} /></Field>
@@ -622,6 +702,18 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
   const [showQuoteForm, setShowQuoteForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showConvert, setShowConvert] = useState(false);
+  // 2026-10-13 — the asked-for items are editable from the details form
+  // ("enquiry edit, modify, delete bhi honi chahiye"). Kept as strings so
+  // typing never fights the parser; the server action parses.
+  const [items, setItems] = useState(() =>
+    inquiry.items.map((it) => ({
+      description: it.description,
+      qty: String(it.qty),
+      unit: it.unit ?? "pcs",
+      unitPrice: it.unit_price == null ? "" : String(it.unit_price),
+      remark: it.remark ?? "",
+    }))
+  );
 
   function saveDetails(formData: FormData) {
     setError(null);
@@ -629,8 +721,10 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
     startTransition(async () => {
       const res = await updateInquiry({
         inquiryId: inquiry.id,
+        inquiryDate: val("inquiry_date"),
         buyerName: val("buyer_name"),
         buyerCompany: val("buyer_company"),
+        buyerAddress: val("buyer_address"),
         buyerContactNo: val("buyer_contact_no"),
         buyerEmail: val("buyer_email"),
         buyerCountry: val("buyer_country"),
@@ -640,6 +734,7 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
         remarks: val("remarks"),
         followUpDate: val("follow_up_date"),
         status: val("status"),
+        items,
       });
       if (res.ok) setNotice("Saved.");
       else setError(res.error ?? "Save failed.");
@@ -673,13 +768,13 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
 
       {mode === "details" && (
         <div className="space-y-3">
-          {inquiry.items.length > 0 && (
+          {!canManage && inquiry.items.length > 0 && (
             <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Asked-for items</div>
               <ul className="list-inside list-disc space-y-0.5 text-slate-700">
                 {inquiry.items.map((it, i) => (
                   <li key={i}>
-                    {it.description} — {it.qty} {it.unit ?? ""}{it.unit_price != null ? ` @ ${fmtMoney(it.unit_price)}` : ""}
+                    {it.description} — {it.qty} {it.unit ?? ""}{it.unit_price != null ? ` @ ${fmtMoney(it.unit_price, inquiry.quote?.currency)}` : ""}
                   </li>
                 ))}
               </ul>
@@ -688,8 +783,14 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
           {canManage ? (
             <form action={saveDetails} className="space-y-3">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Inquiry Date"><input name="inquiry_date" type="date" defaultValue={inquiry.inquiry_date} className={inputClass} /></Field>
                 <Field label="Buyer Name"><input name="buyer_name" defaultValue={inquiry.buyer_name} className={inputClass} /></Field>
                 <Field label="Company"><input name="buyer_company" defaultValue={inquiry.buyer_company ?? ""} className={inputClass} /></Field>
+                <div className="sm:col-span-2">
+                  <Field label="Buyer Address">
+                    <textarea name="buyer_address" rows={2} defaultValue={inquiry.buyer_address ?? ""} className={inputClass} placeholder="Full address as per the buyer&apos;s purchase order (prints on the PI)…" />
+                  </Field>
+                </div>
                 <Field label="Contact No"><input name="buyer_contact_no" defaultValue={inquiry.buyer_contact_no ?? ""} className={inputClass} /></Field>
                 <Field label="Email"><input name="buyer_email" defaultValue={inquiry.buyer_email ?? ""} className={inputClass} /></Field>
                 <Field label="Country"><input name="buyer_country" defaultValue={inquiry.buyer_country ?? ""} className={inputClass} /></Field>
@@ -706,6 +807,39 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
                 </Field>
                 <Field label="Follow-up Date"><input name="follow_up_date" type="date" defaultValue={inquiry.follow_up_date ?? ""} className={inputClass} /></Field>
               </div>
+
+              {/* Asked-for items — editable, saved with the inquiry */}
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className={labelClass}>Asked-for Items</span>
+                  <button
+                    type="button"
+                    onClick={() => setItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }])}
+                    className="text-xs font-medium text-amber-600 hover:underline"
+                  >
+                    + Add item
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {items.map((it, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2">
+                      <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
+                      <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
+                      <input className={`${inputClass} col-span-2`} placeholder="Unit" value={it.unit} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))} />
+                      <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
+                      <button
+                        type="button"
+                        className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50"
+                        onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))}
+                        aria-label="Remove item"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <Field label="Requirement Notes"><textarea name="requirement_notes" rows={2} defaultValue={inquiry.requirement_notes ?? ""} className={inputClass} /></Field>
               <Field label="Remarks"><textarea name="remarks" rows={2} defaultValue={inquiry.remarks ?? ""} className={inputClass} /></Field>
               {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
@@ -797,6 +931,12 @@ function QuotePanel({
       currency: val("currency"),
       terms: val("terms"),
       notes: val("notes"),
+      buyerAddress: val("buyer_address"),
+      productSpecs: val("product_specs"),
+      paymentTerms: val("payment_terms"),
+      shippingTerms: val("shipping_terms"),
+      bankDetails: val("bank_details"),
+      incoterm: val("incoterm"),
       items: items.map((it) => ({
         description: it.description,
         hsnCode: it.hsnCode,
@@ -979,10 +1119,34 @@ function QuotePanel({
             <Field label="Contact No"><input name="buyer_contact_no" defaultValue={q?.buyer_contact_no ?? inquiry.buyer_contact_no ?? ""} className={inputClass} /></Field>
             <Field label="Email"><input name="buyer_email" defaultValue={q?.buyer_email ?? inquiry.buyer_email ?? ""} className={inputClass} /></Field>
             <Field label="Country"><input name="buyer_country" defaultValue={q?.buyer_country ?? inquiry.buyer_country ?? ""} className={inputClass} /></Field>
+            <Field label="Incoterm"><input name="incoterm" defaultValue={q?.incoterm ?? ""} className={inputClass} placeholder="EXW / FOB / CIF / DAP…" /></Field>
             <Field label="Tax %"><input name="tax_percent" inputMode="decimal" defaultValue={q ? String(q.tax_percent) : "0"} className={inputClass} /></Field>
-            <Field label="Shipping"><input name="shipping_amount" inputMode="decimal" defaultValue={q ? String(q.shipping_amount) : "0"} className={inputClass} /></Field>
+            <Field label="Shipping Amount"><input name="shipping_amount" inputMode="decimal" defaultValue={q ? String(q.shipping_amount) : "0"} className={inputClass} placeholder="0 — prints &quot;To be confirmed&quot;" /></Field>
             <Field label="Currency"><input name="currency" defaultValue={q?.currency ?? "INR"} maxLength={3} className={inputClass} /></Field>
           </div>
+
+          {/* 2026-10-13 — the labeled PI/CI sections. These print on the
+              issued Proforma Invoice / Commercial Invoice; blank fields
+              print "To be confirmed" / "To be provided". */}
+          <div className="rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2 text-xs text-sky-800">
+            📄 The fields below print as labeled sections on the PI / Commercial Invoice. Leave blank to print
+            &quot;To be confirmed&quot; — trade terms are never guessed.
+          </div>
+          <Field label="Buyer Address">
+            <textarea name="buyer_address" rows={2} defaultValue={q?.buyer_address ?? inquiry.buyer_address ?? ""} className={inputClass} placeholder="Full address as per the buyer&apos;s purchase order…" />
+          </Field>
+          <Field label="Product Specifications">
+            <textarea name="product_specs" rows={3} defaultValue={q?.product_specs ?? ""} className={inputClass} placeholder={"Size: 2 × 6 feet\nMaterial: 100% jute, if accurate\nManufacturing: Handmade, handwoven\nColour / Design: As agreed\nPackaging: Individual / bulk, as agreed\nCountry of Origin: India, if accurate"} />
+          </Field>
+          <Field label="Payment Terms">
+            <textarea name="payment_terms" rows={3} defaultValue={q?.payment_terms ?? ""} className={inputClass} placeholder={"100% advance payment before dispatch, if agreed\nPayment method: Bank transfer (T/T), if agreed\nPayment due date: …\nBank charges: Buyer / seller / shared, as agreed"} />
+          </Field>
+          <Field label="Shipping & Delivery Terms">
+            <textarea name="shipping_terms" rows={4} defaultValue={q?.shipping_terms ?? ""} className={inputClass} placeholder={"Port of Loading: …\nPort of Destination: …\nDelivery Period: e.g. 90 days after advance payment\nPartial Shipment: Allowed / Not allowed\nTransshipment: Allowed / Not allowed, as agreed\nFreight & Insurance: …"} />
+          </Field>
+          <Field label="Seller Bank Details (prints on PI)">
+            <textarea name="bank_details" rows={4} defaultValue={q?.bank_details ?? ""} className={inputClass} placeholder={"Beneficiary Name: …\nBank Name & Branch: …\nAccount Number: …\nSWIFT / BIC: …\nIntermediary Bank: If applicable"} />
+          </Field>
           <Field label="Terms"><input name="terms" defaultValue={q?.terms ?? ""} className={inputClass} placeholder="50% advance, balance before dispatch…" /></Field>
           <Field label="Notes"><textarea name="notes" rows={2} defaultValue={q?.notes ?? ""} className={inputClass} /></Field>
 
@@ -1345,6 +1509,77 @@ function PaymentsPanel({
         </>
       )}
     </div>
+  );
+}
+
+// ── Seller / Exporter details — the SELLER block printed on every PI/CI ────
+// 2026-10-13 — "Seller ki complete details missing hain": full business
+// address, IEC, PAN, GSTIN (where applicable), business email and phone,
+// edited once per company (not per quotation) and printed from the
+// companies row. Empty fields print "To be provided" on the document.
+function SellerDetailsDialog({
+  companyId,
+  profile,
+  onClose,
+}: {
+  companyId: string;
+  profile: B2BCompanyProfile | null;
+  onClose: () => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function save(formData: FormData) {
+    setError(null);
+    const val = (k: string) => String(formData.get(k) ?? "");
+    startTransition(async () => {
+      const res = await updateCompanyExportProfile({
+        companyId,
+        businessAddress: val("business_address"),
+        iecNo: val("iec_no"),
+        panNo: val("pan_no"),
+        gstin: val("gstin"),
+        businessEmail: val("business_email"),
+        businessPhone: val("business_phone"),
+      });
+      if (res.ok) onClose();
+      else setError(res.error ?? "Save failed.");
+    });
+  }
+
+  return (
+    <SimpleDialog
+      title="Seller / Exporter Details"
+      subtitle="Printed in section 1 of every Proforma Invoice / Commercial Invoice"
+      onClose={onClose}
+      wide
+    >
+      <form action={save} className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Field label="Registered / Business Address">
+              <textarea name="business_address" rows={3} defaultValue={profile?.business_address ?? ""} className={inputClass} placeholder="Full business / registered address, India" />
+            </Field>
+          </div>
+          <Field label="IEC (Importer Exporter Code)"><input name="iec_no" defaultValue={profile?.iec_no ?? ""} className={inputClass} placeholder="If available" /></Field>
+          <Field label="PAN"><input name="pan_no" defaultValue={profile?.pan_no ?? ""} className={inputClass} /></Field>
+          <Field label="GSTIN"><input name="gstin" defaultValue={profile?.gstin ?? ""} className={inputClass} placeholder="Where applicable" /></Field>
+          <Field label="Business Email"><input name="business_email" type="email" defaultValue={profile?.business_email ?? ""} className={inputClass} /></Field>
+          <Field label="Telephone"><input name="business_phone" defaultValue={profile?.business_phone ?? ""} className={inputClass} /></Field>
+        </div>
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Verify IEC / PAN / GSTIN before issuing a document. Seller <strong>bank details</strong> are entered per
+          quotation (Bank Details field in the quotation form) — verify them with the bank before printing.
+        </p>
+        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" disabled={isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+            {isPending ? "Saving…" : "Save Details"}
+          </button>
+        </div>
+      </form>
+    </SimpleDialog>
   );
 }
 

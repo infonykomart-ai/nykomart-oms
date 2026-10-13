@@ -33,7 +33,7 @@ export default async function B2BPage() {
   const supabase = createServiceRoleClient();
   const companyId = me.currentCompanyId;
 
-  const [inquiriesRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes] = await Promise.all([
+  const [inquiriesRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes] = await Promise.all([
     supabase
       .from("b2b_inquiries")
       .select("*")
@@ -94,12 +94,32 @@ export default async function B2BPage() {
         (r) => r,
         () => ({ data: null, error: null })
       ),
+    // 2026-10-13 — SELLER / EXPORTER DETAILS for the PI's seller block.
+    // Separate query so a missing 2026-10-13 migration only empties the
+    // profile (prints "To be provided") instead of taking down the whole
+    // register the way one bad select used to ("logout ho raha" bug).
+    supabase
+      .from("companies")
+      .select("business_address, iec_no, pan_no, gstin, business_email, business_phone")
+      .eq("id", companyId)
+      .maybeSingle()
+      .then(
+        (r) => r,
+        () => ({ data: null, error: null })
+      ),
   ]);
 
   // 2026-09-30b — "logout ho raha baar baar" root cause: a missing table
   // used to throw here and crash the whole page into the error boundary.
   // Now the raw reason travels to the client as a setup notice.
-  const loadError = inquiriesRes.error ? inquiriesRes.error.message : null;
+  // 2026-10-13 — also surface a not-yet-run 2026-10-13 migration (a
+  // missing COLUMN fails the quotations query the same way a missing
+  // TABLE used to); the setup card lists all three SQL files to run.
+  const loadError = inquiriesRes.error
+    ? inquiriesRes.error.message
+    : quotesRes.error
+      ? quotesRes.error.message
+      : null;
 
   const itemsByInquiry = new Map<string, B2BInquiryView["items"]>();
   for (const it of itemsRes.data ?? []) {
@@ -158,6 +178,18 @@ export default async function B2BPage() {
         inquiries={inquiries}
         companyId={companyId}
         companyName={companyRes.data?.name ?? ""}
+        companyProfile={
+          sellerProfileRes.data
+            ? {
+                business_address: sellerProfileRes.data.business_address,
+                iec_no: sellerProfileRes.data.iec_no,
+                pan_no: sellerProfileRes.data.pan_no,
+                gstin: sellerProfileRes.data.gstin,
+                business_email: sellerProfileRes.data.business_email,
+                business_phone: sellerProfileRes.data.business_phone,
+              }
+            : null
+        }
         canManage
         loadError={loadError}
       />

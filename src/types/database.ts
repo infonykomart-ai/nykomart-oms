@@ -623,6 +623,7 @@ export type Database = {
           inquiry_date: string;
           buyer_name: string;
           buyer_company: string | null;
+          buyer_address: string | null;
           buyer_contact_no: string | null;
           buyer_email: string | null;
           buyer_country: string | null;
@@ -646,6 +647,7 @@ export type Database = {
           inquiry_date: string;
           buyer_name: string;
           buyer_company?: string | null;
+          buyer_address?: string | null;
           buyer_contact_no?: string | null;
           buyer_email?: string | null;
           buyer_country?: string | null;
@@ -669,6 +671,7 @@ export type Database = {
           inquiry_date?: string;
           buyer_name?: string;
           buyer_company?: string | null;
+          buyer_address?: string | null;
           buyer_contact_no?: string | null;
           buyer_email?: string | null;
           buyer_country?: string | null;
@@ -1256,6 +1259,11 @@ export type Database = {
           currency: string;
           terms: string | null;
           notes: string | null;
+          buyer_address: string | null;
+          product_specs: string | null;
+          payment_terms: string | null;
+          shipping_terms: string | null;
+          bank_details: string | null;
           sent_at: string | null;
           entered_by_employee_id: string | null;
           created_at: string;
@@ -1289,6 +1297,11 @@ export type Database = {
           currency?: string;
           terms?: string | null;
           notes?: string | null;
+          buyer_address?: string | null;
+          product_specs?: string | null;
+          payment_terms?: string | null;
+          shipping_terms?: string | null;
+          bank_details?: string | null;
           sent_at?: string | null;
           entered_by_employee_id?: string | null;
           created_at?: string;
@@ -1322,6 +1335,11 @@ export type Database = {
           currency?: string;
           terms?: string | null;
           notes?: string | null;
+          buyer_address?: string | null;
+          product_specs?: string | null;
+          payment_terms?: string | null;
+          shipping_terms?: string | null;
+          bank_details?: string | null;
           sent_at?: string | null;
           entered_by_employee_id?: string | null;
           created_at?: string;
@@ -2300,6 +2318,12 @@ export type Database = {
           telegram_chat_id: string | null;
           master_invoice_prefix: string | null;
           weekly_off_days: number[];
+          business_address: string | null;
+          iec_no: string | null;
+          pan_no: string | null;
+          gstin: string | null;
+          business_email: string | null;
+          business_phone: string | null;
           created_at: string;
         };
         Insert: {
@@ -2313,6 +2337,12 @@ export type Database = {
           telegram_chat_id?: string | null;
           master_invoice_prefix?: string | null;
           weekly_off_days?: number[];
+          business_address?: string | null;
+          iec_no?: string | null;
+          pan_no?: string | null;
+          gstin?: string | null;
+          business_email?: string | null;
+          business_phone?: string | null;
           created_at?: string;
         };
         Update: {
@@ -2326,6 +2356,12 @@ export type Database = {
           telegram_chat_id?: string | null;
           master_invoice_prefix?: string | null;
           weekly_off_days?: number[];
+          business_address?: string | null;
+          iec_no?: string | null;
+          pan_no?: string | null;
+          gstin?: string | null;
+          business_email?: string | null;
+          business_phone?: string | null;
           created_at?: string;
         };
         Relationships: [
