@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import { changeEmployeeRole, setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
+import { changeEmployeeRole, deleteEmployee, setEmployeeActive, resetEmployeePassword, type SimpleActionState } from "./actions";
 import { EmployeeDetailsForm, type EmployeeDetails } from "./employee-details-form";
 import { EmployeeStoreAccessForm } from "./employee-store-access-form";
 import { EmployeeDocumentsPanel, type EmployeeDocumentRow } from "./employee-documents-panel";
@@ -17,6 +17,8 @@ export function EmployeeRowActions({
   roles,
   stores,
   currentStoreIds,
+  companies,
+  companyAccess,
   reportsToOptions,
   departments,
   documents,
@@ -31,12 +33,16 @@ export function EmployeeRowActions({
   roles: { id: string; name: string }[];
   stores: { id: string; name: string; company_id: string }[];
   currentStoreIds: string[];
-  // 2026-09-11 (Payroll Phase 3) — same-company employees this one could
-  // report to (self already excluded by the caller).
-  reportsToOptions: { id: string; name: string }[];
-  // 2026-10-02b — this employee's home company's departments for the Edit
-  // Details select (caller filters by company).
-  departments: { id: string; name: string }[];
+  // 2026-10-13 — "puri trah se edit": ALL companies (home-company select
+  // must render an inactive current company too) + this employee's
+  // current employee_company_access rows for the checkboxes.
+  companies: { id: string; name: string; active: boolean }[];
+  companyAccess: string[];
+  // ALL other employees / ALL departments, company_id included — the Edit
+  // Details form re-filters them live when the home company changes
+  // (self already excluded by the caller).
+  reportsToOptions: { id: string; name: string; company_id: string }[];
+  departments: { id: string; name: string; company_id: string }[];
   documents: EmployeeDocumentRow[];
 }) {
   const [isPending, startTransition] = useTransition();
@@ -49,6 +55,9 @@ export function EmployeeRowActions({
   // Until now a role could only be chosen while CREATING the login.
   const [roleError, setRoleError] = useState<string | null>(null);
   const [roleSaved, setRoleSaved] = useState(false);
+  // 2026-10-13 — 🗑 delete: surfaced errors are the WHOLE feedback path
+  // here (FK-linked history, last-admin lockout…), unlike a silent no-op.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   function onRoleChange(newRoleId: string) {
     if (!newRoleId || newRoleId === roleId) return;
@@ -134,11 +143,32 @@ export function EmployeeRowActions({
         >
           Password Reset
         </button>
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => {
+            const okToDelete = window.confirm(
+              `Permanently delete ${employeeName}'s entry?\n\nThis cannot be undone. Employees with linked history (attendance, orders, salary…) cannot be deleted — Deactivate them instead.`
+            );
+            if (!okToDelete) return;
+            setDeleteError(null);
+            startTransition(async () => {
+              const result = await deleteEmployee(employeeId);
+              if (result.error) setDeleteError(result.error);
+            });
+          }}
+          className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+        >
+          Delete
+        </button>
       </div>
+      {deleteError && <p className="mt-1.5 text-right text-xs font-medium text-rose-700">{deleteError}</p>}
       {resetOpen && <ResetPasswordInline employeeId={employeeId} onDone={() => setResetOpen(false)} />}
       {detailsOpen && (
         <EmployeeDetailsForm
           employee={details}
+          companies={companies}
+          companyAccess={companyAccess}
           reportsToOptions={reportsToOptions}
           departments={departments}
           onDone={() => setDetailsOpen(false)}

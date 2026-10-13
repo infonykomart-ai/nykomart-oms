@@ -32,7 +32,7 @@ export default async function EmployeesAdminPage() {
   // salary page), so read it via the service-role client.
   const finSupabase = createServiceRoleClient();
 
-  const [{ data: employees }, { data: roles }, { data: companies }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }] =
+  const [{ data: employees }, { data: roles }, { data: companies }, { data: companyAccess }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }] =
     await Promise.all([
       supabase
         .from("employees")
@@ -41,7 +41,14 @@ export default async function EmployeesAdminPage() {
         )
         .order("created_at", { ascending: false }),
       supabase.from("roles").select("id, name").order("name"),
-      supabase.from("companies").select("id, name").eq("active", true).order("name"),
+      // 2026-10-13 — ALL companies now (active filter moved to the create
+      // form's own list below): the Edit Details home-company select must
+      // be able to render an inactive company this employee already sits
+      // in, or a save would silently move them to the first option.
+      supabase.from("companies").select("id, name, active").order("name"),
+      // 2026-10-13 — "puri trah se edit": current per-employee company
+      // grants for the Edit Details checkboxes.
+      supabase.from("employee_company_access").select("employee_id, company_id"),
       // 2026-08-08: store-scoped Ad Spend — see employee-store-access-form.tsx.
       supabase.from("stores").select("id, name, company_id").order("name"),
       supabase.from("employee_store_access").select("employee_id, store_id"),
@@ -69,14 +76,16 @@ export default async function EmployeesAdminPage() {
 
   const roleName = new Map((roles ?? []).map((r) => [r.id, r.name]));
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
-  // 2026-10-02b — resolve employees.department_id -> name for the table,
-  // and group departments by company for the Edit Details select.
+  // 2026-10-02b — resolve employees.department_id -> name for the table.
   const departmentName = new Map((departments ?? []).map((d) => [d.id, d.name]));
-  const departmentsByCompany = new Map<string, { id: string; name: string }[]>();
-  for (const d of departments ?? []) {
-    const list = departmentsByCompany.get(d.company_id) ?? [];
-    list.push({ id: d.id, name: d.name });
-    departmentsByCompany.set(d.company_id, list);
+  // 2026-10-13 — create form keeps the ACTIVE-companies-only list (you
+  // can't hire someone into a shut company); the edit form gets ALL.
+  const activeCompanies = (companies ?? []).filter((c) => c.active);
+  const companyAccessByEmployee = new Map<string, string[]>();
+  for (const row of companyAccess ?? []) {
+    const list = companyAccessByEmployee.get(row.employee_id) ?? [];
+    list.push(row.company_id);
+    companyAccessByEmployee.set(row.employee_id, list);
   }
   const storeIdsByEmployee = new Map<string, string[]>();
   for (const row of storeAccess ?? []) {
@@ -85,15 +94,12 @@ export default async function EmployeesAdminPage() {
     storeIdsByEmployee.set(row.employee_id, list);
   }
 
-  // 2026-09-11 (Payroll Phase 3) — "Reports To" options are scoped to the
-  // SAME company as the employee being edited (an org chart spanning
-  // companies isn't meaningful here), excluding the employee themselves.
-  const employeesByCompany = new Map<string, { id: string; name: string }[]>();
-  for (const e of employees ?? []) {
-    const list = employeesByCompany.get(e.company_id) ?? [];
-    list.push({ id: e.id, name: e.name });
-    employeesByCompany.set(e.company_id, list);
-  }
+  // 2026-09-11 (Payroll Phase 3) — "Reports To" options stay scoped to
+  // the SAME company as the employee (an org chart spanning companies
+  // isn't meaningful here), excluding the employee themselves. Since
+  // 2026-10-13 the home company itself is editable, the page hands the
+  // form the flat list WITH company_id and the form re-filters live.
+  const employeeOptions = (employees ?? []).map((e) => ({ id: e.id, name: e.name, company_id: e.company_id }));
   const documentsByEmployee = new Map<string, typeof documentsRaw>();
   for (const d of documentsRaw ?? []) {
     const list = documentsByEmployee.get(d.employee_id) ?? [];
@@ -131,7 +137,7 @@ export default async function EmployeesAdminPage() {
               🏢 Manage Departments
             </Link>
           </div>
-          <EmployeeForm roles={roles ?? []} companies={companies ?? []} stores={stores ?? []} departments={departments ?? []} />
+          <EmployeeForm roles={roles ?? []} companies={activeCompanies} stores={stores ?? []} departments={departments ?? []} />
         </div>
 
         <div className="@lg:col-span-2">
@@ -193,8 +199,10 @@ export default async function EmployeesAdminPage() {
                         roles={roles ?? []}
                         stores={stores ?? []}
                         currentStoreIds={storeIdsByEmployee.get(e.id) ?? []}
-                        reportsToOptions={(employeesByCompany.get(e.company_id) ?? []).filter((o) => o.id !== e.id)}
-                        departments={departmentsByCompany.get(e.company_id) ?? []}
+                        companies={companies ?? []}
+                        companyAccess={companyAccessByEmployee.get(e.id) ?? []}
+                        reportsToOptions={employeeOptions.filter((o) => o.id !== e.id)}
+                        departments={departments ?? []}
                         documents={documentsByEmployee.get(e.id) ?? []}
                       />
                     </td>

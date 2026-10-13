@@ -128,23 +128,11 @@ export async function changeEmployeeRole(employeeId: string, newRoleId: string):
   const newRoleIsAdmin = (newRoleCaps?.length ?? 0) > 0;
 
   if (oldRoleIsAdmin && !newRoleIsAdmin) {
-    // Everyone whose CURRENT role carries employee_admin. Note: keyed by
-    // role, not by employee — counting active employees per admin role is
-    // the accurate "who can still get back into this screen" check.
-    const { data: adminRoleIds } = await supabase
-      .from("role_capabilities")
-      .select("role_id")
-      .eq("capability_code", "employee_admin");
-    const adminIds = new Set((adminRoleIds ?? []).map((r) => r.role_id));
-    const { data: adminEmployees } = await supabase
-      .from("employees")
-      .select("id")
-      .in("role_id", [...adminIds])
-      .eq("active", true);
     // Exclude the one being moved — after this change they can no longer
-    // administer.
-    const remaining = (adminEmployees ?? []).filter((e) => e.id !== employeeId);
-    if (remaining.length === 0) {
+    // administer. countOtherActiveAdmins (defined with deleteEmployee
+    // below) is shared between the two actions with this lockout concern.
+    const remaining = await countOtherActiveAdmins(supabase, employeeId);
+    if (remaining === 0) {
       return { error: `${newRole.name} has no Permissions access — this is the last Admin/MD employee, so the role cannot be changed (prevents lockout).` };
     }
   }
@@ -308,6 +296,237 @@ export async function setEmployeeActive(employeeId: string, active: boolean): Pr
   return { error: null, success: true };
 }
 
+/**
+ * How many OTHER active employees still carry employee_admin (via their
+ * role). Shared by changeEmployeeRole and deleteEmployee — moving the
+ * last Admin/MD off an admin role or deleting them is a lockout either
+ * way, so both ask this one question.
+ */
+async function countOtherActiveAdmins(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  excludeEmployeeId: string
+): Promise<number> {
+  const { data: adminRoleIds } = await supabase
+    .from("role_capabilities")
+    .select("role_id")
+    .eq("capability_code", "employee_admin");
+  const adminIds = new Set((adminRoleIds ?? []).map((r) => r.role_id));
+  if (adminIds.size === 0) return 0;
+  const { data: adminEmployees } = await supabase
+    .from("employees")
+    .select("id")
+    .in("role_id", [...adminIds])
+    .eq("active", true);
+  return (adminEmployees ?? []).filter((e) => e.id !== excludeEmployeeId).length;
+}
+
+// ── 2026-10-13 — 🗑 Full DELETE of an employee entry ───────────────────────
+// "uski entry ko delet or puri trah se edit karne ka option nahi hai" —
+// the Deactivate/Activate toggle above only flips employees.active; this
+// removes the row and its login outright. Deliberately guarded rather
+// than free-for-all:
+//
+//   • employee_admin capability, and never yourself (instant lockout);
+//   • never the last active Admin/MD (same rule as changeEmployeeRole);
+//   • anyone still listing this person as their manager blocks it — the
+//     employees.reports_to_employee_id FK is NO ACTION, so Postgres would
+//     reject the delete anyway; we just say it in human words first;
+//   • ~96 OTHER columns reference employees(id) — orders, attendance,
+//     salary, tasks, audit trail… (db/schema.sql). NONE cascade from
+//     employees (only employee_company_access / employee_store_access /
+//     companion_events do), so the database REFUSES a delete that would
+//     detach business history from the person who entered/approved it.
+//     We map that FK violation back to the tables actually holding rows
+//     (EMPLOYEE_REFERENCE_PROBES) so the admin is told WHERE the history
+//     is instead of getting a raw constraint name. An employee with no
+//     such history — a mis-created entry — deletes cleanly in one click.
+//
+// Order matters: the employees-row delete goes FIRST because it is what
+// proves the FK guards passed — destroying the auth login before it would
+// lock a still-existing employee out if the delete then failed.
+
+/** Tables (and the exact column) that block an employees delete, with a human label. */
+type EmployeeRefTable =
+  | "attendance"
+  | "orders"
+  | "tasks"
+  | "daily_work_logs"
+  | "employee_salary"
+  | "salary_payments"
+  | "employee_advances"
+  | "employee_settlements"
+  | "leave_requests"
+  | "leave_balance_adjustments"
+  | "employee_documents"
+  | "employee_onboarding_progress"
+  | "audit_log"
+  | "exchange_rates"
+  | "bill_pass_register"
+  | "bill_pass_register_payments"
+  | "bill_pass_register_adjustments"
+  | "sales_invoices"
+  | "order_refunds"
+  | "hr_letters"
+  | "entry_errors"
+  | "work_plan_templates"
+  | "store_ad_spend"
+  | "finished_stock_movements"
+  | "order_shipments"
+  | "dispatch_invoices"
+  | "internal_invoices"
+  | "credit_notes"
+  | "journal_vouchers"
+  | "internal_expenses"
+  | "recurring_card_debits"
+  | "holidays"
+  | "automation_rules"
+  | "refunds";
+
+const EMPLOYEE_REFERENCE_PROBES: { table: EmployeeRefTable; column: string; label: string }[] = [
+  { table: "attendance", column: "employee_id", label: "Attendance" },
+  { table: "orders", column: "entry_by_employee_id", label: "Orders entered" },
+  { table: "tasks", column: "assigned_to_employee_id", label: "Tasks assigned to them" },
+  { table: "tasks", column: "assigned_by_employee_id", label: "Tasks they assigned" },
+  { table: "daily_work_logs", column: "employee_id", label: "Daily Work Reports" },
+  { table: "employee_salary", column: "employee_id", label: "Salary structure" },
+  { table: "salary_payments", column: "employee_id", label: "Salary payments" },
+  { table: "employee_advances", column: "employee_id", label: "Advances" },
+  { table: "employee_settlements", column: "employee_id", label: "Settlements" },
+  { table: "leave_requests", column: "employee_id", label: "Leave requests" },
+  { table: "leave_balance_adjustments", column: "employee_id", label: "Leave balance adjustments" },
+  { table: "employee_documents", column: "employee_id", label: "Documents" },
+  { table: "employee_onboarding_progress", column: "employee_id", label: "Onboarding progress" },
+  { table: "audit_log", column: "employee_id", label: "Audit trail entries" },
+  { table: "exchange_rates", column: "entered_by", label: "Exchange-rate entries" },
+  { table: "bill_pass_register", column: "employee_id", label: "Bills on their name" },
+  { table: "bill_pass_register", column: "payment_by_employee_id", label: "Bill payments made" },
+  { table: "bill_pass_register_payments", column: "entered_by", label: "Bill payment entries" },
+  { table: "bill_pass_register_adjustments", column: "created_by_employee_id", label: "Bill adjustments" },
+  { table: "sales_invoices", column: "created_by_employee_id", label: "Sales invoices" },
+  { table: "order_refunds", column: "entry_by_employee_id", label: "Order refunds" },
+  { table: "hr_letters", column: "for_employee_id", label: "HR letters" },
+  { table: "entry_errors", column: "raised_by_employee_id", label: "Entry-error reports" },
+  { table: "work_plan_templates", column: "created_by", label: "Work plans" },
+  { table: "store_ad_spend", column: "entry_by_employee_id", label: "Ad-spend entries" },
+  { table: "finished_stock_movements", column: "entry_by_employee_id", label: "Stock movements" },
+  { table: "order_shipments", column: "created_by_employee_id", label: "Shipments created" },
+  { table: "dispatch_invoices", column: "case_handler_employee_id", label: "Dispatch invoices" },
+  { table: "internal_invoices", column: "prepared_by_employee_id", label: "Internal invoices" },
+  { table: "credit_notes", column: "created_by_employee_id", label: "Credit notes" },
+  { table: "journal_vouchers", column: "created_by_employee_id", label: "Journal vouchers" },
+  { table: "internal_expenses", column: "created_by_employee_id", label: "Internal expenses" },
+  { table: "recurring_card_debits", column: "created_by_employee_id", label: "Recurring card debits" },
+  { table: "holidays", column: "created_by_employee_id", label: "Holidays added" },
+  { table: "automation_rules", column: "created_by_employee_id", label: "Automation rules" },
+  { table: "refunds", column: "pass_by_employee_id", label: "Refunds passed" },
+];
+
+/**
+ * Which curated references actually hold rows for this employee — only
+ * ever called AFTER a 23503, so the happy path pays nothing. A blocking
+ * table outside this list simply produces the generic message in
+ * deleteEmployee (still accurate: something blocks it).
+ */
+async function findEmployeeReferenceBlocks(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  employeeId: string
+): Promise<string[]> {
+  const hits = await Promise.all(
+    EMPLOYEE_REFERENCE_PROBES.map(async (p) => {
+      const { count } = await supabase
+        .from(p.table)
+        .select("id", { count: "exact", head: true })
+        .eq(p.column, employeeId);
+      return (count ?? 0) > 0 ? `${p.label} (${count})` : null;
+    })
+  );
+  return hits.filter((h): h is string => h !== null);
+}
+
+export async function deleteEmployee(employeeId: string): Promise<SimpleActionState> {
+  const admin = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  if (!employeeId) return { error: "Employee missing.", success: false };
+  if (employeeId === admin.id) {
+    return { error: "You cannot delete your own entry — ask another Admin/MD to do it (prevents accidental lockout).", success: false };
+  }
+
+  const { data: target } = await supabase
+    .from("employees")
+    .select("id, name, email, role_id, auth_user_id")
+    .eq("id", employeeId)
+    .maybeSingle();
+  if (!target) return { error: "Employee not found — it may already be deleted.", success: false };
+
+  // Last active Admin/MD?
+  const { data: targetRoleCaps } = await supabase
+    .from("role_capabilities")
+    .select("capability_code")
+    .eq("role_id", target.role_id)
+    .eq("capability_code", "employee_admin");
+  if ((targetRoleCaps?.length ?? 0) > 0 && (await countOtherActiveAdmins(supabase, employeeId)) === 0) {
+    return {
+      error: "This is the last active Admin/MD — Deactivate the entry instead (deleting would lock everyone out of this screen).",
+      success: false,
+    };
+  }
+
+  // Anyone still reporting to them? (NO ACTION FK — the delete below
+  // would fail anyway; better to say why in human words up front.)
+  const { count: reporterCount } = await supabase
+    .from("employees")
+    .select("id", { count: "exact", head: true })
+    .eq("reports_to_employee_id", employeeId);
+  if ((reporterCount ?? 0) > 0) {
+    return {
+      error: `${reporterCount} employee(s) list this person as their manager — reassign them first (their Edit Details → Reports To).`,
+      success: false,
+    };
+  }
+
+  const { error: delError } = await supabase.from("employees").delete().eq("id", employeeId);
+  if (delError) {
+    if (delError.code === "23503") {
+      const blockers = await findEmployeeReferenceBlocks(supabase, employeeId);
+      return {
+        error:
+          blockers.length > 0
+            ? `Cannot delete — this employee's history is linked to: ${blockers.join(", ")}. Keep the entry Deactivated instead (that is exactly what it is for).`
+            : "Cannot delete — other records still reference this employee (orders / attendance / salary / audit history). Keep the entry Deactivated instead.",
+        success: false,
+      };
+    }
+    return { error: delError.message, success: false };
+  }
+
+  // Login SECOND — see header comment. Best-effort: without the employees
+  // row the login can't reach any screen anymore (getAuthedEmployee
+  // throws), so a failure here only ever leaves an orphaned auth user —
+  // same reasoning as deleteEmployeeDocument's orphaned-Storage note.
+  if (target.auth_user_id) {
+    await supabase.auth.admin.deleteUser(target.auth_user_id);
+  }
+
+  // audit_log.entity_id is a plain uuid (no FK — see db/schema.sql), so
+  // the record of THIS delete survives the row it describes.
+  await logAudit(supabase, {
+    employeeId: admin.id,
+    employeeName: admin.name,
+    action: "employee.deleted",
+    entityType: "employee",
+    entityId: employeeId,
+    entityLabel: target.name,
+    changes: { deleted: { email: target.email } },
+  });
+
+  revalidatePath("/dashboard/admin/employees");
+  revalidatePath("/dashboard/admin/employees/org-chart");
+  revalidatePath("/dashboard", "layout");
+  revalidatePath("/dashboard/messages");
+  return { error: null, success: true };
+}
+
 /** Sets a brand-new password for an existing employee's login — the in-app equivalent of resetting a forgotten password, previously only possible from the Supabase dashboard. */
 export async function resetEmployeePassword(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
   await requireCapability("employee_admin");
@@ -342,31 +561,65 @@ export type EmployeeDetailsFormState = { error: string | null; success: boolean 
  * createEmployee above. Designation/employee code/date of joining are also
  * editable here since there was previously no way to fix a typo in those
  * without going into Supabase directly.
+ *
+ * 2026-10-13 — "uski entry ko delet or puri trah se edit karne ka option
+ * nahi hai": the form now carries the IDENTITY block too — name, login
+ * email, home company and company access — everything that until today
+ * could only be changed by hand in Supabase. Same rules as
+ * createEmployee: every value is re-validated server-side (nothing the
+ * client sends is trusted), the denormalized employees.email stays in
+ * sync with the auth login, and identity changes are audit-logged.
  */
 export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, formData: FormData): Promise<EmployeeDetailsFormState> {
-  await requireCapability("employee_admin");
+  const admin = await requireCapability("employee_admin");
   const supabase = createServiceRoleClient();
 
   const employeeId = str(formData, "employee_id");
   if (!employeeId) return { error: "Employee missing.", success: false };
 
-  // 2026-10-02b — fetch the employee's home company so the selected
-  // department can be validated against it (departments are per-company).
+  // ── Identity block (2026-10-13) ──────────────────────────────────
+  const name = str(formData, "name");
+  const emailRaw = str(formData, "email").toLowerCase();
+  const email = emailRaw ? emailRaw : null;
+  const homeCompanyId = str(formData, "home_company_id");
+  const accessCompanyIds = Array.from(new Set(formData.getAll("company_access").map(String).filter(Boolean)));
+
+  if (!name) return { error: "Name is required.", success: false };
+  if (!homeCompanyId) return { error: "Choose the home company.", success: false };
+  if (email && !/^\S+@\S+\.\S+$/.test(email)) return { error: "Email is not in a valid format.", success: false };
+
   const { data: employeeRow } = await supabase
     .from("employees")
-    .select("company_id")
+    .select("name, email, company_id, auth_user_id")
     .eq("id", employeeId)
     .maybeSingle();
   if (!employeeRow) return { error: "Employee missing.", success: false };
+
+  // A login NEEDS an address to keep working — a blank email is only
+  // allowed for rows that never had one (the column is nullable by
+  // design, see its comment in db/schema.sql).
+  if (!email && employeeRow.auth_user_id) {
+    return { error: "Email is required — this employee signs in with it.", success: false };
+  }
+
+  const finalCompanyIds = Array.from(new Set([homeCompanyId, ...accessCompanyIds]));
+  const { data: realCompanies } = await supabase.from("companies").select("id").in("id", finalCompanyIds);
+  if ((realCompanies ?? []).length !== finalCompanyIds.length) {
+    return { error: "One of the selected companies doesn't exist.", success: false };
+  }
+
+  // ── Department + Reports To, validated against the NEW home company ──
+  // (both selects are company-scoped in the form — re-checked here
+  // because the submission could carry another company's values.)
   const departmentId = strOrNull(formData, "department_id");
   if (departmentId) {
     const { data: dept } = await supabase
       .from("departments")
       .select("id")
       .eq("id", departmentId)
-      .eq("company_id", employeeRow.company_id)
+      .eq("company_id", homeCompanyId)
       .maybeSingle();
-    if (!dept) return { error: "Selected department doesn't belong to this employee's company.", success: false };
+    if (!dept) return { error: "Selected department doesn't belong to the chosen home company — re-pick it.", success: false };
   }
 
   // 2026-09-11 (Payroll Phase 3) — org chart. An employee can't report to
@@ -375,10 +628,23 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
   // otherwise render as an infinite loop on the Org Chart tree.
   const reportsToRaw = strOrNull(formData, "reports_to_employee_id");
   const reportsToEmployeeId = reportsToRaw === employeeId ? null : reportsToRaw;
+  if (reportsToEmployeeId) {
+    const { data: manager } = await supabase
+      .from("employees")
+      .select("id, company_id")
+      .eq("id", reportsToEmployeeId)
+      .maybeSingle();
+    if (!manager || manager.company_id !== homeCompanyId) {
+      return { error: "\"Reports To\" must be an employee in the same home company.", success: false };
+    }
+  }
 
   const { error } = await supabase
     .from("employees")
     .update({
+      name,
+      email,
+      company_id: homeCompanyId,
       designation: strOrNull(formData, "designation"),
       // 2026-10-02b — structured department entity (validated above).
       department_id: departmentId,
@@ -389,7 +655,67 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
     })
     .eq("id", employeeId);
 
-  if (error) return { error: error.message, success: false };
+  if (error) {
+    // Both uniques employees carries: email (global) and (company, name).
+    if (error.code === "23505") {
+      return {
+        error: error.message.toLowerCase().includes("email")
+          ? "That email already belongs to another employee."
+          : "Another employee in this company already has this name.",
+        success: false,
+      };
+    }
+    return { error: error.message, success: false };
+  }
+
+  // ── Login email follows the displayed one ─────────────────────────
+  // employees.email is a denormalized copy of the auth login (column
+  // comment) — if they drift, everyone sees the new address but the
+  // employee still signs in with the old one. The row is already saved
+  // at this point, so a failure here is reported as exactly that state.
+  const emailChanged = email !== (employeeRow.email ? employeeRow.email.toLowerCase() : null);
+  if (emailChanged && email && employeeRow.auth_user_id) {
+    const { error: authErr } = await supabase.auth.admin.updateUserById(employeeRow.auth_user_id, { email });
+    if (authErr) {
+      const msg = authErr.message.toLowerCase();
+      if (msg.includes("already") || msg.includes("exist")) {
+        return {
+          error: "That email is already used by another login — the profile WAS saved, but the login still signs in with the old address. Pick a different email and save again.",
+          success: false,
+        };
+      }
+      return { error: `Profile saved, but the login email could not be updated (${authErr.message}) — try saving again.`, success: false };
+    }
+  }
+
+  // ── Company access = replace with the ticked set ──────────────────
+  // Home company is always included (server-derived, never trusted from
+  // the client) — same delete-then-insert pattern as
+  // updateEmployeeStoreAccess below.
+  const { error: delAccessError } = await supabase
+    .from("employee_company_access")
+    .delete()
+    .eq("employee_id", employeeId);
+  if (delAccessError) return { error: `Company access could not be updated: ${delAccessError.message}`, success: false };
+  const { error: insAccessError } = await supabase
+    .from("employee_company_access")
+    .insert(finalCompanyIds.map((company_id) => ({ employee_id: employeeId, company_id })));
+  if (insAccessError) return { error: `Company access could not be updated: ${insAccessError.message}`, success: false };
+
+  const identityChanges: Record<string, unknown> = {};
+  if (name !== employeeRow.name) identityChanges.name = { from: employeeRow.name, to: name };
+  if (emailChanged) identityChanges.email = { from: employeeRow.email, to: email };
+  if (homeCompanyId !== employeeRow.company_id) identityChanges.home_company = { from: employeeRow.company_id, to: homeCompanyId };
+  await logAudit(supabase, {
+    employeeId: admin.id,
+    employeeName: admin.name,
+    action: "employee.updated",
+    entityType: "employee",
+    entityId: employeeId,
+    entityLabel: name,
+    changes: Object.keys(identityChanges).length > 0 ? identityChanges : null,
+  });
+
   revalidatePath("/dashboard/admin/employees");
   revalidatePath("/dashboard/admin/employees/org-chart");
   // 2026-08-22 — "photo upload horahi lekin profile/messaging/header me
