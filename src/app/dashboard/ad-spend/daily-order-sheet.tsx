@@ -8,6 +8,14 @@
 // each exportable via the shared ExportBar (CSV/Excel/Word/PDF/WhatsApp…)
 // and all inside one print area for the PDF/Print path.
 //
+// 2026-10-13 (part 2) — "1/2 2/2 4/4 JESE ORDER EK HI MANA JAYE OR
+// QUANTITY ME HO" + "DAILY ORDER KE BASE PAR ORDER FILE GENERATE KARNE
+// KA OPTION ... PURI FILE PDF A4 SIZE": orders now count per BASE PO
+// (PO-A926-1/2 + -2/2 = 1 order, qty/amount still summed — see
+// daily-sheet-stats.ts), and a Generate PO File button opens the day's
+// full order file through /dashboard/orders/print — the exact stacked-
+// sheet A4 file the Orders page generates.
+//
 // The page (page.tsx) does ALL the aggregation — like the rest of this
 // module, this component only renders what it is handed, so screen, PDF
 // and exports can never disagree.
@@ -30,6 +38,8 @@ export type DailyOrderGroupRow = DailyOrderBucket & { label: string };
 export type DailyOrderSheetData = {
   date: string;
   totals: DailyOrderBucket;
+  /** Every order of the day in PO order — feeds the Generate PO File link. */
+  orderIds: string[];
   storeRows: DailyOrderStoreRow[];
   countryRows: DailyOrderGroupRow[];
   skuRows: DailyOrderGroupRow[];
@@ -146,13 +156,27 @@ export function DailyOrderSheet({
         <>
           <p className="-mt-3 text-[11px] text-slate-400">
             Orders counted on the day their <b>PO date</b> falls (blank PO date falls back to the order/entry date) — the same rule
-            the Monthly Roll-up uses.
+            the Monthly Roll-up uses. Multi-part POs like <b>PO-A926-1/2</b> + <b>PO-A926-2/2</b> count as <b>ONE order</b> (their
+            quantities and amounts still add up).
           </p>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Total orders" value={String(data.totals.orders)} sub={data.date} />
-            <StatCard label="Total qty" value={String(data.totals.qty)} />
-            <StatCard label="Total amount" value={`$${data.totals.usd.toFixed(2)}`} sub="USD" />
+          <div className="flex flex-wrap items-stretch justify-between gap-3">
+            <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
+              <StatCard label="Total orders" value={String(data.totals.orders)} sub={data.date} />
+              <StatCard label="Total qty" value={String(data.totals.qty)} />
+              <StatCard label="Total amount" value={`$${data.totals.usd.toFixed(2)}`} sub="USD" />
+            </div>
+            {data.orderIds.length > 0 && (
+              <a
+                href={`/dashboard/orders/print?ids=${data.orderIds.join(",")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Din ka poora order file (PO) — wahi file jo Order page se banti hai, A4 PDF"
+                className="print:hidden flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
+              >
+                📄 Generate PO File (A4)
+              </a>
+            )}
           </div>
 
           <PrintArea id="daily-order-sheet-print"><div className="space-y-8">

@@ -5,6 +5,10 @@ import { AdSpendEntrySection } from "./ad-spend-entry-section";
 import { AdSpendReportTable, type AdSpendDailyRow, type AdSpendMonthlyRow } from "./ad-spend-report-table";
 // 2026-10-13 — Daily Order Sheet (third tab) + the PO-date month rule.
 import { DailyOrderSheet, type DailyOrderSheetData } from "./daily-order-sheet";
+// 2026-10-13 (part 2) — "1/2 2/2 JESE ORDER EK HI MANA JAYE": the sheet's
+// numbers (base-PO order dedup + every breakdown) live in one pure module
+// so the math can be stub-tested; this page only fetches and scopes.
+import { buildDailySheet } from "./daily-sheet-stats";
 import { todayIST } from "@/lib/attendance/ist-date";
 
 // Store-level Daily Spend tracking (pending item 3, 2026-08-08 —
@@ -183,58 +187,24 @@ export default async function AdSpendPage({
   // date rule as the Monthly Roll-up (PO date, fallback order date) so
   // the two views can never disagree about which day an order belongs to.
   if (tab === "sheet" && relevantStoreIds.length > 0) {
+    // id + ref_no ride along for the 2026-10-13 (part 2) features:
+    // ref_no is the PO no. the base-PO dedup counts on, and the day's
+    // ids feed the Generate-PO-File link (see daily-sheet-stats.ts).
     const { data: sheetOrders } = await supabase
       .from("orders")
-      .select("store_id, order_date, po_date, qty, order_value_usd, sku_label, size_label, buyer_country, destination_country")
+      .select(
+        "id, ref_no, store_id, order_date, po_date, qty, order_value_usd, sku_label, size_label, buyer_country, destination_country"
+      )
       .in("store_id", relevantStoreIds)
       .or(`po_date.eq.${sheetDate},order_date.eq.${sheetDate}`);
 
-    type Bucket = { orders: number; qty: number; usd: number };
-    const bumpBucket = (m: Map<string, Bucket>, key: string, qty: number, usd: number) => {
-      const cur = m.get(key) ?? { orders: 0, qty: 0, usd: 0 };
-      cur.orders += 1;
-      cur.qty += qty;
-      cur.usd += usd;
-      m.set(key, cur);
-    };
-    const totals: Bucket = { orders: 0, qty: 0, usd: 0 };
-    const storeMap = new Map<string, Bucket>();
-    const countryMap = new Map<string, Bucket>();
-    const skuMap = new Map<string, Bucket>();
-    const sizeMap = new Map<string, Bucket>();
-
-    for (const o of sheetOrders ?? []) {
-      // The other half of the OR: order_date today but PO'd on another
-      // day belongs to THAT day's sheet, not this one.
-      const effDate = o.po_date ?? o.order_date;
-      if (effDate !== sheetDate) continue;
-      const qty = Number(o.qty ?? 0);
-      const usd = Number(o.order_value_usd ?? 0);
-      totals.orders += 1;
-      totals.qty += qty;
-      totals.usd += usd;
-      bumpBucket(storeMap, o.store_id, qty, usd);
-      bumpBucket(countryMap, o.buyer_country || o.destination_country || "—", qty, usd);
-      bumpBucket(skuMap, o.sku_label || "—", qty, usd);
-      bumpBucket(sizeMap, o.size_label || "—", qty, usd);
-    }
-
-    const byUsdDesc = <T extends { usd: number }>(a: T, b: T) => b.usd - a.usd;
-    sheet = {
+    sheet = buildDailySheet({
+      orders: sheetOrders ?? [],
       date: sheetDate,
-      totals,
-      storeRows: [...storeMap.entries()]
-        .map(([storeId, b]) => ({
-          storeId,
-          storeName: storeName.get(storeId) ?? "—",
-          companyName: companyName.get(storeCompanyId.get(storeId) ?? "") ?? "—",
-          ...b,
-        }))
-        .sort(byUsdDesc),
-      countryRows: [...countryMap.entries()].map(([label, b]) => ({ label, ...b })).sort(byUsdDesc),
-      skuRows: [...skuMap.entries()].map(([label, b]) => ({ label, ...b })).sort(byUsdDesc),
-      sizeRows: [...sizeMap.entries()].map(([label, b]) => ({ label, ...b })).sort(byUsdDesc),
-    };
+      storeName,
+      companyName,
+      storeCompanyId,
+    });
   }
 
   const tabClass = (active: boolean) =>
