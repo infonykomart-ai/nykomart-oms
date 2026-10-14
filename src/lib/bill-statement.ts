@@ -21,12 +21,24 @@ import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capabil
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
 export type BillStatementPoLine = {
+  /** The purchase_bills row this line came from — the key per-entry Edit/Delete acts on. */
+  purchaseBillId: string;
   refNo: string | null;
   description: string | null;
   qty: number;
   unit: string;
+  /** Size as billed (qty_unit is the unit sq_feet + unit_rate are in, e.g. FT/MTR/PCS). */
+  size: number;
   rate: number;
+  /** Pre-GST line amount (qty × sq_feet × unit_rate). */
   amount: number;
+  /** The RAW stored rate (individual CGST/SGST rate, or full rate for IGST) — what the edit form must round-trip. */
+  gstRatePct: number | null;
+  gstType: string | null;
+  /** Total GST on this line (rate × 2 when CGST+SGST, else the single IGST rate). */
+  gstAmount: number;
+  /** amount + gstAmount (excludes round-off, which is per-invoice not per-line). */
+  amountWithGst: number;
 };
 
 export type BillStatementAwbLine = {
@@ -91,6 +103,8 @@ export type BillStatementData = {
   docTitle: string;
   invoiceRef: string;
   poLines: BillStatementPoLine[];
+  /** Sum of every poLine's amountWithGst — the combined value of ALL entries on this invoice. */
+  poSubtotal: number;
   awbLines: BillStatementAwbLine[];
   payments: BillStatementPayment[];
   walletConsumes: { id: string; txn_date: string; payment_mode: string | null; reference_no: string | null; remark: string | null; amount: number }[];
@@ -189,28 +203,53 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
   let poLines: BillStatementPoLine[] = [];
   let awbLines: BillStatementAwbLine[] = [];
   if (bill.source === "purchase_bill" && bill.source_id) {
-    const { data: pb } = await supabase
+    // 2026-10-13 — "COTTON RUG PRINTING BILL ... A4 DILOG BOX ME DIKHNA
+    // CHAHIYE NA KI KONKONSA PO KI ENTRY HUI HAI KYA KYA SIZE AMMOUNT RATE
+    // GST". A multi-item / multi-PO Purchase Bill is stored as SEVERAL
+    // purchase_bills rows sharing one (vendor, vendor_invoice_no) — see
+    // src/lib/bill-grouping.ts. This loader used to read only the ONE row
+    // the opened bill_pass_register row mirrored (bill.source_id), so a
+    // grouped invoice's statement silently showed just its first item.
+    // Now it resolves the whole invoice: match the same (vendor_party_id,
+    // vendor_invoice_no) pair that defines the group. A single-item bill
+    // trivially matches only itself, so nothing changes there. Order-ref
+    // is resolved per line (each row can point at a different PO).
+    const { data: pbRows } = await supabase
       .from("purchase_bills")
-      .select("id, order_id, qty, qty_unit, unit_rate, total_amount, work_description")
-      .eq("id", bill.source_id)
-      .maybeSingle();
-    if (pb) {
-      let refNo: string | null = null;
-      if (pb.order_id) {
-        const { data: o } = await supabase.from("orders").select("id, ref_no").eq("id", pb.order_id).maybeSingle();
-        refNo = o?.ref_no ?? null;
-      }
-      poLines = [
-        {
-          refNo,
-          description: pb.work_description,
-          qty: Number(pb.qty),
-          unit: pb.qty_unit,
-          rate: Number(pb.unit_rate),
-          amount: Number(pb.total_amount ?? 0),
-        },
-      ];
-    }
+      .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, total_amount, gst_rate_pct, gst_type, work_description")
+      .eq("vendor_party_id", bill.party_id)
+      .eq("vendor_invoice_no", bill.vendor_invoice_no ?? "")
+      .order("created_at", { ascending: true });
+    const rows = pbRows ?? [];
+    const orderIds = Array.from(new Set(rows.map((r) => r.order_id).filter((v): v is string => !!v)));
+    const { data: ords } = orderIds.length
+      ? await supabase.from("orders").select("id, ref_no").in("id", orderIds)
+      : { data: [] as { id: string; ref_no: string | null }[] };
+    const refById = new Map((ords ?? []).map((o) => [o.id, o.ref_no] as const));
+    poLines = rows.map((pb) => {
+      const amount = Number(pb.total_amount ?? 0);
+      // gst_rate_pct is the CGST/SGST INDIVIDUAL rate — total GST is double
+      // it (see db/2026-08-17-purchase-bills-gst.sql). IGST stores the full
+      // rate as-is. No rate picked -> the historical flat-5% fallback the
+      // g_total_plus_gst generated column uses, so the shown GST always
+      // ties out to the invoice total.
+      const totalRatePct = pb.gst_rate_pct != null ? (pb.gst_type === "IGST" ? Number(pb.gst_rate_pct) : Number(pb.gst_rate_pct) * 2) : 5;
+      const gstAmount = Math.round(amount * totalRatePct) / 100;
+      return {
+        purchaseBillId: pb.id,
+        refNo: pb.order_id ? refById.get(pb.order_id) ?? null : null,
+        description: pb.work_description,
+        qty: Number(pb.qty),
+        unit: pb.qty_unit,
+        size: Number(pb.sq_feet ?? 0),
+        rate: Number(pb.unit_rate),
+        amount,
+        gstRatePct: pb.gst_rate_pct != null ? Number(pb.gst_rate_pct) : null,
+        gstType: pb.gst_type,
+        gstAmount,
+        amountWithGst: amount + gstAmount,
+      };
+    });
   } else if (bill.source === "freight_bill" && bill.source_id) {
     const { data: assigns } = await supabase
       .from("freight_bill_awb_assignments")
@@ -308,6 +347,7 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
       docTitle,
       invoiceRef: invoiceRef || bill.invoice_no || "—",
       poLines,
+      poSubtotal: poLines.reduce((s, l) => s + l.amountWithGst, 0),
       awbLines,
       payments,
       walletConsumes: walletTxns

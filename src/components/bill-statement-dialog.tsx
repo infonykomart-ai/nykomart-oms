@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BillStatementActions } from "./bill-statement-actions";
 import { BillStatementDocument } from "./bill-statement-document";
+import { PoLineActions } from "./po-line-actions";
 import type { BillStatementData } from "@/lib/bill-statement";
 
 export function BillStatementDialog({
@@ -107,7 +108,7 @@ export function BillStatementDialog({
     );
   }
 
-  return <Sheet open={open} close={close} loading={loading} error={error} data={data} />;
+  return <Sheet open={open} close={close} loading={loading} error={error} data={data} reload={openSheet} />;
 }
 
 // The sheet itself, shared by both the triggered and auto-open variants.
@@ -117,12 +118,15 @@ function Sheet({
   loading,
   error,
   data,
+  reload,
 }: {
   open: boolean;
   close: () => void;
   loading: boolean;
   error: string | null;
   data: BillStatementData | null;
+  /** Refetches the statement — fired after a per-entry edit/delete so the sheet stays in sync. */
+  reload: () => void;
 }) {
   if (!open) return null;
   return (
@@ -155,7 +159,26 @@ function Sheet({
           {data && <BillStatementActions data={data} />}
         </div>
         <div className="flex-1 overflow-y-auto print:overflow-visible">
-          {data && <BillStatementDocument data={data} />}
+          {data && (
+            <BillStatementDocument
+              data={data}
+              // Per-entry Edit/Delete only for Purchase Bill statements (the one
+              // source whose lines map 1:1 back to editable purchase_bills rows).
+              lineActions={
+                data.bill.source === "purchase_bill"
+                  ? (line) => (
+                      <PoLineActions
+                        line={line}
+                        vendorPartyId={data.party.id}
+                        vendorPartyName={data.party.name}
+                        vendorInvoiceNo={data.bill.vendor_invoice_no || data.invoiceRef}
+                        onChanged={reload}
+                      />
+                    )
+                  : undefined
+              }
+            />
+          )}
         </div>
       </div>
     </div>

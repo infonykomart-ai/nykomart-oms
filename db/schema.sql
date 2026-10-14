@@ -6154,7 +6154,37 @@ CREATE TABLE b2b_quotations (
   freight_amount    numeric(14,2) NOT NULL DEFAULT 0 CHECK (freight_amount >= 0),
   other_costs       numeric(14,2) NOT NULL DEFAULT 0 CHECK (other_costs >= 0),
   cost_amount       numeric(14,2) NOT NULL DEFAULT 0 CHECK (cost_amount >= 0),  -- product + packing + freight + other
-  valid_from        date
+  valid_from        date,
+  -- ── 2026-10-13 (db/2026-10-13-b2b-pi-export-fields.sql) — export-document
+  -- fields: every standard PI/CI section the CA-style review found missing
+  -- (buyer full address + attention, payment condition/method/due/bank
+  -- charges, ports, delivery period, partial shipment, transshipment,
+  -- freight+insurance responsibility, country of origin, packing, purpose),
+  -- plus tax_note/shipping_note which print INSTEAD of the numeric amounts
+  -- when set (so a pending quotation says "To be confirmed" rather than a
+  -- fake $0.00). Seller address/IEC/PAN/GSTIN/bank live once per company in
+  -- b2b_export_profiles below, not per-quotation.
+  buyer_attention   text,
+  payment_condition text,
+  payment_method    text,
+  payment_due_note  text,
+  bank_charges      text,
+  port_of_loading     text,
+  port_of_destination text,
+  delivery_period     text,
+  partial_shipment    text,
+  transshipment       text,
+  freight_insurance   text,
+  country_of_origin   text,
+  packing_details     text,
+  tax_note            text,
+  shipping_note       text,
+  purpose             text,
+  -- ── 2026-10-13 round 2 — quotation lifecycle + buyer-facing payment
+  -- instructions. Draft quotes are fully editable/deletable and never
+  -- shared by accident; 'Sent' is set by the Share/Mark-Sent flow.
+  status              text NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Sent', 'Approved', 'Rejected', 'Expired')),
+  payment_instructions text  -- bank-remittance paragraph for the buyer's bank (separate from payment_condition)
 );
 CREATE INDEX idx_b2b_quotations_company ON b2b_quotations(company_id, quote_date DESC);
 
@@ -6202,7 +6232,23 @@ CREATE TABLE b2b_quotation_items (
   unit          text DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL CHECK (unit_price >= 0),
   line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
-  display_order integer NOT NULL DEFAULT 0
+  display_order integer NOT NULL DEFAULT 0,
+  -- 2026-10-13 — per-item product specifications the PI must carry
+  -- (Size / Material / Manufacturing / Colour-design / Packaging), printed
+  -- as a spec sub-line under each description. See
+  -- db/2026-10-13-b2b-pi-export-fields.sql.
+  size          text,
+  material      text,
+  manufacturing text,
+  colour_design text,
+  packaging     text,
+  -- Round 2 — structured dimensions parsed from the free-typed `size` spec
+  -- so the SIZE × QTY formulas (sq ft / sq mtr / CBM) compute identically
+  -- everywhere. App formula: computeItemDims() in src/lib/b2b/erp.ts.
+  size_length    numeric(10,2),
+  size_width     numeric(10,2),
+  size_thickness numeric(10,3),
+  size_unit      text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
 );
 CREATE INDEX idx_b2b_quotation_items_quotation ON b2b_quotation_items(quotation_id, display_order);
 
@@ -6229,6 +6275,34 @@ DROP POLICY IF EXISTS allow_authenticated_all ON b2b_quotation_items;
 CREATE POLICY allow_authenticated_all ON b2b_quotation_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS allow_authenticated_all ON b2b_documents;
 CREATE POLICY allow_authenticated_all ON b2b_documents FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ── 2026-10-13 (db/2026-10-13-b2b-pi-export-fields.sql): company-level
+-- export profile — seller's registered address / IEC / PAN / GSTIN / email /
+-- phone AND the beneficiary bank details (name, branch, account, SWIFT,
+-- intermediary) every PI/CI must carry. ONE row per company, filled once,
+-- reused on every document; the print page falls back to "To be provided"
+-- for anything left blank (never fabricates numbers).
+CREATE TABLE IF NOT EXISTS b2b_export_profiles (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id          uuid NOT NULL UNIQUE REFERENCES companies(id),
+  seller_address      text,   -- full registered/business address (line breaks allowed)
+  iec                 text,   -- Importer Exporter Code
+  pan                 text,
+  gstin               text,
+  email               text,
+  phone               text,
+  bank_beneficiary    text,   -- beneficiary name
+  bank_name           text,
+  bank_branch         text,
+  bank_account        text,
+  bank_swift          text,   -- SWIFT / BIC
+  bank_intermediary   text,   -- correspondent/intermediary bank, if applicable
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE b2b_export_profiles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_authenticated_all ON b2b_export_profiles;
+CREATE POLICY allow_authenticated_all ON b2b_export_profiles FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- ── 2026-10-02d (B2B Export ERP) — the execution half of the spec, all
 -- numbering app-reserved via reserve_next_number() like the register:

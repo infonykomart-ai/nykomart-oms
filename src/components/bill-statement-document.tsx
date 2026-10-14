@@ -3,10 +3,21 @@
 // BillStatementDialog (Bill Payment / Documents rows). Pure presentational
 // component — all data comes from loadBillStatement() in
 // ../bill-statement.ts; actions live in bill-statement-actions.tsx.
+import type { ReactNode } from "react";
 import { PrintArea } from "@/components/print-view";
 import type { BillStatementData } from "@/lib/bill-statement";
 
-export function BillStatementDocument({ data }: { data: BillStatementData }) {
+export function BillStatementDocument({
+  data,
+  // 2026-10-13 — optional per-entry Edit/Delete slot (see po-line-actions.tsx).
+  // Only the interactive dialog (BillStatementDialog) passes this; the
+  // read-only Party Ledger page renders without it, so that page stays a
+  // pure server component with no client actions.
+  lineActions,
+}: {
+  data: BillStatementData;
+  lineActions?: (line: BillStatementData["poLines"][number]) => ReactNode;
+}) {
   const { bill, party, company, profile, companyName } = data;
   const inr = (n: number) => `₹${n.toFixed(2)}`;
 
@@ -63,30 +74,54 @@ export function BillStatementDocument({ data }: { data: BillStatementData }) {
 
         {data.poLines.length > 0 && (
           <div className="mb-3 border-b border-slate-300 pb-3">
-            <div className="mb-1 font-semibold">PURCHASE LINE ITEMS</div>
+            <div className="mb-1 font-semibold">
+              {data.poLines.length > 1 ? `PO ENTRIES ON THIS INVOICE (${data.poLines.length})` : "PURCHASE LINE ITEM"}
+            </div>
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
-                  <th className="py-1 pr-2">Order Ref</th>
+                  <th className="py-1 pr-2">PO / Order Ref</th>
                   <th className="py-1 pr-2">Description</th>
+                  <th className="py-1 pr-2 text-right">Size</th>
                   <th className="py-1 pr-2 text-right">Qty</th>
                   <th className="py-1 pr-2">Unit</th>
                   <th className="py-1 pr-2 text-right">Rate</th>
+                  <th className="py-1 pr-2 text-right">GST%</th>
                   <th className="py-1 pr-2 text-right">Amount</th>
+                  {lineActions && <th className="py-1 pr-2 text-right">Action</th>}
                 </tr>
               </thead>
               <tbody>
                 {data.poLines.map((l, i) => (
-                  <tr key={i} className="border-b border-slate-100">
+                  <tr key={l.purchaseBillId ?? i} className="border-b border-slate-100">
                     <td className="py-1 pr-2">{l.refNo ?? "—"}</td>
                     <td className="py-1 pr-2">{l.description ?? "—"}</td>
+                    <td className="py-1 pr-2 text-right">{l.unit === "PCS" ? "—" : `${l.size} ${l.unit}`}</td>
                     <td className="py-1 pr-2 text-right">{l.qty}</td>
                     <td className="py-1 pr-2">{l.unit}</td>
                     <td className="py-1 pr-2 text-right">{inr(l.rate)}</td>
-                    <td className="py-1 pr-2 text-right">{inr(l.amount)}</td>
+                    <td className="py-1 pr-2 text-right">
+                      {l.gstRatePct != null
+                        ? `${l.gstType === "IGST" ? l.gstRatePct : l.gstRatePct * 2}% ${l.gstType === "IGST" ? "(IGST)" : "(CGST+SGST)"}`
+                        : "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {inr(l.amount)}
+                      {l.gstRatePct != null && <div className="text-[9px] text-slate-400">+ GST {inr(l.gstAmount)} = {inr(l.amountWithGst)}</div>}
+                    </td>
+                    {lineActions && <td className="py-1 pr-2">{lineActions(l)}</td>}
                   </tr>
                 ))}
               </tbody>
+              {data.poLines.length > 1 && (
+                <tfoot>
+                  <tr className="border-t border-slate-800 font-semibold">
+                    <td className="py-1 pr-2" colSpan={7}>Total (all entries, incl. GST)</td>
+                    <td className="py-1 pr-2 text-right">{inr(data.poSubtotal)}</td>
+                    {lineActions && <td />}
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         )}

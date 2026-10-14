@@ -9,64 +9,20 @@
 // Parties, Invoices) — see src/app/dashboard/stock/actions.ts.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { importTableByKey, type ImportColumn, type ImportTableConfig } from "@/lib/statement-import/tables";
+import { importTableByKey, type ImportTableConfig } from "@/lib/statement-import/tables";
+import {
+  captureHeaderValues,
+  convertCell,
+  detectDateOrder,
+  normalizeHeader,
+  resolveColumnHeaders,
+} from "@/lib/statement-import/import-cells";
 
-function normalizeHeader(h: string): string {
-  return h.replace(/\*/g, "").trim().toLowerCase();
-}
-
-function cellRaw(row: Record<string, unknown>, byHeader: Map<string, string>, label: string): string {
-  const key = byHeader.get(normalizeHeader(label));
-  if (!key) return "";
-  const v = row[key];
-  return v === null || v === undefined ? "" : String(v).trim();
-}
-
-function convertCell(row: Record<string, unknown>, byHeader: Map<string, string>, col: ImportColumn): unknown {
-  const raw = cellRaw(row, byHeader, col.header);
-  if (!raw) return null;
-  switch (col.type) {
-    // 2026-08-13: fixed against real Etsy Ledger CSV exports — amount-type
-    // columns there come as "₹18,348", "-₹18", or "--" (Etsy's own blank
-    // marker), not plain numbers. Number("₹18,348") / Number("--") are
-    // both NaN, so every currency-formatted amount was silently importing
-    // as NULL. Stripping everything except digits/minus/decimal-point
-    // handles ₹, $, commas, and "--" (which collapses to "-" -> NaN ->
-    // null, still correctly null) without changing behavior for plain
-    // numeric input from other statement sources.
-    case "number": {
-      const cleaned = raw.replace(/[^0-9.-]/g, "");
-      const n = Number(cleaned);
-      return cleaned && Number.isFinite(n) ? n : null;
-    }
-    case "integer": {
-      const cleaned = raw.replace(/[^0-9.-]/g, "");
-      const n = Number(cleaned);
-      return cleaned && Number.isFinite(n) ? Math.trunc(n) : null;
-    }
-    case "boolean":
-      return /^(true|yes|y|1)$/i.test(raw);
-    // 2026-08-13: fixed against real Amazon Transactions exports — the
-    // SAME "Date" header is DD/MM/YYYY on the UK/GBP export and M/D/YYYY
-    // on the US/USD export (verified against each real file's own stated
-    // date range). Postgres' default DateStyle would misparse (or reject)
-    // whichever one doesn't match its expected order if passed through as
-    // plain text, so these convert explicitly to ISO before insert rather
-    // than leaving it to Postgres to guess.
-    case "date_dmy":
-    case "date_mdy": {
-      const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (!m) return raw; // unrecognized shape — pass through, let Postgres try (and fail loudly if genuinely bad)
-      const [, a, b, year] = m;
-      const [month, day] = col.type === "date_dmy" ? [b, a] : [a, b];
-      return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-    }
-    case "date":
-    case "text":
-    default:
-      return raw;
-  }
-}
+// 2026-10-13 — cell/header conversion moved to
+// src/lib/statement-import/import-cells.ts (pure, stub-testable) along
+// with the three auto-detection helpers the merged Amazon tab needs:
+// headerPattern column matching, currency capture from the file's own
+// "Total (GBP)" header, and per-file DD/MM-vs-M/D date detection.
 
 const MAX_BULK_ROWS = 2000;
 
@@ -176,19 +132,52 @@ export async function bulkImportStatement(_prev: BulkImportState, formData: Form
   const byHeader = new Map<string, string>();
   for (const k of headerKeys) byHeader.set(normalizeHeader(k), k);
 
+  // Resolve each configured column to the header this FILE actually uses
+  // (exact match, else the column's headerPattern — Amazon's "Total
+  // (GBP)" / "Total (USD)" / "Total (AUD)" all map to "Total").
+  const resolvedHeaders = resolveColumnHeaders(headerKeys, config.columns);
+  const valueOf = (raw: Record<string, unknown>, header: string): string => {
+    const key = resolvedHeaders.get(header) ?? byHeader.get(normalizeHeader(header));
+    if (!key) return "";
+    const v = raw[key];
+    return v === null || v === undefined ? "" : String(v).trim();
+  };
+
+  // Header-derived values (Amazon currency), resolved ONCE per file — a
+  // file whose currency can't be detected errors out before any row is
+  // written, never a blank/wrong currency.
+  const captured = captureHeaderValues(headerKeys, config.headerCaptures ?? []);
+  if (captured.missing) {
+    return {
+      error: `Could not detect "${captured.missing.dbColumn}" from this file's column headers — expected a column like "Total (USD)" whose header carries it.`,
+      tableKey,
+      imported: null,
+      results: null,
+    };
+  }
+
+  // date_auto columns: one DD/MM-vs-M/D decision per file, from the
+  // dates in the file itself (fallback: the column's dateDefault).
+  const dateOrders = new Map<string, "dmy" | "mdy">();
+  for (const col of config.columns) {
+    if (col.type === "date_auto" && !dateOrders.has(col.header)) {
+      dateOrders.set(col.header, detectDateOrder(rows.map((r) => valueOf(r, col.header)), col));
+    }
+  }
+
   const dbRows: Record<string, unknown>[] = [];
   const results: BulkImportResult[] = [];
   for (let i = 0; i < rows.length; i++) {
     const raw = rows[i];
     const rowNum = headerLineNo + 1 + i;
-    const missingRequired = config.columns.find((c) => c.required && !cellRaw(raw, byHeader, c.header));
+    const missingRequired = config.columns.find((c) => c.required && !valueOf(raw, c.header));
     if (missingRequired) {
       results.push({ row: rowNum, error: `Missing required "${missingRequired.header}".` });
       continue;
     }
-    const dbRow: Record<string, unknown> = { company_id: companyId, ...config.fixedValues };
+    const dbRow: Record<string, unknown> = { company_id: companyId, ...config.fixedValues, ...captured.values };
     for (const col of config.columns) {
-      dbRow[col.dbColumn] = convertCell(raw, byHeader, col);
+      dbRow[col.dbColumn] = convertCell(valueOf(raw, col.header), col, dateOrders.get(col.header));
     }
     dbRows.push(dbRow);
     results.push({ row: rowNum, error: null });

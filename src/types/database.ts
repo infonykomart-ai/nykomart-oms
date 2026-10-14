@@ -558,6 +558,71 @@ export type Database = {
           },
         ];
       };
+      b2b_export_profiles: {
+        Row: {
+          id: string;
+          company_id: string;
+          seller_address: string | null;
+          iec: string | null;
+          pan: string | null;
+          gstin: string | null;
+          email: string | null;
+          phone: string | null;
+          bank_beneficiary: string | null;
+          bank_name: string | null;
+          bank_branch: string | null;
+          bank_account: string | null;
+          bank_swift: string | null;
+          bank_intermediary: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          seller_address?: string | null;
+          iec?: string | null;
+          pan?: string | null;
+          gstin?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          bank_beneficiary?: string | null;
+          bank_name?: string | null;
+          bank_branch?: string | null;
+          bank_account?: string | null;
+          bank_swift?: string | null;
+          bank_intermediary?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          seller_address?: string | null;
+          iec?: string | null;
+          pan?: string | null;
+          gstin?: string | null;
+          email?: string | null;
+          phone?: string | null;
+          bank_beneficiary?: string | null;
+          bank_name?: string | null;
+          bank_branch?: string | null;
+          bank_account?: string | null;
+          bank_swift?: string | null;
+          bank_intermediary?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "b2b_export_profiles_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: true;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       b2b_followups: {
         Row: {
           id: string;
@@ -1206,6 +1271,15 @@ export type Database = {
           unit_price: number;
           line_total: number | null;
           display_order: number;
+          size: string | null;
+          material: string | null;
+          manufacturing: string | null;
+          colour_design: string | null;
+          packaging: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -1217,6 +1291,15 @@ export type Database = {
           unit_price: number;
           line_total?: number | null;
           display_order?: number;
+          size?: string | null;
+          material?: string | null;
+          manufacturing?: string | null;
+          colour_design?: string | null;
+          packaging?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -1228,6 +1311,15 @@ export type Database = {
           unit_price?: number;
           line_total?: number | null;
           display_order?: number;
+          size?: string | null;
+          material?: string | null;
+          manufacturing?: string | null;
+          colour_design?: string | null;
+          packaging?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -1277,6 +1369,24 @@ export type Database = {
           other_costs: number;
           cost_amount: number;
           valid_from: string | null;
+          buyer_attention: string | null;
+          payment_condition: string | null;
+          payment_method: string | null;
+          payment_due_note: string | null;
+          bank_charges: string | null;
+          port_of_loading: string | null;
+          port_of_destination: string | null;
+          delivery_period: string | null;
+          partial_shipment: string | null;
+          transshipment: string | null;
+          freight_insurance: string | null;
+          country_of_origin: string | null;
+          packing_details: string | null;
+          tax_note: string | null;
+          shipping_note: string | null;
+          purpose: string | null;
+          status: "Draft" | "Sent" | "Approved" | "Rejected" | "Expired";
+          payment_instructions: string | null;
         };
         Insert: {
           id?: string;
@@ -1315,6 +1425,24 @@ export type Database = {
           other_costs?: number;
           cost_amount?: number;
           valid_from?: string | null;
+          buyer_attention?: string | null;
+          payment_condition?: string | null;
+          payment_method?: string | null;
+          payment_due_note?: string | null;
+          bank_charges?: string | null;
+          port_of_loading?: string | null;
+          port_of_destination?: string | null;
+          delivery_period?: string | null;
+          partial_shipment?: string | null;
+          transshipment?: string | null;
+          freight_insurance?: string | null;
+          country_of_origin?: string | null;
+          packing_details?: string | null;
+          tax_note?: string | null;
+          shipping_note?: string | null;
+          purpose?: string | null;
+          status?: "Draft" | "Sent" | "Approved" | "Rejected" | "Expired";
+          payment_instructions?: string | null;
         };
         Update: {
           id?: string;
@@ -1353,6 +1481,24 @@ export type Database = {
           other_costs?: number;
           cost_amount?: number;
           valid_from?: string | null;
+          buyer_attention?: string | null;
+          payment_condition?: string | null;
+          payment_method?: string | null;
+          payment_due_note?: string | null;
+          bank_charges?: string | null;
+          port_of_loading?: string | null;
+          port_of_destination?: string | null;
+          delivery_period?: string | null;
+          partial_shipment?: string | null;
+          transshipment?: string | null;
+          freight_insurance?: string | null;
+          country_of_origin?: string | null;
+          packing_details?: string | null;
+          tax_note?: string | null;
+          shipping_note?: string | null;
+          purpose?: string | null;
+          status?: "Draft" | "Sent" | "Approved" | "Rejected" | "Expired";
+          payment_instructions?: string | null;
         };
         Relationships: [
           {

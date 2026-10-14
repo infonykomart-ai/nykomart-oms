@@ -30,6 +30,11 @@ import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import type { Database } from "@/types/database";
 import { todayIST } from "@/lib/attendance/ist-date";
+// 2026-10-13 round 2 — the SAME size-spec parser the client preview uses
+// (client computes the live sq ft / sq mtr / CBM preview; the server here
+// persists the parsed dimensions from the same spec text, so preview and
+// stored values can never disagree).
+import { parseSizeSpec } from "@/lib/b2b/erp";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -38,9 +43,15 @@ type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 const B2B_STATUS_LIST: B2BInquiryStatus[] = ["Open", "In Discussion", "Quotation Sent", "Won", "Lost", "Converted"];
 const B2B_PAYMENT_MODE_LIST: B2BPaymentMode[] = ["Cash", "Bank Transfer", "UPI", "Cheque", "Card", "Advance"];
 const B2B_DOC_KIND_LIST: B2BDocKind[] = ["PI", "CI", "PL"];
+// 2026-10-13 round 2 — quotation lifecycle ("DRAFT KE SABHI OPTION HONA
+// CHAHIYE"): a quote is born Draft (editable, deletable, never shared by
+// accident); Share/Mark-Sent moves it to Sent; the register later flips it
+// Approved / Rejected / Expired as the buyer responds.
+const B2B_QUOTE_STATUS_LIST: B2BQuoteStatus[] = ["Draft", "Sent", "Approved", "Rejected", "Expired"];
 
 export type B2BInquiryStatus = "Open" | "In Discussion" | "Quotation Sent" | "Won" | "Lost" | "Converted";
 export type B2BPaymentMode = "Cash" | "Bank Transfer" | "UPI" | "Cheque" | "Card" | "Advance";
+export type B2BQuoteStatus = "Draft" | "Sent" | "Approved" | "Rejected" | "Expired";
 
 // NOTE: no non-async runtime exports here. This is a "use server" file —
 // Next.js/Turbopack requires every runtime export to be an async function
@@ -210,10 +221,9 @@ export type UpdateInquiryInput = {
   remarks: string;
   followUpDate: string;
   status: string;
-  // 2026-10-13 — full edit ("enquiry edit, modify, delete bhi honi
-  // chahiye"): when provided, the asked-for items are replaced wholesale
-  // (same delete+insert model updateQuotation uses). When omitted, the
-  // existing item rows are left untouched.
+  // 2026-10-13 — "ENQUARY EDIT, MODIFY, DELETE BHI HONI CHAHIYE": update
+  // now also replaces the asked-for item rows (same wholesale replace the
+  // quotation editor uses). Optional so older callers keep working.
   items?: { description: string; qty: string; unit: string; unitPrice: string; remark: string }[];
 };
 
@@ -257,9 +267,9 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
     .eq("id", input.inquiryId);
   if (error) return { ok: false, error: error.message };
 
-  // Asked-for items replace (only when the form sent them — lets older
-  // callers edit the header without touching the item rows).
-  if (input.items) {
+  // Asked-for items replace — only when the form sent them (undefined =
+  // legacy caller editing the header alone; empty array = clear them).
+  if (input.items !== undefined) {
     const items = (input.items ?? [])
       .map((it, idx) => ({
         inquiry_id: owned.inquiry.id,
@@ -337,18 +347,95 @@ export type QuotationInput = {
   terms: string;
   notes: string;
   // 2026-10-13 — the labeled PI/CI sections the print view was missing
-  // (buyer address, product specs, payment terms, shipping terms, bank
-  // details). Multiline free text: the server stores exactly what was
-  // typed (trimmed) and the print view falls back to "To be confirmed" /
-  // "To be provided" when empty — the app never invents trade terms.
+  // (both 2026-10-13 rounds' fields are here: the multiline free-text
+  // blocks AND the structured per-field columns). The server stores
+  // exactly what was typed (trimmed) and the print view falls back to
+  // "To be confirmed" / "To be provided" when empty — the app never
+  // invents trade terms.
   buyerAddress?: string;
+  buyerAttention?: string;
   productSpecs?: string;
   paymentTerms?: string;
   shippingTerms?: string;
   bankDetails?: string;
+  paymentCondition?: string;
+  paymentMethod?: string;
+  paymentDueNote?: string;
+  bankCharges?: string;
+  portOfLoading?: string;
+  portOfDestination?: string;
+  deliveryPeriod?: string;
+  partialShipment?: string;
+  transshipment?: string;
+  freightInsurance?: string;
+  countryOfOrigin?: string;
+  packingDetails?: string;
+  taxNote?: string;
+  shippingNote?: string;
+  purpose?: string;
+  /** Incoterm (EXW/FOB/CFR/CIF/FCA/DAP/DDP) — column pre-dates this round; now editable from the quote form. */
   incoterm?: string;
-  items: { description: string; hsnCode: string; qty: string; unit: string; unitPrice: string }[];
+  /** Lifecycle status — omitted/invalid defaults to Draft (never Sent by accident). */
+  status?: string;
+  /** Bank-remittance paragraph the buyer's bank needs to process the advance. */
+  paymentInstructions?: string;
+  items: {
+    description: string;
+    hsnCode: string;
+    qty: string;
+    unit: string;
+    unitPrice: string;
+    size?: string;
+    material?: string;
+    manufacturing?: string;
+    colourDesign?: string;
+    packaging?: string;
+  }[];
 };
+
+// Shared by create/update — parses each item's free-typed size spec into
+// the structured dims the SIZE × QTY formulas store (sq ft / sq mtr / CBM
+// are always recomputed in app code via computeItemDims, never stored).
+function itemDimsFromSpec(sizeText: string | undefined | null): {
+  size_length: number | null;
+  size_width: number | null;
+  size_thickness: number | null;
+  size_unit: string | null;
+} {
+  const parsed = parseSizeSpec(sizeText ?? "");
+  return {
+    size_length: parsed?.length ?? null,
+    size_width: parsed?.width ?? null,
+    size_thickness: parsed?.thickness ?? null,
+    size_unit: parsed?.unit ?? null,
+  };
+}
+
+// Maps the optional export-document input fields to their b2b_quotations
+// columns — empty string becomes NULL so the print page shows its
+// "To be confirmed" fallback instead of an empty label.
+function exportDocColumns(input: QuotationInput): Record<string, string | null> {
+  return {
+    incoterm: input.incoterm?.trim() || null,
+    buyer_address: input.buyerAddress?.trim() || null,
+    buyer_attention: input.buyerAttention?.trim() || null,
+    payment_condition: input.paymentCondition?.trim() || null,
+    payment_method: input.paymentMethod?.trim() || null,
+    payment_due_note: input.paymentDueNote?.trim() || null,
+    bank_charges: input.bankCharges?.trim() || null,
+    port_of_loading: input.portOfLoading?.trim() || null,
+    port_of_destination: input.portOfDestination?.trim() || null,
+    delivery_period: input.deliveryPeriod?.trim() || null,
+    partial_shipment: input.partialShipment?.trim() || null,
+    transshipment: input.transshipment?.trim() || null,
+    freight_insurance: input.freightInsurance?.trim() || null,
+    country_of_origin: input.countryOfOrigin?.trim() || null,
+    packing_details: input.packingDetails?.trim() || null,
+    tax_note: input.taxNote?.trim() || null,
+    shipping_note: input.shippingNote?.trim() || null,
+    purpose: input.purpose?.trim() || null,
+  };
+}
 
 export async function createQuotation(input: QuotationInput): Promise<SaveInquiryResult> {
   const me = await requireCapability("b2b_inquiry");
@@ -387,6 +474,12 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
       unit: it.unit.trim() || "pcs",
       unit_price: Math.max(0, parseFloat(it.unitPrice) || 0),
       display_order: idx,
+      size: it.size?.trim() || null,
+      material: it.material?.trim() || null,
+      manufacturing: it.manufacturing?.trim() || null,
+      colour_design: it.colourDesign?.trim() || null,
+      packaging: it.packaging?.trim() || null,
+      ...itemDimsFromSpec(it.size),
     }))
     .filter((it) => it.description);
   if (items.length === 0) return { ok: false, error: "Add at least one item with a description." };
@@ -394,6 +487,12 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
 
   const { no, error: numError } = await reserveB2BNo(supabase, me.currentCompanyId, "B2B_QUOTE", "Q", quoteDate);
   if (errorImpossibleGuard(numError)) return { ok: false, error: numError ?? "Numbering failed." };
+
+  // Draft unless the form explicitly asked to send (invalid → Draft: a
+  // quote is never born Sent by accident).
+  const status: B2BQuoteStatus = B2B_QUOTE_STATUS_LIST.includes(input.status as B2BQuoteStatus) && input.status !== "Draft"
+    ? (input.status as B2BQuoteStatus)
+    : "Draft";
 
   const { data: created, error } = await supabase
     .from("b2b_quotations")
@@ -420,6 +519,10 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
       bank_details: input.bankDetails?.trim() || null,
       incoterm: input.incoterm?.trim() || null,
       entered_by_employee_id: me.id,
+      status,
+      sent_at: status === "Sent" ? new Date().toISOString() : null,
+      payment_instructions: input.paymentInstructions?.trim() || null,
+      ...exportDocColumns(input),
     })
     .select("id, quote_no")
     .single();
@@ -457,15 +560,21 @@ export async function markQuotationSent(quotationId: string): Promise<{ ok: bool
 
   const { data: quote, error: fetchError } = await supabase
     .from("b2b_quotations")
-    .select("id, company_id, inquiry_id, quote_no, sent_at")
+    .select("id, company_id, inquiry_id, quote_no, sent_at, status")
     .eq("id", quotationId)
     .in("company_id", me.companyIds)
     .maybeSingle();
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!quote) return { ok: false, error: "Quotation not found." };
 
-  if (!quote.sent_at) {
-    const { error } = await supabase.from("b2b_quotations").update({ sent_at: new Date().toISOString() }).eq("id", quotationId);
+  if (!quote.sent_at || quote.status !== "Sent") {
+    // Draft → Sent (Approved/Rejected/Expired are terminal — a later
+    // "share" re-send never downgrades them).
+    const { error } = await supabase
+      .from("b2b_quotations")
+      .update({ sent_at: quote.sent_at ?? new Date().toISOString(), status: "Sent" })
+      .eq("id", quotationId)
+      .in("status", ["Draft", "Sent"]);
     if (error) return { ok: false, error: error.message };
   }
   // Inquiry status rides along (idempotent).
@@ -485,7 +594,7 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
 
   const { data: quote, error: fetchError } = await supabase
     .from("b2b_quotations")
-    .select("id, company_id, inquiry_id")
+    .select("id, company_id, inquiry_id, quote_date, status")
     .eq("id", input.quotationId)
     .in("company_id", me.companyIds)
     .maybeSingle();
@@ -494,6 +603,13 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
 
   if (input.validUntil && !/^\d{4}-\d{2}-\d{2}$/.test(input.validUntil)) {
     return { ok: false, error: "Invalid validity date." };
+  }
+  // Quote date is editable ONLY while the quote is still a Draft — once
+  // shared, the number's date is a document fact (delete + re-issue
+  // instead, which is exactly what Drafts are for).
+  let quoteDate = quote.quote_date;
+  if (quote.status === "Draft") {
+    if (input.quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(input.quoteDate)) quoteDate = input.quoteDate;
   }
   // Same items-are-the-money rule as createQuotation: header subtotal is
   // the app-computed sum of the (replaced) item rows.
@@ -505,16 +621,29 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
       unit: it.unit.trim() || "pcs",
       unit_price: Math.max(0, parseFloat(it.unitPrice) || 0),
       display_order: idx,
+      size: it.size?.trim() || null,
+      material: it.material?.trim() || null,
+      manufacturing: it.manufacturing?.trim() || null,
+      colour_design: it.colourDesign?.trim() || null,
+      packaging: it.packaging?.trim() || null,
+      ...itemDimsFromSpec(it.size),
     }))
     .filter((it) => it.description);
   if (items.length === 0) return { ok: false, error: "Add at least one item with a description." };
   const subtotal = Math.round(items.reduce((s, it) => s + it.qty * it.unit_price, 0) * 100) / 100;
   const taxPercent = Math.min(100, Math.max(0, parseFloat(input.taxPercent) || 0));
   const shipping = Math.max(0, parseFloat(input.shippingAmount) || 0);
+  // Status transition only from the form's Draft/Sent choice; an edit
+  // never silently resurrects an Approved/Rejected/Expired quote.
+  const nextStatus: B2BQuoteStatus | null =
+    quote.status === "Draft" && input.status && B2B_QUOTE_STATUS_LIST.includes(input.status as B2BQuoteStatus)
+      ? (input.status as B2BQuoteStatus)
+      : null;
 
   const { error } = await supabase
     .from("b2b_quotations")
     .update({
+      quote_date: quoteDate,
       valid_until: input.validUntil || null,
       buyer_name: input.buyerName.trim() || undefined,
       buyer_contact_no: input.buyerContactNo.trim() || undefined,
@@ -533,6 +662,9 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
       bank_details: input.bankDetails?.trim() || null,
       incoterm: input.incoterm?.trim() || null,
       updated_at: new Date().toISOString(),
+      payment_instructions: input.paymentInstructions?.trim() || null,
+      ...(nextStatus ? { status: nextStatus, ...(nextStatus === "Sent" ? { sent_at: new Date().toISOString() } : {}) } : {}),
+      ...exportDocColumns(input),
     })
     .eq("id", input.quotationId);
   if (error) return { ok: false, error: error.message };
@@ -616,6 +748,57 @@ export async function addPayment(input: PaymentInput): Promise<{ ok: boolean; er
     entityLabel: mode,
     changes: { quotation: input.quotationId, amount, date: paymentDate },
   });
+
+  revalidatePath("/dashboard/b2b");
+  return { ok: true };
+}
+
+export async function deleteQuotation(quotationId: string): Promise<{ ok: boolean; error?: string }> {
+  const me = await requireCapability("b2b_inquiry");
+  const supabase = createServiceRoleClient();
+
+  const { data: quote, error: fetchError } = await supabase
+    .from("b2b_quotations")
+    .select("id, company_id, quote_no, inquiry_id, status")
+    .eq("id", quotationId)
+    .in("company_id", me.companyIds)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: fetchError.message };
+  if (!quote) return { ok: false, error: "Quotation not found." };
+
+  // Guard: only Drafts delete outright. A Sent quote may have been shared
+  // with a buyer or received money — deleting it would orphan payments and
+  // issued PI/CI register rows silently; the client confirms + instructs
+  // to mark it Rejected/Lost instead.
+  if (quote.status !== "Draft") {
+    return {
+      ok: false,
+      error: `Only Draft quotations can be deleted — this one is "${quote.status}". Mark it Rejected/Lost in the register, or contact an admin.`,
+    };
+  }
+
+  const { error } = await supabase.from("b2b_quotations").delete().eq("id", quotationId);
+  if (error) return { ok: false, error: error.message };
+
+  await logAudit(supabase, {
+    companyId: quote.company_id,
+    employeeId: me.id,
+    employeeName: me.name,
+    action: "b2b_quotation.deleted",
+    entityType: "b2b_quotation",
+    entityId: quote.id,
+    entityLabel: quote.quote_no,
+    changes: { status: quote.status, note: "draft quotation deleted with its items" },
+  });
+
+  // The inquiry steps back from "Quotation Sent" when its only quote went
+  // away — but only forward-looking statuses move (Won/Lost/Converted
+  // never get resurrected).
+  await supabase
+    .from("b2b_inquiries")
+    .update({ status: "In Discussion", updated_at: new Date().toISOString() })
+    .eq("id", quote.inquiry_id)
+    .eq("status", "Quotation Sent");
 
   revalidatePath("/dashboard/b2b");
   return { ok: true };
@@ -800,6 +983,68 @@ export async function deleteDocument(documentId: string): Promise<{ ok: boolean;
     entityType: "b2b_document",
     entityId: doc.id,
     entityLabel: doc.doc_no,
+  });
+
+  revalidatePath("/dashboard/b2b");
+  return { ok: true };
+}
+
+// ═════════════════════ Company export profile (seller + bank) ══════════════
+// 2026-10-13 — "Seller ki complete details missing hain" + "Bank details
+// missing hain": ONE row per company (b2b_export_profiles) holding the
+// registered address / IEC / PAN / GSTIN / email / phone AND the
+// beneficiary bank block every PI/CI must carry. Filled once here, reused
+// on every document; blanks print "To be provided" — the app never
+// fabricates registration numbers or bank accounts.
+
+export type ExportProfileInput = {
+  sellerAddress: string;
+  iec: string;
+  pan: string;
+  gstin: string;
+  email: string;
+  phone: string;
+  bankBeneficiary: string;
+  bankName: string;
+  bankBranch: string;
+  bankAccount: string;
+  bankSwift: string;
+  bankIntermediary: string;
+};
+
+export async function saveExportProfile(input: ExportProfileInput): Promise<{ ok: boolean; error?: string }> {
+  const me = await requireCapability("b2b_inquiry");
+  const supabase = createServiceRoleClient();
+
+  const row = {
+    company_id: me.currentCompanyId,
+    seller_address: input.sellerAddress.trim() || null,
+    iec: input.iec.trim() || null,
+    pan: input.pan.trim() || null,
+    gstin: input.gstin.trim() || null,
+    email: input.email.trim() || null,
+    phone: input.phone.trim() || null,
+    bank_beneficiary: input.bankBeneficiary.trim() || null,
+    bank_name: input.bankName.trim() || null,
+    bank_branch: input.bankBranch.trim() || null,
+    bank_account: input.bankAccount.trim() || null,
+    bank_swift: input.bankSwift.trim() || null,
+    bank_intermediary: input.bankIntermediary.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Upsert on the UNIQUE(company_id) sentinel — first save creates, later
+  // saves update the same row.
+  const { error } = await supabase.from("b2b_export_profiles").upsert(row, { onConflict: "company_id" });
+  if (error) return { ok: false, error: error.message };
+
+  await logAudit(supabase, {
+    companyId: me.currentCompanyId,
+    employeeId: me.id,
+    employeeName: me.name,
+    action: "b2b_export_profile.saved",
+    entityType: "b2b_export_profile",
+    entityLabel: me.name,
   });
 
   revalidatePath("/dashboard/b2b");

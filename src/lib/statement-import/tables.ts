@@ -25,13 +25,31 @@
 // instead of relying on Postgres to guess. Plain "date" stays as before
 // (relies on Postgres accepting the source's own format, e.g. Etsy's
 // "January 31, 2026", which it does).
-export type ImportColumnType = "text" | "number" | "integer" | "date" | "date_dmy" | "date_mdy" | "boolean";
+//
+// 2026-10-13: "AMAZON KI REPORT ALAG ALAG COUNTRY KE HISAB SE BANI HUI
+// HAI USKO EK HI BANA DO CURRENCY FORMATE AUTO ADJUST HO JAYE" — added
+// "date_auto" (per-file DD/MM vs M/D detection) plus ImportColumn
+// .headerPattern / ImportTableConfig .headerCaptures so ONE Amazon tab
+// replaces the per-marketplace UK/US/Australia ones (see the merged
+// amazon_transactions config below — it detects both the currency and
+// the date order from the file itself).
+export type ImportColumnType = "text" | "number" | "integer" | "date" | "date_dmy" | "date_mdy" | "date_auto" | "boolean";
 
 export type ImportColumn = {
   header: string; // CSV column header (also the template header)
   dbColumn: string;
   type: ImportColumnType;
   required?: boolean;
+  // Fallback match when the file's header isn't literally `header` — real
+  // exports vary the header with the data inside it (Amazon's "Total
+  // (GBP)" / "Total (USD)" / "Total (AUD)"). Matched against the file's
+  // ORIGINAL-cased header; must be a plain /i regex (no /g — lastIndex
+  // would make repeated tests skip rows).
+  headerPattern?: RegExp;
+  // date_auto only: which order to assume when a file's dates are all
+  // genuinely ambiguous (every day-of-month ≤ 12, so nothing in the data
+  // can reveal the marketplace's convention).
+  dateDefault?: "dmy" | "mdy";
 };
 
 export type ImportTableConfig = {
@@ -47,6 +65,14 @@ export type ImportTableConfig = {
   // template with its own currency literal + matching date column type
   // instead of trying to auto-detect it from the file.
   fixedValues?: Record<string, string>;
+  // 2026-10-13: values read OUT of a matching CSV header (once per file,
+  // same for every row) — added for the merged Amazon tab, where the
+  // marketplace currency lives in the Total column's own header
+  // ("Total (GBP)" / "Total (USD)" / "Total (AUD)"). Group 1 of the
+  // pattern is the value (keeps the header's own casing, e.g. "GBP").
+  // Missing capture ⇒ the import errors out BEFORE writing anything,
+  // rather than silently storing a wrong/blank currency.
+  headerCaptures?: { dbColumn: string; pattern: RegExp }[];
 };
 
 export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
@@ -305,13 +331,27 @@ export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
       { header: "Total Expenses INR", dbColumn: "total_expenses_inr", type: "number" },
     ],
   },
+  // 2026-10-13 — the 3 per-marketplace tabs (UK/US/Australia) were three
+  // near-identical copies of ONE import (same amazon_transactions table,
+  // same 10 columns); merged into a single tab whose two real differences
+  // are now detected from the file itself: the CURRENCY comes from the
+  // file's own "Total (GBP)"/"Total (USD)"/"Total (AUD)" header
+  // (headerCaptures) and the DATE ORDER from the dates in the file
+  // (date_auto: any first component > 12 ⇒ DD/MM, any second > 12 ⇒ M/D,
+  // fallback dateDefault only when fully ambiguous — UK/AU are DD/MM,
+  // US is M/D, each confirmed against its real export). A new marketplace
+  // now just works — no new tab, no new template.
   {
-    key: "amazon_transactions_uk",
-    label: "Amazon Transactions (UK / GBP)",
+    key: "amazon_transactions",
+    label: "Amazon Transactions",
     dbTable: "amazon_transactions",
-    sourceNote: "Amazon Seller Central \"Transactions\" report, amazon.co.uk (GBP) — Date column is DD/MM/YYYY.",
+    sourceNote:
+      'Amazon Seller Central "Transactions" report — ONE tab for every marketplace (UK / US / Australia / any other). Currency is read from the file\'s own "Total (GBP)" / "Total (USD)" / "Total (AUD)" column header, and the date format (DD/MM/YYYY vs M/D/YYYY) is auto-detected from the file — just upload any marketplace\'s export as-is.',
     columns: [
-      { header: "Date", dbColumn: "txn_date", type: "date_dmy" },
+      { header: "Date", dbColumn: "txn_date", type: "date_auto", dateDefault: "dmy" },
+      // Header case differs between exports (UK: "Transaction status",
+      // US/AU: "Transaction Status") but header matching is
+      // case-insensitive, so one entry covers all of them.
       { header: "Transaction status", dbColumn: "transaction_status", type: "text" },
       { header: "Transaction type", dbColumn: "transaction_type", type: "text" },
       { header: "Order ID", dbColumn: "order_id", type: "text" },
@@ -320,56 +360,11 @@ export const STATEMENT_IMPORT_TABLES: ImportTableConfig[] = [
       { header: "Total promotional rebates", dbColumn: "total_promotional_rebates", type: "number" },
       { header: "Amazon fees", dbColumn: "amazon_fees", type: "number" },
       { header: "Other", dbColumn: "other", type: "number" },
-      { header: "Total (GBP)", dbColumn: "total_amount", type: "number" },
+      // Real exports say "Total (GBP)/(USD)/(AUD)" → headerPattern;
+      // a plain "Total" (the generated template) still matches exactly.
+      { header: "Total", dbColumn: "total_amount", type: "number", headerPattern: /^total\s*\([a-z]{3}\)$/i },
     ],
-    fixedValues: { currency: "GBP" },
-  },
-  {
-    key: "amazon_transactions_us",
-    label: "Amazon Transactions (US / USD)",
-    dbTable: "amazon_transactions",
-    sourceNote: "Amazon Seller Central \"Transactions\" report, amazon.com (USD) — Date column is M/D/YYYY.",
-    columns: [
-      { header: "Date", dbColumn: "txn_date", type: "date_mdy" },
-      { header: "Transaction Status", dbColumn: "transaction_status", type: "text" },
-      { header: "Transaction type", dbColumn: "transaction_type", type: "text" },
-      { header: "Order ID", dbColumn: "order_id", type: "text" },
-      { header: "Product Details", dbColumn: "product_details", type: "text" },
-      { header: "Total product charges", dbColumn: "total_product_charges", type: "number" },
-      { header: "Total promotional rebates", dbColumn: "total_promotional_rebates", type: "number" },
-      { header: "Amazon fees", dbColumn: "amazon_fees", type: "number" },
-      { header: "Other", dbColumn: "other", type: "number" },
-      { header: "Total (USD)", dbColumn: "total_amount", type: "number" },
-    ],
-    fixedValues: { currency: "USD" },
-  },
-  // 2026-08-13: "agar baki country ki report bhi dali jaye to uska bhi
-  // dhyan rakhna" — Australia is the 3rd real Amazon marketplace export
-  // supplied. Confirmed DD/MM/YYYY (same as UK) by finding a real day-of-
-  // month > 12 in the file's own Date column (30/07/2026, 28/07/2026,
-  // etc. — unambiguous, since month 30 doesn't exist). Same recipe as
-  // UK/US above: one new template per marketplace/currency once a real
-  // export for it is supplied — don't add a country ahead of time without
-  // seeing its actual date format and column shape, since those are what
-  // differed between UK and US.
-  {
-    key: "amazon_transactions_au",
-    label: "Amazon Transactions (Australia / AUD)",
-    dbTable: "amazon_transactions",
-    sourceNote: "Amazon Seller Central \"Transactions\" report, amazon.com.au (AUD) — Date column is DD/MM/YYYY.",
-    columns: [
-      { header: "Date", dbColumn: "txn_date", type: "date_dmy" },
-      { header: "Transaction Status", dbColumn: "transaction_status", type: "text" },
-      { header: "Transaction type", dbColumn: "transaction_type", type: "text" },
-      { header: "Order ID", dbColumn: "order_id", type: "text" },
-      { header: "Product Details", dbColumn: "product_details", type: "text" },
-      { header: "Total product charges", dbColumn: "total_product_charges", type: "number" },
-      { header: "Total promotional rebates", dbColumn: "total_promotional_rebates", type: "number" },
-      { header: "Amazon fees", dbColumn: "amazon_fees", type: "number" },
-      { header: "Other", dbColumn: "other", type: "number" },
-      { header: "Total (AUD)", dbColumn: "total_amount", type: "number" },
-    ],
-    fixedValues: { currency: "AUD" },
+    headerCaptures: [{ dbColumn: "currency", pattern: /^total\s*\(([a-z]{3})\)$/i }],
   },
 ];
 

@@ -33,7 +33,11 @@ export default async function B2BPage() {
   const supabase = createServiceRoleClient();
   const companyId = me.currentCompanyId;
 
-  const [inquiriesRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes] = await Promise.all([
+  // 2026-10-15 merge — BOTH seller-detail sources are loaded: the
+  // companies columns (PI seller block) and the editable b2b_export_profiles
+  // row (the 2026-10-13 PI export round). See the props below for how the
+  // client falls back from one to the other.
+  const [inquiriesRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes, profileRes] = await Promise.all([
     supabase
       .from("b2b_inquiries")
       .select("*")
@@ -94,14 +98,27 @@ export default async function B2BPage() {
         (r) => r,
         () => ({ data: null, error: null })
       ),
-    // 2026-10-13 — SELLER / EXPORTER DETAILS for the PI's seller block.
-    // Separate query so a missing 2026-10-13 migration only empties the
-    // profile (prints "To be provided") instead of taking down the whole
-    // register the way one bad select used to ("logout ho raha" bug).
+    // 2026-10-13 (PI completeness round) — SELLER / EXPORTER DETAILS for
+    // the PI's seller block. Separate query so a missing 2026-10-13
+    // migration only empties the profile (prints "To be provided") instead
+    // of taking down the whole register the way one bad select used to
+    // ("logout ho raha" bug).
     supabase
       .from("companies")
       .select("business_address, iec_no, pan_no, gstin, business_email, business_phone")
       .eq("id", companyId)
+      .maybeSingle()
+      .then(
+        (r) => r,
+        () => ({ data: null, error: null })
+      ),
+    // 2026-10-13 — the company's export profile (seller address / IEC /
+    // PAN / GSTIN / bank block) that every issued PI/CI prints. Loaded here
+    // so the client can edit it; degrades to null before the migration runs.
+    supabase
+      .from("b2b_export_profiles")
+      .select("*")
+      .eq("company_id", companyId)
       .maybeSingle()
       .then(
         (r) => r,
@@ -120,6 +137,11 @@ export default async function B2BPage() {
     : quotesRes.error
       ? quotesRes.error.message
       : null;
+
+  // 2026-10-02d — "export profile" table is the LAST one the migration
+  // creates; only its failure is worth surfacing (the register itself
+  // already loaded fine above).
+  const profileError = profileRes.error ? profileRes.error.message : null;
 
   const itemsByInquiry = new Map<string, B2BInquiryView["items"]>();
   for (const it of itemsRes.data ?? []) {
@@ -192,6 +214,8 @@ export default async function B2BPage() {
         }
         canManage
         loadError={loadError}
+        exportProfile={profileRes.data ?? null}
+        exportProfileError={profileError}
       />
     </>
   );

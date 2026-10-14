@@ -11,20 +11,41 @@ import { downloadXLSX, type ExportColumn } from "@/lib/export/export-table";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { formatDocMoney } from "@/lib/b2b/money-format";
 import {
+  buildQuotationMessage,
+  computeItemDims,
+  fmtDocMoney,
+  formatDims,
+  ITEM_UNITS,
+  QUOTE_CURRENCIES,
+  parseSizeSpec,
+  type ItemDims,
+} from "@/lib/b2b/erp";
+// 2026-10-13 round 2 — structured buyer address in the ORDER PAGE's own
+// format (Address Line 1 paste-splits itself into line 2/city/state/postcode
+// via the same two libs; postal code auto-fills city/state on blur).
+import { looksLikeFullAddress, parseFullAddress } from "@/lib/parse-full-address";
+import { lookupPostalCode } from "@/lib/postal-lookup";
+import {
   addPayment,
   createInquiry,
   createQuotation,
   deleteDocument,
   deleteInquiry,
   deletePayment,
+  deleteQuotation,
   issueDocument,
   linkConversion,
   markQuotationSent,
+  // 2026-10-15 merge — BOTH seller-detail editors live on this page: the
+  // companies-columns panel (updateCompanyExportProfile) and the
+  // b2b_export_profiles panel (saveExportProfile).
   updateCompanyExportProfile,
+  saveExportProfile,
   updateInquiry,
   updateQuotation,
   type B2BDocKind,
   type B2BPaymentMode,
+  type B2BQuoteStatus,
 } from "./actions";
 
 // ── shared types (mirrors the DB rows the page loads) ───────────────────────
@@ -48,6 +69,18 @@ export type B2BQuoteItemRow = {
   unit: string | null;
   unit_price: number;
   line_total: number;
+  // 2026-10-13 — per-item product specifications printed on PI/CI.
+  size: string | null;
+  material: string | null;
+  manufacturing: string | null;
+  colour_design: string | null;
+  packaging: string | null;
+  // Round 2 — structured dims parsed from `size` (the SIZE × QTY formula's
+  // stored inputs; sq ft / sq mtr / CBM always recomputed via computeItemDims).
+  size_length: number | null;
+  size_width: number | null;
+  size_thickness: number | null;
+  size_unit: string | null;
 };
 
 export type B2BDocRow = {
@@ -86,6 +119,27 @@ export type B2BQuoteRow = {
   terms: string | null;
   notes: string | null;
   sent_at: string | null;
+  status: B2BQuoteStatus;
+  payment_instructions: string | null;
+  // 2026-10-13 — export-document fields every PI/CI section needs
+  // (buyer_address / product_specs / payment_terms / shipping_terms /
+  // bank_details / incoterm are declared with the block above).
+  buyer_attention: string | null;
+  payment_condition: string | null;
+  payment_method: string | null;
+  payment_due_note: string | null;
+  bank_charges: string | null;
+  port_of_loading: string | null;
+  port_of_destination: string | null;
+  delivery_period: string | null;
+  partial_shipment: string | null;
+  transshipment: string | null;
+  freight_insurance: string | null;
+  country_of_origin: string | null;
+  packing_details: string | null;
+  tax_note: string | null;
+  shipping_note: string | null;
+  purpose: string | null;
   payments: B2BPaymentRow[];
   items: B2BQuoteItemRow[];
   documents: B2BDocRow[];
@@ -134,6 +188,26 @@ export type B2BCompanyProfile = {
   business_phone: string | null;
 };
 
+// 2026-10-13 — company-level export profile (seller + beneficiary bank
+// block) printed on every PI/CI; one row per company, edited from the
+// register header.
+export type B2BExportProfileRow = {
+  id: string;
+  company_id: string;
+  seller_address: string | null;
+  iec: string | null;
+  pan: string | null;
+  gstin: string | null;
+  email: string | null;
+  phone: string | null;
+  bank_beneficiary: string | null;
+  bank_name: string | null;
+  bank_branch: string | null;
+  bank_account: string | null;
+  bank_swift: string | null;
+  bank_intermediary: string | null;
+};
+
 export type B2BInquiryManagerProps = {
   inquiries: B2BInquiryView[];
   companyId: string;
@@ -142,6 +216,10 @@ export type B2BInquiryManagerProps = {
   canManage: boolean;
   /** Server-side load failure (usually "table does not exist" — migration not run yet). */
   loadError?: string | null;
+  /** Company export profile (seller + bank block) — null until first saved. */
+  exportProfile?: B2BExportProfileRow | null;
+  /** Set when the b2b_export_profiles table itself is missing (migration not run). */
+  exportProfileError?: string | null;
 };
 
 const STATUSES = ["Open", "In Discussion", "Quotation Sent", "Won", "Lost", "Converted"] as const;
@@ -154,9 +232,22 @@ const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide tex
 
 // Editable quotation line — kept as STRINGS in UI state so typing "1." or
 // "" mid-edit never fights the number parser; the server action parses.
-type QuoteItemDraft = { description: string; hsnCode: string; qty: string; unit: string; unitPrice: string };
+// 2026-10-13: each line also carries the product specifications the PI must
+// print (Size / Material / Manufacturing / Colour-design / Packaging).
+type QuoteItemDraft = {
+  description: string;
+  hsnCode: string;
+  qty: string;
+  unit: string;
+  unitPrice: string;
+  size: string;
+  material: string;
+  manufacturing: string;
+  colourDesign: string;
+  packaging: string;
+};
 function emptyQuoteItem(): QuoteItemDraft {
-  return { description: "", hsnCode: "", qty: "1", unit: "pcs", unitPrice: "" };
+  return { description: "", hsnCode: "", qty: "1", unit: "pcs", unitPrice: "", size: "", material: "", manufacturing: "", colourDesign: "", packaging: "" };
 }
 
 function fmtMoney(n: number, currency = "INR"): string {
@@ -188,13 +279,37 @@ function statusBadgeClass(status: B2BInquiryRow["status"]): string {
 function priorityDot(priority: B2BInquiryRow["priority"]): string {
   return priority === "Hot" ? "🔥" : priority === "Warm" ? "☀️" : "❄️";
 }
+function quoteStatusClass(status: B2BQuoteStatus): string {
+  switch (status) {
+    case "Draft":
+      return "bg-slate-100 text-slate-600 border-slate-200";
+    case "Sent":
+      return "bg-sky-50 text-sky-700 border-sky-200";
+    case "Approved":
+      return "bg-green-50 text-green-700 border-green-200";
+    case "Rejected":
+      return "bg-red-50 text-red-700 border-red-200";
+    case "Expired":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+  }
+}
 
 // ── root component ───────────────────────────────────────────────────────────
-export function B2BInquiryManager({ inquiries, companyId, companyName, companyProfile, canManage, loadError }: B2BInquiryManagerProps) {
+export function B2BInquiryManager({
+  inquiries,
+  companyId,
+  companyName,
+  companyProfile,
+  canManage,
+  loadError,
+  exportProfile,
+  exportProfileError,
+}: B2BInquiryManagerProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [showForm, setShowForm] = useState(false);
   const [showSeller, setShowSeller] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -211,7 +326,6 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, companyPr
   }
 
   void companyId;
-  void companyName; // (kept for future per-company theming)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -312,9 +426,17 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, companyPr
                 type="button"
                 onClick={() => setShowSeller(true)}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
-                title="Seller / Exporter details printed on every PI / Commercial Invoice"
+                title="Seller / Exporter details stored on the company row (fallback for the PI seller block)"
               >
                 🏢 Seller Details
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowProfile(true)}
+                title="Seller address, IEC/PAN/GSTIN and bank details printed on every PI/CI — fill once per company"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:bg-slate-50"
+              >
+                🏦 Export Profile{exportProfile ? "" : " ⚠"}
               </button>
               <button
                 type="button"
@@ -428,7 +550,10 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, companyPr
                     <td className="px-4 py-3">
                       {i.quote ? (
                         <>
-                          <div className="font-medium text-slate-800">{i.quote.quote_no}</div>
+                          <div className="flex items-center gap-1.5 font-medium text-slate-800">
+                            {i.quote.quote_no}
+                            <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${quoteStatusClass(i.quote.status)}`}>{i.quote.status}</span>
+                          </div>
                           <div className="text-xs text-slate-500">{fmtMoney(i.quote.total_amount, i.quote.currency)}</div>
                         </>
                       ) : (
@@ -495,6 +620,15 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, companyPr
         </div>
       </div>
 
+      {/* ── Export profile (seller + bank) editor ──────────────────────────── */}
+      {exportProfileError && (
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Export-profile setup pending — run <code className="font-mono">db/2026-10-13-b2b-pi-export-fields.sql</code> in Supabase, then refresh.
+          <span className="opacity-70"> ({exportProfileError})</span>
+        </p>
+      )}
+      {showProfile && <ExportProfileModal profile={exportProfile ?? null} onClose={() => setShowProfile(false)} />}
+
       {/* ── New-inquiry modal ──────────────────────────────────────────── */}
       {showForm && <NewInquiryModal onClose={() => setShowForm(false)} />}
 
@@ -505,7 +639,7 @@ export function B2BInquiryManager({ inquiries, companyId, companyName, companyPr
 
       {/* ── Inquiry detail dialog ──────────────────────────────────────── */}
       {selected && (
-        <InquiryDetailDialog inquiry={selected} canManage={canManage} onClose={() => setSelectedId(null)} />
+        <InquiryDetailDialog inquiry={selected} canManage={canManage} companyName={companyName} onClose={() => setSelectedId(null)} />
       )}
     </div>
   );
@@ -694,7 +828,7 @@ function NewInquiryModal({ onClose }: { onClose: () => void }) {
 }
 
 // ── Inquiry detail: edit + quotation + payments + conversion ────────────────
-function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInquiryView; canManage: boolean; onClose: () => void }) {
+function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inquiry: B2BInquiryView; canManage: boolean; companyName: string; onClose: () => void }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -713,6 +847,21 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
       unitPrice: it.unit_price == null ? "" : String(it.unit_price),
       remark: it.remark ?? "",
     }))
+  );
+
+  // 2026-10-13 — "ENQUARY EDIT, MODIFY, DELETE BHI HONI CHAHIYE": the
+  // details tab's Save now also replaces the asked-for item rows (draft
+  // state mirrors the same string-typed pattern the quote form uses).
+  const [inqItems, setInqItems] = useState(
+    inquiry.items.length > 0
+      ? inquiry.items.map((it) => ({
+          description: it.description,
+          qty: String(it.qty),
+          unit: it.unit ?? "pcs",
+          unitPrice: it.unit_price != null ? String(it.unit_price) : "",
+          remark: it.remark ?? "",
+        }))
+      : [{ description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }]
   );
 
   function saveDetails(formData: FormData) {
@@ -734,7 +883,7 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
         remarks: val("remarks"),
         followUpDate: val("follow_up_date"),
         status: val("status"),
-        items,
+        items: inqItems.map((it) => ({ ...it })),
       });
       if (res.ok) setNotice("Saved.");
       else setError(res.error ?? "Save failed.");
@@ -842,6 +991,33 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
 
               <Field label="Requirement Notes"><textarea name="requirement_notes" rows={2} defaultValue={inquiry.requirement_notes ?? ""} className={inputClass} /></Field>
               <Field label="Remarks"><textarea name="remarks" rows={2} defaultValue={inquiry.remarks ?? ""} className={inputClass} /></Field>
+
+              {/* 2026-10-13 — asked-for items are now EDITABLE here (edit /
+                  modify the enquiry itself, not just its header fields). */}
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className={labelClass}>Asked-for Items</span>
+                  <button
+                    type="button"
+                    onClick={() => setInqItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }])}
+                    className="text-xs font-medium text-amber-600 hover:underline"
+                  >
+                    + Add item
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {inqItems.map((it, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2">
+                      <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
+                      <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
+                      <input className={`${inputClass} col-span-2`} placeholder="Unit" value={it.unit} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))} />
+                      <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
+                      <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setInqItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
               {notice && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</p>}
               <div className="flex items-center justify-between border-t border-slate-100 pt-3">
@@ -855,7 +1031,7 @@ function InquiryDetailDialog({ inquiry, canManage, onClose }: { inquiry: B2BInqu
         </div>
       )}
 
-      {mode === "quote" && <QuotePanel inquiry={inquiry} canManage={canManage} showForm={showQuoteForm} setShowForm={setShowQuoteForm} setError={setError} />}
+      {mode === "quote" && <QuotePanel inquiry={inquiry} canManage={canManage} companyName={companyName} showForm={showQuoteForm} setShowForm={setShowQuoteForm} setError={setError} />}
 
       {mode === "documents" && (
         <DocumentsPanel
@@ -896,12 +1072,14 @@ function QuotePanel({
   showForm,
   setShowForm,
   setError,
+  companyName,
 }: {
   inquiry: B2BInquiryView;
   canManage: boolean;
   showForm: boolean;
   setShowForm: (v: boolean) => void;
   setError: (s: string | null) => void;
+  companyName: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const [localError, setLocalError] = useState<string | null>(null);
@@ -910,6 +1088,19 @@ function QuotePanel({
   // Line items drive the money (server computes subtotal = Σ qty×rate);
   // used by BOTH the create form and the edit form below.
   const [items, setItems] = useState<QuoteItemDraft[]>([emptyQuoteItem()]);
+  // 2026-10-13 round 2 — "CURRENCY SELECTION DROPDOWN, EK BAAR SELECT
+  // KARTE HI PURI QUOTATION ME CHANGE HO JAYE": the form's currency is
+  // controlled state, so every live figure (subtotal preview, item rates'
+  // context) re-renders the moment the select changes.
+  const [currencySel, setCurrencySel] = useState("INR");
+  // Draft lifecycle — a new quote is saved as Draft unless explicitly
+  // "Save & Sent"; a Draft can be edited/deleted outright.
+  const [saveStatus, setSaveStatus] = useState<"Draft" | "Sent">("Draft");
+  // Structured buyer address in the ORDER PAGE's format (line 1 / line 2 /
+  // city / state / postal) — composed into the single buyer_address column
+  // on save, so the print page and old data stay compatible.
+  const [addr, setAddr] = useState({ a1: "", a2: "", city: "", state: "", postal: "", country: "" });
+
   const liveSubtotal = items.reduce(
     (s, it) => s + (parseFloat(it.qty) || 0) * (parseFloat(it.unitPrice) || 0),
     0
@@ -917,6 +1108,11 @@ function QuotePanel({
 
   function buildPayload(formData: FormData) {
     const val = (k: string) => String(formData.get(k) ?? "");
+    // Compose the structured address into the one stored column, skipping
+    // empty parts ("City, State PIN" becomes its own line — exactly how a
+    // real export address block reads).
+    const cityLine = [addr.city, addr.state, addr.postal].filter(Boolean).join(", ");
+    const composedAddress = [addr.a1, addr.a2, cityLine].filter((s) => s && s.trim()).join("\n");
     return {
       inquiryId: inquiry.id,
       quotationId: q?.id,
@@ -925,24 +1121,52 @@ function QuotePanel({
       buyerName: val("buyer_name"),
       buyerContactNo: val("buyer_contact_no"),
       buyerEmail: val("buyer_email"),
-      buyerCountry: val("buyer_country"),
+      buyerCountry: addr.country || val("buyer_country"),
       taxPercent: val("tax_percent"),
       shippingAmount: val("shipping_amount"),
-      currency: val("currency"),
+      currency: currencySel,
       terms: val("terms"),
       notes: val("notes"),
-      buyerAddress: val("buyer_address"),
+      status: saveStatus,
+      paymentInstructions: val("payment_instructions"),
+      // 2026-10-13 — export-document fields (every PI/CI section, both
+      // rounds' columns: the structured ones AND the free-text blocks).
+      incoterm: val("incoterm"),
+      // Structured address composition wins when filled; the plain
+      // buyer_address textarea (2026-10-13 completeness round) is the
+      // fallback so neither editor's text is ever dropped.
+      buyerAddress: composedAddress || val("buyer_address"),
       productSpecs: val("product_specs"),
       paymentTerms: val("payment_terms"),
       shippingTerms: val("shipping_terms"),
       bankDetails: val("bank_details"),
-      incoterm: val("incoterm"),
+      buyerAttention: val("buyer_attention"),
+      paymentCondition: val("payment_condition"),
+      paymentMethod: val("payment_method"),
+      paymentDueNote: val("payment_due_note"),
+      bankCharges: val("bank_charges"),
+      portOfLoading: val("port_of_loading"),
+      portOfDestination: val("port_of_destination"),
+      deliveryPeriod: val("delivery_period"),
+      partialShipment: val("partial_shipment"),
+      transshipment: val("transshipment"),
+      freightInsurance: val("freight_insurance"),
+      countryOfOrigin: val("country_of_origin"),
+      packingDetails: val("packing_details"),
+      taxNote: val("tax_note"),
+      shippingNote: val("shipping_note"),
+      purpose: val("purpose"),
       items: items.map((it) => ({
         description: it.description,
         hsnCode: it.hsnCode,
         qty: it.qty,
         unit: it.unit,
         unitPrice: it.unitPrice,
+        size: it.size,
+        material: it.material,
+        manufacturing: it.manufacturing,
+        colourDesign: it.colourDesign,
+        packaging: it.packaging,
       })),
     };
   }
@@ -975,28 +1199,155 @@ function QuotePanel({
         qty: String(it.qty),
         unit: it.unit ?? "pcs",
         unitPrice: String(it.unit_price),
+        size: it.size ?? "",
+        material: it.material ?? "",
+        manufacturing: it.manufacturing ?? "",
+        colourDesign: it.colour_design ?? "",
+        packaging: it.packaging ?? "",
       }))
     );
+    setCurrencySel(q.currency);
+    setSaveStatus(q.status === "Sent" ? "Sent" : "Draft");
+    // Split the stored address string back into the structured fields —
+    // the same parser the order page uses handles collapsed one-liners too.
+    const parsed = parseFullAddress(q.buyer_address ?? "");
+    setAddr({
+      a1: parsed.address1,
+      a2: parsed.address2,
+      city: parsed.city,
+      state: parsed.state,
+      postal: parsed.postalCode,
+      country: parsed.country || q.buyer_country || "",
+    });
     setShowForm(true);
   }
 
-  function send() {
+  function openCreateForm() {
+    setItems([emptyQuoteItem()]);
+    setCurrencySel("INR");
+    setSaveStatus("Draft");
+    setAddr({ a1: "", a2: "", city: "", state: "", postal: "", country: inquiry.buyer_country ?? "" });
+    setShowForm(true);
+  }
+
+  // Order-page paste behaviour: a full address pasted into Address Line 1
+  // splits itself into line 2 / city / state / postcode / country before
+  // the browser would collapse the newlines.
+  function handleAddr1Paste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const pasted = e.clipboardData.getData("text/plain");
+    if (!looksLikeFullAddress(pasted)) return;
+    e.preventDefault();
+    applyParsed(pasteeToAddr(pasted));
+  }
+  function pasteeToAddr(raw: string) {
+    const p = parseFullAddress(raw);
+    return { a1: p.address1, a2: p.address2, city: p.city, state: p.state, postal: p.postalCode, country: p.country };
+  }
+  function applyParsed(next: ReturnType<typeof pasteeToAddr>) {
+    // "Only fill what's still empty" — same rule as the order form, so a
+    // value already typed is never silently overwritten.
+    setAddr((cur) => ({
+      a1: cur.a1 || next.a1,
+      a2: cur.a2 || next.a2,
+      city: cur.city || next.city,
+      state: cur.state || next.state,
+      postal: cur.postal || next.postal,
+      country: cur.country || next.country,
+    }));
+  }
+  function splitAddressInBox() {
+    if (!addr.a1.trim()) return;
+    applyParsed(pasteeToAddr(addr.a1));
+  }
+  // Postal → city/state autofill on blur (same free lookups, same
+  // "never blocks, never overwrites" rules as the order page).
+  async function handlePostalBlur() {
+    if (!addr.postal.trim()) return;
+    const result = await lookupPostalCode(addr.postal, addr.country);
+    if (!result) return;
+    setAddr((cur) => ({ ...cur, city: cur.city || result.city, state: cur.state || result.state }));
+  }
+
+  // 2026-10-13 round 2 — "EK BADHIYA SE FORMATE ME JAYE USKE PASS": the
+  // buyer receives the SAME structured message on WhatsApp and email —
+  // bold headings, per-line size + qty × rate, totals with amount-in-words,
+  // payment/delivery terms, validity and sign-off — built by the pure
+  // buildQuotationMessage() so it always matches the A4 print page.
+  const sharePayload = q
+    ? buildQuotationMessage({
+        docNo: (q.documents ?? []).at(-1)?.doc_no ?? q.quote_no,
+        docDate: fmtDate((q.documents ?? []).at(-1)?.doc_date ?? q.quote_date),
+        validUntil: q.valid_until ? fmtDate(q.valid_until) : null,
+        companyName: companyName || "Nykomart",
+        buyerName: q.buyer_name,
+        buyerCompany: inquiry.buyer_company,
+        currency: q.currency,
+        subtotal: q.subtotal,
+        taxLabel: q.tax_note ?? `Tax (${q.tax_percent}%)`,
+        taxAmount: q.tax_amount ?? 0,
+        taxIsNote: !!q.tax_note,
+        shippingLabel: q.shipping_note ?? "Shipping & Freight",
+        shippingAmount: q.shipping_amount,
+        shippingIsNote: !!q.shipping_note,
+        total: q.total_amount ?? 0,
+        paymentCondition: q.payment_condition,
+        paymentMethod: q.payment_method,
+        deliveryPeriod: q.delivery_period,
+        incoterm: q.incoterm,
+        terms: q.terms,
+        lines: (q.items ?? []).map((it) => ({
+          description: it.description,
+          hsnCode: it.hsn_code,
+          qty: it.qty,
+          unit: it.unit,
+          unitPrice: it.unit_price,
+          lineTotal: it.line_total ?? 0,
+          sizeSpec: it.size,
+        })),
+      })
+    : "";
+  const waText = encodeURIComponent(sharePayload);
+
+  // Sharing IS sending: a Draft flips to Sent (server-side, idempotent)
+  // at the moment the buyer link opens, so the register never lies about
+  // what the buyer has actually received.
+  function shareVia(kind: "wa" | "email") {
     if (!q) return;
+    const url =
+      kind === "wa"
+        ? `https://wa.me/${(q.buyer_contact_no ?? "").replace(/[^\d]/g, "")}?text=${waText}`
+        : `mailto:${q.buyer_email}?subject=${encodeURIComponent(`Quotation ${q.quote_no} — ${companyName || "Nykomart"}`)}&body=${waText}`;
     startTransition(async () => {
-      const res = await markQuotationSent(q.id);
-      if (!res.ok) setLocalError(res.error ?? "Failed.");
+      if (q.status === "Draft") await markQuotationSent(q.id);
+      if (kind === "wa") window.open(url, "_blank", "noopener,noreferrer");
+      else window.location.href = url;
     });
   }
 
-  const waText = q
-    ? encodeURIComponent(
-        `Quotation ${q.quote_no}\nBuyer: ${q.buyer_name}\n` +
-          (q.items ?? [])
-            .map((it, i) => `${i + 1}. ${it.description} — ${it.qty} ${it.unit ?? ""} @ ${fmtMoney(it.unit_price, q.currency)}`)
-            .join("\n") +
-          `\nSubtotal: ${fmtMoney(q.subtotal, q.currency)}\nTax (${q.tax_percent}%): ${fmtMoney(q.tax_amount, q.currency)}\nShipping: ${fmtMoney(q.shipping_amount, q.currency)}\nTOTAL: ${fmtMoney(q.total_amount, q.currency)}${q.valid_until ? `\nValid until: ${fmtDate(q.valid_until)}` : ""}\n\n— Nykomart`
-      )
-    : "";
+  function removeQuote() {
+    if (!q) return;
+    if (!window.confirm(`Delete draft quotation ${q.quote_no}? Its item rows go too — this cannot be undone.`)) return;
+    startTransition(async () => {
+      const res = await deleteQuotation(q.id);
+      if (!res.ok) setLocalError(res.error ?? "Delete failed.");
+    });
+  }
+
+  // LIVE size × qty formula preview — the exact same computeItemDims() the
+  // server persists dimensions from, so what the user sees here is what
+  // the PI prints and what any packing maths will use.
+  function lineDims(it: QuoteItemDraft): { text: string; dims: ItemDims } | null {
+    const parsed = parseSizeSpec(it.size);
+    if (!parsed) return null;
+    const dims = computeItemDims({
+      qty: parseFloat(it.qty) || 0,
+      length: parsed.length,
+      width: parsed.width,
+      thickness: parsed.thickness,
+      unit: parsed.unit,
+    });
+    return { text: formatDims(dims), dims };
+  }
 
   return (
     <div className="space-y-3">
@@ -1005,7 +1356,7 @@ function QuotePanel({
         <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center">
           <p className="text-sm text-slate-500">No quotation yet for this inquiry.</p>
           {canManage && (
-            <button type="button" onClick={() => setShowForm(true)} className="mt-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+            <button type="button" onClick={openCreateForm} className="mt-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
               + Create Quotation
             </button>
           )}
@@ -1016,19 +1367,34 @@ function QuotePanel({
           <div className="rounded-lg border border-slate-200 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-bold text-slate-900">{q.quote_no}</div>
+                <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                  {q.quote_no}
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${quoteStatusClass(q.status)}`}>{q.status}</span>
+                </div>
                 <div className="text-xs text-slate-500">
                   {fmtDate(q.quote_date)}{q.valid_until ? ` · valid till ${fmtDate(q.valid_until)}` : ""}
-                  {q.sent_at ? " · sent ✓" : " · not sent"}
+                  {q.status === "Draft" ? " · draft — not shared with the buyer yet" : q.sent_at ? " · sent ✓" : ""}
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-lg font-bold text-slate-900">{fmtMoney(q.total_amount, q.currency)}</div>
+                <div className="text-lg font-bold text-slate-900">{fmtDocMoney(q.total_amount, q.currency)}</div>
                 <div className="text-xs text-slate-500">
-                  {fmtMoney(q.subtotal, q.currency)} + {q.tax_percent}% tax + {fmtMoney(q.shipping_amount, q.currency)} ship
+                  {fmtDocMoney(q.subtotal, q.currency)} + {q.tax_percent}% tax + {fmtDocMoney(q.shipping_amount, q.currency)} ship
                 </div>
               </div>
             </div>
+            {/* 2026-10-13 — export-document quick summary: payment + shipping
+                terms the PI carries, so a missing field is visible BEFORE
+                issuing the document. */}
+            {[
+              ["Payment", [q.payment_condition, q.payment_method, q.payment_due_note].filter(Boolean).join(" · ")],
+              ["Shipping", [q.incoterm, q.port_of_loading && `Load: ${q.port_of_loading}`, q.port_of_destination && `Dest: ${q.port_of_destination}`, q.delivery_period].filter(Boolean).join(" · ")],
+              ["Buyer", [q.buyer_attention && `Attn: ${q.buyer_attention}`, q.buyer_address].filter(Boolean).join(" · ")],
+            ].map(([label, value]) =>
+              value ? (
+                <p key={label} className="mt-1 text-xs text-slate-500"><strong>{label}:</strong> {value}</p>
+              ) : null
+            )}
             {q.terms && <p className="mt-2 text-xs text-slate-500"><strong>Terms:</strong> {q.terms}</p>}
             {q.notes && <p className="mt-1 text-xs text-slate-500"><strong>Notes:</strong> {q.notes}</p>}
             {/* Itemized lines — the same rows PI/CI/PL print */}
@@ -1046,25 +1412,51 @@ function QuotePanel({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(q.items ?? []).map((it) => (
+                    {(q.items ?? []).map((it) => {
+                      // Same SIZE × QTY formula as the form preview & PI: recompute
+                      // from the stored spec so every surface agrees.
+                      const d = lineDims({ ...emptyQuoteItem(), qty: String(it.qty), size: it.size ?? "" });
+                      return (
                       <tr key={it.id}>
-                        <td className="px-3 py-1.5 text-slate-800">{it.description}</td>
+                        <td className="px-3 py-1.5 text-slate-800">
+                          {it.description}
+                          {(it.size || it.material || it.manufacturing || it.colour_design || it.packaging || d) && (
+                            <div className="text-[11px] text-slate-400">
+                              {[it.size, it.material, it.manufacturing, it.colour_design, it.packaging].filter(Boolean).join(" · ")}
+                              {d && <span className="ml-1 font-medium text-emerald-700">→ {d.text}</span>}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-1.5 text-slate-500">{it.hsn_code ?? "—"}</td>
                         <td className="px-3 py-1.5 text-right">{it.qty}</td>
                         <td className="px-3 py-1.5">{it.unit ?? "pcs"}</td>
-                        <td className="px-3 py-1.5 text-right">{fmtMoney(it.unit_price, q.currency)}</td>
-                        <td className="px-3 py-1.5 text-right font-medium">{fmtMoney(it.line_total, q.currency)}</td>
+                        <td className="px-3 py-1.5 text-right">{fmtDocMoney(it.unit_price, q.currency)}</td>
+                        <td className="px-3 py-1.5 text-right font-medium">{fmtDocMoney(it.line_total, q.currency)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
             {canManage && (
               <div className="mt-3 flex flex-wrap gap-2">
-                {!q.sent_at && (
-                  <button type="button" onClick={send} disabled={isPending} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-60">
-                    Mark as Sent
+                {q.status === "Draft" && (
+                  <span className="self-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                    Draft — sharing below marks it Sent
+                  </span>
+                )}
+                {q.status === "Draft" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm(`Delete draft quotation ${q.quote_no}? This cannot be undone.`)) return;
+                      removeQuote();
+                    }}
+                    disabled={isPending}
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-60"
+                  >
+                    🗑 Delete Draft
                   </button>
                 )}
                 <button
@@ -1076,28 +1468,28 @@ function QuotePanel({
                   ✎ Edit Quote &amp; Items
                 </button>
                 {q.buyer_contact_no && (
-                  <a href={`https://wa.me/${q.buyer_contact_no.replace(/[^\d]/g, "")}?text=${waText}`} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100">
+                  <button type="button" onClick={() => shareVia("wa")} disabled={isPending} className="rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-60">
                     Share on WhatsApp
-                  </a>
+                  </button>
                 )}
                 {q.buyer_email && (
-                  <a href={`mailto:${q.buyer_email}?subject=${encodeURIComponent(`Quotation ${q.quote_no}`)}&body=${waText}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">
+                  <button type="button" onClick={() => shareVia("email")} disabled={isPending} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60">
                     Email
-                  </a>
+                  </button>
                 )}
               </div>
             )}
           </div>
-          {/* totals recap table (invoice-style) */}
+          {/* totals recap table (invoice-style) — international document format */}
           <table className="w-full text-sm">
             <tbody className="divide-y divide-slate-100">
-              <tr><td className="py-1.5 text-slate-500">Subtotal</td><td className="py-1.5 text-right font-medium">{fmtMoney(q.subtotal, q.currency)}</td></tr>
-              <tr><td className="py-1.5 text-slate-500">Tax ({q.tax_percent}%)</td><td className="py-1.5 text-right font-medium">{fmtMoney(q.tax_amount, q.currency)}</td></tr>
-              <tr><td className="py-1.5 text-slate-500">Shipping</td><td className="py-1.5 text-right font-medium">{fmtMoney(q.shipping_amount, q.currency)}</td></tr>
-              <tr><td className="py-1.5 font-semibold text-slate-900">Total</td><td className="py-1.5 text-right font-bold">{fmtMoney(q.total_amount, q.currency)}</td></tr>
-              <tr><td className="py-1.5 text-slate-500">Received</td><td className="py-1.5 text-right font-medium text-green-700">{fmtMoney((q.payments ?? []).reduce((s, p) => s + p.amount, 0), q.currency)}</td></tr>
+              <tr><td className="py-1.5 text-slate-500">Subtotal</td><td className="py-1.5 text-right font-medium">{fmtDocMoney(q.subtotal, q.currency)}</td></tr>
+              <tr><td className="py-1.5 text-slate-500">{q.tax_note ?? `Tax (${q.tax_percent}%)`}</td><td className="py-1.5 text-right font-medium">{q.tax_note ? "—" : fmtDocMoney(q.tax_amount, q.currency)}</td></tr>
+              <tr><td className="py-1.5 text-slate-500">{q.shipping_note ?? "Shipping"}</td><td className="py-1.5 text-right font-medium">{q.shipping_note ? "—" : fmtDocMoney(q.shipping_amount, q.currency)}</td></tr>
+              <tr><td className="py-1.5 font-semibold text-slate-900">Total</td><td className="py-1.5 text-right font-bold">{fmtDocMoney(q.total_amount, q.currency)}</td></tr>
+              <tr><td className="py-1.5 text-slate-500">Received</td><td className="py-1.5 text-right font-medium text-green-700">{fmtDocMoney((q.payments ?? []).reduce((s, p) => s + p.amount, 0), q.currency)}</td></tr>
               <tr><td className="py-1.5 font-medium text-slate-700">Balance Due</td><td className={`py-1.5 text-right font-bold ${q.total_amount - (q.payments ?? []).reduce((s, p) => s + p.amount, 0) > 0 ? "text-red-600" : "text-green-700"}`}>
-                {fmtMoney(q.total_amount - (q.payments ?? []).reduce((s, p) => s + p.amount, 0), q.currency)}
+                {fmtDocMoney(q.total_amount - (q.payments ?? []).reduce((s, p) => s + p.amount, 0), q.currency)}
               </td></tr>
             </tbody>
           </table>
@@ -1109,20 +1501,44 @@ function QuotePanel({
             {q ? "Edit quotation — items replace the saved set on save" : "New quotation — subtotal is the sum of item rows"}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {!q && (
-              <>
-                <Field label="Quote Date"><input name="quote_date" type="date" required className={inputClass} /></Field>
-                <Field label="Valid Until"><input name="valid_until" type="date" className={inputClass} /></Field>
-              </>
-            )}
+            <Field label={q && q.status !== "Draft" ? "Quote Date (locked after sending)" : "Quote Date"}>
+              <input
+                name="quote_date"
+                type="date"
+                required
+                disabled={!!q && q.status !== "Draft"}
+                defaultValue={q?.quote_date ?? ""}
+                className={`${inputClass} disabled:bg-slate-50 disabled:text-slate-400`}
+              />
+            </Field>
+            <Field label="Valid Until"><input name="valid_until" type="date" defaultValue={q?.valid_until ?? ""} className={inputClass} /></Field>
             <Field label="Buyer Name"><input name="buyer_name" defaultValue={q?.buyer_name ?? inquiry.buyer_name} className={inputClass} /></Field>
             <Field label="Contact No"><input name="buyer_contact_no" defaultValue={q?.buyer_contact_no ?? inquiry.buyer_contact_no ?? ""} className={inputClass} /></Field>
-            <Field label="Email"><input name="buyer_email" defaultValue={q?.buyer_email ?? inquiry.buyer_email ?? ""} className={inputClass} /></Field>
+            <Field label="Email"><input name="buyer_email" type="email" defaultValue={q?.buyer_email ?? inquiry.buyer_email ?? ""} className={inputClass} /></Field>
             <Field label="Country"><input name="buyer_country" defaultValue={q?.buyer_country ?? inquiry.buyer_country ?? ""} className={inputClass} /></Field>
-            <Field label="Incoterm"><input name="incoterm" defaultValue={q?.incoterm ?? ""} className={inputClass} placeholder="EXW / FOB / CIF / DAP…" /></Field>
             <Field label="Tax %"><input name="tax_percent" inputMode="decimal" defaultValue={q ? String(q.tax_percent) : "0"} className={inputClass} /></Field>
-            <Field label="Shipping Amount"><input name="shipping_amount" inputMode="decimal" defaultValue={q ? String(q.shipping_amount) : "0"} className={inputClass} placeholder="0 — prints &quot;To be confirmed&quot;" /></Field>
-            <Field label="Currency"><input name="currency" defaultValue={q?.currency ?? "INR"} maxLength={3} className={inputClass} /></Field>
+            <Field label="Shipping"><input name="shipping_amount" inputMode="decimal" defaultValue={q ? String(q.shipping_amount) : "0"} className={inputClass} placeholder="0 — prints &quot;To be confirmed&quot;" /></Field>
+            {/* 2026-10-13 r2 — "CURRENCY SELECTION DROPDOWN, EK BAAR SELECT
+                KARTE HI PURI QUOTATION ME CHANGE HO JAYE": a real select off
+                the shared QUOTE_CURRENCIES list; controlled, so the whole
+                form's live figures re-render the moment it changes. */}
+            <Field label="Currency">
+              <select name="currency" value={currencySel} onChange={(e) => setCurrencySel(e.target.value)} className={inputClass}>
+                {QUOTE_CURRENCIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </Field>
+            {/* Status: born Draft; "Sent" only when explicitly chosen (sharing
+                a Draft later also flips it server-side). */}
+            {(!q || q.status === "Draft") && (
+              <Field label="Save As">
+                <select value={saveStatus} onChange={(e) => setSaveStatus(e.target.value === "Sent" ? "Sent" : "Draft")} className={inputClass}>
+                  <option value="Draft">Draft — edit / delete / send later</option>
+                  <option value="Sent">Sent — already shared with the buyer</option>
+                </select>
+              </Field>
+            )}
           </div>
 
           {/* 2026-10-13 — the labeled PI/CI sections. These print on the
@@ -1148,7 +1564,104 @@ function QuotePanel({
             <textarea name="bank_details" rows={4} defaultValue={q?.bank_details ?? ""} className={inputClass} placeholder={"Beneficiary Name: …\nBank Name & Branch: …\nAccount Number: …\nSWIFT / BIC: …\nIntermediary Bank: If applicable"} />
           </Field>
           <Field label="Terms"><input name="terms" defaultValue={q?.terms ?? ""} className={inputClass} placeholder="50% advance, balance before dispatch…" /></Field>
+          {/* 2026-10-13 r2 — "PAYMENT INSTRUCTION": the buyer-facing
+              bank-remittance paragraph (what their bank actually needs —
+              separate from the short condition line below). */}
+          <Field label="Payment Instructions (buyer's bank remittance note)">
+            <textarea
+              name="payment_instructions"
+              rows={2}
+              defaultValue={q?.payment_instructions ?? ""}
+              className={inputClass}
+              placeholder="Remit 100% advance to the beneficiary bank quoted on the Proforma Invoice quoting invoice no. as reference…"
+            />
+          </Field>
           <Field label="Notes"><textarea name="notes" rows={2} defaultValue={q?.notes ?? ""} className={inputClass} /></Field>
+
+          {/* ── 2026-10-13 — export-document fields (every PI/CI section) ── */}
+          <details className="rounded-lg border border-slate-200 bg-white p-3" open>
+            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Export document details (PI / CI sections)
+            </summary>
+            <div className="mt-3 space-y-3">
+              {/* 2026-10-13 r2 — "ADDRESS FORMAT Kaise KAAM KARTA HAI APNE
+                  ORDER PAGE SE USE KAR SAKTE HAIN": the order page's own
+                  structured-address UX, reused verbatim — paste the full
+                  address into Line 1 and it splits itself; postal code
+                  auto-fills city/state on blur. Composed into the one
+                  buyer_address column on save. */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className={labelClass}>Buyer Address (order-page format)</span>
+                  <button
+                    type="button"
+                    onClick={splitAddressInBox}
+                    className="text-xs font-medium text-amber-700 hover:underline"
+                    title="If the full address got pasted into Line 1, click to split it into City/State/Postcode below"
+                  >
+                    ✂ Split Address
+                  </button>
+                </div>
+                <p className="mb-2 text-[11px] text-slate-500">
+                  Tip: paste the buyer&apos;s full address (street, city, state, zip, country) into Address Line 1 — it splits itself.
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <span className={labelClass}>Address Line 1</span>
+                    <input value={addr.a1} onPaste={handleAddr1Paste} onChange={(e) => setAddr((cur) => ({ ...cur, a1: e.target.value }))} className={inputClass} placeholder="Plot 128, Sultan Abubakar Road" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className={labelClass}>Address Line 2</span>
+                    <input value={addr.a2} onChange={(e) => setAddr((cur) => ({ ...cur, a2: e.target.value }))} className={inputClass} />
+                  </div>
+                  <div><span className={labelClass}>City</span><input value={addr.city} onChange={(e) => setAddr((cur) => ({ ...cur, city: e.target.value }))} className={inputClass} /></div>
+                  <div><span className={labelClass}>State / Province</span><input value={addr.state} onChange={(e) => setAddr((cur) => ({ ...cur, state: e.target.value }))} className={inputClass} /></div>
+                  <div><span className={labelClass}>Postal / Zip Code</span><input value={addr.postal} onChange={(e) => setAddr((cur) => ({ ...cur, postal: e.target.value }))} onBlur={() => void handlePostalBlur()} className={inputClass} /></div>
+                  <div><span className={labelClass}>Country</span><input value={addr.country} onChange={(e) => setAddr((cur) => ({ ...cur, country: e.target.value }))} className={inputClass} placeholder="Nigeria" /></div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-3">
+                  <Field label="Buyer Attention (contact person)"><input name="buyer_attention" defaultValue={q?.buyer_attention ?? ""} className={inputClass} placeholder="e.g. Najm Ahmad / Alhaji …" /></Field>
+                  <Field label="Purpose of Invoice"><input name="purpose" defaultValue={q?.purpose ?? ""} className={inputClass} placeholder="Proforma invoice for advance payment and buyer-bank processing" /></Field>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Field label="Payment Condition"><input name="payment_condition" defaultValue={q?.payment_condition ?? ""} className={inputClass} placeholder="100% advance before dispatch" /></Field>
+                <Field label="Payment Method"><input name="payment_method" defaultValue={q?.payment_method ?? ""} className={inputClass} placeholder="Bank Transfer (T/T)" /></Field>
+                <Field label="Payment Due"><input name="payment_due_note" defaultValue={q?.payment_due_note ?? ""} className={inputClass} placeholder="Before dispatch / Net 30…" /></Field>
+                <Field label="Bank Charges"><input name="bank_charges" defaultValue={q?.bank_charges ?? ""} className={inputClass} placeholder="To be mutually agreed / Buyer's account…" /></Field>
+                <Field label="Tax Note (replaces tax % on PI)"><input name="tax_note" defaultValue={q?.tax_note ?? ""} className={inputClass} placeholder="To be confirmed — verify export GST treatment" /></Field>
+                <Field label="Shipping Note (replaces shipping ₹ on PI)"><input name="shipping_note" defaultValue={q?.shipping_note ?? ""} className={inputClass} placeholder="To be confirmed / Free FOB…" /></Field>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Field label="Incoterm">
+                  <select name="incoterm" defaultValue={q?.incoterm ?? ""} className={inputClass}>
+                    <option value="">To be confirmed</option>
+                    {["EXW", "FOB", "CFR", "CIF", "FCA", "DAP", "DDP"].map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </Field>
+                <Field label="Port of Loading"><input name="port_of_loading" defaultValue={q?.port_of_loading ?? ""} className={inputClass} placeholder="e.g. Mundra / Kolkata" /></Field>
+                <Field label="Port of Destination"><input name="port_of_destination" defaultValue={q?.port_of_destination ?? ""} className={inputClass} placeholder="e.g. Lagos / Onne" /></Field>
+                <Field label="Delivery Period"><input name="delivery_period" defaultValue={q?.delivery_period ?? ""} className={inputClass} placeholder="e.g. 90 days after advance payment" /></Field>
+                <Field label="Partial Shipment">
+                  <select name="partial_shipment" defaultValue={q?.partial_shipment ?? ""} className={inputClass}>
+                    <option value="">To be agreed</option>
+                    {['Allowed', 'Not allowed'].map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </Field>
+                <Field label="Transshipment">
+                  <select name="transshipment" defaultValue={q?.transshipment ?? ""} className={inputClass}>
+                    <option value="">To be agreed</option>
+                    {['Allowed', 'Not allowed'].map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </Field>
+                <Field label="Freight &amp; Insurance Paid By"><input name="freight_insurance" defaultValue={q?.freight_insurance ?? ""} className={inputClass} placeholder="Buyer / Seller (as per Incoterm)" /></Field>
+                <Field label="Country of Origin"><input name="country_of_origin" defaultValue={q?.country_of_origin ?? ""} className={inputClass} placeholder="India" /></Field>
+                <Field label="Packing Details"><input name="packing_details" defaultValue={q?.packing_details ?? ""} className={inputClass} placeholder="Individual / bulk packaging, as agreed" /></Field>
+              </div>
+            </div>
+          </details>
 
           {/* ── the items grid (rate × qty lines drive the money) ── */}
           <div>
@@ -1160,60 +1673,103 @@ function QuotePanel({
             </div>
             <div className="space-y-2">
               {items.map((it, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2">
-                  <input
-                    className={`${inputClass} col-span-4`}
-                    placeholder="Item description"
-                    value={it.description}
-                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
-                  />
-                  <input
-                    className={`${inputClass} col-span-2`}
-                    placeholder="HSN code"
-                    value={it.hsnCode}
-                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, hsnCode: e.target.value } : x)))}
-                  />
-                  <input
-                    className={`${inputClass} col-span-2`}
-                    placeholder="Qty"
-                    inputMode="decimal"
-                    value={it.qty}
-                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))}
-                  />
-                  <input
-                    className={`${inputClass} col-span-1`}
-                    placeholder="Unit"
-                    value={it.unit}
-                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))}
-                  />
-                  <input
-                    className={`${inputClass} col-span-2`}
-                    placeholder="Rate"
-                    inputMode="decimal"
-                    value={it.unitPrice}
-                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))}
-                  />
-                  <button
-                    type="button"
-                    className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50"
-                    onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))}
-                    aria-label="Remove item"
-                  >
-                    ✕
-                  </button>
+                <div key={idx} className="rounded-lg border border-slate-100 bg-white p-2">
+                  <div className="grid grid-cols-12 gap-2">
+                    <input
+                      className={`${inputClass} col-span-3`}
+                      placeholder="Item description"
+                      value={it.description}
+                      onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))}
+                    />
+                    <input
+                      className={`${inputClass} col-span-2`}
+                      placeholder="HSN code"
+                      value={it.hsnCode}
+                      onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, hsnCode: e.target.value } : x)))}
+                    />
+                    <input
+                      className={`${inputClass} col-span-2`}
+                      placeholder="Qty"
+                      inputMode="decimal"
+                      value={it.qty}
+                      onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))}
+                    />
+                    {/* 2026-10-13 r2 — "INQUARY KESE BHI AASKATI AHI — PCS,
+                        SQ FT, SQ MTR, QTY": a real unit dropdown (pcs / sq ft /
+                        sq mtr / …) with an Other… escape hatch for one-offs. */}
+                    <select
+                      className={`${inputClass} col-span-2`}
+                      value={(ITEM_UNITS as readonly string[]).includes(it.unit) ? it.unit : "__other"}
+                      onChange={(e) =>
+                        setItems((v) =>
+                          v.map((x, i) => (i === idx ? { ...x, unit: e.target.value === "__other" ? "" : e.target.value } : x))
+                        )
+                      }
+                    >
+                      {ITEM_UNITS.map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                      <option value="__other">Other…</option>
+                    </select>
+                    {!(ITEM_UNITS as readonly string[]).includes(it.unit) && (
+                      <input
+                        className={`${inputClass} col-span-1`}
+                        placeholder="Unit"
+                        value={it.unit}
+                        onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))}
+                      />
+                    )}
+                    <input
+                      className={`${inputClass} ${!(ITEM_UNITS as readonly string[]).includes(it.unit) ? "col-span-1" : "col-span-2"}`}
+                      placeholder="Rate"
+                      inputMode="decimal"
+                      value={it.unitPrice}
+                      onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))}
+                    />
+                    <button
+                      type="button"
+                      className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50"
+                      onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))}
+                      aria-label="Remove item"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {/* 2026-10-13 — per-item product specifications printed on the PI */}
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                    <input className={`${inputClass} !py-1.5`} placeholder="Size (2 × 6 feet)" value={it.size} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, size: e.target.value } : x)))} />
+                    <input className={`${inputClass} !py-1.5`} placeholder="Material (100% Jute)" value={it.material} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, material: e.target.value } : x)))} />
+                    <input className={`${inputClass} !py-1.5`} placeholder="Manufacturing (Handmade)" value={it.manufacturing} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, manufacturing: e.target.value } : x)))} />
+                    <input className={`${inputClass} !py-1.5`} placeholder="Colour / design" value={it.colourDesign} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, colourDesign: e.target.value } : x)))} />
+                    <input className={`${inputClass} !py-1.5`} placeholder="Packaging" value={it.packaging} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, packaging: e.target.value } : x)))} />
+                  </div>
+                  {/* 2026-10-13 r2 — "SIZE QUINTIY PCS SQ FT CBS FORMULA": live
+                      preview of the size × qty line totals (sq ft / sq mtr /
+                      CBM) — same computeItemDims the server stores from. */}
+                  {lineDims(it) && (
+                    <div className="mt-1.5 rounded bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800">
+                      📐 Size × Qty: {lineDims(it)!.text}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
             <div className="mt-2 flex items-center justify-between text-sm">
               <span className="text-slate-500">{items.filter((it) => it.description.trim()).length} item(s)</span>
-              <span className="font-semibold text-slate-900">Subtotal: {fmtMoney(liveSubtotal)}</span>
+              <span className="font-semibold text-slate-900">Subtotal ({currencySel}): {fmtDocMoney(liveSubtotal, currencySel)}</span>
             </div>
           </div>
 
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setShowForm(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
             <button type="submit" disabled={isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
-              {isPending ? "Saving…" : q ? "Save Changes" : "Create Quotation"}
+              {isPending
+                ? "Saving…"
+                : q
+                  ? "Save Changes"
+                  : saveStatus === "Sent"
+                    ? "Create & Mark Sent"
+                    : "Save as Draft"}
             </button>
           </div>
         </form>
@@ -1610,6 +2166,82 @@ function ConvertModal({ inquiry, onClose, onDone }: { inquiry: B2BInquiryView; o
           <button type="button" onClick={submit} disabled={isPending || !ref.trim()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">{isPending ? "Linking…" : "Link Order"}</button>
         </div>
       </div>
+    </SimpleDialog>
+  );
+}
+
+// ── Export profile editor (2026-10-13) ───────────────────────────────────────
+// "Seller ki complete details missing hain" + "Bank details missing hain":
+// ONE modal per company, saved once into b2b_export_profiles, printed on
+// every PI/CI. Blanks print "To be provided" on the document — this form
+// never invents IEC/PAN/GSTIN/bank numbers.
+function ExportProfileModal({ profile, onClose }: { profile: B2BExportProfileRow | null; onClose: () => void }) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function submit(formData: FormData) {
+    setError(null);
+    const val = (k: string) => String(formData.get(k) ?? "");
+    startTransition(async () => {
+      const res = await saveExportProfile({
+        sellerAddress: val("seller_address"),
+        iec: val("iec"),
+        pan: val("pan"),
+        gstin: val("gstin"),
+        email: val("email"),
+        phone: val("phone"),
+        bankBeneficiary: val("bank_beneficiary"),
+        bankName: val("bank_name"),
+        bankBranch: val("bank_branch"),
+        bankAccount: val("bank_account"),
+        bankSwift: val("bank_swift"),
+        bankIntermediary: val("bank_intermediary"),
+      });
+      if (res.ok) onClose();
+      else setError(res.error ?? "Save failed.");
+    });
+  }
+
+  return (
+    <SimpleDialog title="Company Export Profile" subtitle="Seller + bank details printed on every PI / CI — fill once per company" onClose={onClose} wide>
+      <form action={submit} className="space-y-4">
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Seller / Exporter</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Field label="Registered / Business Address">
+                <textarea name="seller_address" rows={3} defaultValue={profile?.seller_address ?? ""} className={inputClass} placeholder="Full address with city, state, PIN, India" />
+              </Field>
+            </div>
+            <Field label="IEC (Importer Exporter Code)"><input name="iec" defaultValue={profile?.iec ?? ""} className={inputClass} /></Field>
+            <Field label="PAN"><input name="pan" defaultValue={profile?.pan ?? ""} className={inputClass} /></Field>
+            <Field label="GSTIN (if applicable)"><input name="gstin" defaultValue={profile?.gstin ?? ""} className={inputClass} /></Field>
+            <Field label="Business Email"><input name="email" type="email" defaultValue={profile?.email ?? ""} className={inputClass} /></Field>
+            <Field label="Phone"><input name="phone" defaultValue={profile?.phone ?? ""} className={inputClass} /></Field>
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Beneficiary Bank Details</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Beneficiary Name"><input name="bank_beneficiary" defaultValue={profile?.bank_beneficiary ?? ""} className={inputClass} /></Field>
+            <Field label="Bank Name"><input name="bank_name" defaultValue={profile?.bank_name ?? ""} className={inputClass} /></Field>
+            <Field label="Branch / Address"><input name="bank_branch" defaultValue={profile?.bank_branch ?? ""} className={inputClass} /></Field>
+            <Field label="Account Number"><input name="bank_account" defaultValue={profile?.bank_account ?? ""} className={inputClass} /></Field>
+            <Field label="SWIFT / BIC"><input name="bank_swift" defaultValue={profile?.bank_swift ?? ""} className={inputClass} /></Field>
+            <Field label="Intermediary / Correspondent Bank (if any)"><input name="bank_intermediary" defaultValue={profile?.bank_intermediary ?? ""} className={inputClass} /></Field>
+          </div>
+        </div>
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Verify bank details with your bank before sharing a PI — buyers&apos; banks remit against exactly these numbers.
+        </p>
+        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" disabled={isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60">
+            {isPending ? "Saving…" : "Save Profile"}
+          </button>
+        </div>
+      </form>
     </SimpleDialog>
   );
 }

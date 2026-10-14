@@ -402,6 +402,299 @@ export function fmtPct(n: number): string {
   return `${(n || 0).toFixed(2)}%`;
 }
 
+// ── Export-document money (2026-10-13) ──────────────────────────────────────
+// The CA-style review of a real PI: "Total amount ka format galat hai —
+// $28,00,000.00 likha hai. International format: USD 2,800,000.00". Export
+// documents never use Indian lakh/crore grouping and never a bare symbol —
+// ISO code + international (en-US) grouping, and every total also printed
+// in words. Shared by the print page and the client preview so both agree.
+
+export const CURRENCY_NAMES: Record<string, string> = {
+  USD: "United States Dollars",
+  INR: "Indian Rupees",
+  EUR: "Euros",
+  GBP: "Pounds Sterling",
+  AED: "UAE Dirhams",
+  CAD: "Canadian Dollars",
+  AUD: "Australian Dollars",
+};
+
+/** International document format: `USD 2,800,000.00` (en-US grouping, ISO code prefix — never ₹28,00,000). */
+export function fmtDocMoney(n: number, currency = "USD"): string {
+  const code = (currency || "USD").toUpperCase();
+  try {
+    const body = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n || 0);
+    return `${code} ${body}`;
+  } catch {
+    return `${code} ${(n || 0).toFixed(2)}`;
+  }
+}
+
+const ONES = [
+  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen",
+];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function underThousand(n: number): string {
+  if (n === 0) return "";
+  if (n < 20) return ONES[n];
+  if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? ` ${ONES[n % 10]}` : "");
+  return `${ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ` ${underThousand(n % 100)}` : ""}`;
+}
+
+/**
+ * International-scale amount in words (Thousand / Million / Billion — export
+ * documents use international grouping, not lakh/crore):
+ *   2800000 USD → "Two Million Eight Hundred Thousand United States Dollars Only."
+ * Paisa/cents print as "and Fifty Cents" when non-zero.
+ */
+export function amountInWords(amount: number, currency = "USD"): string {
+  const code = (currency || "USD").toUpperCase();
+  const name = CURRENCY_NAMES[code] ?? code;
+  const abs = Math.abs(amount || 0);
+  const whole = Math.floor(abs);
+  const cents = Math.round((abs - whole) * 100);
+
+  if (whole === 0 && cents === 0) return `Zero ${name} Only.`;
+
+  const scales: { value: number; label: string }[] = [
+    { value: 1_000_000_000, label: "Billion" },
+    { value: 1_000_000, label: "Million" },
+    { value: 1_000, label: "Thousand" },
+  ];
+  let rest = whole;
+  const parts: string[] = [];
+  for (const s of scales) {
+    const count = Math.floor(rest / s.value);
+    if (count > 0) {
+      parts.push(`${underThousand(count)} ${s.label}`);
+      rest -= count * s.value;
+    }
+  }
+  if (rest > 0) parts.push(underThousand(rest));
+
+  const negative = amount < 0 ? "Minus " : "";
+  const words = parts.length > 0 ? parts.join(" ") : "Zero";
+  const frac = cents > 0 ? ` and ${underThousand(cents)} Cents` : "";
+  return `${negative}${words}${frac} ${name} Only.`;
+}
+
+// ── Flexible units + size-quantity formulas (2026-10-13 round 2) ────────────
+// "INQUARY KESE BHI AASKATI AHI — PCS, SQ FT, SQ MTR, QTY" + "SIZE QUINTIY
+// PCS SQ FT CBS FORMULA, SABHI KI CALCULATION SAHI JAGAH MATCH HONI
+// CHAHIYE": items can be measured in pieces OR area/volume units, and a
+// Size spec (L × W, e.g. "2 × 6 feet") × qty computes sq ft / sq mtr / CBM
+// live so every place that prints them (quote form, PI/CI, packing data)
+// agrees — all pure, all client-safe, all stub-testable.
+
+/** Common export line-item units — the select options on the quote form. */
+export const ITEM_UNITS = [
+  "pcs",
+  "nos",
+  "sets",
+  "pair",
+  "kg",
+  "mtr",
+  "yard",
+  "sq ft",
+  "sq mtr",
+  "box",
+  "carton",
+  "roll",
+  "bag",
+  "bundle",
+  "litre",
+] as const;
+
+export const SIZE_UNITS = ["ft", "m", "cm", "inch"] as const;
+export type SizeUnit = (typeof SIZE_UNITS)[number];
+
+const SIZE_UNIT_ALIASES: Record<string, SizeUnit> = {
+  ft: "ft", feet: "ft", foot: "ft", "'": "ft",
+  m: "m", mtr: "m", meter: "m", metre: "m", meters: "m", metres: "m",
+  cm: "cm", centimeter: "cm", centimetre: "cm", centimeters: "cm", centimetres: "cm",
+  inch: "inch", inches: "inch", in: "inch", '"': "inch",
+};
+
+export type ParsedSize = { length: number; width: number; thickness: number | null; unit: SizeUnit };
+
+/**
+ * Parses a free-typed size spec into length × width (× optional thickness)
+ * + the unit. Accepts the shapes people actually type:
+ *   "2 × 6 feet" / "2x6" / "2 * 6" / "60 x 90 cm" / "2×6×0.05 ft" / "4 x 6"
+ * Separator: ×, x, X, * (not the letter x inside words). Unit is optional
+ * (defaults to ft — this business's rug/dhurrie sizes are feet-first) and
+ * recognised anywhere in the string. Returns null for anything unparseable
+ * so the UI can simply show no preview rather than a wrong number.
+ */
+export function parseSizeSpec(text: string): ParsedSize | null {
+  const raw = (text || "").trim().toLowerCase();
+  if (!raw) return null;
+
+  // Unit: last word-ish token that matches an alias (also accepts bare ' / ").
+  let unit: SizeUnit = "ft";
+  const unitMatch = raw.match(/(?:^|[^a-z"])(ft|feet|foot|mtr|meter|metre|meters|metres|m|cm|centimeters?|centimetres?|inch|inches|in|["'])\s*$/);
+  if (unitMatch) unit = SIZE_UNIT_ALIASES[unitMatch[1]] ?? "ft";
+
+  // Numbers: pull every decimal number BEFORE stripping the unit word so
+  // "in" (inch alias) never leaks into the number list as part of a word.
+  const numbers = (raw.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+  if (numbers.length < 2) return null;
+  const [length, width, thickness] = numbers;
+  if (!(length > 0) || !(width > 0)) return null;
+  return { length, width, thickness: thickness && thickness > 0 ? thickness : null, unit };
+}
+
+const METERS_PER: Record<SizeUnit, number> = { ft: 0.3048, m: 1, cm: 0.01, inch: 0.0254 };
+
+export function lengthToMeters(value: number, unit: SizeUnit): number {
+  return (value || 0) * (METERS_PER[unit] ?? 0.3048);
+}
+
+export type ItemDims = {
+  /** per-line total area in sq ft (qty × L × W) */
+  sqFt: number;
+  /** per-line total area in sq mtr (sq ft × 0.09290304) */
+  sqMtr: number;
+  /** per-line total volume in CBM — only when thickness given, else 0 */
+  cbm: number;
+};
+
+export const SQFT_TO_SQM = 0.09290304;
+
+/**
+ * The "SIZE × QTY" formula: line totals in sq ft / sq mtr / CBM.
+ *   sqFt  = qty × L × W (converted to feet when the size unit is m/cm/inch)
+ *   sqMtr = sqFt × 0.09290304
+ *   cbm   = qty × L(m) × W(m) × T(m) — 0 unless a thickness was parsed
+ * Rounded to 2 decimals at the boundary (same rule as every money figure).
+ */
+export function computeItemDims(input: { qty: number; length: number; width: number; thickness?: number | null; unit: SizeUnit }): ItemDims {
+  const qty = Math.max(0, input.qty || 0);
+  const lM = lengthToMeters(input.length, input.unit);
+  const wM = lengthToMeters(input.width, input.unit);
+  const tM = input.thickness ? lengthToMeters(input.thickness, input.unit) : 0;
+  const sqMtr = round2(qty * lM * wM);
+  const sqFt = round2(sqMtr / SQFT_TO_SQM);
+  const cbm = tM > 0 ? round2(qty * lM * wM * tM) : 0;
+  return { sqFt, sqMtr, cbm };
+}
+
+/** Convenience: parse a size spec + qty straight to dims (null spec → null). */
+export function dimsFromSizeSpec(qty: number, sizeSpec: string | null | undefined): ItemDims | null {
+  const parsed = parseSizeSpec(sizeSpec ?? "");
+  if (!parsed) return null;
+  return computeItemDims({ qty, length: parsed.length, width: parsed.width, thickness: parsed.thickness, unit: parsed.unit });
+}
+
+/** Human line for the form preview / PI sub-line: "24,000,000.00 sq ft · 2,229,672.96 sq mtr" (+ CBM when known). */
+export function formatDims(d: ItemDims): string {
+  const parts = [`${d.sqFt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft`];
+  if (d.sqFt > 0) parts.push(`${d.sqMtr.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq mtr`);
+  if (d.cbm > 0) parts.push(`${d.cbm.toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} CBM`);
+  return parts.join(" · ");
+}
+
+// ── Professional send template (2026-10-13 round 2) ─────────────────────────
+// "QUATATION BHI AGR SEND KARTE HAI TO EK BADHIYA SE FORMATE ME JAYE USKE
+// PASS": one formatted message (WhatsApp / email body) built from the SAME
+// stored quote + the SAME formatters the print page uses — so what the
+// buyer receives on WhatsApp exactly matches the A4 PDF. Pure function →
+// stub-testable, shared by both share buttons.
+
+export type QuotationMessageLine = {
+  description: string;
+  hsnCode?: string | null;
+  qty: number;
+  unit: string | null;
+  unitPrice: number;
+  lineTotal: number;
+  sizeSpec?: string | null;
+};
+
+export type QuotationMessageInput = {
+  docNo: string; // e.g. PI/Q-26-27-0001/01 — or quote_no when no doc issued yet
+  docDate: string; // display date, e.g. "13 Oct 2026"
+  validUntil: string | null;
+  companyName: string;
+  buyerName: string;
+  buyerCompany?: string | null;
+  currency: string;
+  subtotal: number;
+  taxLabel: string; // "Tax (0%)" or the tax_note text
+  taxAmount: number;
+  taxIsNote: boolean; // true → print the note text instead of the amount
+  shippingLabel: string; // "Shipping & Freight" or the shipping_note text
+  shippingAmount: number;
+  shippingIsNote: boolean;
+  total: number;
+  paymentCondition?: string | null;
+  paymentMethod?: string | null;
+  deliveryPeriod?: string | null;
+  incoterm?: string | null;
+  terms?: string | null;
+  lines: QuotationMessageLine[];
+};
+
+/**
+ * Builds the buyer-facing quotation message — bold headings, per-line
+ * details with size spec, totals block with amount-in-words, payment and
+ * delivery lines, validity and a sign-off. Plain text (wa.me + email both
+ * render it faithfully); the ₹/$ grouping is always the international
+ * fmtDocMoney so the buyer never sees lakh-style figures.
+ */
+export function buildQuotationMessage(input: QuotationMessageInput): string {
+  const cur = (input.currency || "USD").toUpperCase();
+  const bar = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+  const rows = input.lines
+    .map((l, i) => {
+      const head = `${i + 1}. ${l.description}${l.sizeSpec ? ` (${l.sizeSpec})` : ""}`;
+      const meta = `   Qty: ${l.qty.toLocaleString("en-US")} ${l.unit ?? "pcs"} × ${fmtDocMoney(l.unitPrice, cur)}`;
+      const total = `   = ${fmtDocMoney(l.lineTotal, cur)}`;
+      const hsn = l.hsnCode ? `   HSN: ${l.hsnCode}` : null;
+      return [head, meta, hsn, total].filter(Boolean).join("\n");
+    })
+    .join("\n");
+
+  const totals = [
+    `Subtotal: ${fmtDocMoney(input.subtotal, cur)}`,
+    `${input.taxIsNote ? `Tax: ${input.taxLabel}` : `${input.taxLabel}: ${fmtDocMoney(input.taxAmount, cur)}`}`,
+    `${input.shippingIsNote ? `Freight: ${input.shippingLabel}` : `${input.shippingLabel}: ${fmtDocMoney(input.shippingAmount, cur)}`}`,
+    `*TOTAL: ${fmtDocMoney(input.total, cur)}*`,
+    `Amount in words: ${amountInWords(input.total, cur)}`,
+  ].join("\n");
+
+  const terms = [
+    input.paymentCondition && `Payment: ${input.paymentCondition}`,
+    input.paymentMethod && `Method: ${input.paymentMethod}`,
+    input.deliveryPeriod && `Delivery: ${input.deliveryPeriod}`,
+    input.incoterm && `Incoterm: ${input.incoterm}`,
+    input.validUntil && `Valid until: ${input.validUntil}`,
+    input.terms && `Terms: ${input.terms}`,
+  ].filter(Boolean).join("\n");
+
+  return [
+    `*${input.companyName.toUpperCase()}*`,
+    `*PROFORMA QUOTATION* — ${input.docNo}`,
+    `Date: ${input.docDate}`,
+    bar,
+    `Buyer: ${input.buyerName}${input.buyerCompany ? ` (${input.buyerCompany})` : ""}`,
+    bar,
+    rows,
+    bar,
+    totals,
+    ...(terms ? [bar, terms] : []),
+    bar,
+    `This is a quotation/proforma — not a final commercial invoice.`,
+    `For orders & confirmation:`,
+    `${input.companyName}`,
+  ].join("\n");
+}
+
 /** Status chip colour classes — one place so every page agrees. */
 export function statusTone(status: string): string {
   switch (status) {
