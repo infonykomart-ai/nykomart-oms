@@ -277,6 +277,33 @@ as the Credit Note Register, with a matching error-boundary override):
   `PurchaseBillEditForm`, which made `npx tsc --noEmit` fail on the
   previous round's commit.
 
+**B2B PI/CI print — both 2026-10-13 rebuilds merged (2026-10-15)** — the
+same "complete Proforma Invoice" feature had been built twice on two
+machines (a local commit and an uploaded one), which blocked every push.
+Both are now integrated instead of one winning:
+
+- **Seller + bank block**: the editable `b2b_export_profiles` row prints
+  first, falling back to the `companies` seller columns
+  (business_address / iec_no / pan_no / gstin / business_email /
+  business_phone), then "To be provided" — both header editors kept
+  (🏢 Seller Details + 🏦 Export Profile).
+- **Payment / shipping sections**: the structured quotation columns
+  (payment_condition/method/due_note, bank_charges, ports, delivery
+  period, partial shipment, transshipment, freight & insurance, packing,
+  country of origin) print as rows AND the free-text `payment_terms` /
+  `shipping_terms` blocks print below them, deduped by label so nothing
+  appears twice; all-`DEFAULT_SHIPPING_LINES` fallback keeps every fact
+  "To be confirmed".
+- **Items**: per-line specs (size / material / manufacturing / colour /
+  packaging) + the 📐 SIZE × QTY dimension line (`computeItemDims`) plus
+  the quotation's own `product_specs` block. Money + amount-in-words come
+  from `lib/b2b/money-format` (INR keeps lakh words, export currencies
+  international grouping).
+- Both migrations are `ADD COLUMN IF NOT EXISTS`, so they run in any
+  order; the duplicated `buyer_address` column that the auto-merge left
+  in `db/schema.sql` / `src/types/database.ts` is deduped by hand (types
+  can't be regenerated here without DB access).
+
 ## Database & schema workflow (important)
 
 - `db/schema.sql` is the **only** thing needed to stand up a fresh database — every dated
