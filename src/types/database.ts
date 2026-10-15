@@ -9025,6 +9025,10 @@ export type Database = {
           id: string;
           store_id: string;
           spend_date: string;
+          // 2026-10-15 — Amazon marketplace country code ('US', 'GB', …);
+          // '' for every non-Amazon store. See
+          // db/2026-10-15-ad-spend-amazon-country.sql.
+          country_code: string;
           budget_usd: number;
           spend_usd: number;
           entry_by_employee_id: string;
@@ -9034,6 +9038,7 @@ export type Database = {
           id?: string;
           store_id: string;
           spend_date: string;
+          country_code?: string;
           budget_usd?: number;
           spend_usd?: number;
           entry_by_employee_id: string;

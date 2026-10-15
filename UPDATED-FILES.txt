@@ -1,12 +1,41 @@
-UPDATED FILES in commit 4734ea3 (new: A, modified: M)
-================================================
-A	db/2026-10-13-b2b-pi-export-details.sql
+UPDATED FILES — Store Ad Spend: Amazon country-wise Budget/Spend + monthly-statement verification (2026-10-15)
+            + B2B: not-yet-run PI migration ab screen par dikhta hai
+================================================================================================================
+A	db/2026-10-15-ad-spend-amazon-country.sql
 M	db/schema.sql
-M	src/app/dashboard/b2b/actions.ts
-M	src/app/dashboard/b2b/b2b-client.tsx
-M	src/app/dashboard/b2b/documents/[id]/page.tsx
-M	src/app/dashboard/b2b/page.tsx
-A	src/lib/b2b/money-format.ts
 M	src/types/database.ts
+A	src/app/dashboard/ad-spend/amazon-countries.ts
+A	src/app/dashboard/ad-spend/ad-spend-stats.ts
+M	src/app/dashboard/ad-spend/actions.ts
+M	src/app/dashboard/ad-spend/ad-spend-entry-section.tsx
+M	src/app/dashboard/ad-spend/ad-spend-report-table.tsx
+M	src/app/dashboard/ad-spend/page.tsx
+M	src/app/dashboard/b2b/page.tsx
+M	src/app/dashboard/b2b/b2b-client.tsx
+M	BRAIN.md
+M	UPDATED-FILES.txt
 
-NOTE: db/2026-10-13-b2b-pi-export-details.sql ko Supabase SQL Editor me run karna zaroori hai.
+WHAT CHANGED
+============
+1. Amazon Country section (Amazon stores only): the daily entry form now asks for a Country
+   (US / CA / MX / AU / UK / DE / IT / JP / FR / ES / IN / AE) when the selected store is an
+   Amazon store, and the Report tab gains a "🌍 Amazon — Country-wise Budget / Spend" table.
+   Etsy / eBay / Website stores are untouched — one row per day, as before.
+2. Statement verification + link: every Report row (Monthly Roll-up, Daily Master, Amazon
+   Country) now shows whether that store's orders were actually found in the store's imported
+   marketplace statement (✅ / ⚠️ / ⏳) and links straight to that store's statement detail for
+   the month (/dashboard/reports/store-expenses?store=…&from=…&to=…).
+3. B2B PI: pehle chup-chaap "To be provided" chhap raha tha jab PI ki migration run nahi hui thi.
+   Ab ek explicit-column probe query fail hoti hai, aur wahi message 🛠️ setup card par pahunchta
+   hai jo chalane wali SQL files ki list dikhata hai (ab us list me
+   db/2026-10-13-b2b-pi-export-fields.sql bhi hai). Register/quotations/payments pehle jaise
+   load hote rahenge — sirf missing-column wala hissa screen par aa jayega.
+
+NOTES — ye 2 SQL files Supabase SQL Editor me run karni hain
+============================================================
+1. db/2026-10-13-b2b-pi-export-fields.sql   -> B2B PI ke payment terms / ports / packing / item
+   specs + b2b_export_profiles. ISKE BINA PI me "To be provided" aata hai.
+2. db/2026-10-15-ad-spend-amazon-country.sql -> country_code column + (store, date, country)
+   unique key. ISKE BINA Amazon store ki country-wise entry save nahi hogi.
+   (Purani Amazon rows country '' ke saath "Other" row me dikhengi — dobara save karne par sahi
+   country aa jayegi.)

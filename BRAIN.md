@@ -283,6 +283,53 @@ Audit confirmed P&L is accrual (bill-basis — `total_paid`/`balance_due` never 
   `db/2026-09-18-orders-multi-photo-and-capability-sync.sql` once on production for
   photo_urls + the function (the next permissions page visit does the rest).
 
+## 5g. Ad Spend: Amazon country split + statement verification (2026-10-15)
+
+Two user-requested additions to `/dashboard/ad-spend` (module: `src/app/dashboard/ad-spend/`).
+
+- **Amazon Country dimension** — "AMAZON ME ALAG ALAG COUNTRY KE HISAB SE BUDGT & SPEND HOTA HAI TO
+  USKA MERE HISAB SE COUNTRY SECTION OR BAN JAYE JO SIRF AMAZON PAR WORK KARE". `store_ad_spend`
+  gained `country_code` (db/2026-10-15-ad-spend-amazon-country.sql + folded into db/schema.sql) and
+  its unique key became (store, date, country); the old (store, date) key is dropped by the
+  migration. The 12 countries + currencies live in `amazon-countries.ts` (US CA MX AU GB DE IT JP FR
+  ES IN AE) and are validated in both the action and a DB CHECK. The Country field appears on the
+  entry form **only** for stores whose name matches `/amazon/i` (the app's existing Amazon-store
+  convention — orders/new/page.tsx does the same) and is required there; Etsy/eBay/Website stores
+  keep exactly one row per day with `country_code = ''`. Country codes are stored, never labels.
+- **Statement verification + link** — "STORE KI MONTHLY STATEMENT SE BHI VERFY NAHI HOTA HAI ...
+  OR LINK HO JAYE". Every row of the Monthly Roll-up, Daily Master and the Amazon Country table now
+  carries a Statement column: ✅ matched/total, ⚠️ partial, ⏳ nothing imported (plus "No orders" for
+  a spend-only row), derived from `matchMarketplaceFees()` — the SAME matcher the Orders hub and the
+  Store Expense Report use, so "verified" can't drift between screens. Each row links to
+  `/dashboard/reports/store-expenses?store=…&from=…&to=…` (that store+month's statement lines, order
+  by order). Import/type statements on Statement Entry / CSV Upload.
+- **Aggregation moved out of the page**: all report math (country split, roll-ups, verification
+  counts) now lives in the pure `ad-spend-stats.ts` (`buildAdSpendReport`), same pattern as
+  `daily-sheet-stats.ts`, so screen / print / CSV-Excel exports can never disagree. Behaviour for
+  non-Amazon stores is unchanged (verified with a stub run: same qty/usd/budget/spend per store+day).
+- **Known caveat**: Amazon rows entered BEFORE this migration have `country_code = ''` and therefore
+  show under the Country table's **Other** row until someone re-saves them with a country; the same
+  happens for buyer countries with no Amazon ad account (e.g. Netherlands). The section's own note
+  says so on screen.
+- **Entry-form UX**: the Store select is now controlled and (with the country) stays selected after
+  Save — Budget/Spend/Date still reset — so an Amazon day is entered country by country instead of
+  re-picking the store 12 times.
+
+## 5h. B2B: a not-yet-run PI migration is now VISIBLE (2026-10-15)
+
+- **Symptom it fixes**: after the 2026-10-13 PI export round, the Proforma Invoice printed
+  "To be provided" in its payment-terms / port / packing / item-spec blocks with no error anywhere
+  ("ye cheezein nahi aa rahi"). Cause: `page.tsx` loaded quotations with `select("*")`, and PostgREST
+  returns only the columns that EXIST — a missing column never errors, so
+  `db/2026-10-13-b2b-pi-export-fields.sql` being un-run was invisible.
+- **Fix**: one extra cheap probe query asks for 4 of those columns EXPLICITLY
+  (`payment_condition, port_of_loading, port_of_destination, packing_details`, `limit(1)`); before the
+  migration it fails loudly and that message now feeds `loadError` → the existing 🛠️ SetupNotice card,
+  which lists the SQL files to run in order. `db/2026-10-13-b2b-pi-export-fields.sql` was added to that
+  list (it was already named by the separate export-profile banner).
+- Deliberately still non-fatal for everything else: the register, quotations and payments keep loading
+  exactly as before — only the missing-column piece is surfaced.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:
