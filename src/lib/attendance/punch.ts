@@ -28,7 +28,21 @@ import { notifyPunchInTelegram, notifyPunchOutTelegram } from "./telegram-notify
 // time 9:20 se 9:45 am tak agar koi present karta hai to vo present
 // dikhaye" — moved from 09:30 to 09:45. Anyone punching in AT or before
 // 9:45 AM IST now shows Present; only strictly after 9:45 shows Late.
-const LATE_CUTOFF_HHMM = "09:45";
+export const LATE_CUTOFF_HHMM = "09:45";
+
+/**
+ * 2026-10-15 — which status a punch-in time earns, in IST terms. Extracted so
+ * the live punch below and the Attendance Admin's MANUAL punch (where the
+ * admin types the time — "kitne baje ka punch dalna hai") can never disagree
+ * about what counts as Late: at or before the cutoff is Present, strictly
+ * after it is Late. "HH:MM" compares correctly as a string because it is
+ * zero-padded 24-hour. A blank time (manual entry can leave it empty) is left
+ * to the caller's own default.
+ */
+export function attendanceStatusForPunchIn(hhmm: string): "Present" | "Late" | null {
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(hhmm)) return null;
+  return hhmm > LATE_CUTOFF_HHMM ? "Late" : "Present";
+}
 
 // 2026-10-02 — Web-Punch GPS capture (TeamOffice parity): the manual
 // Punch In/Out buttons send a one-shot browser geolocation fix along with

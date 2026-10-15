@@ -70,6 +70,30 @@ export function istDateFromInstant(iso: string): string {
 }
 
 /**
+ * 2026-10-15 — an admin-entered PUNCH TIME ("HH:MM" IST, as typed into the
+ * Attendance Admin manual-entry form — "kitne baje ka punch dalna hai") to a
+ * real timestamptz for attendance.punch_in/punch_out. The IST offset is
+ * written into the string itself ("+05:30"), so the stored instant is correct
+ * no matter what timezone the server process runs in — the same reason every
+ * other helper here exists. Returns null for a blank/invalid time rather than
+ * throwing, so callers can treat "no time entered" and "bad time entered"
+ * the same way (leave the column alone).
+ */
+export function istTimeToInstant(dateStr: string, hhmm: string): string | null {
+  const time = (hhmm ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) return null;
+  const parsed = new Date(`${dateStr}T${time}:00+05:30`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+/** "HH:MM" IST as typed by a user, normalized to "HH:MM" or "" when blank/invalid. */
+export function normalizeISTTimeInput(value: string): string {
+  const time = (value ?? "").trim();
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(time) ? time : "";
+}
+
+/**
  * 2026-09-09 — splits a [startIso, endIso) stopped-timer interval into one
  * segment per IST calendar day it touches, e.g. a task timer left running
  * from 11pm to 1am IST produces 2 segments (yesterday's last hour, today's

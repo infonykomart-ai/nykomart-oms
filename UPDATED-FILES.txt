@@ -1,67 +1,81 @@
-UPDATED FILES — UI/UX cleanup round (2026-10-15)
-================================================
-Purani Hinglish UI strings English me, responsive layout (columns/text kisi par nahi chadhe),
-theme-aware text color + font, aur linter ke dead-code warnings saaf.
+UPDATED FILES — 2026-10-15 CUMULATIVE ROUND (Attendance manual punch time + Amazon live-rate totals)
+=================================================================================================
+Base: current origin/main. Is round me pichla "ui-fixes" round bhi shamil hai (cumulative) —
+poori history BRAIN.md me hai (§5g Amazon country + statement verify, §5h B2B PI migration,
+§5i UI round, §5j manual punch, §5k Amazon live-rate totals).
 
-UI TEXT → ENGLISH (saari user-visible strings)
----------------------------------------------
-M	src/app/api/companion-chat/route.ts                     (AI chat reply/error messages)
-M	src/app/api/telegram-send-order/route.ts                (send errors)
-M	src/app/api/whapi-send-order/route.ts                   (send errors)
+N = NAYI FILE   M = MODIFIED (overwrite)
+
+A) ATTENDANCE ADMIN — MANUAL PUNCH AB ASLI TIME KE SAATH
+-------------------------------------------------------
+M	src/lib/attendance/ist-date.ts                 (naya: istTimeToInstant(date, "HH:MM") + normalizeISTTimeInput)
+M	src/lib/attendance/punch.ts                    (naya: attendanceStatusForPunchIn — wahi 09:45 IST Present/Late rule)
+M	src/app/dashboard/attendance/admin/actions.ts  (setManualAttendance: punch_in/punch_out save, validation, "kya save hua" message)
+M	src/app/dashboard/attendance/admin/manual-attendance-form.tsx (Punch In / Punch Out time fields)
+M	src/app/dashboard/attendance/admin/page.tsx    (Manual Correction panel ka description)
+
+B) AMAZON TOTAL BUDGET/SPEND — LIVE CONVERSION RATE (auto, daily)
+-----------------------------------------------------------------
+N	db/2026-10-15b-fx-rate-cache.sql               ⚠ Supabase me run karna hai (nayi table)
+N	src/lib/fx/rates.ts                            (loadFxSnapshot — 12h auto refresh, fail-safe)
+M	db/schema.sql                                  (fx_rate_cache folded in)
+M	src/types/database.ts                          (fx_rate_cache types)
+M	src/app/dashboard/ad-spend/actions.ts          (refreshFxRatesAction = "↻ Refresh rates")
+M	src/app/dashboard/ad-spend/amazon-countries.ts (AMAZON_CURRENCIES)
+M	src/app/dashboard/ad-spend/ad-spend-report-table.tsx (Total Budget/Spend (USD + ₹) strip, Spend (₹) column, total row, rate line)
+M	src/app/dashboard/ad-spend/page.tsx            (rate snapshot sirf jab scope me Amazon store ho)
+
+C) AMAZON COUNTRY SPLIT + STATEMENT VERIFICATION + LINK (pichle round se — aapke repo me already hai)
+----------------------------------------------------------------------------------------------------
+   db/2026-10-15-ad-spend-amazon-country.sql (agar Supabase me run nahi ki to run karo:
+   country_code + nayi unique key). ad-spend-stats.ts / ad-spend-entry-section.tsx me is round koi change nahi.
+
+D) UI ROUND — English UI text + responsive layout + theme-aware text/font
+------------------------------------------------------------------------
+M	src/app/api/companion-chat/route.ts
+M	src/app/api/telegram-send-order/route.ts
+M	src/app/api/whapi-send-order/route.ts
+M	src/app/dashboard/admin/companion-access/companion-access-client.tsx
 M	src/app/dashboard/admin/departments/page.tsx
+M	src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
 M	src/app/dashboard/attendance/admin/coff-report/page.tsx
 M	src/app/dashboard/attendance/admin/gps-report/page.tsx
 M	src/app/dashboard/attendance/my-recurring-work-form.tsx
 M	src/app/dashboard/attendance/telegram-connect-card.tsx
 M	src/app/dashboard/b2b/engine/page.tsx
+M	src/app/dashboard/b2b/products/products-client.tsx
 M	src/app/dashboard/bill-payment/credit-note-panel.tsx
 M	src/app/dashboard/bill-payment/page.tsx
 M	src/app/dashboard/bill-payment/wallet-panel.tsx
-M	src/app/dashboard/courier-booking/actions.ts            (address / FedEx ETD hints)
-M	src/app/dashboard/courier-booking/create-shipment-form.tsx (CSB-V preview dialog)
-M	src/app/dashboard/documents/actions.ts                   (duplicate-entry error)
-M	src/app/dashboard/documents/document-entry-tabs.tsx      (A4 edit dialog subtitles)
+M	src/app/dashboard/courier-booking/actions.ts
+M	src/app/dashboard/courier-booking/create-shipment-form.tsx
+M	src/app/dashboard/documents/actions.ts
+M	src/app/dashboard/documents/credit-note-edit-form.tsx
+M	src/app/dashboard/documents/credit-note-form.tsx
+M	src/app/dashboard/documents/document-entry-tabs.tsx
+M	src/app/dashboard/documents/duty-bill-section.tsx
+M	src/app/dashboard/documents/freight-bill-section.tsx
+M	src/app/dashboard/documents/inline-add-shipment.tsx
+M	src/app/dashboard/documents/purchase-bill-multi-form.tsx
+M	src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
 M	src/app/dashboard/expenses/recurring-debits-section.tsx
+M	src/app/dashboard/invoices/invoice-generate-form.tsx
 M	src/app/dashboard/orders/new/order-whatsapp-button.tsx
+M	src/app/dashboard/orders/order-hold-cancel-actions.tsx
 M	src/app/dashboard/orders/order-list-table.tsx
+M	src/app/dashboard/orders/page.tsx
 M	src/app/dashboard/orders/photo-url-field.tsx
+M	src/app/dashboard/parties/[id]/ledger/page.tsx
+M	src/app/dashboard/reports/finance-dashboard/page.tsx
+M	src/app/dashboard/stock/stock-in-form.tsx
+M	src/app/globals.css
 M	src/components/logout-button.tsx
 M	src/components/po-line-actions.tsx
 M	src/lib/attendance/telegram-notify.ts
 
-LAYOUT — screen ke according auto adjust (scroll / responsive grids)
--------------------------------------------------------------------
-M	src/app/dashboard/parties/[id]/ledger/page.tsx
-M	src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
-M	src/app/dashboard/admin/companion-access/companion-access-client.tsx
-M	src/app/dashboard/documents/duty-bill-section.tsx
-M	src/app/dashboard/documents/freight-bill-section.tsx
-M	src/app/dashboard/documents/credit-note-form.tsx
-M	src/app/dashboard/documents/credit-note-edit-form.tsx
-M	src/app/dashboard/documents/purchase-bill-multi-form.tsx
-M	src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
-M	src/app/dashboard/documents/inline-add-shipment.tsx
-M	src/app/dashboard/invoices/invoice-generate-form.tsx
-M	src/app/dashboard/orders/order-hold-cancel-actions.tsx
-M	src/app/dashboard/orders/page.tsx
-M	src/app/dashboard/stock/stock-in-form.tsx
-M	src/app/dashboard/b2b/products/products-client.tsx
+DOCS
+----
+M	BRAIN.md        (§5j attendance manual punch, §5k Amazon live-rate totals)
+M	UPDATED-FILES.txt
 
-THEME / TYPOGRAPHY (dono inherit-only — theme waise hi auto-adjust karta rahega)
-------------------------------------------------------------------------------
-M	src/app/globals.css   -> body font = theme ka --font-sans (Arial hata diya)
-                        -> [data-theme] ka inherited text color = --oms-text (near-black)
-                        -> [data-theme] table me tabular figures (money columns align)
-
-DEAD CODE (linter warnings saaf)
---------------------------------
-M	src/app/dashboard/reports/finance-dashboard/page.tsx  (unused BarChart import)
-
-AUDIT — kuch karne ki zaroorat nahi thi (verify kiya gaya)
-----------------------------------------------------------
-* 52 static internal hrefs + saare capability tiles + redirect()/router.push() targets: sab
-  real page.tsx par resolve hote hain — koi broken link nahi.
-* Koi orphan dashboard route nahi, koi href="#", koi khaali onClick, koi "coming soon"/TODO nahi.
-* Attendance Admin ke tables pehle se horizontal scroll me the (shared tableWrapClass).
-
-NOTE: is round me koi DB migration nahi hai — sirf UI/code changes hain.
+KOI NAYA NPM PACKAGE NAHI CHAHIYE — live rate ke liye seedha fetch() use kiya gaya hai.

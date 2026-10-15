@@ -7,6 +7,10 @@ import { AdSpendReportTable } from "./ad-spend-report-table";
 // verification) lives in its own module, same as the Daily Order Sheet's
 // daily-sheet-stats.ts: page.tsx fetches/scopes, the module decides numbers.
 import { buildAdSpendReport, type AdSpendReport } from "./ad-spend-stats";
+// 2026-10-15b — live FX snapshot for the Amazon country-wise totals
+// ("ACTUAL CONVERSION KE HISAB SE JO DAILY BASIS PAR UPDATE HO AUTOMATICLLY").
+import { loadFxSnapshot } from "@/lib/fx/rates";
+import { AMAZON_CURRENCIES } from "./amazon-countries";
 // 2026-10-15 — "STORE KI MONTHLY STATEMENT SE BHI VERFY... OR LINK HO
 // JAYE": the statement match is the SAME helper the Orders hub and the
 // Store Expense Report use, so "verified" means the same thing everywhere.
@@ -87,6 +91,7 @@ export default async function AdSpendPage({
   const relevantStoreIds = scopedStores.map((s) => s.id);
 
   let report: AdSpendReport | null = null;
+  let fx: Awaited<ReturnType<typeof loadFxSnapshot>> | null = null;
   let sheet: DailyOrderSheetData | null = null;
   const now = new Date(); // fine here — server-render time, not inside a workflow script
   const defaultMonth = now.toISOString().slice(0, 7);
@@ -178,6 +183,11 @@ export default async function AdSpendPage({
       companyName,
       matches,
     });
+
+    // 2026-10-15b — only an Amazon store needs a currency conversion, so the
+    // rates are loaded only then (and the loader keeps them fresh on its own:
+    // it re-pulls from the provider once the cached snapshot is 12h old).
+    if (report.hasAmazonStore) fx = await loadFxSnapshot(supabase, AMAZON_CURRENCIES);
   }
 
   // 2026-10-13 — "DAILY ORDER SHEET ... AAJ SABHI STORE PAR KITNE ORDER
@@ -249,6 +259,7 @@ export default async function AdSpendPage({
           monthlyRows={report?.monthlyRows ?? []}
           amazonCountryRows={report?.amazonCountryRows ?? []}
           hasAmazonStore={report?.hasAmazonStore ?? false}
+          fx={fx}
         />
       )}
     </div>

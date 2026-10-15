@@ -366,6 +366,60 @@ me update karo". What was actually done, and what the audit found:
   `companies` prop (type + its single caller). Remaining ESLint warnings are 2 `no-img-element`
   suggestions (deliberate: PDF/document images) and one underscore-prefixed server-action param.
 
+## 5j. Attendance Admin: manual punch now records the ACTUAL TIME (2026-10-15)
+
+User report: "ATTENDANCE ADMIN VALE ME MANUAL PUNCHING KAAM NAHI KAR RAHA HAI OR USME YE BHI HONA
+CHAHIYE KI KITNE BAJE KA PUNCH DALNA HAI".
+
+- **Why it looked broken**: the Manual Correction panel took only a Status + Remark, so a manual
+  entry could never record a punch — the row came out with `punch_in`/`punch_out` NULL, hence no
+  work hours and nothing that looked like a punch in any report. Nothing was throwing; the feature
+  simply had no time fields.
+- **Fix**: `manual-attendance-form.tsx` gained controlled **Punch In time (IST)** / **Punch Out time
+  (IST)** inputs (type="time", 24h). Punch Out stays disabled until a Punch In is typed.
+  `setManualAttendance` in `attendance/admin/actions.ts` validates and converts them with the new
+  `istTimeToInstant(date, hhmm)` (`ist-date.ts` — the "+05:30" is written into the parsed string, so
+  the stored timestamptz is correct regardless of server timezone) and stores real `punch_in`/
+  `punch_out`; `work_hours` is the existing generated column and keeps working unchanged.
+- **Status follows the same rule as a live punch**: with only a Punch In typed, the status is derived
+  via the new `attendanceStatusForPunchIn()` (`lib/attendance/punch.ts`, exported alongside
+  `LATE_CUTOFF_HHMM`) — Present at/before 09:45 IST, Late after — unless the admin picks a Status
+  explicitly. Entering only a Punch Out is rejected on a day with no Punch In (“Punch Out needs a
+  Punch In”).
+- **Corrections never destroy data**: on an existing row a BLANK time field leaves the stored punch
+  untouched (only the fields that were actually filled in are written), and a punch-out-only
+  correction keeps whatever status the day already had. The success message now reports exactly what
+  was saved ("Saved — Punch In 09:20 · Punch Out 18:05"), which is what makes the punch visible in
+  the UI at all.
+
+## 5k. Ad Spend: Amazon totals converted at a LIVE rate that updates itself (2026-10-15)
+
+User request: "ISME EK CHIZ OR ADD KARO TOTAL BUDGET KITNA HUA AMAZON KA SPEND KITNA HUA PERFECT
+CALCULATION SE ACTUAL CONVERASTION KE HISAB SE JO DAILY BASIS PAR UPDATE HO AUTOMATICLY GOOGLE SE".
+
+- **New `fx_rate_cache` table** (`db/2026-10-15b-fx-rate-cache.sql`, folded into `db/schema.sql`) —
+  base USD, machine-refreshed, used ONLY for on-screen conversion. Deliberately separate from
+  `exchange_rates`, which is the customs/legal rate master (one row per currency per CBIC
+  notification, entered by Finance) and must never be overwritten by an API feed.
+- **`src/lib/fx/rates.ts`** (`loadFxSnapshot`) — reads the cache, and refreshes from
+  `open.er-api.com` (keyless, updates once a day, returns its own “rates last changed” stamp) when
+  the snapshot is missing or older than 12 hours. NO cron job: any screen that is opened keeps it
+  fresh, so the numbers are at most a day old. A failed fetch never breaks the page — the previous
+  cached values are shown with a ⚠ note, and the manual **↻ Refresh rates** button (new
+  `refreshFxRatesAction`) forces a pull right now. Cross rates are derived (GBP→INR = usdToInr /
+  usdToGbp); `AMAZON_CURRENCIES` in `amazon-countries.ts` is derived from the country list itself so
+  the two can't drift apart.
+- **Amazon Country section** (`/dashboard/ad-spend`, Report tab): a summary strip above the table now
+  shows Total Budget (USD), Total Spend (USD), **Total Spend (₹)** at the live rate, Budget Used %,
+  Total Sales (USD) + order count, and Spend % of Sales; the table gained a **Spend (₹ @ live rate)**
+  column (and the totals row converts with it, so the footer and the strip agree); a line under the
+  strip prints “Actual conversion: 1 USD = ₹…”, the provider, when THIS app fetched the rates and
+  when the market rate last moved. All of it is derived from the same `amazonCountryRows` the table
+  renders, so screen / CSV / Excel export cannot disagree. CSV/Excel exports carry the ₹ column with
+  its rate.
+- The rates are loaded ONLY when the scope actually contains an Amazon store (`report.hasAmazonStore`)
+  — an Etsy/eBay-only view makes no network call at all.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

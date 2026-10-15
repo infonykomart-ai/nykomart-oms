@@ -3,8 +3,22 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+// 2026-10-15 — shared with the live punch path so an admin-typed punch time
+// earns exactly the same Present/Late verdict (see punch.ts).
+import { attendanceStatusForPunchIn } from "@/lib/attendance/punch";
+import { istTimeToInstant, normalizeISTTimeInput } from "@/lib/attendance/ist-date";
+// 2026-10-15 — typed update payload for the "correct an existing day" branch
+// below, so a partial update (only the punch times the admin actually typed)
+// is checked against the real attendance columns instead of a loose record.
+import type { Database } from "@/types/database";
 
-export type SimpleActionState = { error: string | null; success: boolean };
+type AttendanceUpdate = Database["public"]["Tables"]["attendance"]["Update"];
+
+// `message` (2026-10-15, optional): an informational "what exactly was saved"
+// line (e.g. "Saved — Punch In 09:20 · Punch Out 18:05"), used by the manual
+// attendance form so the admin can SEE that the punch times went in. Optional
+// on purpose — every other action in this file keeps its two-field contract.
+export type SimpleActionState = { error: string | null; success: boolean; message?: string | null };
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -187,9 +201,26 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
   const date = str(formData, "attendance_date");
   const status = str(formData, "status");
   const remark = str(formData, "remark");
-  if (!employeeId || !companyId || !date || !status) {
-    return { error: "Employee, date, and status are all required.", success: false };
+  // 2026-10-15 — "manual punching kaam nahi kar raha ... usme ye bhi hona
+  // chahiye ki kitne baje ka punch dalna hai": the admin can now type the
+  // actual punch times, so a manual entry is a real punch (with work hours
+  // computed by the generated column) and not just a status label.
+  const punchInTime = normalizeISTTimeInput(str(formData, "punch_in_time"));
+  const punchOutTime = normalizeISTTimeInput(str(formData, "punch_out_time"));
+  if (!employeeId || !companyId || !date) {
+    return { error: "Employee, date and (if no time is entered) status are required.", success: false };
   }
+  if (!status && !punchInTime && !punchOutTime) {
+    return { error: "Pick a status, or enter at least one punch time.", success: false };
+  }
+  if (punchInTime && punchOutTime && punchOutTime <= punchInTime) {
+    return { error: "Punch Out time has to be after the Punch In time.", success: false };
+  }
+  // One rule for both branches below: with a punch-in time typed, the status
+  // follows the SAME late cutoff the live punch uses (Present up to 09:45
+  // IST, Late after) unless the admin picked one explicitly.
+  const derivedStatus = punchInTime ? attendanceStatusForPunchIn(punchInTime) : null;
+  const effectiveStatus = status || derivedStatus || "";
   // 2026-08-12 (round 11 security review): see addHoliday's identical comment above.
   if (!admin.companyIds.includes(companyId)) {
     return { error: "You don't have access to that company.", success: false };
@@ -223,24 +254,63 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
     .eq("attendance_date", date)
     .maybeSingle();
 
+  // A punch time is stored as a real timestamptz (IST +05:30 — see
+  // istTimeToInstant), so work_hours (a generated column) and every existing
+  // report keep working unchanged.
+  const punchInInstant = punchInTime ? istTimeToInstant(date, punchInTime) : null;
+  const punchOutInstant = punchOutTime ? istTimeToInstant(date, punchOutTime) : null;
+
   if (existing) {
-    const { error } = await supabase
+    // Only the fields the admin actually filled in are touched: a blank time
+    // leaves the stored punch alone instead of wiping a real one (correcting
+    // today's status should never silently delete today's punch-in).
+    const { data: current } = await supabase
       .from("attendance")
-      .update({ status: status as never, remark: remark || null, entered_by_employee_id: admin.id })
-      .eq("id", existing.id);
+      .select("punch_in, punch_out")
+      .eq("id", existing.id)
+      .maybeSingle();
+    if (punchOutTime && !punchInTime && !current?.punch_in) {
+      return { error: "Punch Out needs a Punch In — enter the Punch In time too.", success: false };
+    }
+    const update: AttendanceUpdate = {
+      remark: remark || null,
+      entered_by_employee_id: admin.id,
+    };
+    // No status to write (a punch-OUT-only correction on an existing row) →
+    // keep whatever status the day already has rather than writing "".
+    if (effectiveStatus) update.status = effectiveStatus as never;
+    if (punchInInstant) update.punch_in = punchInInstant;
+    if (punchOutInstant) update.punch_out = punchOutInstant;
+    const { error } = await supabase.from("attendance").update(update).eq("id", existing.id);
     if (error) return { error: error.message, success: false };
   } else {
+    if (punchOutTime && !punchInTime) {
+      return { error: "Punch Out needs a Punch In — enter the Punch In time too.", success: false };
+    }
+    if (!effectiveStatus) {
+      return { error: "Pick a status, or enter the Punch In time so the status can be worked out.", success: false };
+    }
     const { error } = await supabase.from("attendance").insert({
       employee_id: employeeId,
       company_id: companyId,
       attendance_date: date,
-      status: status as never,
+      status: effectiveStatus as never,
       source: "Manual Entry",
+      punch_in: punchInInstant,
+      punch_out: punchOutInstant,
       remark: remark || null,
       entered_by_employee_id: admin.id,
     });
     if (error) return { error: error.message, success: false };
   }
   revalidatePath("/dashboard/attendance/admin");
-  return { error: null, success: true };
+  revalidatePath("/dashboard/attendance");
+  const saved = [
+    `Saved — ${date}`,
+    `Status ${effectiveStatus}${!status && punchInTime ? " (set from the punch-in time)" : ""}`,
+    punchInTime || punchOutTime
+      ? `Punch In ${punchInTime || "—"} · Punch Out ${punchOutTime || "—"} (IST)`
+      : "no punch times entered",
+  ].join(" · ");
+  return { error: null, success: true, message: saved };
 }

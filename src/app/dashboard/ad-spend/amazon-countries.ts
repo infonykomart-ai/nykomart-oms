@@ -45,6 +45,12 @@ export const AMAZON_COUNTRIES: AmazonCountry[] = [
 
 export const AMAZON_COUNTRY_CODES: string[] = AMAZON_COUNTRIES.map((c) => c.code);
 
+/** Every currency an Amazon marketplace ad account can be billed in
+ *  (2026-10-15b) — the set whose live rates the Country section converts at.
+ *  This is exactly the Amazon country list's own currencies, so the two can
+ *  never drift apart. */
+export const AMAZON_CURRENCIES: string[] = Array.from(new Set(AMAZON_COUNTRIES.map((c) => c.currency)));
+
 const BY_CODE = new Map(AMAZON_COUNTRIES.map((c) => [c.code, c]));
 
 export function amazonCountryByCode(code: string | null | undefined): AmazonCountry | undefined {

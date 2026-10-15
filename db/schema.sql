@@ -644,6 +644,23 @@ CREATE TABLE exchange_rates (
 );
 CREATE INDEX idx_exchange_rates_lookup ON exchange_rates (currency_code, effective_from DESC);
 
+-- 2026-10-15b — DISPOSABLE live-rate cache (base USD), kept deliberately
+-- apart from exchange_rates above, which is the legal/customs rate master
+-- (one row per currency per CBIC notification, entered by Finance) and must
+-- never be overwritten by an API feed. This one only converts ad-spend
+-- figures on screen (e.g. the Amazon country-wise Budget/Spend totals) and is
+-- refreshed from open.er-api.com when older than 12 hours — see
+-- db/2026-10-15b-fx-rate-cache.sql and src/lib/fx/rates.ts.
+CREATE TABLE fx_rate_cache (
+  base_currency       varchar(3) NOT NULL,
+  quote_currency      varchar(3) NOT NULL,
+  rate                numeric(18,8) NOT NULL CHECK (rate > 0),
+  source              text NOT NULL DEFAULT 'open.er-api.com',
+  market_updated_at   timestamptz,
+  fetched_at          timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (base_currency, quote_currency)
+);
+
 CREATE OR REPLACE FUNCTION get_official_rate_as_of(p_currency_code varchar(3), p_as_of date)
 RETURNS TABLE (rate_to_inr numeric, effective_from date)
 LANGUAGE sql STABLE AS $$

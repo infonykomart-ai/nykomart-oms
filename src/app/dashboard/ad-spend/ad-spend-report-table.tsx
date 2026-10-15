@@ -5,6 +5,13 @@ import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
 import { verifyStatus, verifyText } from "./ad-spend-stats";
+// 2026-10-15b — "TOTAL BUDGET KITNA HUA ... SPEND KITNA HUA ... ACTUAL
+// CONVERSION KE HISAB SE": the Amazon Country section's totals are shown in
+// USD *and* converted to INR at the live rate (src/lib/fx/rates.ts keeps the
+// cached snapshot at most 12 hours old by itself; this button is the manual
+// refresh).
+import { formatUsdToInr, type FxSnapshot } from "@/lib/fx/rates";
+import { refreshFxRatesAction } from "./actions";
 
 /** Statement verification for one (store, country) row of the month — see
  *  ad-spend-stats.ts's buildAdSpendReport for how `matched` is derived
@@ -88,18 +95,9 @@ const MONTHLY_COLUMNS: ExportColumn<AdSpendMonthlyRow>[] = [
   { key: "verify", label: "Statement", value: (r) => verifyText(r.verify) },
 ];
 
-const AMAZON_COUNTRY_COLUMNS: ExportColumn<AdSpendAmazonCountryRow>[] = [
-  { key: "companyName", label: "Company", value: (r) => r.companyName },
-  { key: "storeName", label: "Store", value: (r) => r.storeName },
-  { key: "country", label: COUNTRY_LABEL, value: countryCell },
-  { key: "qty", label: "QTY ORD", value: (r) => r.qty },
-  { key: "usd", label: "SALES (USD)", value: (r) => r.usd.toFixed(2) },
-  { key: "avg", label: "AVG Order (USD)", value: (r) => r.avg.toFixed(2) },
-  { key: "budget", label: "Budget (USD)", value: (r) => r.budget.toFixed(2) },
-  { key: "spend", label: "Spend (USD)", value: (r) => r.spend.toFixed(2) },
-  { key: "spendPct", label: "Spend % of Sales", value: (r) => (r.usd > 0 ? `${((r.spend / r.usd) * 100).toFixed(1)}%` : "—") },
-  { key: "verify", label: "Statement", value: (r) => verifyText(r.verify) },
-];
+// The Amazon Country table's columns are built INSIDE the component instead
+// of here (2026-10-15b) — its Spend column has an extra ₹ copy that needs the
+// live exchange rate, which only the component has.
 
 const rowKey = (r: { storeId: string; countryCode: string }) => `${r.storeId}|${r.countryCode}`;
 
@@ -109,6 +107,16 @@ const rowKey = (r: { storeId: string; countryCode: string }) => `${r.storeId}|${
  *  lines order by order, which is what "verified" above is claiming). The
  *  two import screens are linked once, under the tables, rather than in
  *  every row. */
+function AmazonStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-sm font-bold text-slate-900">{value}</div>
+      {sub && <div className="text-[10px] text-slate-500">{sub}</div>}
+    </div>
+  );
+}
+
 function StatementCell({
   row,
   monthFrom,
@@ -153,6 +161,7 @@ export function AdSpendReportTable({
   monthlyRows,
   amazonCountryRows,
   hasAmazonStore,
+  fx,
 }: {
   companies: { id: string; name: string }[];
   filters: { month: string; companyId: string };
@@ -160,7 +169,11 @@ export function AdSpendReportTable({
   monthlyRows: AdSpendMonthlyRow[];
   amazonCountryRows: AdSpendAmazonCountryRow[];
   hasAmazonStore: boolean;
+  /** Live rate snapshot for the Amazon totals (null when there is no Amazon
+   *  store in scope, or before the first successful fetch). */
+  fx?: FxSnapshot | null;
 }) {
+  const usdToInr = fx?.usdToInr ?? null;
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
@@ -176,6 +189,35 @@ export function AdSpendReportTable({
     (acc, r) => ({ qty: acc.qty + r.qty, usd: acc.usd + r.usd, budget: acc.budget + r.budget, spend: acc.spend + r.spend }),
     { qty: 0, usd: 0, budget: 0, spend: 0 }
   );
+
+  // 2026-10-15b — the Amazon section's own column set, built here (not at
+  // module level) because the ₹ column depends on the live rate. Everything
+  // below the Spend column is identical to the shared list.
+  const inrToText = (usd: number) => (usdToInr ? `₹${(usd * usdToInr).toFixed(2)}` : "—");
+  const amazonColumns: ExportColumn<AdSpendAmazonCountryRow>[] = [
+    { key: "companyName", label: "Company", value: (r) => r.companyName },
+    { key: "storeName", label: "Store", value: (r) => r.storeName },
+    { key: "country", label: COUNTRY_LABEL, value: countryCell },
+    { key: "qty", label: "QTY ORD", value: (r) => r.qty },
+    { key: "usd", label: "SALES (USD)", value: (r) => r.usd.toFixed(2) },
+    { key: "avg", label: "AVG Order (USD)", value: (r) => r.avg.toFixed(2) },
+    { key: "budget", label: "Budget (USD)", value: (r) => r.budget.toFixed(2) },
+    { key: "spend", label: "Spend (USD)", value: (r) => r.spend.toFixed(2) },
+    { key: "spendInr", label: "Spend (₹ @ live rate)", value: (r) => inrToText(r.spend) },
+    { key: "spendPct", label: "Spend % of Sales", value: (r) => (r.usd > 0 ? `${((r.spend / r.usd) * 100).toFixed(1)}%` : "—") },
+    { key: "verify", label: "Statement", value: (r) => verifyText(r.verify) },
+  ];
+
+  const rateFetchedText = fx?.fetchedAt
+    ? new Date(fx.fetchedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })
+    : null;
+  const marketUpdatedText = fx?.marketUpdatedAt
+    ? new Date(fx.marketUpdatedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })
+    : null;
+  const budgetUsedPct =
+    amazonTotals.budget > 0 ? `${((amazonTotals.spend / amazonTotals.budget) * 100).toFixed(1)}%` : "—";
+  const spendPctOfSales =
+    amazonTotals.usd > 0 ? `${((amazonTotals.spend / amazonTotals.usd) * 100).toFixed(1)}%` : "—";
 
   function renderTable<T extends { storeId: string; countryCode: string; verify: AdSpendStatementVerify }>({
     columns,
@@ -204,9 +246,12 @@ export function AdSpendReportTable({
       if (key === "budget") return totals.budget.toFixed(2);
       if (key === "spend") return totals.spend.toFixed(2);
       if (key === "spendPct") return totals.usd > 0 ? `${((totals.spend / totals.usd) * 100).toFixed(1)}%` : "—";
+      // 2026-10-15b — the Amazon table's extra ₹ column totals at the same
+      // live rate its rows do (blank when no rate is available yet).
+      if (key === "spendInr") return totals.spend > 0 ? inrToText(totals.spend) : "";
       return "";
     };
-    const moneyKeys = new Set(["qty", "usd", "avg", "budget", "spend", "spendPct"]);
+    const moneyKeys = new Set(["qty", "usd", "avg", "budget", "spend", "spendInr", "spendPct"]);
     return (
       <div className={`${maxHeight ?? ""} overflow-auto rounded-xl border border-slate-200 bg-white`}>
         <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -335,10 +380,52 @@ export function AdSpendReportTable({
                 <p className="text-[11px] text-slate-400">                  Amazon only — one row per Amazon store × marketplace country (US, UK, DE …). Budget/Spend come from the entry form&apos;s Country field; SALES/QTY are the same Amazon store&apos;s orders whose buyer country maps to that country. Amazon rows entered before the Country field existed (and buyer countries with no Amazon ad account) show up under <b>Other</b> — re-save those days with the right country.
                 </p>
               </div>
-              <ExportBar title="Ad Spend — Amazon Country" filenameBase="ad-spend-amazon-country" columns={AMAZON_COUNTRY_COLUMNS} rows={amazonCountryRows} />
+              <ExportBar title="Ad Spend — Amazon Country" filenameBase="ad-spend-amazon-country" columns={amazonColumns} rows={amazonCountryRows} />
+            </div>
+
+            {/* 2026-10-15b — "TOTAL BUDGET KITNA HUA AMAZON KA SPEND KITNA HUA
+                PERFECT CALCULATION SE ACTUAL CONVERSION KE HISAB SE": one
+                summary strip plus the live-rate line it was converted at. */}
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 print:hidden">
+              <AmazonStat label="Total Budget (USD)" value={amazonTotals.budget.toFixed(2)} />
+              <AmazonStat label="Total Spend (USD)" value={amazonTotals.spend.toFixed(2)} />
+              <AmazonStat
+                label="Total Spend (₹)"
+                value={usdToInr ? `₹${(amazonTotals.spend * usdToInr).toFixed(2)}` : "—"}
+                sub={`@ 1 USD = ${formatUsdToInr(fx)}`}
+              />
+              <AmazonStat label="Budget Used" value={budgetUsedPct} />
+              <AmazonStat label="Total Sales (USD)" value={amazonTotals.usd.toFixed(2)} sub={`${amazonTotals.qty} order(s)`} />
+              <AmazonStat label="Spend % of Sales" value={spendPctOfSales} />
+            </div>
+            <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+              <span>
+                Actual conversion: <b>1 USD = {formatUsdToInr(fx)}</b> · {fx?.source ?? "live rates"}
+              </span>
+              {rateFetchedText && <span>Rates fetched: {rateFetchedText} IST</span>}
+              {marketUpdatedText && <span>Market update: {marketUpdatedText} IST</span>}
+              <span className="text-slate-400">Auto-refreshes every 12 hours</span>
+              {fx?.warning && <span className="font-medium text-amber-700">⚠ {fx.warning}</span>}
+              {/* A plain <form action> must return void — the action returns
+                  {error} for the useActionState paths, so it is awaited here
+                  and its result deliberately ignored (a failed refresh just
+                  leaves the cached snapshot and its ⚠ warning in place). */}
+              <form
+                action={async () => {
+                  await refreshFxRatesAction();
+                }}
+                className="print:hidden"
+              >
+                <button
+                  type="submit"
+                  className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  ↻ Refresh rates
+                </button>
+              </form>
             </div>
             {renderTable({
-              columns: AMAZON_COUNTRY_COLUMNS,
+              columns: amazonColumns,
               rows: amazonCountryRows,
               emptyText: "No Amazon country data for this month yet — enter Budget/Spend per country on the Daily Entry tab, or pick another month.",
               totals: amazonTotals,

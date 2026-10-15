@@ -5647,6 +5647,36 @@ export type Database = {
           },
         ];
       };
+      // 2026-10-15b — disposable live FX cache (base USD) for on-screen
+      // conversion only; the legal/customs master is exchange_rates below.
+      // See db/2026-10-15b-fx-rate-cache.sql and src/lib/fx/rates.ts.
+      fx_rate_cache: {
+        Row: {
+          base_currency: string;
+          quote_currency: string;
+          rate: number;
+          source: string;
+          market_updated_at: string | null;
+          fetched_at: string;
+        };
+        Insert: {
+          base_currency: string;
+          quote_currency: string;
+          rate: number;
+          source?: string;
+          market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Update: {
+          base_currency?: string;
+          quote_currency?: string;
+          rate?: number;
+          source?: string;
+          market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Relationships: [];
+      };
       exchange_rates: {
         Row: {
           id: string;

@@ -12,7 +12,9 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 // 2026-10-15 — Amazon is entered per marketplace country (see
 // db/2026-10-15-ad-spend-amazon-country.sql).
-import { AMAZON_COUNTRY_CODES, isAmazonStore } from "./amazon-countries";
+import { AMAZON_COUNTRY_CODES, AMAZON_CURRENCIES, isAmazonStore } from "./amazon-countries";
+// 2026-10-15b — live rate snapshot for the Amazon country-wise totals.
+import { loadFxSnapshot } from "@/lib/fx/rates";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -98,6 +100,23 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
 }
 
 export type SimpleResult = { error: string | null };
+
+/**
+ * 2026-10-15b — "ACTUAL CONVERSION KE HISAB SE JO DAILY BASIS PAR UPDATE HO
+ * AUTOMATICLLY": the Amazon Country-wise section converts its USD figures at
+ * a live market rate, refreshed automatically once the cached snapshot is
+ * older than 12 hours (see src/lib/fx/rates.ts). This action is the manual
+ * "Refresh rates" button next to those numbers, for the case where someone
+ * wants today's rate right now.
+ */
+export async function refreshFxRatesAction(): Promise<SimpleResult> {
+  await requireCapability("ad_spend_entry");
+  const supabase = createServiceRoleClient();
+  const snapshot = await loadFxSnapshot(supabase, AMAZON_CURRENCIES, { force: true });
+  revalidatePath("/dashboard/ad-spend");
+  if (snapshot.stale) return { error: snapshot.warning ?? "Could not refresh the exchange rates." };
+  return { error: null };
+}
 
 /** Clears a day's entry entirely (rather than leaving a stray 0/0 row). */
 export async function deleteAdSpendAction(id: string): Promise<SimpleResult> {

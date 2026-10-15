@@ -770,7 +770,7 @@ export default async function AttendanceAdminPage({
       <Panel
         icon="✍️"
         title="Manual Correction"
-        description="Missed punch, approved leave, or a one-off half day — sets/overrides that day's status directly."
+        description="Missed punch, approved leave, or a one-off half day — set the status and/or the actual Punch In / Punch Out time (IST) for that day."
       >
         <ManualAttendanceForm companyId={selectedCompanyId} employees={teamEmployees ?? []} today={today} />
       </Panel>
