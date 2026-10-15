@@ -90,9 +90,16 @@ export function PoLineActions({
       </button>
       {editing && (
         <A4Dialog open onClose={() => setEditing(false)} title={`Edit entry — ${line.description ?? line.refNo ?? "item"}`} subtitle="Change karke Save dabao.">
+          {/* 2026-10-15 — PurchaseBillEditForm's party select needs the
+              full PartyOption shape (it groups by invoice_type /
+              party_type); the statement line only carries the vendor's id
+              + name, so the grouping fields go through as null — the
+              select still shows this one party. */}
           <PurchaseBillEditForm
             bill={bill}
-            parties={[{ id: vendorPartyId, name: vendorPartyName }]}
+            parties={[
+              { id: vendorPartyId, name: vendorPartyName, invoice_type: null, party_type: null },
+            ]}
             onDone={() => { setEditing(false); onChanged(); }}
           />
         </A4Dialog>

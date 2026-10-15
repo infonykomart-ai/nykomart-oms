@@ -78,6 +78,10 @@ const CAPABILITY_OVERRIDES: { prefix: string; codes: string[] }[] = [
   { prefix: "/dashboard/reports/finance-dashboard", codes: ["crm_dashboard"] },
   { prefix: "/dashboard/admin/departments", codes: ["employee_admin"] },
   { prefix: "/dashboard/credit-notes-register", codes: ["bill_payment", "doc_entry"] },
+  // 2026-10-15 — Unified Printing register accepts either module's users
+  // (requireAnyCapability("stock_entry", "doc_entry")), so neither prefix
+  // guess is right on its own.
+  { prefix: "/dashboard/printing-register", codes: ["stock_entry", "doc_entry"] },
 ];
 
 function requiredCapabilitiesFor(pathname: string): string[] | null {

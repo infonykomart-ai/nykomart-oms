@@ -242,6 +242,41 @@ server pages and client previews so they can never disagree.
   NUL bytes in source (same runtime value via `\u0000` escape — the raw
   bytes made grep treat the file as binary).
 
+**Unified Printing register (2026-10-15)** — printing job work was
+spread over three unrelated places (Material OUT Chalan under Stock,
+Received Chalan under Documents, printing charges typed in the Bill Pass
+Register) with nothing showing them together — one register now does, at
+`/dashboard/printing-register` (linked from the Documents AND Stock
+headers; gated `requireAnyCapability("stock_entry", "doc_entry")`, same
+as the Credit Note Register, with a matching error-boundary override):
+
+- One **per-party group** unifying all three streams in a single table —
+  📤 Sent (Material OUT Chalan: SKU lines, qty in ft, linked POs, links
+  to the chalan's own print page), 📥 Received (Received Chalan: item
+  lines with qty/unit/rate, PO, links to its print page) and 🧾 Bill
+  (Bill Pass Register rows) — each group with sent/received/pending
+  totals, bill total and still-due, plus grand totals on top.
+- **Pending** = sent − received (received converted to feet via
+  `toFeet`; PCS tracked separately since it has no feet equivalent), so
+  "kitna maal printer ke paas hai" is visible per party at a glance.
+- Bills join via `invoice_type = 'Printing'` **or** a vendor whose Party
+  Master says `invoice_type = 'Printing'` (job-work returns are billed as
+  a normal Purchase bill, which mirrors into the ledger as 'Purchase') —
+  see `src/lib/printing-register.ts` for why both are needed. Bills use
+  `invoice_recv_date ?? invoice_date` and undated old rows are kept, never
+  dropped by the date filter.
+- Default scope is **all parties with a chalan or printing bill** (a
+  party typed wrong in the master can never be invisible here); the
+  Parties filter narrows to *Printing vendors only*. Company select +
+  From/To follow the existing register pattern, and the whole sheet
+  prints via the shared `PrintArea`/`PrintButton`.
+- Aggregation lives in pure `buildPrintingRegister()`
+  (`src/lib/printing-register.ts`) so any future export can't disagree
+  with the page.
+- Also fixed: `po-line-actions.tsx` passed a partial party object into
+  `PurchaseBillEditForm`, which made `npx tsc --noEmit` fail on the
+  previous round's commit.
+
 ## Database & schema workflow (important)
 
 - `db/schema.sql` is the **only** thing needed to stand up a fresh database — every dated

@@ -194,12 +194,23 @@ export default async function StockPage({
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📦 Stock (Raw Material)</h1>
         </div>
-        <Link
-          href="/dashboard/stock/bulk-upload"
-          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-        >
-          📤 Bulk Upload (CSV)
-        </Link>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* 2026-10-15 — Unified Printing register: material OUT for
+              printing is created here, so this header links the unified
+              register too (also linked from Documents). */}
+          <Link
+            href="/dashboard/printing-register"
+            className="rounded-lg border border-fuchsia-300 bg-fuchsia-50 px-3 py-1.5 text-xs font-medium text-fuchsia-700 hover:bg-fuchsia-100"
+          >
+            🖨️ Printing Register
+          </Link>
+          <Link
+            href="/dashboard/stock/bulk-upload"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📤 Bulk Upload (CSV)
+          </Link>
+        </div>
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">

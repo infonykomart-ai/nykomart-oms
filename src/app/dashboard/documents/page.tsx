@@ -413,12 +413,23 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Document Entry</h1>
         </div>
-        <Link
-          href="/dashboard/documents/bulk-upload"
-          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-        >
-          📤 Bulk Upload (CSV)
-        </Link>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* 2026-10-15 — Unified Printing register: the printing job-work
+              picture (material out / received back / printing bills) spans
+              Documents AND Stock, so both headers link it. */}
+          <Link
+            href="/dashboard/printing-register"
+            className="rounded-lg border border-fuchsia-300 bg-fuchsia-50 px-3 py-1.5 text-xs font-medium text-fuchsia-700 hover:bg-fuchsia-100"
+          >
+            🖨️ Printing Register
+          </Link>
+          <Link
+            href="/dashboard/documents/bulk-upload"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📤 Bulk Upload (CSV)
+          </Link>
+        </div>
       </div>
 
       <DocumentEntryTabs
