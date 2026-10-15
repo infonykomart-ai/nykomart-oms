@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="NYKO INFOTEC">
+  <defs>
+    <linearGradient id="nyko-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1b47"/>
+      <stop offset="0.55" stop-color="#0a1740"/>
+      <stop offset="1" stop-color="#050b1f"/>
+    </linearGradient>
+    <linearGradient id="nyko-orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffa24d"/>
+      <stop offset="1" stop-color="#ff7a1a"/>
+    </linearGradient>
+    <linearGradient id="nyko-blue" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#2e7dff"/>
+      <stop offset="1" stop-color="#63d4ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="16" fill="url(#nyko-bg)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="15.25" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1.5"/>
+  <!-- left stem -->
+  <path d="M16 46 V18 h7 v28 z" fill="#ffffff"/>
+  <!-- diagonal (rising = growth) -->
+  <path d="M23 18 l14 20 v-20 h-7 l-7 -0 z" fill="url(#nyko-blue)"/>
+  <path d="M23 18 L37 38 V18 Z" fill="url(#nyko-blue)"/>
+  <!-- right stem -->
+  <path d="M41 46 V18 h7 v28 z" fill="url(#nyko-orange)"/>
+  <!-- ground reflection -->
+  <rect x="16" y="48.5" width="32" height="3" rx="1.5" fill="rgba(255,255,255,0.22)"/>
+</svg>
