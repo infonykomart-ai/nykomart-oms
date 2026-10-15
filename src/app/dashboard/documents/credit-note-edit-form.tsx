@@ -161,7 +161,7 @@ export function CreditNoteEditForm({
       {note.party_id && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
           <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className={labelClass} htmlFor={`cn_qty_${note.id}`}>Qty</label>
               <input

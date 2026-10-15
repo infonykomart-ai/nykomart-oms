@@ -98,13 +98,13 @@ export function WalletPanel({
       <div className="mb-3 flex items-center gap-2">
         <span className="text-lg">💳</span>
         <h2 className="text-sm font-bold text-slate-700">Courier Wallets (prepaid)</h2>
-        <span className="text-[11px] text-slate-400">Recharge before booking · invoice consume kar deta hai</span>
+        <span className="text-[11px] text-slate-400">Recharge before booking · a courier invoice consumes it</span>
       </div>
 
       {/* Balance cards */}
       {overview.balances.length === 0 ? (
         <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
-          Koi wallet entry nahi. Pehla recharge neeche karo — phir har courier bill pe &quot;Pay from Wallet&quot; dikhega.
+          No wallet entries yet. Add the first recharge below — after that every courier bill offers &quot;Pay from Wallet&quot;.
         </p>
       ) : (
         <div className="mb-4 flex flex-wrap gap-2">
@@ -170,7 +170,7 @@ export function WalletPanel({
         </form>
 
         <form action={refundAction} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-          <div className="mb-2 text-xs font-bold text-slate-600">↩️ Refund (courier ne unused money wapas ki)</div>
+          <div className="mb-2 text-xs font-bold text-slate-600">↩️ Refund (the courier returned unused money)</div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className={labelClass}>Company</label>
@@ -215,7 +215,7 @@ export function WalletPanel({
         <div className="mt-4">
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <div className="text-xs font-semibold text-slate-500">Recent wallet activity</div>
-            <div className="text-[10px] text-slate-400">galat entry? ✏️ se theek karo ya 🗑 se hatao</div>
+            <div className="text-[10px] text-slate-400">Wrong entry? Fix it with ✏️ or remove it with 🗑</div>
           </div>
           {editState.error && (
             <p className="mb-1 rounded-lg bg-rose-50 px-2 py-1.5 text-xs font-medium text-rose-600">{editState.error}</p>
@@ -229,7 +229,8 @@ export function WalletPanel({
           {!editState.error && !deleteState.error && deleteState.done && deleteState.done > (editState.done ?? 0) && (
             <p className="mb-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-700">✅ Entry deleted.</p>
           )}
-          <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-100">
+          {/* 2026-10-15 — overflow-auto (not overflow-y-auto): narrow screens scroll this sideways instead of squashing the columns. */}
+          <div className="max-h-44 overflow-auto rounded-lg border border-slate-100">
             <table className="min-w-full text-xs">
               <tbody className="divide-y divide-slate-100">
                 {overview.recent.slice(0, 40).map((t) => (

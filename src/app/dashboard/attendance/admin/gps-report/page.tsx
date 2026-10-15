@@ -21,7 +21,7 @@ export default async function GpsReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/gps-report"
       heading="GPS Report"
-      blurb="Punch-wise GPS coordinates with a Google Maps link (default: pichhle 30 din). Server-side punches/import ke bina coords wali rows bhi dikhti hain — missing-location audit ke kaam aati hai."
+      blurb="Punch-wise GPS coordinates with a Google Maps link (default: the last 30 days). Rows that came in without server-side punch/import coordinates are listed too, which is what makes this usable as a missing-location audit."
       reportTypes={REPORT_TYPES}
       defaultReport="gps"
     />

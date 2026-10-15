@@ -80,8 +80,9 @@ export default async function B2BEnginePage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">🧮 Quotation Engine</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Sirf product + quantity select karein — costing, freight, margin aur suggested price automatic. Freight/incoterm
-          entered values se calculate hota hai (the system never guesses a rate). Save quotation → convert to sales order.
+          Just pick a product and a quantity — costing, freight, margin and the suggested price are all calculated.
+          Freight/incoterm follow the values you enter (the system never guesses a rate). Save the quotation, then convert it
+          to a sales order.
         </p>
       </header>
       <EngineClient inquiries={inquiries} products={products} buyers={buyers} rates={rates} />

@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
-        error: "Telegram bot abhi configure nahi hai — TELEGRAM_BOT_TOKEN set karna hoga (.env.example dekhein).",
+        error: "The Telegram bot is not configured yet — TELEGRAM_BOT_TOKEN has to be set (see .env.example).",
       },
       { status: 500 }
     );
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
-        error: "Is company ke liye Telegram group set nahi hai — companies.telegram_chat_id ya TELEGRAM_ORDER_CHAT_ID set karna hoga.",
+        error: "No Telegram group is set for this company — either companies.telegram_chat_id or TELEGRAM_ORDER_CHAT_ID has to be set.",
       },
       { status: 500 }
     );
@@ -138,6 +138,6 @@ export async function POST(request: Request) {
     if (!result.ok) return Response.json({ ok: false, error: `Telegram ne message reject kar diya: ${result.error}` }, { status: 502 });
     return Response.json({ ok: true });
   } catch {
-    return Response.json({ ok: false, error: "Telegram tak pahunch nahi paye — thodi der me dobara try karein." }, { status: 502 });
+    return Response.json({ ok: false, error: "Could not reach Telegram — please try again in a moment." }, { status: 502 });
   }
 }

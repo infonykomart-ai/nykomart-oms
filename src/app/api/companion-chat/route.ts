@@ -123,7 +123,7 @@ export async function POST(req: Request) {
   if (!apiKey) {
     return NextResponse.json({
       reply:
-        "AI chat abhi Admin ne configure nahi kiya hai — GEMINI_API_KEY set karna baaki hai (Google AI Studio se free key milti hai, phir Vercel ke Environment Variables mein add karni hoti hai).",
+        "The AI chat has not been configured by an Admin yet — GEMINI_API_KEY still has to be set (Google AI Studio gives a free key, which then has to be added to the Vercel environment variables).",
     });
   }
 
@@ -178,13 +178,13 @@ export async function POST(req: Request) {
     if (isRateLimit) {
       return NextResponse.json({
         reply:
-          "Abhi Google AI ki free-tier request-limit khatam ho gayi hai (ek saath bahut saare sawal aa gaye honge) — 1-2 minute ruk kar dobara try karein. Agar yeh baar-baar hota hai, Admin ko batayein: Google AI Studio (aistudio.google.com) mein billing enable karke yeh limit badhayi ja sakti hai.",
+          "Google AI's free-tier request limit is finished for now (too many questions came in at once) — wait 1-2 minutes and try again. If this keeps happening, tell an Admin: enabling billing in Google AI Studio (aistudio.google.com) raises this limit.",
       });
     }
     if (isAuthProblem) {
       return NextResponse.json({
         reply:
-          "AI chat abhi kaam nahi kar raha — lagta hai GEMINI_API_KEY galat hai ya expire ho gayi hai. Admin ko batayein Vercel ke Environment Variables mein yeh key check/update karein.",
+          "The AI chat is not working right now — the GEMINI_API_KEY looks wrong or expired. Please tell an Admin to check/update that key in the Vercel environment variables.",
       });
     }
     return NextResponse.json({ reply: "Sorry, the AI chat service is having trouble right now — try again in a moment." });

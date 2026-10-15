@@ -1,41 +1,67 @@
-UPDATED FILES — Store Ad Spend: Amazon country-wise Budget/Spend + monthly-statement verification (2026-10-15)
-            + B2B: not-yet-run PI migration ab screen par dikhta hai
-================================================================================================================
-A	db/2026-10-15-ad-spend-amazon-country.sql
-M	db/schema.sql
-M	src/types/database.ts
-A	src/app/dashboard/ad-spend/amazon-countries.ts
-A	src/app/dashboard/ad-spend/ad-spend-stats.ts
-M	src/app/dashboard/ad-spend/actions.ts
-M	src/app/dashboard/ad-spend/ad-spend-entry-section.tsx
-M	src/app/dashboard/ad-spend/ad-spend-report-table.tsx
-M	src/app/dashboard/ad-spend/page.tsx
-M	src/app/dashboard/b2b/page.tsx
-M	src/app/dashboard/b2b/b2b-client.tsx
-M	BRAIN.md
-M	UPDATED-FILES.txt
+UPDATED FILES — UI/UX cleanup round (2026-10-15)
+================================================
+Purani Hinglish UI strings English me, responsive layout (columns/text kisi par nahi chadhe),
+theme-aware text color + font, aur linter ke dead-code warnings saaf.
 
-WHAT CHANGED
-============
-1. Amazon Country section (Amazon stores only): the daily entry form now asks for a Country
-   (US / CA / MX / AU / UK / DE / IT / JP / FR / ES / IN / AE) when the selected store is an
-   Amazon store, and the Report tab gains a "🌍 Amazon — Country-wise Budget / Spend" table.
-   Etsy / eBay / Website stores are untouched — one row per day, as before.
-2. Statement verification + link: every Report row (Monthly Roll-up, Daily Master, Amazon
-   Country) now shows whether that store's orders were actually found in the store's imported
-   marketplace statement (✅ / ⚠️ / ⏳) and links straight to that store's statement detail for
-   the month (/dashboard/reports/store-expenses?store=…&from=…&to=…).
-3. B2B PI: pehle chup-chaap "To be provided" chhap raha tha jab PI ki migration run nahi hui thi.
-   Ab ek explicit-column probe query fail hoti hai, aur wahi message 🛠️ setup card par pahunchta
-   hai jo chalane wali SQL files ki list dikhata hai (ab us list me
-   db/2026-10-13-b2b-pi-export-fields.sql bhi hai). Register/quotations/payments pehle jaise
-   load hote rahenge — sirf missing-column wala hissa screen par aa jayega.
+UI TEXT → ENGLISH (saari user-visible strings)
+---------------------------------------------
+M	src/app/api/companion-chat/route.ts                     (AI chat reply/error messages)
+M	src/app/api/telegram-send-order/route.ts                (send errors)
+M	src/app/api/whapi-send-order/route.ts                   (send errors)
+M	src/app/dashboard/admin/departments/page.tsx
+M	src/app/dashboard/attendance/admin/coff-report/page.tsx
+M	src/app/dashboard/attendance/admin/gps-report/page.tsx
+M	src/app/dashboard/attendance/my-recurring-work-form.tsx
+M	src/app/dashboard/attendance/telegram-connect-card.tsx
+M	src/app/dashboard/b2b/engine/page.tsx
+M	src/app/dashboard/bill-payment/credit-note-panel.tsx
+M	src/app/dashboard/bill-payment/page.tsx
+M	src/app/dashboard/bill-payment/wallet-panel.tsx
+M	src/app/dashboard/courier-booking/actions.ts            (address / FedEx ETD hints)
+M	src/app/dashboard/courier-booking/create-shipment-form.tsx (CSB-V preview dialog)
+M	src/app/dashboard/documents/actions.ts                   (duplicate-entry error)
+M	src/app/dashboard/documents/document-entry-tabs.tsx      (A4 edit dialog subtitles)
+M	src/app/dashboard/expenses/recurring-debits-section.tsx
+M	src/app/dashboard/orders/new/order-whatsapp-button.tsx
+M	src/app/dashboard/orders/order-list-table.tsx
+M	src/app/dashboard/orders/photo-url-field.tsx
+M	src/components/logout-button.tsx
+M	src/components/po-line-actions.tsx
+M	src/lib/attendance/telegram-notify.ts
 
-NOTES — ye 2 SQL files Supabase SQL Editor me run karni hain
-============================================================
-1. db/2026-10-13-b2b-pi-export-fields.sql   -> B2B PI ke payment terms / ports / packing / item
-   specs + b2b_export_profiles. ISKE BINA PI me "To be provided" aata hai.
-2. db/2026-10-15-ad-spend-amazon-country.sql -> country_code column + (store, date, country)
-   unique key. ISKE BINA Amazon store ki country-wise entry save nahi hogi.
-   (Purani Amazon rows country '' ke saath "Other" row me dikhengi — dobara save karne par sahi
-   country aa jayegi.)
+LAYOUT — screen ke according auto adjust (scroll / responsive grids)
+-------------------------------------------------------------------
+M	src/app/dashboard/parties/[id]/ledger/page.tsx
+M	src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
+M	src/app/dashboard/admin/companion-access/companion-access-client.tsx
+M	src/app/dashboard/documents/duty-bill-section.tsx
+M	src/app/dashboard/documents/freight-bill-section.tsx
+M	src/app/dashboard/documents/credit-note-form.tsx
+M	src/app/dashboard/documents/credit-note-edit-form.tsx
+M	src/app/dashboard/documents/purchase-bill-multi-form.tsx
+M	src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
+M	src/app/dashboard/documents/inline-add-shipment.tsx
+M	src/app/dashboard/invoices/invoice-generate-form.tsx
+M	src/app/dashboard/orders/order-hold-cancel-actions.tsx
+M	src/app/dashboard/orders/page.tsx
+M	src/app/dashboard/stock/stock-in-form.tsx
+M	src/app/dashboard/b2b/products/products-client.tsx
+
+THEME / TYPOGRAPHY (dono inherit-only — theme waise hi auto-adjust karta rahega)
+------------------------------------------------------------------------------
+M	src/app/globals.css   -> body font = theme ka --font-sans (Arial hata diya)
+                        -> [data-theme] ka inherited text color = --oms-text (near-black)
+                        -> [data-theme] table me tabular figures (money columns align)
+
+DEAD CODE (linter warnings saaf)
+--------------------------------
+M	src/app/dashboard/reports/finance-dashboard/page.tsx  (unused BarChart import)
+
+AUDIT — kuch karne ki zaroorat nahi thi (verify kiya gaya)
+----------------------------------------------------------
+* 52 static internal hrefs + saare capability tiles + redirect()/router.push() targets: sab
+  real page.tsx par resolve hote hain — koi broken link nahi.
+* Koi orphan dashboard route nahi, koi href="#", koi khaali onClick, koi "coming soon"/TODO nahi.
+* Attendance Admin ke tables pehle se horizontal scroll me the (shared tableWrapClass).
+
+NOTE: is round me koi DB migration nahi hai — sirf UI/code changes hain.

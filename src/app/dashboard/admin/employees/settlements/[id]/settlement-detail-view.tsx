@@ -342,7 +342,9 @@ export function SettlementDetailView({
             />
           </div>
 
-          <table className="mb-3 w-full border-collapse text-xs">
+          {/* 2026-10-15 — scrolls sideways on a narrow screen instead of squashing the amount columns. */}
+          <div className="overflow-x-auto">
+          <table className="mb-3 w-full min-w-[420px] border-collapse text-xs print:min-w-0">
             <thead>
               <tr className="border-b border-slate-300 text-left text-slate-500">
                 <th className="py-1">Additions</th>
@@ -368,6 +370,7 @@ export function SettlementDetailView({
               </tr>
             </tbody>
           </table>
+          </div>
 
           <div className="mb-4 flex items-center justify-between rounded-lg bg-green-50 px-3 py-2">
             <span className="text-sm font-semibold text-green-800">Net Settlement Amount</span>

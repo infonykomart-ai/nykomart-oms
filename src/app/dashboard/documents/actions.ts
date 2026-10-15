@@ -2442,7 +2442,7 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
   {
     const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
     if (dup) {
-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. Kisi invoice ki do baar entry nahi hoti — agar amount alag hai to purani entry edit karein.`, success: false };
+      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
     }
   }
 
@@ -2897,7 +2897,7 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
   {
     const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
     if (dup) {
-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. Kisi invoice ki do baar entry nahi hoti — agar amount alag hai to purani entry edit karein.`, success: false };
+      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
     }
   }
 

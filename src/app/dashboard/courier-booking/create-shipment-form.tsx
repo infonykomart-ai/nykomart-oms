@@ -1010,7 +1010,7 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
-              <span className="text-sm font-semibold text-slate-700">CSB-V Invoice Preview (draft — yahi document booking par courier ko jayega)</span>
+              <span className="text-sm font-semibold text-slate-700">CSB-V Invoice Preview (draft — this is the document the courier receives on booking)</span>
               <button
                 type="button"
                 onClick={closeInvoicePreview}
@@ -1021,8 +1021,8 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
             </div>
             <iframe src={invoicePreviewBlobUrl} title="FedEx invoice preview" className="min-h-0 flex-1" />
             <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
-              Sahi lag raha hai to ye window band kar ke &quot;Create FedEx Shipment&quot; dabaiye. Kuch galat hai to niche fields edit
-              karke &quot;Preview Invoice&quot; dobara dabaiye.
+              If this looks right, close this window and press &quot;Create FedEx Shipment&quot;. If something is wrong, edit the
+              fields below and press &quot;Preview Invoice&quot; again.
             </div>
           </div>
         </div>

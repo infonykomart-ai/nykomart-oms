@@ -487,7 +487,7 @@ export function ProductsClient({ products, bom }: { products: ProductView[]; bom
               <input type="number" value={draft.piecesPerCarton} onChange={(e) => setDraft({ ...draft, piecesPerCarton: e.target.value })} className={inputClass} />
             </Field>
             <Field label="Carton L × W × H (cm)">
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                 <input type="number" value={draft.cartonLengthCm} onChange={(e) => setDraft({ ...draft, cartonLengthCm: e.target.value })} className={inputClass} placeholder="L" />
                 <input type="number" value={draft.cartonWidthCm} onChange={(e) => setDraft({ ...draft, cartonWidthCm: e.target.value })} className={inputClass} placeholder="W" />
                 <input type="number" value={draft.cartonHeightCm} onChange={(e) => setDraft({ ...draft, cartonHeightCm: e.target.value })} className={inputClass} placeholder="H" />

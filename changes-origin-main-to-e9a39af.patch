@@ -1,0 +1,1139 @@
+diff --git a/BRAIN.md b/BRAIN.md
+index 1e63379..11ebeea 100644
+--- a/BRAIN.md
++++ b/BRAIN.md
+@@ -330,6 +330,42 @@ Two user-requested additions to `/dashboard/ad-spend` (module: `src/app/dashboar
+ - Deliberately still non-fatal for everything else: the register, quotations and payments keep loading
+   exactly as before — only the missing-column piece is surfaced.
+ 
++## 5i. UI/UX cleanup round — English UI text, responsive layout, theme-aware text (2026-10-15)
++
++Requested as one sweep: "UI professional honi chahiye · koi bhi text/column kisi par nahi chadh raha ho ·
++font black ho normally lekin theme ke according auto adjust ho · jaha bhi hindi ke word ho unko english
++me update karo". What was actually done, and what the audit found:
++
++- **Hinglish → English in every USER-VISIBLE string** (there was NO Devanagari anywhere in `src/`, so
++  the target was Roman-script Hinglish): buttons, notes, empty states, toasts, validation/error
++  messages, placeholders and dialogs — entry forms, bill payment + wallet panel, credit-note panel,
++  documents (A4 dialog subtitles), orders (WhatsApp/Telegram send + photo field), attendance
++  (Telegram connect, recurring work), courier booking (address/ETD hints + CSB-V preview), expenses
++  (recurring debits), admin (departments), b2b (quotation engine), statement/bill duplicate-entry
++  errors, and the AI companion + WhatsApp/Telegram send-route replies. Code COMMENTS were deliberately
++  left in the repo's own voice — they are internal notes, not UI.
++- **Horizontal overflow / squashed columns**: every screen table that lacked a horizontally scrollable
++  container got one (`overflow-x-auto`, and `overflow-y-auto` → `overflow-auto` where a table sat in a
++  fixed-height box): credit-note panel, wallet panel, companion access, settlement detail view, party
++  ledger (`min-w-[820px] print:min-w-0` so the print/PDF path is unaffected). Attendance admin tables
++  were already fine (shared `tableWrapClass`).
++- **Responsive entry-form grids**: 23 non-responsive `grid-cols-3/4/5/6` field rows across 11 forms
++  (duty bill, freight bill, credit note, purchase-bill multi, inline shipment, invoice generate, stock
++  in, order hold/cancel, b2b products) became `grid-cols-1 sm:grid-cols-2 lg:grid-cols-N` — same 3/4/5
++  column look on desktop, stacked on a narrow screen. A4 print documents were intentionally left alone.
++- **Text color / typography (globals.css)**: `body` now uses the theme's own `--font-sans` stack
++  (system-ui…) instead of Arial; inside `[data-theme]` the inherited text color is the theme's own
++  `--oms-text` (near-black in every shipped theme) and tables use tabular figures. Both rules are
++  INHERIT-ONLY — nothing that sets its own color (white-on-accent buttons, status pills) is forced, so
++  the theme keeps auto-adjusting exactly as before.
++- **Audit results (no work needed)**: 52 static internal `href`s, all capability tiles, and every
++  `redirect()`/`router.push()` target resolve to a real `page.tsx` — zero broken links; zero orphan
++  dashboard routes; no `href="#"`, no empty handlers, no "coming soon"/TODO placeholders. `printing-
++  register` is linked from Stock + Documents (it has no tile of its own, by design).
++- Removed dead code the linter flagged: an unused `totalOutstanding` computation and an unused
++  `companies` prop (type + its single caller). Remaining ESLint warnings are 2 `no-img-element`
++  suggestions (deliberate: PDF/document images) and one underscore-prefixed server-action param.
++
+ ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
+ 
+ **Overall: well-guarded, no critical findings.** Specifically verified:
+diff --git a/UPDATED-FILES.txt b/UPDATED-FILES.txt
+index 8388afa..da5c7e7 100644
+--- a/UPDATED-FILES.txt
++++ b/UPDATED-FILES.txt
+@@ -1,41 +1,67 @@
+-UPDATED FILES — Store Ad Spend: Amazon country-wise Budget/Spend + monthly-statement verification (2026-10-15)
+-            + B2B: not-yet-run PI migration ab screen par dikhta hai
+-================================================================================================================
+-A	db/2026-10-15-ad-spend-amazon-country.sql
+-M	db/schema.sql
+-M	src/types/database.ts
+-A	src/app/dashboard/ad-spend/amazon-countries.ts
+-A	src/app/dashboard/ad-spend/ad-spend-stats.ts
+-M	src/app/dashboard/ad-spend/actions.ts
+-M	src/app/dashboard/ad-spend/ad-spend-entry-section.tsx
+-M	src/app/dashboard/ad-spend/ad-spend-report-table.tsx
+-M	src/app/dashboard/ad-spend/page.tsx
+-M	src/app/dashboard/b2b/page.tsx
+-M	src/app/dashboard/b2b/b2b-client.tsx
+-M	BRAIN.md
+-M	UPDATED-FILES.txt
++UPDATED FILES — UI/UX cleanup round (2026-10-15)
++================================================
++Purani Hinglish UI strings English me, responsive layout (columns/text kisi par nahi chadhe),
++theme-aware text color + font, aur linter ke dead-code warnings saaf.
+ 
+-WHAT CHANGED
+-============
+-1. Amazon Country section (Amazon stores only): the daily entry form now asks for a Country
+-   (US / CA / MX / AU / UK / DE / IT / JP / FR / ES / IN / AE) when the selected store is an
+-   Amazon store, and the Report tab gains a "🌍 Amazon — Country-wise Budget / Spend" table.
+-   Etsy / eBay / Website stores are untouched — one row per day, as before.
+-2. Statement verification + link: every Report row (Monthly Roll-up, Daily Master, Amazon
+-   Country) now shows whether that store's orders were actually found in the store's imported
+-   marketplace statement (✅ / ⚠️ / ⏳) and links straight to that store's statement detail for
+-   the month (/dashboard/reports/store-expenses?store=…&from=…&to=…).
+-3. B2B PI: pehle chup-chaap "To be provided" chhap raha tha jab PI ki migration run nahi hui thi.
+-   Ab ek explicit-column probe query fail hoti hai, aur wahi message 🛠️ setup card par pahunchta
+-   hai jo chalane wali SQL files ki list dikhata hai (ab us list me
+-   db/2026-10-13-b2b-pi-export-fields.sql bhi hai). Register/quotations/payments pehle jaise
+-   load hote rahenge — sirf missing-column wala hissa screen par aa jayega.
++UI TEXT → ENGLISH (saari user-visible strings)
++---------------------------------------------
++M	src/app/api/companion-chat/route.ts                     (AI chat reply/error messages)
++M	src/app/api/telegram-send-order/route.ts                (send errors)
++M	src/app/api/whapi-send-order/route.ts                   (send errors)
++M	src/app/dashboard/admin/departments/page.tsx
++M	src/app/dashboard/attendance/admin/coff-report/page.tsx
++M	src/app/dashboard/attendance/admin/gps-report/page.tsx
++M	src/app/dashboard/attendance/my-recurring-work-form.tsx
++M	src/app/dashboard/attendance/telegram-connect-card.tsx
++M	src/app/dashboard/b2b/engine/page.tsx
++M	src/app/dashboard/bill-payment/credit-note-panel.tsx
++M	src/app/dashboard/bill-payment/page.tsx
++M	src/app/dashboard/bill-payment/wallet-panel.tsx
++M	src/app/dashboard/courier-booking/actions.ts            (address / FedEx ETD hints)
++M	src/app/dashboard/courier-booking/create-shipment-form.tsx (CSB-V preview dialog)
++M	src/app/dashboard/documents/actions.ts                   (duplicate-entry error)
++M	src/app/dashboard/documents/document-entry-tabs.tsx      (A4 edit dialog subtitles)
++M	src/app/dashboard/expenses/recurring-debits-section.tsx
++M	src/app/dashboard/orders/new/order-whatsapp-button.tsx
++M	src/app/dashboard/orders/order-list-table.tsx
++M	src/app/dashboard/orders/photo-url-field.tsx
++M	src/components/logout-button.tsx
++M	src/components/po-line-actions.tsx
++M	src/lib/attendance/telegram-notify.ts
+ 
+-NOTES — ye 2 SQL files Supabase SQL Editor me run karni hain
+-============================================================
+-1. db/2026-10-13-b2b-pi-export-fields.sql   -> B2B PI ke payment terms / ports / packing / item
+-   specs + b2b_export_profiles. ISKE BINA PI me "To be provided" aata hai.
+-2. db/2026-10-15-ad-spend-amazon-country.sql -> country_code column + (store, date, country)
+-   unique key. ISKE BINA Amazon store ki country-wise entry save nahi hogi.
+-   (Purani Amazon rows country '' ke saath "Other" row me dikhengi — dobara save karne par sahi
+-   country aa jayegi.)
++LAYOUT — screen ke according auto adjust (scroll / responsive grids)
++-------------------------------------------------------------------
++M	src/app/dashboard/parties/[id]/ledger/page.tsx
++M	src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
++M	src/app/dashboard/admin/companion-access/companion-access-client.tsx
++M	src/app/dashboard/documents/duty-bill-section.tsx
++M	src/app/dashboard/documents/freight-bill-section.tsx
++M	src/app/dashboard/documents/credit-note-form.tsx
++M	src/app/dashboard/documents/credit-note-edit-form.tsx
++M	src/app/dashboard/documents/purchase-bill-multi-form.tsx
++M	src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
++M	src/app/dashboard/documents/inline-add-shipment.tsx
++M	src/app/dashboard/invoices/invoice-generate-form.tsx
++M	src/app/dashboard/orders/order-hold-cancel-actions.tsx
++M	src/app/dashboard/orders/page.tsx
++M	src/app/dashboard/stock/stock-in-form.tsx
++M	src/app/dashboard/b2b/products/products-client.tsx
++
++THEME / TYPOGRAPHY (dono inherit-only — theme waise hi auto-adjust karta rahega)
++------------------------------------------------------------------------------
++M	src/app/globals.css   -> body font = theme ka --font-sans (Arial hata diya)
++                        -> [data-theme] ka inherited text color = --oms-text (near-black)
++                        -> [data-theme] table me tabular figures (money columns align)
++
++DEAD CODE (linter warnings saaf)
++--------------------------------
++M	src/app/dashboard/reports/finance-dashboard/page.tsx  (unused BarChart import)
++
++AUDIT — kuch karne ki zaroorat nahi thi (verify kiya gaya)
++----------------------------------------------------------
++* 52 static internal hrefs + saare capability tiles + redirect()/router.push() targets: sab
++  real page.tsx par resolve hote hain — koi broken link nahi.
++* Koi orphan dashboard route nahi, koi href="#", koi khaali onClick, koi "coming soon"/TODO nahi.
++* Attendance Admin ke tables pehle se horizontal scroll me the (shared tableWrapClass).
++
++NOTE: is round me koi DB migration nahi hai — sirf UI/code changes hain.
+diff --git a/src/app/api/companion-chat/route.ts b/src/app/api/companion-chat/route.ts
+index cd5c66f..40e8d19 100644
+--- a/src/app/api/companion-chat/route.ts
++++ b/src/app/api/companion-chat/route.ts
+@@ -123,7 +123,7 @@ export async function POST(req: Request) {
+   if (!apiKey) {
+     return NextResponse.json({
+       reply:
+-        "AI chat abhi Admin ne configure nahi kiya hai — GEMINI_API_KEY set karna baaki hai (Google AI Studio se free key milti hai, phir Vercel ke Environment Variables mein add karni hoti hai).",
++        "The AI chat has not been configured by an Admin yet — GEMINI_API_KEY still has to be set (Google AI Studio gives a free key, which then has to be added to the Vercel environment variables).",
+     });
+   }
+ 
+@@ -178,13 +178,13 @@ export async function POST(req: Request) {
+     if (isRateLimit) {
+       return NextResponse.json({
+         reply:
+-          "Abhi Google AI ki free-tier request-limit khatam ho gayi hai (ek saath bahut saare sawal aa gaye honge) — 1-2 minute ruk kar dobara try karein. Agar yeh baar-baar hota hai, Admin ko batayein: Google AI Studio (aistudio.google.com) mein billing enable karke yeh limit badhayi ja sakti hai.",
++          "Google AI's free-tier request limit is finished for now (too many questions came in at once) — wait 1-2 minutes and try again. If this keeps happening, tell an Admin: enabling billing in Google AI Studio (aistudio.google.com) raises this limit.",
+       });
+     }
+     if (isAuthProblem) {
+       return NextResponse.json({
+         reply:
+-          "AI chat abhi kaam nahi kar raha — lagta hai GEMINI_API_KEY galat hai ya expire ho gayi hai. Admin ko batayein Vercel ke Environment Variables mein yeh key check/update karein.",
++          "The AI chat is not working right now — the GEMINI_API_KEY looks wrong or expired. Please tell an Admin to check/update that key in the Vercel environment variables.",
+       });
+     }
+     return NextResponse.json({ reply: "Sorry, the AI chat service is having trouble right now — try again in a moment." });
+diff --git a/src/app/api/telegram-send-order/route.ts b/src/app/api/telegram-send-order/route.ts
+index 420020f..66e25ed 100644
+--- a/src/app/api/telegram-send-order/route.ts
++++ b/src/app/api/telegram-send-order/route.ts
+@@ -76,7 +76,7 @@ export async function POST(request: Request) {
+     return Response.json(
+       {
+         ok: false,
+-        error: "Telegram bot abhi configure nahi hai — TELEGRAM_BOT_TOKEN set karna hoga (.env.example dekhein).",
++        error: "The Telegram bot is not configured yet — TELEGRAM_BOT_TOKEN has to be set (see .env.example).",
+       },
+       { status: 500 }
+     );
+@@ -108,7 +108,7 @@ export async function POST(request: Request) {
+     return Response.json(
+       {
+         ok: false,
+-        error: "Is company ke liye Telegram group set nahi hai — companies.telegram_chat_id ya TELEGRAM_ORDER_CHAT_ID set karna hoga.",
++        error: "No Telegram group is set for this company — either companies.telegram_chat_id or TELEGRAM_ORDER_CHAT_ID has to be set.",
+       },
+       { status: 500 }
+     );
+@@ -138,6 +138,6 @@ export async function POST(request: Request) {
+     if (!result.ok) return Response.json({ ok: false, error: `Telegram ne message reject kar diya: ${result.error}` }, { status: 502 });
+     return Response.json({ ok: true });
+   } catch {
+-    return Response.json({ ok: false, error: "Telegram tak pahunch nahi paye — thodi der me dobara try karein." }, { status: 502 });
++    return Response.json({ ok: false, error: "Could not reach Telegram — please try again in a moment." }, { status: 502 });
+   }
+ }
+diff --git a/src/app/api/whapi-send-order/route.ts b/src/app/api/whapi-send-order/route.ts
+index 07b4780..d715d04 100644
+--- a/src/app/api/whapi-send-order/route.ts
++++ b/src/app/api/whapi-send-order/route.ts
+@@ -67,7 +67,7 @@ async function callWhapi(token: string, path: string, body: Record<string, unkno
+       body: JSON.stringify(body),
+     });
+   } catch {
+-    return { ok: false, error: "Whapi tak pahunch nahi paye — thodi der me dobara try karein." };
++    return { ok: false, error: "Could not reach Whapi — please try again in a moment." };
+   }
+   // Whapi's exact success/error JSON shape isn't fully documented, so this
+   // treats any 2xx as success and best-effort extracts a message from
+@@ -100,7 +100,7 @@ export async function POST(request: Request) {
+     return Response.json(
+       {
+         ok: false,
+-        error: "WhatsApp automation abhi configure nahi hai — WHAPI_TOKEN set karna hoga (.env.example dekhein).",
++        error: "WhatsApp automation is not configured yet — WHAPI_TOKEN has to be set (see .env.example).",
+       },
+       { status: 500 }
+     );
+@@ -133,7 +133,7 @@ export async function POST(request: Request) {
+     return Response.json(
+       {
+         ok: false,
+-        error: "Is company ke liye WhatsApp group set nahi hai — companies.whapi_group_id ya WHAPI_GROUP_ID set karna hoga.",
++        error: "No WhatsApp group is set for this company — either companies.whapi_group_id or WHAPI_GROUP_ID has to be set.",
+       },
+       { status: 500 }
+     );
+@@ -167,6 +167,6 @@ export async function POST(request: Request) {
+     if (!result.ok) return Response.json({ ok: false, error: `WhatsApp ne message reject kar diya: ${result.error}` }, { status: 502 });
+     return Response.json({ ok: true });
+   } catch {
+-    return Response.json({ ok: false, error: "WhatsApp tak pahunch nahi paye — thodi der me dobara try karein." }, { status: 502 });
++    return Response.json({ ok: false, error: "Could not reach WhatsApp — please try again in a moment." }, { status: 502 });
+   }
+ }
+diff --git a/src/app/dashboard/admin/companion-access/companion-access-client.tsx b/src/app/dashboard/admin/companion-access/companion-access-client.tsx
+index 07e9f13..cc2ece6 100644
+--- a/src/app/dashboard/admin/companion-access/companion-access-client.tsx
++++ b/src/app/dashboard/admin/companion-access/companion-access-client.tsx
+@@ -60,7 +60,8 @@ export function CompanionAccessClient({
+       <p className="mb-3 text-xs font-medium text-slate-500">
+         {enabledCount} of {employees.length} employees enabled
+       </p>
+-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
++      {/* 2026-10-15 — overflow-x-auto instead of overflow-hidden: on a narrow screen the table scrolls sideways instead of clipping its columns. */}
++      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+         <table className="w-full border-collapse text-sm">
+           <thead>
+             <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+diff --git a/src/app/dashboard/admin/departments/page.tsx b/src/app/dashboard/admin/departments/page.tsx
+index 472bdfa..bb0a3f5 100644
+--- a/src/app/dashboard/admin/departments/page.tsx
++++ b/src/app/dashboard/admin/departments/page.tsx
+@@ -45,8 +45,8 @@ export default async function DepartmentsPage({
+         <div>
+           <h1 className="text-lg font-semibold text-slate-900">🏢 Departments</h1>
+           <p className="text-sm text-slate-500">
+-            Structured department master — yahin se add/rename/deactivate karo; Employees forms aur har attendance report isi se
+-            Department column/filter bharte hain.
++            Structured department master — add, rename or deactivate departments here; the employee forms and every attendance
++            report fill their Department column and filter from this list.
+           </p>
+         </div>
+         <Link
+diff --git a/src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx b/src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
+index 63323d3..59be7be 100644
+--- a/src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
++++ b/src/app/dashboard/admin/employees/settlements/[id]/settlement-detail-view.tsx
+@@ -342,7 +342,9 @@ export function SettlementDetailView({
+             />
+           </div>
+ 
+-          <table className="mb-3 w-full border-collapse text-xs">
++          {/* 2026-10-15 — scrolls sideways on a narrow screen instead of squashing the amount columns. */}
++          <div className="overflow-x-auto">
++          <table className="mb-3 w-full min-w-[420px] border-collapse text-xs print:min-w-0">
+             <thead>
+               <tr className="border-b border-slate-300 text-left text-slate-500">
+                 <th className="py-1">Additions</th>
+@@ -368,6 +370,7 @@ export function SettlementDetailView({
+               </tr>
+             </tbody>
+           </table>
++          </div>
+ 
+           <div className="mb-4 flex items-center justify-between rounded-lg bg-green-50 px-3 py-2">
+             <span className="text-sm font-semibold text-green-800">Net Settlement Amount</span>
+diff --git a/src/app/dashboard/attendance/admin/coff-report/page.tsx b/src/app/dashboard/attendance/admin/coff-report/page.tsx
+index e41f96b..a0aa3c6 100644
+--- a/src/app/dashboard/attendance/admin/coff-report/page.tsx
++++ b/src/app/dashboard/attendance/admin/coff-report/page.tsx
+@@ -22,7 +22,7 @@ export default async function CoffReportPage({
+       mode="range"
+       basePath="/dashboard/attendance/admin/coff-report"
+       heading="COFF Report (Compensatory Off)"
+-      blurb="Week-off/holiday par kaam karke kitna COFF bana aur kitna use hua (default: pichhle 30 din). Availed = leave type jiska naam COFF/Comp Off ho."
++      blurb="How much COFF was earned by working on weekly offs / holidays and how much was used (default: the last 30 days). Availed = rows whose leave type is named COFF / Comp Off."
+       reportTypes={REPORT_TYPES}
+       defaultReport="coff"
+     />
+diff --git a/src/app/dashboard/attendance/admin/gps-report/page.tsx b/src/app/dashboard/attendance/admin/gps-report/page.tsx
+index c346075..c96d2cc 100644
+--- a/src/app/dashboard/attendance/admin/gps-report/page.tsx
++++ b/src/app/dashboard/attendance/admin/gps-report/page.tsx
+@@ -21,7 +21,7 @@ export default async function GpsReportPage({
+       mode="range"
+       basePath="/dashboard/attendance/admin/gps-report"
+       heading="GPS Report"
+-      blurb="Punch-wise GPS coordinates with a Google Maps link (default: pichhle 30 din). Server-side punches/import ke bina coords wali rows bhi dikhti hain — missing-location audit ke kaam aati hai."
++      blurb="Punch-wise GPS coordinates with a Google Maps link (default: the last 30 days). Rows that came in without server-side punch/import coordinates are listed too, which is what makes this usable as a missing-location audit."
+       reportTypes={REPORT_TYPES}
+       defaultReport="gps"
+     />
+diff --git a/src/app/dashboard/attendance/my-recurring-work-form.tsx b/src/app/dashboard/attendance/my-recurring-work-form.tsx
+index 2e2921d..a446a1c 100644
+--- a/src/app/dashboard/attendance/my-recurring-work-form.tsx
++++ b/src/app/dashboard/attendance/my-recurring-work-form.tsx
+@@ -107,7 +107,7 @@ export function MyRecurringWorkForm({ items }: { items: MyRecurringItemRow[] })
+           value={form.description}
+           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+           required
+-          placeholder="Description — kaam jo roz karna hai (e.g. Check yesterday's tracking updates)"
++          placeholder="Description — the work to be done daily (e.g. Check yesterday's tracking updates)"
+           className={inputClass}
+         />
+         <div className="flex flex-wrap items-center gap-2">
+diff --git a/src/app/dashboard/attendance/telegram-connect-card.tsx b/src/app/dashboard/attendance/telegram-connect-card.tsx
+index b3a1f29..935f469 100644
+--- a/src/app/dashboard/attendance/telegram-connect-card.tsx
++++ b/src/app/dashboard/attendance/telegram-connect-card.tsx
+@@ -69,7 +69,7 @@ export function TelegramConnectCard({
+     pollingRef.current = true;
+     setPolling(true);
+     setConnectResult(null);
+-    setPollNote("Telegram kholein aur bot chat me START dabayein — hum yahin connect kar rahe hain…");
++    setPollNote("Open Telegram and press START in the bot chat — we are connecting you right here…");
+     let lastServerError: string | null = null; // plain local — not state (no render churn per attempt)
+     try {
+       for (let attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
+@@ -96,7 +96,7 @@ export function TelegramConnectCard({
+         connected: false,
+         error:
+           lastServerError ??
+-          "Abhi tak Start message nahi mila — neeche wala 'Connect (retry)' button dabakar dobara try karein. Telegram me bot chat khol kar ya to 'Open Telegram & Start' link dubara kholein (payload wala /start aata hai), ya fresh /start bhejein — 15 minute se purana /start count nahi hota.",
++          "No Start message received yet — press the 'Connect (retry)' button below to try again. Either reopen the bot chat / the 'Open Telegram & Start' link (that sends the /start with the payload) or send a fresh /start — a /start older than 15 minutes is not counted.",
+       });
+     } finally {
+       pollingRef.current = false;
+@@ -195,8 +195,8 @@ export function TelegramConnectCard({
+         botUsername ? (
+           <div className="space-y-2">
+             <p className="text-xs text-slate-600">
+-              Bas <strong>1 click</strong>: neeche button se Telegram khulega → bot chat me <strong>START</strong> dabayein →
+-              wapas yahan aate hi connect ho jayega.
++              Just <strong>1 click</strong>: the button below opens Telegram → press <strong>START</strong> in the bot chat →
++              you are connected as soon as you come back to this page.
+             </p>
+             <div className="flex flex-wrap items-center gap-2">
+               <a
+@@ -227,9 +227,9 @@ export function TelegramConnectCard({
+           </div>
+         ) : (
+           <p className="text-xs text-amber-600">
+-            Bot ka deep link abhi auto-resolve nahi ho paya — server pe{" "}
+-            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_USERNAME</code> set karwayein (ya{" "}
+-            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_TOKEN</code> check karein), phir reload karein.
++            The bot deep link could not be resolved yet — ask the server admin to set{" "}
++            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_USERNAME</code> (or check{" "}
++            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_TOKEN</code>), then reload this page.
+           </p>
+         )
+       ) : (
+diff --git a/src/app/dashboard/b2b/engine/page.tsx b/src/app/dashboard/b2b/engine/page.tsx
+index 8b4b3a6..1f1db3b 100644
+--- a/src/app/dashboard/b2b/engine/page.tsx
++++ b/src/app/dashboard/b2b/engine/page.tsx
+@@ -80,8 +80,9 @@ export default async function B2BEnginePage() {
+       <header className="mb-6">
+         <h1 className="text-2xl font-bold text-slate-900">🧮 Quotation Engine</h1>
+         <p className="mt-1 text-sm text-slate-500">
+-          Sirf product + quantity select karein — costing, freight, margin aur suggested price automatic. Freight/incoterm
+-          entered values se calculate hota hai (the system never guesses a rate). Save quotation → convert to sales order.
++          Just pick a product and a quantity — costing, freight, margin and the suggested price are all calculated.
++          Freight/incoterm follow the values you enter (the system never guesses a rate). Save the quotation, then convert it
++          to a sales order.
+         </p>
+       </header>
+       <EngineClient inquiries={inquiries} products={products} buyers={buyers} rates={rates} />
+diff --git a/src/app/dashboard/b2b/products/products-client.tsx b/src/app/dashboard/b2b/products/products-client.tsx
+index 48910d3..ea6b9fb 100644
+--- a/src/app/dashboard/b2b/products/products-client.tsx
++++ b/src/app/dashboard/b2b/products/products-client.tsx
+@@ -487,7 +487,7 @@ export function ProductsClient({ products, bom }: { products: ProductView[]; bom
+               <input type="number" value={draft.piecesPerCarton} onChange={(e) => setDraft({ ...draft, piecesPerCarton: e.target.value })} className={inputClass} />
+             </Field>
+             <Field label="Carton L × W × H (cm)">
+-              <div className="grid grid-cols-3 gap-1.5">
++              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                 <input type="number" value={draft.cartonLengthCm} onChange={(e) => setDraft({ ...draft, cartonLengthCm: e.target.value })} className={inputClass} placeholder="L" />
+                 <input type="number" value={draft.cartonWidthCm} onChange={(e) => setDraft({ ...draft, cartonWidthCm: e.target.value })} className={inputClass} placeholder="W" />
+                 <input type="number" value={draft.cartonHeightCm} onChange={(e) => setDraft({ ...draft, cartonHeightCm: e.target.value })} className={inputClass} placeholder="H" />
+diff --git a/src/app/dashboard/bill-payment/credit-note-panel.tsx b/src/app/dashboard/bill-payment/credit-note-panel.tsx
+index b994a98..0df2aec 100644
+--- a/src/app/dashboard/bill-payment/credit-note-panel.tsx
++++ b/src/app/dashboard/bill-payment/credit-note-panel.tsx
+@@ -42,7 +42,7 @@ function AwbOrderPreview({ hits }: { hits: AwbOrderHit[] | null }) {
+       {hits.map((h) => (
+         <p key={h.awb} className={`text-[11px] ${h.found ? "text-emerald-700" : "text-amber-600"}`}>
+           {h.found ? "✓" : "?"} <span className="font-mono">{h.awb}</span>
+-          {h.found ? ` → ${h.ordersLine}` : " — koi shipment nahi mila (check karo ya chhod do)"}
++          {h.found ? ` → ${h.ordersLine}` : " — no shipment found (check the AWB or leave it blank)"}
+         </p>
+       ))}
+     </div>
+@@ -102,7 +102,7 @@ export function CreditNotePanel({
+     listPartyBillsForCn(partyId).then((rows) => {
+       if (alive) setAwbBills(rows);
+     }).catch(() => {
+-      if (alive) setAwbBillsError("Party ke outstanding bills load nahi ho paye — page refresh karke dobara try karein.");
++      if (alive) setAwbBillsError("Could not load the party's outstanding bills — refresh the page and try again.");
+     });
+     return () => {
+       alive = false;
+@@ -314,18 +314,19 @@ export function CreditNotePanel({
+             {/* Live GST math — "CREDTI AMMOUNT + GST 18% = TOTAL AMMOUNT". */}
+             {awbGstTotal != null && (
+               <p className="text-[11px] font-medium text-slate-600">
+-                Base ₹{Number(awbBase).toFixed(2)} + GST 18% = <strong>Total ₹{awbGstTotal.toFixed(2)}</strong> (CN document par yahi total jayega; har AWB bill ko base share split hoga)
++                Base ₹{Number(awbBase).toFixed(2)} + GST 18% = <strong>Total ₹{awbGstTotal.toFixed(2)}</strong> (this total is what the CN document carries; each AWB bill is split as its share of the base)
+               </p>
+             )}
+             {awbBillsError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{awbBillsError}</p>}
+             {!awbBills && !awbBillsError && <p className="text-[11px] text-slate-400">Party ke bills load ho rahe hain…</p>}
++            {/* 2026-10-15 — overflow-auto (not overflow-y-auto): a cramped screen must be able to scroll these columns sideways rather than squash/clip them. */}
+             {awbBills && (
+-              <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200 bg-white">
++              <div className="max-h-44 overflow-auto rounded-lg border border-slate-200 bg-white">
+                 <table className="min-w-full text-xs">
+                   <tbody>
+                     {awbBills.length === 0 && (
+                       <tr>
+-                        <td className="px-3 py-2 text-slate-400">Is party ka koi outstanding bill nahi hai.</td>
++                        <td className="px-3 py-2 text-slate-400">This party has no outstanding bill.</td>
+                       </tr>
+                     )}
+                     {awbBills.map((b) => (
+@@ -351,7 +352,7 @@ export function CreditNotePanel({
+               </div>
+             )}
+             <p className={`text-[11px] ${awbSplitSum > 0 && Math.abs(awbSplitSum - (Number(awbBase) || 0)) <= 0.05 ? "text-green-700" : "text-slate-500"}`}>
+-              AWB split total: ₹{awbSplitSum.toFixed(2)} {awbBase !== "" && Number(awbBase) > 0 ? (Math.abs(awbSplitSum - Number(awbBase)) <= 0.05 ? "✓ base amount ke barabar hai" : `— base amount ₹${Number(awbBase).toFixed(2)} ke barabar hona chahiye`) : ""}
++              AWB split total: ₹{awbSplitSum.toFixed(2)} {awbBase !== "" && Number(awbBase) > 0 ? (Math.abs(awbSplitSum - Number(awbBase)) <= 0.05 ? "✓ equals the base amount" : `— must equal the base amount ₹${Number(awbBase).toFixed(2)}`) : ""}
+             </p>
+             {/* The per-bill split rides to the action as JSON. */}
+             <input type="hidden" name="awb_amounts" value={JSON.stringify(awbAmounts)} />
+@@ -382,6 +383,7 @@ export function CreditNotePanel({
+           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+             Applied credit notes ({applied.length})
+           </p>
++          <div className="overflow-x-auto">
+           <table className="min-w-full text-xs">
+             <tbody>
+               {applied.map((a) => (
+@@ -411,6 +413,7 @@ export function CreditNotePanel({
+               ))}
+             </tbody>
+           </table>
++          </div>
+         </div>
+       )}
+     </td>
+diff --git a/src/app/dashboard/bill-payment/page.tsx b/src/app/dashboard/bill-payment/page.tsx
+index d34236b..d79db43 100644
+--- a/src/app/dashboard/bill-payment/page.tsx
++++ b/src/app/dashboard/bill-payment/page.tsx
+@@ -180,8 +180,6 @@ export default async function BillPaymentPage({
+     })),
+   }));
+ 
+-  const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);
+-
+   // 2026-09-15 — wallet overview for the visible companies. Client-side
+   // show/hide toggle (useState) instead of a route param so opening the
+   // panel never loses the bill filters.
+@@ -206,8 +204,8 @@ export default async function BillPaymentPage({
+             plus the per-bill "💳 Pay from Wallet" action on rows below. */}
+         <p className="mt-1 text-[11px] text-slate-400">
+           {hasWalletParties
+-            ? `💳 ${Object.keys(partyWalletBalances).length} courier wallet${Object.keys(partyWalletBalances).length === 1 ? "" : "s"} active — jis bill ka party wallet me hai, uspe "Pay from Wallet" action dikhega.`
+-            : "💳 Prepaid courier wallet (FedEx/UPS style): pehle recharge karo, phir invoice wallet se pay hoga. Panel se shuru karo."}
++            ? `💳 ${Object.keys(partyWalletBalances).length} courier wallet${Object.keys(partyWalletBalances).length === 1 ? "" : "s"} active — bills paid from a party wallet show the "Pay from Wallet" action.`
++            : "💳 Prepaid courier wallet (FedEx/UPS style): recharge first, then the invoice is paid out of that wallet. Start from the wallet panel below."}
+         </p>
+       </div>
+ 
+diff --git a/src/app/dashboard/bill-payment/wallet-panel.tsx b/src/app/dashboard/bill-payment/wallet-panel.tsx
+index b611c0c..79fc171 100644
+--- a/src/app/dashboard/bill-payment/wallet-panel.tsx
++++ b/src/app/dashboard/bill-payment/wallet-panel.tsx
+@@ -98,13 +98,13 @@ export function WalletPanel({
+       <div className="mb-3 flex items-center gap-2">
+         <span className="text-lg">💳</span>
+         <h2 className="text-sm font-bold text-slate-700">Courier Wallets (prepaid)</h2>
+-        <span className="text-[11px] text-slate-400">Recharge before booking · invoice consume kar deta hai</span>
++        <span className="text-[11px] text-slate-400">Recharge before booking · a courier invoice consumes it</span>
+       </div>
+ 
+       {/* Balance cards */}
+       {overview.balances.length === 0 ? (
+         <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+-          Koi wallet entry nahi. Pehla recharge neeche karo — phir har courier bill pe &quot;Pay from Wallet&quot; dikhega.
++          No wallet entries yet. Add the first recharge below — after that every courier bill offers &quot;Pay from Wallet&quot;.
+         </p>
+       ) : (
+         <div className="mb-4 flex flex-wrap gap-2">
+@@ -170,7 +170,7 @@ export function WalletPanel({
+         </form>
+ 
+         <form action={refundAction} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+-          <div className="mb-2 text-xs font-bold text-slate-600">↩️ Refund (courier ne unused money wapas ki)</div>
++          <div className="mb-2 text-xs font-bold text-slate-600">↩️ Refund (the courier returned unused money)</div>
+           <div className="grid grid-cols-2 gap-2">
+             <div>
+               <label className={labelClass}>Company</label>
+@@ -215,7 +215,7 @@ export function WalletPanel({
+         <div className="mt-4">
+           <div className="mb-1 flex items-baseline justify-between gap-2">
+             <div className="text-xs font-semibold text-slate-500">Recent wallet activity</div>
+-            <div className="text-[10px] text-slate-400">galat entry? ✏️ se theek karo ya 🗑 se hatao</div>
++            <div className="text-[10px] text-slate-400">Wrong entry? Fix it with ✏️ or remove it with 🗑</div>
+           </div>
+           {editState.error && (
+             <p className="mb-1 rounded-lg bg-rose-50 px-2 py-1.5 text-xs font-medium text-rose-600">{editState.error}</p>
+@@ -229,7 +229,8 @@ export function WalletPanel({
+           {!editState.error && !deleteState.error && deleteState.done && deleteState.done > (editState.done ?? 0) && (
+             <p className="mb-1 rounded-lg bg-emerald-50 px-2 py-1.5 text-xs font-medium text-emerald-700">✅ Entry deleted.</p>
+           )}
+-          <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-100">
++          {/* 2026-10-15 — overflow-auto (not overflow-y-auto): narrow screens scroll this sideways instead of squashing the columns. */}
++          <div className="max-h-44 overflow-auto rounded-lg border border-slate-100">
+             <table className="min-w-full text-xs">
+               <tbody className="divide-y divide-slate-100">
+                 {overview.recent.slice(0, 40).map((t) => (
+diff --git a/src/app/dashboard/courier-booking/actions.ts b/src/app/dashboard/courier-booking/actions.ts
+index fe0c60e..b863da2 100644
+--- a/src/app/dashboard/courier-booking/actions.ts
++++ b/src/app/dashboard/courier-booking/actions.ts
+@@ -164,9 +164,9 @@ function withAddressErrorHint(message: string, formData: FormData): string {
+   const state = str(formData, "recipient_state");
+   const postcode = str(formData, "recipient_postcode");
+   if (!city || !state || !postcode) {
+-    return `${message} — City/State/Postcode me se koi field khali thi. Order ke "Structured Address" section me jaakar "✂ Split Address" button try karein (agar poora address Address Line 1 me paste ho gaya tha), ya yahan seedha bhar dein aur dobara try karein.`;
++    return `${message} — one of City / State / Postcode was empty. Open the order's "Structured Address" section and try the "✂ Split Address" button (useful when the whole address was pasted into Address Line 1), or fill them in here and try again.`;
+   }
+-  return `${message} — City, State aur Postcode dubara check karein (in teeno ka aapas me match hona zaroori hai).`;
++  return `${message} — please check City, State and Postcode again (all three must match each other).`;
+ }
+ 
+ // 2026-09-12 — a real live-test error: "Requested SpecialServiceType
+@@ -181,7 +181,7 @@ function withAddressErrorHint(message: string, formData: FormData): string {
+ // RIGHT NOW for this booking.
+ function withEtdNotEnabledHint(message: string): string {
+   if (!/special ?service ?type.{0,60}not enabled/i.test(message)) return message;
+-  return `${message} — Aapke FedEx account par "Electronic Trade Documents" ka ye hissa abhi enabled nahi hai (FedEx customer service se enable karvana hoga). Tab tak "Commercial Invoice Method" dropdown me "I will upload my own invoice" ya "None" chunein — dono abhi kaam karte hain, sirf "FedEx creates ... electronically" wale 2 options ke liye ye enable karvana padega.`;
++  return `${message} — this part of "Electronic Trade Documents" is not enabled on your FedEx account yet (FedEx customer service has to enable it). Until then pick "I will upload my own invoice" or "None" in the "Commercial Invoice Method" dropdown — both work right now; only the two "FedEx creates ... electronically" options need this to be enabled.`;
+ }
+ 
+ // -----------------------------------------------------------------------
+diff --git a/src/app/dashboard/courier-booking/create-shipment-form.tsx b/src/app/dashboard/courier-booking/create-shipment-form.tsx
+index 55630ff..17d2caf 100644
+--- a/src/app/dashboard/courier-booking/create-shipment-form.tsx
++++ b/src/app/dashboard/courier-booking/create-shipment-form.tsx
+@@ -1010,7 +1010,7 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
+             onClick={(e) => e.stopPropagation()}
+           >
+             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
+-              <span className="text-sm font-semibold text-slate-700">CSB-V Invoice Preview (draft — yahi document booking par courier ko jayega)</span>
++              <span className="text-sm font-semibold text-slate-700">CSB-V Invoice Preview (draft — this is the document the courier receives on booking)</span>
+               <button
+                 type="button"
+                 onClick={closeInvoicePreview}
+@@ -1021,8 +1021,8 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
+             </div>
+             <iframe src={invoicePreviewBlobUrl} title="FedEx invoice preview" className="min-h-0 flex-1" />
+             <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
+-              Sahi lag raha hai to ye window band kar ke &quot;Create FedEx Shipment&quot; dabaiye. Kuch galat hai to niche fields edit
+-              karke &quot;Preview Invoice&quot; dobara dabaiye.
++              If this looks right, close this window and press &quot;Create FedEx Shipment&quot;. If something is wrong, edit the
++              fields below and press &quot;Preview Invoice&quot; again.
+             </div>
+           </div>
+         </div>
+diff --git a/src/app/dashboard/documents/actions.ts b/src/app/dashboard/documents/actions.ts
+index 5cbc98d..41b301d 100644
+--- a/src/app/dashboard/documents/actions.ts
++++ b/src/app/dashboard/documents/actions.ts
+@@ -2442,7 +2442,7 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
+   {
+     const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+     if (dup) {
+-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. Kisi invoice ki do baar entry nahi hoti — agar amount alag hai to purani entry edit karein.`, success: false };
++      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
+     }
+   }
+ 
+@@ -2897,7 +2897,7 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
+   {
+     const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+     if (dup) {
+-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. Kisi invoice ki do baar entry nahi hoti — agar amount alag hai to purani entry edit karein.`, success: false };
++      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
+     }
+   }
+ 
+diff --git a/src/app/dashboard/documents/credit-note-edit-form.tsx b/src/app/dashboard/documents/credit-note-edit-form.tsx
+index abdd9d8..077b99f 100644
+--- a/src/app/dashboard/documents/credit-note-edit-form.tsx
++++ b/src/app/dashboard/documents/credit-note-edit-form.tsx
+@@ -161,7 +161,7 @@ export function CreditNoteEditForm({
+       {note.party_id && (
+         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+           <p className="mb-2 text-xs font-semibold text-slate-700">Rate Difference Calculator (optional)</p>
+-          <div className="grid grid-cols-3 gap-3">
++          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+             <div>
+               <label className={labelClass} htmlFor={`cn_qty_${note.id}`}>Qty</label>
+               <input
+diff --git a/src/app/dashboard/documents/credit-note-form.tsx b/src/app/dashboard/documents/credit-note-form.tsx
+index b9c9394..65a62b0 100644
+--- a/src/app/dashboard/documents/credit-note-form.tsx
++++ b/src/app/dashboard/documents/credit-note-form.tsx
+@@ -162,7 +162,7 @@ export function CreditNoteForm({
+               agreed/PO — fill Qty and both rates here; Refund Amount fills in automatically as (Billed − PO Rate) × Qty,
+               plus GST below if the difference itself was billed with GST.
+             </p>
+-            <div className="grid grid-cols-4 gap-3">
++            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+               <div>
+                 <label className={labelClass} htmlFor="cn_qty">Qty</label>
+                 <input
+diff --git a/src/app/dashboard/documents/document-entry-tabs.tsx b/src/app/dashboard/documents/document-entry-tabs.tsx
+index d441a04..61de993 100644
+--- a/src/app/dashboard/documents/document-entry-tabs.tsx
++++ b/src/app/dashboard/documents/document-entry-tabs.tsx
+@@ -644,7 +644,7 @@ function DocList<T extends { id: string }>({
+               open
+               onClose={() => setEditingId(null)}
+               title={`Edit — ${r.no}`}
+-              subtitle="A4-size dialog — change karke Save dabao."
++              subtitle="A4-size dialog — edit the fields and press Save."
+             >
+               {renderEdit(r.record, () => setEditingId(null))}
+             </A4Dialog>
+diff --git a/src/app/dashboard/documents/duty-bill-section.tsx b/src/app/dashboard/documents/duty-bill-section.tsx
+index 849c509..aa9ce32 100644
+--- a/src/app/dashboard/documents/duty-bill-section.tsx
++++ b/src/app/dashboard/documents/duty-bill-section.tsx
+@@ -145,7 +145,7 @@ export function DutyBillSection({
+             one against this invoice. */}
+         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+           <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any) — whole-invoice level</div>
+-          <div className="grid grid-cols-3 gap-3">
++          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+             <div>
+               <label className={labelClass} htmlFor="db_cn_no">Credit Note No.</label>
+               <input id="db_cn_no" name="credit_note_no" className={inputClass} placeholder="optional" />
+@@ -166,7 +166,7 @@ export function DutyBillSection({
+             says, not a computed formula (see schema.sql's comment). */}
+         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+           <div className="mb-1.5 text-xs font-medium text-slate-600">Bottom Summary (off the physical bill)</div>
+-          <div className="grid grid-cols-3 gap-3">
++          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+             <div>
+               <label className={labelClass} htmlFor="db_disb">Disbursement Fee</label>
+               <input id="db_disb" name="disbursement_fee" type="number" step="0.01" className={inputClass} placeholder="0" />
+@@ -370,7 +370,7 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
+           </div>
+           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+             <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
+-            <div className="grid grid-cols-3 gap-2">
++            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+               <input name="credit_note_no" defaultValue={bill.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+               <input name="credit_note_date" type="date" defaultValue={bill.credit_note_date ?? ""} className={inputClass} />
+               <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} placeholder="Amt" className={inputClass} />
+@@ -378,7 +378,7 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
+           </div>
+           <div className="rounded-lg border border-slate-200 bg-white p-2">
+             <div className="mb-1 text-[11px] font-medium text-slate-600">Bottom Summary (off the physical bill)</div>
+-            <div className="grid grid-cols-3 gap-2">
++            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+               <input name="disbursement_fee" type="number" step="0.01" defaultValue={bill.disbursement_fee} placeholder="Disbursement Fee" className={inputClass} />
+               <input name="courier_duty_charges_adj" type="number" step="0.01" defaultValue={bill.courier_duty_charges_adj} placeholder="Duty Charges (adj.)" className={inputClass} />
+               <input name="total_payable_amt" type="number" step="0.01" defaultValue={bill.total_payable_amt ?? ""} placeholder="Total Payable Amt" className={inputClass} />
+@@ -610,7 +610,7 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
+       {rows.length > 0 && (
+         <div className="mt-3 space-y-2">
+           {rows.map((r, i) => (
+-            <div key={r.query + i} className="grid grid-cols-6 items-end gap-1.5 rounded border border-slate-200 bg-white p-1.5">
++            <div key={r.query + i} className="grid grid-cols-2 items-end gap-1.5 rounded sm:grid-cols-3 lg:grid-cols-6 border border-slate-200 bg-white p-1.5">
+               <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
+               <input value={r.dutyTaxAmtUsd} onChange={(e) => updateRow(i, { dutyTaxAmtUsd: e.target.value })} placeholder="USD" className={inputClass} />
+               <input value={r.dutyTaxAmtInr} onChange={(e) => updateRow(i, { dutyTaxAmtInr: e.target.value })} placeholder="INR" className={inputClass} />
+@@ -693,12 +693,12 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
+           <input type="hidden" name="id" value={assignment.id} />
+           {noteState.error && <p className="rounded bg-red-50 px-2 py-1 text-red-800">{noteState.error}</p>}
+           <p className="font-medium text-purple-800">Credit / Debit Note — against this AWB specifically</p>
+-          <div className="grid grid-cols-3 gap-1.5">
++          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+             <input name="credit_note_no" defaultValue={assignment.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+             <input name="credit_note_date" type="date" defaultValue={assignment.credit_note_date ?? ""} className={inputClass} />
+             <input name="credit_note_amt" type="number" step="0.01" defaultValue={assignment.credit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
+           </div>
+-          <div className="grid grid-cols-3 gap-1.5">
++          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+             <input name="debit_note_no" defaultValue={assignment.debit_note_no ?? ""} placeholder="Debit Note No." className={inputClass} />
+             <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
+             <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
+diff --git a/src/app/dashboard/documents/freight-bill-section.tsx b/src/app/dashboard/documents/freight-bill-section.tsx
+index 9b48425..f1e4050 100644
+--- a/src/app/dashboard/documents/freight-bill-section.tsx
++++ b/src/app/dashboard/documents/freight-bill-section.tsx
+@@ -167,7 +167,7 @@ export function FreightBillSection({
+             one against this invoice. */}
+         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+           <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any) — whole-invoice level</div>
+-          <div className="grid grid-cols-3 gap-3">
++          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+             <div>
+               <label className={labelClass} htmlFor="fb_cn_no">Credit Note No.</label>
+               <input id="fb_cn_no" name="credit_note_no" className={inputClass} placeholder="optional" />
+@@ -373,7 +373,7 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
+           </div>
+           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+             <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
+-            <div className="grid grid-cols-3 gap-2">
++            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+               <input name="credit_note_no" defaultValue={bill.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+               <input name="credit_note_date" type="date" defaultValue={bill.credit_note_date ?? ""} className={inputClass} />
+               <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} placeholder="Amt" className={inputClass} />
+@@ -759,7 +759,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
+         <div className="mt-3 space-y-2">
+           {rows.map((r, i) => (
+             <div key={r.query + i} className="rounded border border-slate-200 bg-white p-1.5">
+-            <div className="grid grid-cols-5 items-end gap-1.5">
++            <div className="grid grid-cols-2 items-end gap-1.5 sm:grid-cols-3 lg:grid-cols-5">
+               <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
+               <input
+                 value={r.billWeightKg}
+@@ -783,7 +783,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
+             </div>
+             {/* 2026-09-21: per-AWB billed charge breakup — see
+                 db/2026-09-21-freight-awb-billed-charge-breakup.sql. */}
+-            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
++            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 sm:grid-cols-5">
+               <input
+                 value={r.billedFreightAmt}
+                 onChange={(e) => updateRow(i, { billedFreightAmt: e.target.value })}
+@@ -906,12 +906,12 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
+           <input type="hidden" name="id" value={assignment.id} />
+           {noteState.error && <p className="rounded bg-red-50 px-2 py-1 text-red-800">{noteState.error}</p>}
+           <p className="font-medium text-purple-800">Credit / Debit Note — against this AWB specifically</p>
+-          <div className="grid grid-cols-3 gap-1.5">
++          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+             <input name="credit_note_no" defaultValue={assignment.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
+             <input name="credit_note_date" type="date" defaultValue={assignment.credit_note_date ?? ""} className={inputClass} />
+             <input name="credit_note_amt" type="number" step="0.01" defaultValue={assignment.credit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
+           </div>
+-          <div className="grid grid-cols-3 gap-1.5">
++          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+             <input name="debit_note_no" defaultValue={assignment.debit_note_no ?? ""} placeholder="Debit Note No." className={inputClass} />
+             <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
+             <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
+diff --git a/src/app/dashboard/documents/inline-add-shipment.tsx b/src/app/dashboard/documents/inline-add-shipment.tsx
+index f9197a5..0174ea4 100644
+--- a/src/app/dashboard/documents/inline-add-shipment.tsx
++++ b/src/app/dashboard/documents/inline-add-shipment.tsx
+@@ -45,7 +45,7 @@ export function InlineAddShipmentBox({
+         Add a shipment/AWB for <strong>{refNo}</strong> — then it can be matched right away.
+       </p>
+       {state.error && <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
+-      <div className="grid grid-cols-3 gap-2">
++      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+         <div>
+           <label className={labelClass}>Shipment No.</label>
+           <input name="shipment_no" type="number" min={1} defaultValue={1} className={inputClass} />
+diff --git a/src/app/dashboard/documents/purchase-bill-multi-form.tsx b/src/app/dashboard/documents/purchase-bill-multi-form.tsx
+index 7b13b33..0678ee2 100644
+--- a/src/app/dashboard/documents/purchase-bill-multi-form.tsx
++++ b/src/app/dashboard/documents/purchase-bill-multi-form.tsx
+@@ -304,7 +304,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
+               {o.alreadyBilled > 0 && (
+                 <p className="mt-0.5 text-amber-700">⚠ This order already has {o.alreadyBilled} Purchase Bill(s) — a new one under a different invoice no. is fine.</p>
+               )}
+-              <div className="mt-1.5 grid grid-cols-3 gap-2">
++              <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                 <div>
+                   <label className="mb-0.5 block text-[11px] text-slate-400">Qty {isPcs && "(Pcs)"}</label>
+                   <input
+diff --git a/src/app/dashboard/documents/purchase-bill-multi-items-form.tsx b/src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
+index c8a9616..2714705 100644
+--- a/src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
++++ b/src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
+@@ -159,7 +159,7 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
+               </div>
+             )}
+ 
+-            <div className="mt-1.5 grid grid-cols-3 gap-2">
++            <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+               <div>
+                 <label className="mb-0.5 block text-[11px] text-slate-400">Qty {it.sqFeetUnit === "PCS" && "(Pcs)"}</label>
+                 <input
+diff --git a/src/app/dashboard/expenses/recurring-debits-section.tsx b/src/app/dashboard/expenses/recurring-debits-section.tsx
+index d7167ce..97b1b64 100644
+--- a/src/app/dashboard/expenses/recurring-debits-section.tsx
++++ b/src/app/dashboard/expenses/recurring-debits-section.tsx
+@@ -108,14 +108,14 @@ export function RecurringDebitsSection({
+       </div>
+       {logResult?.error && <p className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{logResult.error}</p>}
+       {logResult?.logged && logResult.logged.length === 0 && (
+-        <p className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Kuch due nahi tha — sab already logged ya abhi date nahi aayi.</p>
++        <p className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Nothing was due — every entry is already logged or its date has not arrived yet.</p>
+       )}
+ 
+       {/* Registry table */}
+       {registry.length === 0 ? (
+         <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">
+-          Registry khali hai — neeche form se add karo (eRank $9.99, Etsy bill, eBay store…). Har mahine due date par
+-          &quot;⚡ Log due now&quot; ek click me sab expenses bana dega.
++          The registry is empty — add your first entry with the form below (eRank $9.99, Etsy bill, eBay store…). On each
++          due date, &quot;⚡ Log due now&quot; creates every due expense in one click.
+         </p>
+       ) : (
+         <div className="overflow-x-auto">
+@@ -146,7 +146,7 @@ export function RecurringDebitsSection({
+                   <td className="px-2 py-1.5">
+                     {r.active ? (
+                       dueNow(r) ? (
+-                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">DUE — log karo</span>
++                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">DUE — log it</span>
+                       ) : (
+                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">active</span>
+                       )
+diff --git a/src/app/dashboard/invoices/invoice-generate-form.tsx b/src/app/dashboard/invoices/invoice-generate-form.tsx
+index c48a694..80b8df3 100644
+--- a/src/app/dashboard/invoices/invoice-generate-form.tsx
++++ b/src/app/dashboard/invoices/invoice-generate-form.tsx
+@@ -176,7 +176,7 @@ export function InvoiceGenerateForm({
+           Taxes Payable By is NOT asked here — it auto-fills from
+           Shipment Term above (DDP -> Exporter, DDU/DAP -> Consignee) and
+           can be corrected afterward on the invoice's own Edit panel. */}
+-      <div className="grid grid-cols-3 gap-3">
++      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+         <div>
+           <label className={labelClass} htmlFor="broker_name">Name of Broker (if any)</label>
+           <input id="broker_name" name="broker_name" className={inputClass} />
+@@ -225,7 +225,7 @@ export function InvoiceGenerateForm({
+       {/* 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — customs
+           declaration fields. Optional here (can also be filled in later
+           from the invoice's own Edit-before-printing panel). */}
+-      <div className="grid grid-cols-4 gap-3">
++      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+         <div>
+           <label className={labelClass} htmlFor="weight_kg">Weight (kg)</label>
+           <input id="weight_kg" name="weight_kg" type="number" step="0.001" className={inputClass} />
+diff --git a/src/app/dashboard/orders/new/order-whatsapp-button.tsx b/src/app/dashboard/orders/new/order-whatsapp-button.tsx
+index d05cd63..2f33f27 100644
+--- a/src/app/dashboard/orders/new/order-whatsapp-button.tsx
++++ b/src/app/dashboard/orders/new/order-whatsapp-button.tsx
+@@ -261,7 +261,7 @@ export function OrderWhatsAppButton({
+       }
+       flashNotice(
+         `📷 Asli photo (koi text nahi, jaisi hai waisi) download ho gayi — WhatsApp me photo ATTACH karo, caption box me ${
+-          copiedOk ? "Ctrl+V se PASTE karo (caption copy ho chuka hai)" : "📋 Copy caption button se caption copy karke paste karo"
++          copiedOk ? "Press Ctrl+V to paste (the caption is already copied)" : "📋 Use the Copy caption button, then paste"
+         }, phir send. Ek hi message jayega aur caption search me milega.`
+       );
+       markSent();
+@@ -290,13 +290,13 @@ export function OrderWhatsAppButton({
+       });
+       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+       if (!res.ok || !json?.ok) {
+-        setError(json?.error || "Telegram par bhej nahi paye — dobara try karein.");
++        setError(json?.error || "Could not send to Telegram — please try again.");
+         return;
+       }
+       flashNotice("☁️ Telegram par bhej diya — photo aur caption ek hi message me chale gaye.");
+       markSent();
+     } catch {
+-      setError("Telegram par bhej nahi paye — internet check karke dobara try karein.");
++      setError("Could not send to Telegram — check the internet connection and try again.");
+     } finally {
+       setTelegramSending(false);
+     }
+@@ -321,13 +321,13 @@ export function OrderWhatsAppButton({
+       });
+       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+       if (!res.ok || !json?.ok) {
+-        setError(json?.error || "WhatsApp (auto) par bhej nahi paye — dobara try karein.");
++        setError(json?.error || "Could not send to WhatsApp (auto) — please try again.");
+         return;
+       }
+       flashNotice("🚀 WhatsApp group par bhej diya — photo aur caption ek hi message me chale gaye.");
+       markSent();
+     } catch {
+-      setError("WhatsApp (auto) par bhej nahi paye — internet check karke dobara try karein.");
++      setError("Could not send to WhatsApp (auto) — check the internet connection and try again.");
+     } finally {
+       setWhapiSending(false);
+     }
+diff --git a/src/app/dashboard/orders/order-hold-cancel-actions.tsx b/src/app/dashboard/orders/order-hold-cancel-actions.tsx
+index 72fdd7b..dd2f120 100644
+--- a/src/app/dashboard/orders/order-hold-cancel-actions.tsx
++++ b/src/app/dashboard/orders/order-hold-cancel-actions.tsx
+@@ -241,7 +241,7 @@ export function OrderHoldCancelActions({
+             <label className="mb-0.5 block text-[10px] font-medium text-slate-500">
+               Refund Calculator (optional — order value {Number(order.order_value_original || 0).toFixed(2)} {order.order_currency})
+             </label>
+-            <div className="grid grid-cols-3 gap-1.5">
++            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+               <div>
+                 <label className="mb-0.5 block text-[9px] text-slate-400">% of order value</label>
+                 <select
+diff --git a/src/app/dashboard/orders/order-list-table.tsx b/src/app/dashboard/orders/order-list-table.tsx
+index 8cc6572..0116e4e 100644
+--- a/src/app/dashboard/orders/order-list-table.tsx
++++ b/src/app/dashboard/orders/order-list-table.tsx
+@@ -142,7 +142,6 @@ export function OrderListTable({
+   sizes,
+   currencies,
+   parties,
+-  companies,
+   stores,
+   statuses,
+   todayStr,
+@@ -157,7 +156,6 @@ export function OrderListTable({
+   sizes: { id: string; label: string }[];
+   currencies: { code: string; name: string }[];
+   parties: { id: string; name: string }[];
+-  companies: { id: string; name: string }[];
+   stores: { id: string; name: string }[];
+   statuses: string[];
+   todayStr: string;
+@@ -920,7 +918,7 @@ export function OrderListTable({
+                           open
+                           onClose={() => setEditingId(null)}
+                           title={`Edit Order — ${o.ref_no}`}
+-                          subtitle="A4-size dialog — update karke Save dabao, page change nahi hota."
++                          subtitle="A4-size dialog — update the fields and press Save; this page does not change."
+                         >
+                           <OrderEditForm
+                             order={o}
+@@ -938,7 +936,7 @@ export function OrderListTable({
+                           open
+                           onClose={() => setViewingId(null)}
+                           title={`Order — ${o.ref_no}`}
+-                          subtitle="A4-size dialog — poora detail view, page change nahi hota."
++                          subtitle="A4-size dialog — the full detail view; this page does not change."
+                           flushBody
+                         >
+                           <iframe
+diff --git a/src/app/dashboard/orders/page.tsx b/src/app/dashboard/orders/page.tsx
+index 1b0b43f..68ff790 100644
+--- a/src/app/dashboard/orders/page.tsx
++++ b/src/app/dashboard/orders/page.tsx
+@@ -270,7 +270,6 @@ export default async function OrdersPage({
+         sizes={sizes ?? []}
+         currencies={currencies ?? []}
+         parties={parties ?? []}
+-        companies={companies ?? []}
+         stores={stores ?? []}
+         statuses={STATUSES}
+         todayStr={todayStr}
+diff --git a/src/app/dashboard/orders/photo-url-field.tsx b/src/app/dashboard/orders/photo-url-field.tsx
+index e005a94..2cad3e1 100644
+--- a/src/app/dashboard/orders/photo-url-field.tsx
++++ b/src/app/dashboard/orders/photo-url-field.tsx
+@@ -103,7 +103,7 @@ export function PhotoUrlField({
+             setUrl(e.target.value);
+             setBroken(false);
+           }}
+-          placeholder="https://… (ya upload karein)"
++          placeholder="https://… (or upload a file)"
+           className={inputClass}
+         />
+         <label className="shrink-0 cursor-pointer rounded-lg border border-slate-300 px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+@@ -120,7 +120,7 @@ export function PhotoUrlField({
+       </div>
+       {url && broken && (
+         <p className="mt-1 text-xs text-red-500">
+-          Yeh link se photo load nahi ho rahi — direct image link paste karein ya Upload button use karein.
++          This photo could not be loaded from the link — paste a direct image URL or use the Upload button.
+         </p>
+       )}
+       {uploadError && <p className="mt-1 text-xs text-red-500">{uploadError}</p>}
+diff --git a/src/app/dashboard/parties/[id]/ledger/page.tsx b/src/app/dashboard/parties/[id]/ledger/page.tsx
+index f4119a5..aea86fe 100644
+--- a/src/app/dashboard/parties/[id]/ledger/page.tsx
++++ b/src/app/dashboard/parties/[id]/ledger/page.tsx
+@@ -658,7 +658,9 @@ async function PartyLedgerInner(
+             <span>· a bill and its payments share the same shade; due date = bill received date + 7 days.</span>
+           </p>
+ 
+-          <table className="w-full border-collapse text-left">
++          {/* 2026-10-15 — the ledger has 8 columns; on a narrow screen it scrolls sideways (min-w keeps the columns readable) instead of squashing the amounts into each other. */}
++          <div className="overflow-x-auto">
++          <table className="w-full min-w-[820px] border-collapse text-left print:min-w-0">
+             <thead>
+               <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
+                 <th className="py-1 pr-2">Date</th>
+@@ -759,6 +761,7 @@ async function PartyLedgerInner(
+               )}
+             </tbody>
+           </table>
++          </div>
+         </div>
+       </PrintArea>
+     </div>
+diff --git a/src/app/dashboard/reports/finance-dashboard/page.tsx b/src/app/dashboard/reports/finance-dashboard/page.tsx
+index a1c9756..734a4b6 100644
+--- a/src/app/dashboard/reports/finance-dashboard/page.tsx
++++ b/src/app/dashboard/reports/finance-dashboard/page.tsx
+@@ -3,7 +3,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
+ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+ import { todayIST } from "@/lib/attendance/ist-date";
+ import { FY_START_MONTH, fyDateWindow } from "@/lib/fy-date";
+-import { BarChart, DonutChart, GroupedBarChart, LineChart } from "@/components/simple-charts";
++import { DonutChart, GroupedBarChart, LineChart } from "@/components/simple-charts";
+ 
+ // 2026-09-18 (later) — "Finance Dashboard" page. The owner sent a
+ // screenshot of a reference dashboard (KPI cards + Profit & Loss bar chart
+diff --git a/src/app/dashboard/stock/stock-in-form.tsx b/src/app/dashboard/stock/stock-in-form.tsx
+index affed1b..1743a0e 100644
+--- a/src/app/dashboard/stock/stock-in-form.tsx
++++ b/src/app/dashboard/stock/stock-in-form.tsx
+@@ -183,7 +183,7 @@ export function StockInForm({
+       </div>
+ 
+       {preview && (
+-        <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
++        <div className="grid grid-cols-1 gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
+           <div>Total Amt: <span className="font-semibold text-slate-800">₹{preview.total.toFixed(2)}</span></div>
+           <div>GST (5%): <span className="font-semibold text-slate-800">₹{preview.gst.toFixed(2)}</span></div>
+           <div>To Be Paid: <span className="font-semibold text-slate-800">₹{preview.toBePaid.toFixed(2)}</span></div>
+diff --git a/src/app/globals.css b/src/app/globals.css
+index 504d274..37da1cd 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -34,7 +34,30 @@ html, body {
+ body {
+   background: var(--background);
+   color: var(--foreground);
+-  font-family: Arial, Helvetica, sans-serif;
++  /* 2026-10-15 — professional type: the theme's own system-font stack
++   * (--font-sans, declared in @theme inline above) instead of Arial, with
++   * Arial/Helvetica kept only as the last-resort fallback. Arial rendered
++   * noticeably wider/older-looking than the rest of the UI's font stack. */
++  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
++}
++
++/* 2026-10-15 — "font black ho normally lekin according to UI theme ke auto
++ * adjust ho". Two rules, both inherit-only (no component is forced):
++ *
++ *  1. Any text inside the themed shell that does NOT specify its own color
++ *     inherits the theme's own --oms-text (near-black in every shipped
++ *     theme) instead of whatever the raw body color happened to be. A
++ *     component that DOES set a color class/var still wins — an inherited
++ *     value always loses to any declaration — so nothing that deliberately
++ *     paints text (white-on-accent buttons, colored status pills) changes.
++ *  2. Tables get tabular figures so money/quantity columns line up digit
++ *     for digit; the inherited color from rule 1 applies to them too. */
++[data-theme] {
++  color: var(--oms-text);
++}
++
++[data-theme] table {
++  font-variant-numeric: tabular-nums;
+ }
+ 
+ /*
+diff --git a/src/components/logout-button.tsx b/src/components/logout-button.tsx
+index 628d6bb..d15ed7b 100644
+--- a/src/components/logout-button.tsx
++++ b/src/components/logout-button.tsx
+@@ -26,7 +26,7 @@ export function LogoutButton() {
+         if (
+           openPunch &&
+           !window.confirm(
+-            "Aaj ka Punch In abhi open hai.\nLogout karne par abhi ka Punch Out (time abhi) record ho jayega.\n\nContinue?"
++            "Today's Punch In is still open.\nLogging out will record your Punch Out with the current time.\n\nContinue?"
+           )
+         ) {
+           return;
+diff --git a/src/components/po-line-actions.tsx b/src/components/po-line-actions.tsx
+index 8f39002..ab28219 100644
+--- a/src/components/po-line-actions.tsx
++++ b/src/components/po-line-actions.tsx
+@@ -89,7 +89,7 @@ export function PoLineActions({
+         {pending ? "…" : "🗑 Delete"}
+       </button>
+       {editing && (
+-        <A4Dialog open onClose={() => setEditing(false)} title={`Edit entry — ${line.description ?? line.refNo ?? "item"}`} subtitle="Change karke Save dabao.">
++        <A4Dialog open onClose={() => setEditing(false)} title={`Edit entry — ${line.description ?? line.refNo ?? "item"}`} subtitle="Edit the fields and press Save.">
+           {/* 2026-10-15 — PurchaseBillEditForm's party select needs the
+               full PartyOption shape (it groups by invoice_type /
+               party_type); the statement line only carries the vendor's id
+diff --git a/src/lib/attendance/telegram-notify.ts b/src/lib/attendance/telegram-notify.ts
+index 0c08e9b..cd7f5b7 100644
+--- a/src/lib/attendance/telegram-notify.ts
++++ b/src/lib/attendance/telegram-notify.ts
+@@ -471,7 +471,7 @@ export async function connectEmployeeTelegram(params: {
+         return {
+           ok: false,
+           error:
+-            "Aur ek Telegram account se bhi plain Start aaya hai — galat connect hone se bachne ke liye ruka. Har employee apna personal 'Open Telegram & Start' link (Attendance page se) use kare, phir dobara Connect kare.",
++            "Another Telegram account also sent a plain Start, so this was stopped to avoid connecting the wrong person. Every employee must use their own personal 'Open Telegram & Start' link (from the Attendance page) and then press Connect again.",
+         };
+       }
+       if (candidates.length === 1) {

@@ -330,6 +330,42 @@ Two user-requested additions to `/dashboard/ad-spend` (module: `src/app/dashboar
 - Deliberately still non-fatal for everything else: the register, quotations and payments keep loading
   exactly as before — only the missing-column piece is surfaced.
 
+## 5i. UI/UX cleanup round — English UI text, responsive layout, theme-aware text (2026-10-15)
+
+Requested as one sweep: "UI professional honi chahiye · koi bhi text/column kisi par nahi chadh raha ho ·
+font black ho normally lekin theme ke according auto adjust ho · jaha bhi hindi ke word ho unko english
+me update karo". What was actually done, and what the audit found:
+
+- **Hinglish → English in every USER-VISIBLE string** (there was NO Devanagari anywhere in `src/`, so
+  the target was Roman-script Hinglish): buttons, notes, empty states, toasts, validation/error
+  messages, placeholders and dialogs — entry forms, bill payment + wallet panel, credit-note panel,
+  documents (A4 dialog subtitles), orders (WhatsApp/Telegram send + photo field), attendance
+  (Telegram connect, recurring work), courier booking (address/ETD hints + CSB-V preview), expenses
+  (recurring debits), admin (departments), b2b (quotation engine), statement/bill duplicate-entry
+  errors, and the AI companion + WhatsApp/Telegram send-route replies. Code COMMENTS were deliberately
+  left in the repo's own voice — they are internal notes, not UI.
+- **Horizontal overflow / squashed columns**: every screen table that lacked a horizontally scrollable
+  container got one (`overflow-x-auto`, and `overflow-y-auto` → `overflow-auto` where a table sat in a
+  fixed-height box): credit-note panel, wallet panel, companion access, settlement detail view, party
+  ledger (`min-w-[820px] print:min-w-0` so the print/PDF path is unaffected). Attendance admin tables
+  were already fine (shared `tableWrapClass`).
+- **Responsive entry-form grids**: 23 non-responsive `grid-cols-3/4/5/6` field rows across 11 forms
+  (duty bill, freight bill, credit note, purchase-bill multi, inline shipment, invoice generate, stock
+  in, order hold/cancel, b2b products) became `grid-cols-1 sm:grid-cols-2 lg:grid-cols-N` — same 3/4/5
+  column look on desktop, stacked on a narrow screen. A4 print documents were intentionally left alone.
+- **Text color / typography (globals.css)**: `body` now uses the theme's own `--font-sans` stack
+  (system-ui…) instead of Arial; inside `[data-theme]` the inherited text color is the theme's own
+  `--oms-text` (near-black in every shipped theme) and tables use tabular figures. Both rules are
+  INHERIT-ONLY — nothing that sets its own color (white-on-accent buttons, status pills) is forced, so
+  the theme keeps auto-adjusting exactly as before.
+- **Audit results (no work needed)**: 52 static internal `href`s, all capability tiles, and every
+  `redirect()`/`router.push()` target resolve to a real `page.tsx` — zero broken links; zero orphan
+  dashboard routes; no `href="#"`, no empty handlers, no "coming soon"/TODO placeholders. `printing-
+  register` is linked from Stock + Documents (it has no tile of its own, by design).
+- Removed dead code the linter flagged: an unused `totalOutstanding` computation and an unused
+  `companies` prop (type + its single caller). Remaining ESLint warnings are 2 `no-img-element`
+  suggestions (deliberate: PDF/document images) and one underscore-prefixed server-action param.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

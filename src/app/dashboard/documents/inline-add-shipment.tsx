@@ -45,7 +45,7 @@ export function InlineAddShipmentBox({
         Add a shipment/AWB for <strong>{refNo}</strong> — then it can be matched right away.
       </p>
       {state.error && <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         <div>
           <label className={labelClass}>Shipment No.</label>
           <input name="shipment_no" type="number" min={1} defaultValue={1} className={inputClass} />

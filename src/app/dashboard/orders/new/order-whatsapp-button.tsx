@@ -261,7 +261,7 @@ export function OrderWhatsAppButton({
       }
       flashNotice(
         `📷 Asli photo (koi text nahi, jaisi hai waisi) download ho gayi — WhatsApp me photo ATTACH karo, caption box me ${
-          copiedOk ? "Ctrl+V se PASTE karo (caption copy ho chuka hai)" : "📋 Copy caption button se caption copy karke paste karo"
+          copiedOk ? "Press Ctrl+V to paste (the caption is already copied)" : "📋 Use the Copy caption button, then paste"
         }, phir send. Ek hi message jayega aur caption search me milega.`
       );
       markSent();
@@ -290,13 +290,13 @@ export function OrderWhatsAppButton({
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) {
-        setError(json?.error || "Telegram par bhej nahi paye — dobara try karein.");
+        setError(json?.error || "Could not send to Telegram — please try again.");
         return;
       }
       flashNotice("☁️ Telegram par bhej diya — photo aur caption ek hi message me chale gaye.");
       markSent();
     } catch {
-      setError("Telegram par bhej nahi paye — internet check karke dobara try karein.");
+      setError("Could not send to Telegram — check the internet connection and try again.");
     } finally {
       setTelegramSending(false);
     }
@@ -321,13 +321,13 @@ export function OrderWhatsAppButton({
       });
       const json = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) {
-        setError(json?.error || "WhatsApp (auto) par bhej nahi paye — dobara try karein.");
+        setError(json?.error || "Could not send to WhatsApp (auto) — please try again.");
         return;
       }
       flashNotice("🚀 WhatsApp group par bhej diya — photo aur caption ek hi message me chale gaye.");
       markSent();
     } catch {
-      setError("WhatsApp (auto) par bhej nahi paye — internet check karke dobara try karein.");
+      setError("Could not send to WhatsApp (auto) — check the internet connection and try again.");
     } finally {
       setWhapiSending(false);
     }

@@ -180,8 +180,6 @@ export default async function BillPaymentPage({
     })),
   }));
 
-  const totalOutstanding = rows.reduce((sum, r) => sum + r.balance_due, 0);
-
   // 2026-09-15 — wallet overview for the visible companies. Client-side
   // show/hide toggle (useState) instead of a route param so opening the
   // panel never loses the bill filters.
@@ -206,8 +204,8 @@ export default async function BillPaymentPage({
             plus the per-bill "💳 Pay from Wallet" action on rows below. */}
         <p className="mt-1 text-[11px] text-slate-400">
           {hasWalletParties
-            ? `💳 ${Object.keys(partyWalletBalances).length} courier wallet${Object.keys(partyWalletBalances).length === 1 ? "" : "s"} active — jis bill ka party wallet me hai, uspe "Pay from Wallet" action dikhega.`
-            : "💳 Prepaid courier wallet (FedEx/UPS style): pehle recharge karo, phir invoice wallet se pay hoga. Panel se shuru karo."}
+            ? `💳 ${Object.keys(partyWalletBalances).length} courier wallet${Object.keys(partyWalletBalances).length === 1 ? "" : "s"} active — bills paid from a party wallet show the "Pay from Wallet" action.`
+            : "💳 Prepaid courier wallet (FedEx/UPS style): recharge first, then the invoice is paid out of that wallet. Start from the wallet panel below."}
         </p>
       </div>
 

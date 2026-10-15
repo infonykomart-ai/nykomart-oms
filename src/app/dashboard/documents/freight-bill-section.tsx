@@ -167,7 +167,7 @@ export function FreightBillSection({
             one against this invoice. */}
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any) — whole-invoice level</div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className={labelClass} htmlFor="fb_cn_no">Credit Note No.</label>
               <input id="fb_cn_no" name="credit_note_no" className={inputClass} placeholder="optional" />
@@ -373,7 +373,7 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
           </div>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
             <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <input name="credit_note_no" defaultValue={bill.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
               <input name="credit_note_date" type="date" defaultValue={bill.credit_note_date ?? ""} className={inputClass} />
               <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} placeholder="Amt" className={inputClass} />
@@ -759,7 +759,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
         <div className="mt-3 space-y-2">
           {rows.map((r, i) => (
             <div key={r.query + i} className="rounded border border-slate-200 bg-white p-1.5">
-            <div className="grid grid-cols-5 items-end gap-1.5">
+            <div className="grid grid-cols-2 items-end gap-1.5 sm:grid-cols-3 lg:grid-cols-5">
               <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
               <input
                 value={r.billWeightKg}
@@ -783,7 +783,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
             </div>
             {/* 2026-09-21: per-AWB billed charge breakup — see
                 db/2026-09-21-freight-awb-billed-charge-breakup.sql. */}
-            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 sm:grid-cols-5">
               <input
                 value={r.billedFreightAmt}
                 onChange={(e) => updateRow(i, { billedFreightAmt: e.target.value })}
@@ -906,12 +906,12 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
           <input type="hidden" name="id" value={assignment.id} />
           {noteState.error && <p className="rounded bg-red-50 px-2 py-1 text-red-800">{noteState.error}</p>}
           <p className="font-medium text-purple-800">Credit / Debit Note — against this AWB specifically</p>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
             <input name="credit_note_no" defaultValue={assignment.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
             <input name="credit_note_date" type="date" defaultValue={assignment.credit_note_date ?? ""} className={inputClass} />
             <input name="credit_note_amt" type="number" step="0.01" defaultValue={assignment.credit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
             <input name="debit_note_no" defaultValue={assignment.debit_note_no ?? ""} placeholder="Debit Note No." className={inputClass} />
             <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
             <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />

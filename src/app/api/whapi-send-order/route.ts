@@ -67,7 +67,7 @@ async function callWhapi(token: string, path: string, body: Record<string, unkno
       body: JSON.stringify(body),
     });
   } catch {
-    return { ok: false, error: "Whapi tak pahunch nahi paye — thodi der me dobara try karein." };
+    return { ok: false, error: "Could not reach Whapi — please try again in a moment." };
   }
   // Whapi's exact success/error JSON shape isn't fully documented, so this
   // treats any 2xx as success and best-effort extracts a message from
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
-        error: "WhatsApp automation abhi configure nahi hai — WHAPI_TOKEN set karna hoga (.env.example dekhein).",
+        error: "WhatsApp automation is not configured yet — WHAPI_TOKEN has to be set (see .env.example).",
       },
       { status: 500 }
     );
@@ -133,7 +133,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
-        error: "Is company ke liye WhatsApp group set nahi hai — companies.whapi_group_id ya WHAPI_GROUP_ID set karna hoga.",
+        error: "No WhatsApp group is set for this company — either companies.whapi_group_id or WHAPI_GROUP_ID has to be set.",
       },
       { status: 500 }
     );
@@ -167,6 +167,6 @@ export async function POST(request: Request) {
     if (!result.ok) return Response.json({ ok: false, error: `WhatsApp ne message reject kar diya: ${result.error}` }, { status: 502 });
     return Response.json({ ok: true });
   } catch {
-    return Response.json({ ok: false, error: "WhatsApp tak pahunch nahi paye — thodi der me dobara try karein." }, { status: 502 });
+    return Response.json({ ok: false, error: "Could not reach WhatsApp — please try again in a moment." }, { status: 502 });
   }
 }

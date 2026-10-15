@@ -145,7 +145,7 @@ export function DutyBillSection({
             one against this invoice. */}
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <div className="mb-1.5 text-xs font-medium text-amber-800">Courier Credit Note (if any) — whole-invoice level</div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className={labelClass} htmlFor="db_cn_no">Credit Note No.</label>
               <input id="db_cn_no" name="credit_note_no" className={inputClass} placeholder="optional" />
@@ -166,7 +166,7 @@ export function DutyBillSection({
             says, not a computed formula (see schema.sql's comment). */}
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
           <div className="mb-1.5 text-xs font-medium text-slate-600">Bottom Summary (off the physical bill)</div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className={labelClass} htmlFor="db_disb">Disbursement Fee</label>
               <input id="db_disb" name="disbursement_fee" type="number" step="0.01" className={inputClass} placeholder="0" />
@@ -370,7 +370,7 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
           </div>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
             <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <input name="credit_note_no" defaultValue={bill.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
               <input name="credit_note_date" type="date" defaultValue={bill.credit_note_date ?? ""} className={inputClass} />
               <input name="credit_note_amt" type="number" step="0.01" defaultValue={bill.credit_note_amt} placeholder="Amt" className={inputClass} />
@@ -378,7 +378,7 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-2">
             <div className="mb-1 text-[11px] font-medium text-slate-600">Bottom Summary (off the physical bill)</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <input name="disbursement_fee" type="number" step="0.01" defaultValue={bill.disbursement_fee} placeholder="Disbursement Fee" className={inputClass} />
               <input name="courier_duty_charges_adj" type="number" step="0.01" defaultValue={bill.courier_duty_charges_adj} placeholder="Duty Charges (adj.)" className={inputClass} />
               <input name="total_payable_amt" type="number" step="0.01" defaultValue={bill.total_payable_amt ?? ""} placeholder="Total Payable Amt" className={inputClass} />
@@ -610,7 +610,7 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
       {rows.length > 0 && (
         <div className="mt-3 space-y-2">
           {rows.map((r, i) => (
-            <div key={r.query + i} className="grid grid-cols-6 items-end gap-1.5 rounded border border-slate-200 bg-white p-1.5">
+            <div key={r.query + i} className="grid grid-cols-2 items-end gap-1.5 rounded sm:grid-cols-3 lg:grid-cols-6 border border-slate-200 bg-white p-1.5">
               <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
               <input value={r.dutyTaxAmtUsd} onChange={(e) => updateRow(i, { dutyTaxAmtUsd: e.target.value })} placeholder="USD" className={inputClass} />
               <input value={r.dutyTaxAmtInr} onChange={(e) => updateRow(i, { dutyTaxAmtInr: e.target.value })} placeholder="INR" className={inputClass} />
@@ -693,12 +693,12 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
           <input type="hidden" name="id" value={assignment.id} />
           {noteState.error && <p className="rounded bg-red-50 px-2 py-1 text-red-800">{noteState.error}</p>}
           <p className="font-medium text-purple-800">Credit / Debit Note — against this AWB specifically</p>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
             <input name="credit_note_no" defaultValue={assignment.credit_note_no ?? ""} placeholder="Credit Note No." className={inputClass} />
             <input name="credit_note_date" type="date" defaultValue={assignment.credit_note_date ?? ""} className={inputClass} />
             <input name="credit_note_amt" type="number" step="0.01" defaultValue={assignment.credit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
             <input name="debit_note_no" defaultValue={assignment.debit_note_no ?? ""} placeholder="Debit Note No." className={inputClass} />
             <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
             <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />

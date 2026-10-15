@@ -26,7 +26,7 @@ export function LogoutButton() {
         if (
           openPunch &&
           !window.confirm(
-            "Aaj ka Punch In abhi open hai.\nLogout karne par abhi ka Punch Out (time abhi) record ho jayega.\n\nContinue?"
+            "Today's Punch In is still open.\nLogging out will record your Punch Out with the current time.\n\nContinue?"
           )
         ) {
           return;

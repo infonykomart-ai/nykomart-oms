@@ -176,7 +176,7 @@ export function InvoiceGenerateForm({
           Taxes Payable By is NOT asked here — it auto-fills from
           Shipment Term above (DDP -> Exporter, DDU/DAP -> Consignee) and
           can be corrected afterward on the invoice's own Edit panel. */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div>
           <label className={labelClass} htmlFor="broker_name">Name of Broker (if any)</label>
           <input id="broker_name" name="broker_name" className={inputClass} />
@@ -225,7 +225,7 @@ export function InvoiceGenerateForm({
       {/* 2026-08-08: "WEIGHT OR DIMENSION KYU NAHI MANG RAHA" — customs
           declaration fields. Optional here (can also be filled in later
           from the invoice's own Edit-before-printing panel). */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label className={labelClass} htmlFor="weight_kg">Weight (kg)</label>
           <input id="weight_kg" name="weight_kg" type="number" step="0.001" className={inputClass} />

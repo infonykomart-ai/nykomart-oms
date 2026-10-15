@@ -658,7 +658,9 @@ async function PartyLedgerInner(
             <span>· a bill and its payments share the same shade; due date = bill received date + 7 days.</span>
           </p>
 
-          <table className="w-full border-collapse text-left">
+          {/* 2026-10-15 — the ledger has 8 columns; on a narrow screen it scrolls sideways (min-w keeps the columns readable) instead of squashing the amounts into each other. */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] border-collapse text-left print:min-w-0">
             <thead>
               <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                 <th className="py-1 pr-2">Date</th>
@@ -759,6 +761,7 @@ async function PartyLedgerInner(
               )}
             </tbody>
           </table>
+          </div>
         </div>
       </PrintArea>
     </div>

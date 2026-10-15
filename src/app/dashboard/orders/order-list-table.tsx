@@ -142,7 +142,6 @@ export function OrderListTable({
   sizes,
   currencies,
   parties,
-  companies,
   stores,
   statuses,
   todayStr,
@@ -157,7 +156,6 @@ export function OrderListTable({
   sizes: { id: string; label: string }[];
   currencies: { code: string; name: string }[];
   parties: { id: string; name: string }[];
-  companies: { id: string; name: string }[];
   stores: { id: string; name: string }[];
   statuses: string[];
   todayStr: string;
@@ -920,7 +918,7 @@ export function OrderListTable({
                           open
                           onClose={() => setEditingId(null)}
                           title={`Edit Order — ${o.ref_no}`}
-                          subtitle="A4-size dialog — update karke Save dabao, page change nahi hota."
+                          subtitle="A4-size dialog — update the fields and press Save; this page does not change."
                         >
                           <OrderEditForm
                             order={o}
@@ -938,7 +936,7 @@ export function OrderListTable({
                           open
                           onClose={() => setViewingId(null)}
                           title={`Order — ${o.ref_no}`}
-                          subtitle="A4-size dialog — poora detail view, page change nahi hota."
+                          subtitle="A4-size dialog — the full detail view; this page does not change."
                           flushBody
                         >
                           <iframe
