@@ -462,6 +462,29 @@ box me khulni chahiye."
   by an automated PDF test — re-check once manually: open any Credit/Debit Note row → 👁 View →
   Print / Save PDF → output should be that one document on A4.
 
+## 5m. B2B Inquiry/Quotation — full unit dropdown, PCS-only calculation gone (2026-10-16)
+
+User report: "quotation vale section me inquiry agar aayegi to kese handle hoyegi — bs pcs se
+calculation hori, baki CM, MTR, FEET, INCH, SQ FT, SQ MTR, PER SQ FT, PER INCH VALE SECTION
+NAHI HAI".
+
+- **How an inquiry is handled** (unchanged, for the record): B2B → Inquiries → "New Inquiry"
+  registers the buyer + asked-for item rows (qty × unit × rate) → the inquiry's **Quotation /
+  Invoice** tab builds Q-<FY>-#### with DB-computed totals → PI/CI/PL documents → WhatsApp/email
+  share. The gap was only the UNIT on those item rows.
+- **`ITEM_UNITS` extended** (`src/lib/b2b/erp.ts`): added `feet`, `inch`, `cm` (length) and the
+  rate-units `per pcs / per mtr / per feet / per inch / per sq ft / per sq mtr` a carpet/rug
+  inquiry actually prices by — mtr/yard/sq ft/sq mtr were already there.
+- **ONE shared `UnitSelect`** (`b2b-client.tsx`) now drives every item editor: the New Inquiry
+  modal, BOTH "Asked-for Items" blocks in the inquiry details form (which were free-text Unit
+  boxes — in practice only "pcs" ever got typed and the PI printed that text), and the quote form
+  (which already had its own copy of the same select+"Other…" logic — now deduplicated). One-off
+  units still possible via "Other…".
+- **Calculation untouched on purpose**: subtotal = Σ qty × rate is unit-agnostic server-side
+  (actions.ts), so every unit computes identically; unlike Purchase Bills there is NO conversion
+  to a base unit (toFeet) — a quote must show the buyer exactly the unit they asked in.
+- **Verified**: `npx tsc --noEmit` → 0 errors; `npx eslint` on both changed files → clean.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

@@ -1,8 +1,7 @@
-PENDING CHANGES — 2026-10-16 (sabhi uncommitted/untracked files, dono repos se)
-================================================================================
-Yeh zip uncommitted kaam ki COPY hai — repo paths bilkul same hain, extract
-karke apne clone par overlay kar sakte ho. Zip ke andar koi .zip artifact
-nahi hai, na node_modules/.next.
+PENDING CHANGES v2 — 2026-10-16 (sabhi uncommitted files, dono repos se)
+========================================================================
+Repo paths bilkul same hain — extract karke seedha overlay kar sakte ho.
+Zip ke andar koi .zip artifact nahi, na node_modules/.next.
 
 LAYER 1 — repo root = github.com/artsofjaipur/NCR-OMS (outer repo)
 - public/index.html        — naya 3D animated homepage (navy/blue/white/orange)
@@ -12,13 +11,18 @@ LAYER 1 — repo root = github.com/artsofjaipur/NCR-OMS (outer repo)
 - BRAIN.md                 — change-log entries
 
 LAYER 2 — repo root = nykomart-oms/ (nested repo, github.com/infonykomart-ai/nykomart-oms)
-Aaj ka Document Entry round (2026-10-16) — View/Print/Edit sabhi same page par A4 dialog me:
-- src/app/dashboard/documents/doc-entry-a4.tsx        — NAYA: 6 doc types ki A4 preview sheets
-- src/app/dashboard/documents/document-entry-tabs.tsx — View + in-dialog Print wiring
-- src/components/a4-dialog.tsx                        — portal-to-body + @media print CSS
-- BRAIN.md                                            — section 5l change-log entry
 
-Pichhle rounds ka bhi pending kaam (2026-10-15):
+Aaj ke rounds:
+1) Document Entry — View/Print/Edit sabhi same page par A4 dialog me (2026-10-16):
+   - src/app/dashboard/documents/doc-entry-a4.tsx        — NAYA: 6 doc types ki A4 sheets
+   - src/app/dashboard/documents/document-entry-tabs.tsx — View + in-dialog Print wiring
+   - src/components/a4-dialog.tsx                        — portal-to-body + print CSS
+2) B2B Inquiry/Quotation — full unit dropdown, PCS-only calculation gone (2026-10-16):
+   - src/lib/b2b/erp.ts             — ITEM_UNITS extended (feet/inch/cm + per ... rate units)
+   - src/app/dashboard/b2b/b2b-client.tsx — common UnitSelect har item editor me
+3) BRAIN.md — sections 5l + 5m change-log entries
+
+Pichhle rounds ka pending kaam (2026-10-15):
 - src/lib/fx/rates.ts + db/2026-10-15b-fx-rate-cache.sql + db/schema.sql
   + src/types/database.ts — live FX rate cache (Amazon spend INR conversion)
 - src/app/dashboard/ad-spend/* — Amazon country split + statement verification
