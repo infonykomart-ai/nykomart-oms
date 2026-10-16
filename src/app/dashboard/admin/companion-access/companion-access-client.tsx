@@ -60,7 +60,8 @@ export function CompanionAccessClient({
       <p className="mb-3 text-xs font-medium text-slate-500">
         {enabledCount} of {employees.length} employees enabled
       </p>
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      {/* 2026-10-15 — overflow-x-auto instead of overflow-hidden: on a narrow screen the table scrolls sideways instead of clipping its columns. */}
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">

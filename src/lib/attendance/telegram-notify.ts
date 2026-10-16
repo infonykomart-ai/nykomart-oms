@@ -471,7 +471,7 @@ export async function connectEmployeeTelegram(params: {
         return {
           ok: false,
           error:
-            "Aur ek Telegram account se bhi plain Start aaya hai — galat connect hone se bachne ke liye ruka. Har employee apna personal 'Open Telegram & Start' link (Attendance page se) use kare, phir dobara Connect kare.",
+            "Another Telegram account also sent a plain Start, so this was stopped to avoid connecting the wrong person. Every employee must use their own personal 'Open Telegram & Start' link (from the Attendance page) and then press Connect again.",
         };
       }
       if (candidates.length === 1) {

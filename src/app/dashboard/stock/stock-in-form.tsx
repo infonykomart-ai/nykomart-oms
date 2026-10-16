@@ -183,7 +183,7 @@ export function StockInForm({
       </div>
 
       {preview && (
-        <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        <div className="grid grid-cols-1 gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:grid-cols-2 lg:grid-cols-3">
           <div>Total Amt: <span className="font-semibold text-slate-800">₹{preview.total.toFixed(2)}</span></div>
           <div>GST (5%): <span className="font-semibold text-slate-800">₹{preview.gst.toFixed(2)}</span></div>
           <div>To Be Paid: <span className="font-semibold text-slate-800">₹{preview.toBePaid.toFixed(2)}</span></div>

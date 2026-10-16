@@ -42,7 +42,7 @@ function AwbOrderPreview({ hits }: { hits: AwbOrderHit[] | null }) {
       {hits.map((h) => (
         <p key={h.awb} className={`text-[11px] ${h.found ? "text-emerald-700" : "text-amber-600"}`}>
           {h.found ? "✓" : "?"} <span className="font-mono">{h.awb}</span>
-          {h.found ? ` → ${h.ordersLine}` : " — koi shipment nahi mila (check karo ya chhod do)"}
+          {h.found ? ` → ${h.ordersLine}` : " — no shipment found (check the AWB or leave it blank)"}
         </p>
       ))}
     </div>
@@ -102,7 +102,7 @@ export function CreditNotePanel({
     listPartyBillsForCn(partyId).then((rows) => {
       if (alive) setAwbBills(rows);
     }).catch(() => {
-      if (alive) setAwbBillsError("Party ke outstanding bills load nahi ho paye — page refresh karke dobara try karein.");
+      if (alive) setAwbBillsError("Could not load the party's outstanding bills — refresh the page and try again.");
     });
     return () => {
       alive = false;
@@ -314,18 +314,19 @@ export function CreditNotePanel({
             {/* Live GST math — "CREDTI AMMOUNT + GST 18% = TOTAL AMMOUNT". */}
             {awbGstTotal != null && (
               <p className="text-[11px] font-medium text-slate-600">
-                Base ₹{Number(awbBase).toFixed(2)} + GST 18% = <strong>Total ₹{awbGstTotal.toFixed(2)}</strong> (CN document par yahi total jayega; har AWB bill ko base share split hoga)
+                Base ₹{Number(awbBase).toFixed(2)} + GST 18% = <strong>Total ₹{awbGstTotal.toFixed(2)}</strong> (this total is what the CN document carries; each AWB bill is split as its share of the base)
               </p>
             )}
             {awbBillsError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{awbBillsError}</p>}
             {!awbBills && !awbBillsError && <p className="text-[11px] text-slate-400">Party ke bills load ho rahe hain…</p>}
+            {/* 2026-10-15 — overflow-auto (not overflow-y-auto): a cramped screen must be able to scroll these columns sideways rather than squash/clip them. */}
             {awbBills && (
-              <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+              <div className="max-h-44 overflow-auto rounded-lg border border-slate-200 bg-white">
                 <table className="min-w-full text-xs">
                   <tbody>
                     {awbBills.length === 0 && (
                       <tr>
-                        <td className="px-3 py-2 text-slate-400">Is party ka koi outstanding bill nahi hai.</td>
+                        <td className="px-3 py-2 text-slate-400">This party has no outstanding bill.</td>
                       </tr>
                     )}
                     {awbBills.map((b) => (
@@ -351,7 +352,7 @@ export function CreditNotePanel({
               </div>
             )}
             <p className={`text-[11px] ${awbSplitSum > 0 && Math.abs(awbSplitSum - (Number(awbBase) || 0)) <= 0.05 ? "text-green-700" : "text-slate-500"}`}>
-              AWB split total: ₹{awbSplitSum.toFixed(2)} {awbBase !== "" && Number(awbBase) > 0 ? (Math.abs(awbSplitSum - Number(awbBase)) <= 0.05 ? "✓ base amount ke barabar hai" : `— base amount ₹${Number(awbBase).toFixed(2)} ke barabar hona chahiye`) : ""}
+              AWB split total: ₹{awbSplitSum.toFixed(2)} {awbBase !== "" && Number(awbBase) > 0 ? (Math.abs(awbSplitSum - Number(awbBase)) <= 0.05 ? "✓ equals the base amount" : `— must equal the base amount ₹${Number(awbBase).toFixed(2)}`) : ""}
             </p>
             {/* The per-bill split rides to the action as JSON. */}
             <input type="hidden" name="awb_amounts" value={JSON.stringify(awbAmounts)} />
@@ -382,6 +383,7 @@ export function CreditNotePanel({
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             Applied credit notes ({applied.length})
           </p>
+          <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
             <tbody>
               {applied.map((a) => (
@@ -411,6 +413,7 @@ export function CreditNotePanel({
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </td>

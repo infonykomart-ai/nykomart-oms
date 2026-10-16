@@ -270,7 +270,6 @@ export default async function OrdersPage({
         sizes={sizes ?? []}
         currencies={currencies ?? []}
         parties={parties ?? []}
-        companies={companies ?? []}
         stores={stores ?? []}
         statuses={STATUSES}
         todayStr={todayStr}

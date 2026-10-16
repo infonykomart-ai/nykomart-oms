@@ -107,7 +107,7 @@ export function MyRecurringWorkForm({ items }: { items: MyRecurringItemRow[] }) 
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           required
-          placeholder="Description — kaam jo roz karna hai (e.g. Check yesterday's tracking updates)"
+          placeholder="Description — the work to be done daily (e.g. Check yesterday's tracking updates)"
           className={inputClass}
         />
         <div className="flex flex-wrap items-center gap-2">

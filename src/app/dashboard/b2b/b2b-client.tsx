@@ -699,7 +699,10 @@ function SetupNotice({ error, onRetry }: { error: string; onRetry: () => void })
               (Dashboard → SQL Editor → New query → paste file contents → Run), in order:
             </p>
             <ol className="mt-3 space-y-1.5 text-sm">
-              {["db/2026-09-30-b2b-inquiries.sql", "db/2026-09-30b-b2b-documents.sql", "db/2026-10-13-b2b-pi-export-details.sql"].map((f, i) => (
+              {/* 2026-10-15 — the 2026-10-13 PI export-fields migration added: the PI's payment terms / ports /
+                  packing / item-spec columns and b2b_export_profiles all come from it, so before it runs those
+                  blocks print "To be provided". Listed last (it is the newest of the three). */}
+              {["db/2026-09-30-b2b-inquiries.sql", "db/2026-09-30b-b2b-documents.sql", "db/2026-10-13-b2b-pi-export-details.sql", "db/2026-10-13-b2b-pi-export-fields.sql"].map((f, i) => (
                 <li key={f} className="flex items-center gap-2">
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-200 text-xs font-bold text-amber-900">{i + 1}</span>
                   <code className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-800 ring-1 ring-amber-200">{f}</code>

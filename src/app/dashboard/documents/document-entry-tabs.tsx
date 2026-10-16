@@ -644,7 +644,7 @@ function DocList<T extends { id: string }>({
               open
               onClose={() => setEditingId(null)}
               title={`Edit — ${r.no}`}
-              subtitle="A4-size dialog — change karke Save dabao."
+              subtitle="A4-size dialog — edit the fields and press Save."
             >
               {renderEdit(r.record, () => setEditingId(null))}
             </A4Dialog>

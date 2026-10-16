@@ -3,7 +3,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { FY_START_MONTH, fyDateWindow } from "@/lib/fy-date";
-import { BarChart, DonutChart, GroupedBarChart, LineChart } from "@/components/simple-charts";
+import { DonutChart, GroupedBarChart, LineChart } from "@/components/simple-charts";
 
 // 2026-09-18 (later) — "Finance Dashboard" page. The owner sent a
 // screenshot of a reference dashboard (KPI cards + Profit & Loss bar chart

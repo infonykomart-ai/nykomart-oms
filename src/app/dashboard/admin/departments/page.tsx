@@ -45,8 +45,8 @@ export default async function DepartmentsPage({
         <div>
           <h1 className="text-lg font-semibold text-slate-900">🏢 Departments</h1>
           <p className="text-sm text-slate-500">
-            Structured department master — yahin se add/rename/deactivate karo; Employees forms aur har attendance report isi se
-            Department column/filter bharte hain.
+            Structured department master — add, rename or deactivate departments here; the employee forms and every attendance
+            report fill their Department column and filter from this list.
           </p>
         </div>
         <Link

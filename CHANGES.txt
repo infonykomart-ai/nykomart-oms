@@ -1,0 +1,43 @@
+NYKO INFOTEC OMS — 3D HOMEPAGE + LINK FIXES (2026-10-15)
+=========================================================
+Extract this folder over your project root — every path matches the repo.
+
+Files changed / added this round
+--------------------------------
+public/index.html        REBUILT — premium 3D animated landing page
+                         (navy + electric blue + white + orange). Sticky
+                         header, 3D hero scene (floating OMS dashboard,
+                         4 marketplace nodes, glowing animated data paths,
+                         order chips riding the paths, rotating data ring,
+                         3D parcels, mouse parallax), integrations marquee,
+                         6 feature cards linking to the REAL screens,
+                         5-tab interactive product tour
+                         (Orders/Inventory/Shipping/Returns/Analytics),
+                         5-step how-it-works, benefits, security section,
+                         final CTA, full footer sitemap (every real route),
+                         mobile menu, keyboard-accessible tabs,
+                         prefers-reduced-motion support, OG meta + JSON-LD.
+public/nav.js            Sidebar me universal "Homepage -> /" link add ki
+                         (sec:"*" permission gate bypass) — dashboard and
+                         website now link to each other.
+public/brand/nyko.svg    NEW — NYKO INFOTEC brand mark (navy/blue/orange).
+public/photos/README.md  NEW — optional artwork slots. Drop your renders in
+                         public/photos/ with these names and they appear
+                         automatically:
+                           hero.jpg, scene-ecommerce.jpg, scene-cloud.jpg,
+                           scene-global.jpg, scene-support.jpg,
+                           scene-security.jpg
+                         Missing files hide their card — page never breaks.
+BRAIN.md                 Change Log entry appended (2026-10-15).
+
+Not included (unchanged this round): all backend TS, CSS, other pages.
+Note: nykomart-oms changes from earlier are in the separate zip
+nykomart-oms-updates-2026-10-15-complete.zip.
+
+Verification done before packaging
+----------------------------------
+- node --check on nav.js and the inlined homepage script: OK
+- CSS braces 324/324, HTML tags balanced, no duplicate ids, JSON-LD valid
+- every href="#..." resolves to a real id on the page
+- all 17 internal links curl'd against the live preview: HTTP 200
+- served homepage byte-identical to the file in this zip

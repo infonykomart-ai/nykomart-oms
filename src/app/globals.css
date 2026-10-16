@@ -34,7 +34,30 @@ html, body {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* 2026-10-15 — professional type: the theme's own system-font stack
+   * (--font-sans, declared in @theme inline above) instead of Arial, with
+   * Arial/Helvetica kept only as the last-resort fallback. Arial rendered
+   * noticeably wider/older-looking than the rest of the UI's font stack. */
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* 2026-10-15 — "font black ho normally lekin according to UI theme ke auto
+ * adjust ho". Two rules, both inherit-only (no component is forced):
+ *
+ *  1. Any text inside the themed shell that does NOT specify its own color
+ *     inherits the theme's own --oms-text (near-black in every shipped
+ *     theme) instead of whatever the raw body color happened to be. A
+ *     component that DOES set a color class/var still wins — an inherited
+ *     value always loses to any declaration — so nothing that deliberately
+ *     paints text (white-on-accent buttons, colored status pills) changes.
+ *  2. Tables get tabular figures so money/quantity columns line up digit
+ *     for digit; the inherited color from rule 1 applies to them too. */
+[data-theme] {
+  color: var(--oms-text);
+}
+
+[data-theme] table {
+  font-variant-numeric: tabular-nums;
 }
 
 /*

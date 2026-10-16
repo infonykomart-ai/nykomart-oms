@@ -164,9 +164,9 @@ function withAddressErrorHint(message: string, formData: FormData): string {
   const state = str(formData, "recipient_state");
   const postcode = str(formData, "recipient_postcode");
   if (!city || !state || !postcode) {
-    return `${message} — City/State/Postcode me se koi field khali thi. Order ke "Structured Address" section me jaakar "✂ Split Address" button try karein (agar poora address Address Line 1 me paste ho gaya tha), ya yahan seedha bhar dein aur dobara try karein.`;
+    return `${message} — one of City / State / Postcode was empty. Open the order's "Structured Address" section and try the "✂ Split Address" button (useful when the whole address was pasted into Address Line 1), or fill them in here and try again.`;
   }
-  return `${message} — City, State aur Postcode dubara check karein (in teeno ka aapas me match hona zaroori hai).`;
+  return `${message} — please check City, State and Postcode again (all three must match each other).`;
 }
 
 // 2026-09-12 — a real live-test error: "Requested SpecialServiceType
@@ -181,7 +181,7 @@ function withAddressErrorHint(message: string, formData: FormData): string {
 // RIGHT NOW for this booking.
 function withEtdNotEnabledHint(message: string): string {
   if (!/special ?service ?type.{0,60}not enabled/i.test(message)) return message;
-  return `${message} — Aapke FedEx account par "Electronic Trade Documents" ka ye hissa abhi enabled nahi hai (FedEx customer service se enable karvana hoga). Tab tak "Commercial Invoice Method" dropdown me "I will upload my own invoice" ya "None" chunein — dono abhi kaam karte hain, sirf "FedEx creates ... electronically" wale 2 options ke liye ye enable karvana padega.`;
+  return `${message} — this part of "Electronic Trade Documents" is not enabled on your FedEx account yet (FedEx customer service has to enable it). Until then pick "I will upload my own invoice" or "None" in the "Commercial Invoice Method" dropdown — both work right now; only the two "FedEx creates ... electronically" options need this to be enabled.`;
 }
 
 // -----------------------------------------------------------------------

@@ -841,8 +841,8 @@ export default async function AttendanceAdminPage({
 
       <Panel
         icon="✍️"
-        title="Manual Correction &amp; Manual Punch"
-        description="Missed punch, approved leave, or a one-off half day. Set Punch In / Punch Out to record a real manual punch (hours are computed from them), or leave the times blank to only set that day's status."
+        title="Manual Correction & Manual Punch"
+        description="Missed punch, approved leave, or a one-off half day — set that day's status and/or the actual Punch In / Punch Out time (IST). Hours are computed from the times; leave them blank to only set the status."
       >
         <ManualAttendanceForm
           companyId={selectedCompanyId}

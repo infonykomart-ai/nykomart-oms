@@ -89,7 +89,7 @@ export function PoLineActions({
         {pending ? "…" : "🗑 Delete"}
       </button>
       {editing && (
-        <A4Dialog open onClose={() => setEditing(false)} title={`Edit entry — ${line.description ?? line.refNo ?? "item"}`} subtitle="Change karke Save dabao.">
+        <A4Dialog open onClose={() => setEditing(false)} title={`Edit entry — ${line.description ?? line.refNo ?? "item"}`} subtitle="Edit the fields and press Save.">
           {/* 2026-10-15 — PurchaseBillEditForm's party select needs the
               full PartyOption shape (it groups by invoice_type /
               party_type); the statement line only carries the vendor's id

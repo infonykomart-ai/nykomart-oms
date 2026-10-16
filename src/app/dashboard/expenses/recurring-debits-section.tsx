@@ -108,14 +108,14 @@ export function RecurringDebitsSection({
       </div>
       {logResult?.error && <p className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{logResult.error}</p>}
       {logResult?.logged && logResult.logged.length === 0 && (
-        <p className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Kuch due nahi tha — sab already logged ya abhi date nahi aayi.</p>
+        <p className="mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Nothing was due — every entry is already logged or its date has not arrived yet.</p>
       )}
 
       {/* Registry table */}
       {registry.length === 0 ? (
         <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">
-          Registry khali hai — neeche form se add karo (eRank $9.99, Etsy bill, eBay store…). Har mahine due date par
-          &quot;⚡ Log due now&quot; ek click me sab expenses bana dega.
+          The registry is empty — add your first entry with the form below (eRank $9.99, Etsy bill, eBay store…). On each
+          due date, &quot;⚡ Log due now&quot; creates every due expense in one click.
         </p>
       ) : (
         <div className="overflow-x-auto">
@@ -146,7 +146,7 @@ export function RecurringDebitsSection({
                   <td className="px-2 py-1.5">
                     {r.active ? (
                       dueNow(r) ? (
-                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">DUE — log karo</span>
+                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">DUE — log it</span>
                       ) : (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">active</span>
                       )

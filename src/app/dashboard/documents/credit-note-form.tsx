@@ -162,7 +162,7 @@ export function CreditNoteForm({
               agreed/PO — fill Qty and both rates here; Refund Amount fills in automatically as (Billed − PO Rate) × Qty,
               plus GST below if the difference itself was billed with GST.
             </p>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label className={labelClass} htmlFor="cn_qty">Qty</label>
                 <input

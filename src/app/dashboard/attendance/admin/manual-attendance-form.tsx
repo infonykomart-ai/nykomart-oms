@@ -3,9 +3,10 @@
 import { useActionState, useMemo, useState } from "react";
 import { setManualAttendance, type SimpleActionState } from "./actions";
 // Pure IST/date helpers only — safe in a client component (ist-date.ts has no
-// server-only imports); LATE_CUTOFF_HHMM is shared with the punch flow so the
-// suggested status can never drift from what an automatic punch would record.
-import { LATE_CUTOFF_HHMM } from "@/lib/attendance/ist-date";
+// server-only imports); the cutoff and the Present/Late verdict are shared
+// with the punch flow so a suggested status can never drift from what an
+// automatic punch would record.
+import { LATE_CUTOFF_HHMM, attendanceStatusForPunchIn } from "@/lib/attendance/ist-date";
 
 const initialState: SimpleActionState = { error: null, success: false };
 const inputClass =
@@ -34,21 +35,32 @@ export type CorrectionEmployee = {
   crossCompany?: boolean;
 };
 
-// 2026-10-16 — "admin attendance page par manual correction me employee
-// select nahi ho rahe to kese manual punch karu". Two fixes here:
-//
-// 1. The employee dropdown is now fed by a service-role read on the page
-//    (see admin/page.tsx) covering EVERY company this admin can act for —
-//    not just the company currently filtered at the top — and a failed read
-//    is SHOWN (readError banner) instead of silently rendering an empty
-//    select, which is exactly how this looked like "employees can't be
-//    selected". Employees of another company are grouped under their company
-//    name, and inactive ones are labelled, so a historical correction for a
-//    former staffer is still possible.
-// 2. Punch In / Punch Out are now real inputs (optional). A missed punch can
-//    be recorded WITH its times instead of only flipping a status, which is
-//    what "manual punch" actually means — work_hours is a generated column
-//    off those two values, so the day's hours come out right automatically.
+/**
+ * Manual attendance correction for one employee + date, upserted by
+ * (employee_id, attendance_date) — the same unique key the automatic punch
+ * path uses.
+ *
+ * Two problems are fixed here (2026-10-15/16):
+ *
+ * 1. "admin attendance page par manual correction me employee select nahi ho
+ *    rahe to kese manual punch karu": the employee dropdown was fed only by
+ *    the page's current company filter and a FAILED read silently rendered an
+ *    empty select — which is exactly what "employees can't be selected" looks
+ *    like. It is now fed by a service-role read covering every company this
+ *    admin can act for, grouped under company names, with inactive and
+ *    cross-company staff labelled and the read error SHOWN.
+ * 2. "manual punching kaam nahi kar raha ... usme ye bhi hona chahiye ki
+ *    kitne baje ka punch dalna hai": the form took only a status + remark, so
+ *    a manual entry could never record a PUNCH — the row came out with no
+ *    punch_in/punch_out and therefore no work hours. It now takes the actual
+ *    Punch In / Punch Out times (IST, 24h), stored by the server as real
+ *    timestamptz values:
+ *      • both times   → a complete manual punch; work hours compute themselves
+ *      • only Punch In → status is derived from the same 09:45 IST late cutoff
+ *        the live punch uses, unless a Status is picked explicitly
+ *      • a blank time  → only the status is corrected; an already-recorded
+ *        punch is left untouched (correcting a day must never wipe a punch)
+ */
 export function ManualAttendanceForm({
   companyId,
   employees,
@@ -65,7 +77,11 @@ export function ManualAttendanceForm({
   const [employeeId, setEmployeeId] = useState("");
   const [punchIn, setPunchIn] = useState("");
   const [punchOut, setPunchOut] = useState("");
+  // Status starts on "Auto" — the server derives Present/Late from the Punch
+  // In time — and only sticks once the admin picks one deliberately, so
+  // editing the time afterwards never leaves a stale suggested status behind.
   const [status, setStatus] = useState("");
+  const [statusTouched, setStatusTouched] = useState(false);
 
   const selected = employees.find((e) => e.id === employeeId) ?? null;
   const targetCompanyId = selected?.companyId ?? companyId;
@@ -99,17 +115,21 @@ export function ManualAttendanceForm({
         </p>
       )}
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
+
       {state.success && (
-        <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">
-          ✓ Saved. The employee&apos;s Attendance page already shows this day updated.
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          ✓ {state.message ?? "Saved."}
+          <span className="mt-0.5 block text-emerald-700">
+            The employee&apos;s Attendance page already shows this day updated.
+          </span>
         </p>
       )}
 
       {employees.length === 0 ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          No selectable employees were found. Add the person under Admin → Employees (an <strong>inactive</strong> employee
-          still lists here, so a left staffer&apos;s history can be corrected), and check that your login has access to
-          their company.
+          No selectable employees were found. Add the person under Admin → Employees (an <strong>inactive</strong>{" "}
+          employee still lists here, so a left staffer&apos;s history can be corrected), and check that your login has
+          access to their company.
         </p>
       ) : (
         <>
@@ -151,12 +171,19 @@ export function ManualAttendanceForm({
               <label className={labelClass} htmlFor="manual-date">
                 Date *
               </label>
-              <input id="manual-date" type="date" name="attendance_date" required defaultValue={today} className={inputClass} />
+              <input
+                id="manual-date"
+                type="date"
+                name="attendance_date"
+                required
+                defaultValue={today}
+                className={inputClass}
+              />
             </div>
 
             <div>
               <label className={labelClass} htmlFor="manual-in">
-                Punch In (optional)
+                Punch In (IST)
               </label>
               <input
                 id="manual-in"
@@ -166,9 +193,10 @@ export function ManualAttendanceForm({
                 onChange={(e) => {
                   const v = e.target.value;
                   setPunchIn(v);
-                  // Only ever PROPOSE a status for a field the admin hasn't
-                  // chosen yet — an explicit pick is never overridden.
-                  if (v && !status) setStatus(v > LATE_CUTOFF_HHMM ? "Late" : "Present");
+                  // While the admin hasn&apos;t chosen a status themselves, mirror
+                  // exactly what the server will derive from this time — same
+                  // 09:45 cutoff, same verdict, so the field shows the truth.
+                  if (!statusTouched) setStatus(attendanceStatusForPunchIn(v) ?? "");
                 }}
                 className={inputClass}
               />
@@ -176,7 +204,7 @@ export function ManualAttendanceForm({
 
             <div>
               <label className={labelClass} htmlFor="manual-out">
-                Punch Out (optional)
+                Punch Out (IST)
               </label>
               <input
                 id="manual-out"
@@ -190,19 +218,19 @@ export function ManualAttendanceForm({
 
             <div>
               <label className={labelClass} htmlFor="manual-status">
-                Status *
+                Status (auto from Punch In)
               </label>
               <select
                 id="manual-status"
                 name="status"
-                required
                 value={status}
-                onChange={(e) => setStatus(e.target.value)}
+                onChange={(e) => {
+                  setStatus(e.target.value);
+                  setStatusTouched(e.target.value !== "");
+                }}
                 className={inputClass}
               >
-                <option value="" disabled>
-                  Status
-                </option>
+                <option value="">Auto (from Punch In time)</option>
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -236,9 +264,10 @@ export function ManualAttendanceForm({
           </div>
 
           <p className="text-[11px] leading-relaxed text-slate-500">
-            Status alone corrects the day (Leave / Holiday / Half Day), and Punch In + Punch Out record a{" "}
-            <strong>real manual punch</strong> with hours — leave both blank to only set the status. Times are IST; a Punch
-            In after {LATE_CUTOFF_HHMM} is normally <strong>Late</strong>
+            Status alone corrects the day (Leave / Holiday / Half Day); Punch In + Punch Out record a{" "}
+            <strong>real manual punch</strong> whose hours drive Work Hours just like a live punch. Times are IST and a
+            Punch In after {LATE_CUTOFF_HHMM} is <strong>Late</strong> unless you pick a status yourself. Leave a time
+            blank to keep an already-recorded punch — Punch Out on its own needs an existing Punch In.
             {selected && (
               <>
                 {" "}

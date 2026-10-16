@@ -69,7 +69,7 @@ export function TelegramConnectCard({
     pollingRef.current = true;
     setPolling(true);
     setConnectResult(null);
-    setPollNote("Telegram kholein aur bot chat me START dabayein — hum yahin connect kar rahe hain…");
+    setPollNote("Open Telegram and press START in the bot chat — we are connecting you right here…");
     let lastServerError: string | null = null; // plain local — not state (no render churn per attempt)
     try {
       for (let attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
@@ -96,7 +96,7 @@ export function TelegramConnectCard({
         connected: false,
         error:
           lastServerError ??
-          "Abhi tak Start message nahi mila — neeche wala 'Connect (retry)' button dabakar dobara try karein. Telegram me bot chat khol kar ya to 'Open Telegram & Start' link dubara kholein (payload wala /start aata hai), ya fresh /start bhejein — 15 minute se purana /start count nahi hota.",
+          "No Start message received yet — press the 'Connect (retry)' button below to try again. Either reopen the bot chat / the 'Open Telegram & Start' link (that sends the /start with the payload) or send a fresh /start — a /start older than 15 minutes is not counted.",
       });
     } finally {
       pollingRef.current = false;
@@ -195,8 +195,8 @@ export function TelegramConnectCard({
         botUsername ? (
           <div className="space-y-2">
             <p className="text-xs text-slate-600">
-              Bas <strong>1 click</strong>: neeche button se Telegram khulega → bot chat me <strong>START</strong> dabayein →
-              wapas yahan aate hi connect ho jayega.
+              Just <strong>1 click</strong>: the button below opens Telegram → press <strong>START</strong> in the bot chat →
+              you are connected as soon as you come back to this page.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <a
@@ -227,9 +227,9 @@ export function TelegramConnectCard({
           </div>
         ) : (
           <p className="text-xs text-amber-600">
-            Bot ka deep link abhi auto-resolve nahi ho paya — server pe{" "}
-            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_USERNAME</code> set karwayein (ya{" "}
-            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_TOKEN</code> check karein), phir reload karein.
+            The bot deep link could not be resolved yet — ask the server admin to set{" "}
+            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_USERNAME</code> (or check{" "}
+            <code className="rounded bg-amber-50 px-1">TELEGRAM_BOT_TOKEN</code>), then reload this page.
           </p>
         )
       ) : (

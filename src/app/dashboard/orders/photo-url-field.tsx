@@ -103,7 +103,7 @@ export function PhotoUrlField({
             setUrl(e.target.value);
             setBroken(false);
           }}
-          placeholder="https://… (ya upload karein)"
+          placeholder="https://… (or upload a file)"
           className={inputClass}
         />
         <label className="shrink-0 cursor-pointer rounded-lg border border-slate-300 px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
@@ -120,7 +120,7 @@ export function PhotoUrlField({
       </div>
       {url && broken && (
         <p className="mt-1 text-xs text-red-500">
-          Yeh link se photo load nahi ho rahi — direct image link paste karein ya Upload button use karein.
+          This photo could not be loaded from the link — paste a direct image URL or use the Upload button.
         </p>
       )}
       {uploadError && <p className="mt-1 text-xs text-red-500">{uploadError}</p>}

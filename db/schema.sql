@@ -644,6 +644,23 @@ CREATE TABLE exchange_rates (
 );
 CREATE INDEX idx_exchange_rates_lookup ON exchange_rates (currency_code, effective_from DESC);
 
+-- 2026-10-15b — DISPOSABLE live-rate cache (base USD), kept deliberately
+-- apart from exchange_rates above, which is the legal/customs rate master
+-- (one row per currency per CBIC notification, entered by Finance) and must
+-- never be overwritten by an API feed. This one only converts ad-spend
+-- figures on screen (e.g. the Amazon country-wise Budget/Spend totals) and is
+-- refreshed from open.er-api.com when older than 12 hours — see
+-- db/2026-10-15b-fx-rate-cache.sql and src/lib/fx/rates.ts.
+CREATE TABLE fx_rate_cache (
+  base_currency       varchar(3) NOT NULL,
+  quote_currency      varchar(3) NOT NULL,
+  rate                numeric(18,8) NOT NULL CHECK (rate > 0),
+  source              text NOT NULL DEFAULT 'open.er-api.com',
+  market_updated_at   timestamptz,
+  fetched_at          timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (base_currency, quote_currency)
+);
+
 CREATE OR REPLACE FUNCTION get_official_rate_as_of(p_currency_code varchar(3), p_as_of date)
 RETURNS TABLE (rate_to_inr numeric, effective_from date)
 LANGUAGE sql STABLE AS $$
@@ -859,18 +876,30 @@ COMMENT ON COLUMN orders.ref_no IS
 -- — never duplicated into this table. Only Budget/Spend (external ad-
 -- platform numbers) are stored — one row per (store, date) that has data;
 -- a day with no ad spend simply has no row.
+-- 2026-10-15 — Amazon ad spend is per MARKETPLACE COUNTRY (one Amazon
+-- store runs separate US / UK / DE … campaigns), so the grain is
+-- (store, date, country) for an Amazon store and (store, date, '') for
+-- every other store — '' rather than NULL keeps the UNIQUE key
+-- enforceable (Postgres treats NULLs as distinct). See
+-- db/2026-10-15-ad-spend-amazon-country.sql for the ALTER that introduced
+-- country_code on databases created before it, and
+-- src/app/dashboard/ad-spend/amazon-countries.ts for the 12 valid codes.
 CREATE TABLE store_ad_spend (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   store_id              uuid NOT NULL REFERENCES stores(id),
   spend_date            date NOT NULL,
+  country_code          text NOT NULL DEFAULT '',
   budget_usd            numeric(12,2) NOT NULL DEFAULT 0,
   spend_usd             numeric(12,2) NOT NULL DEFAULT 0,
   entry_by_employee_id  uuid NOT NULL REFERENCES employees(id),
   updated_at            timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (store_id, spend_date)
+  CONSTRAINT store_ad_spend_store_date_country_key UNIQUE (store_id, spend_date, country_code),
+  CONSTRAINT store_ad_spend_country_code_check
+    CHECK (country_code IN ('', 'US', 'CA', 'MX', 'AU', 'GB', 'DE', 'IT', 'JP', 'FR', 'ES', 'IN', 'AE'))
 );
 CREATE INDEX idx_store_ad_spend_date  ON store_ad_spend(spend_date);
 CREATE INDEX idx_store_ad_spend_store ON store_ad_spend(store_id);
+CREATE INDEX idx_store_ad_spend_store_country_date ON store_ad_spend(store_id, country_code, spend_date);
 
 
 -- =============================================================================

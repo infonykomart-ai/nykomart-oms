@@ -5647,6 +5647,36 @@ export type Database = {
           },
         ];
       };
+      // 2026-10-15b — disposable live FX cache (base USD) for on-screen
+      // conversion only; the legal/customs master is exchange_rates below.
+      // See db/2026-10-15b-fx-rate-cache.sql and src/lib/fx/rates.ts.
+      fx_rate_cache: {
+        Row: {
+          base_currency: string;
+          quote_currency: string;
+          rate: number;
+          source: string;
+          market_updated_at: string | null;
+          fetched_at: string;
+        };
+        Insert: {
+          base_currency: string;
+          quote_currency: string;
+          rate: number;
+          source?: string;
+          market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Update: {
+          base_currency?: string;
+          quote_currency?: string;
+          rate?: number;
+          source?: string;
+          market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Relationships: [];
+      };
       exchange_rates: {
         Row: {
           id: string;
@@ -9025,6 +9055,10 @@ export type Database = {
           id: string;
           store_id: string;
           spend_date: string;
+          // 2026-10-15 — Amazon marketplace country code ('US', 'GB', …);
+          // '' for every non-Amazon store. See
+          // db/2026-10-15-ad-spend-amazon-country.sql.
+          country_code: string;
           budget_usd: number;
           spend_usd: number;
           entry_by_employee_id: string;
@@ -9034,6 +9068,7 @@ export type Database = {
           id?: string;
           store_id: string;
           spend_date: string;
+          country_code?: string;
           budget_usd?: number;
           spend_usd?: number;
           entry_by_employee_id: string;

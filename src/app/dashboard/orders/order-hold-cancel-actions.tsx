@@ -241,7 +241,7 @@ export function OrderHoldCancelActions({
             <label className="mb-0.5 block text-[10px] font-medium text-slate-500">
               Refund Calculator (optional — order value {Number(order.order_value_original || 0).toFixed(2)} {order.order_currency})
             </label>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <label className="mb-0.5 block text-[9px] text-slate-400">% of order value</label>
                 <select

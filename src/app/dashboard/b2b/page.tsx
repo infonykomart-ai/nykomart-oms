@@ -37,12 +37,31 @@ export default async function B2BPage() {
   // companies columns (PI seller block) and the editable b2b_export_profiles
   // row (the 2026-10-13 PI export round). See the props below for how the
   // client falls back from one to the other.
-  const [inquiriesRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes, profileRes] = await Promise.all([
+  const [inquiriesRes, quoteColsRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes, profileRes] = await Promise.all([
     supabase
       .from("b2b_inquiries")
       .select("*")
       .eq("company_id", companyId)
       .order("inquiry_no", { ascending: false })
+      .then(
+        (r) => r,
+        (err) => ({ data: null, error: err as { message: string } })
+      ),
+    // 2026-10-15 — MIGRATION PROBE for the PI's own sections. quotesRes
+    // below uses select("*"), and PostgREST returns just the columns that
+    // exist — it never errors on a MISSING column — so until
+    // db/2026-10-13-b2b-pi-export-fields.sql is run, the Proforma Invoice
+    // silently printed "To be provided" in its payment-terms / ports /
+    // packing / item-spec blocks with no hint anywhere why ("ye cheezein
+    // nahi aa rahi"). Asking for those columns EXPLICITLY fails loudly
+    // instead, and the failure travels into loadError → the setup card that
+    // names the SQL file to run. Selecting only 4 of the ~20 columns the
+    // migration adds keeps the probe cheap; the migration adds them all in
+    // one go, so 4 is as good a witness as 20.
+    supabase
+      .from("b2b_quotations")
+      .select("payment_condition, port_of_loading, port_of_destination, packing_details")
+      .limit(1)
       .then(
         (r) => r,
         (err) => ({ data: null, error: err as { message: string } })
@@ -131,12 +150,18 @@ export default async function B2BPage() {
   // Now the raw reason travels to the client as a setup notice.
   // 2026-10-13 — also surface a not-yet-run 2026-10-13 migration (a
   // missing COLUMN fails the quotations query the same way a missing
-  // TABLE used to); the setup card lists all three SQL files to run.
+  // TABLE used to); the setup card lists all four SQL files to run.
+  // 2026-10-15 — quoteColsRes (see the probe above) is what actually makes a
+  // missing COLUMN fail, since select("*") cannot.
   const loadError = inquiriesRes.error
     ? inquiriesRes.error.message
     : quotesRes.error
       ? quotesRes.error.message
-      : null;
+      : quoteColsRes.error
+        ? quoteColsRes.error.message
+        : sellerProfileRes.error
+          ? sellerProfileRes.error.message
+          : null;
 
   // 2026-10-02d — "export profile" table is the LAST one the migration
   // creates; only its failure is worth surfacing (the register itself
