@@ -3,15 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-// 2026-10-15/16 — shared with the live punch path (punch.ts) so an
-// admin-typed punch time earns exactly the same Present/Late verdict, and
-// with the Manual Correction form (a client component) which needs the same
-// 09:45 cutoff — hence they live in the dependency-free ist-date.ts.
-import {
-  attendanceStatusForPunchIn,
-  istTimeToInstant,
-  normalizeISTTimeInput,
-} from "@/lib/attendance/ist-date";
+// 2026-10-15 — shared with the live punch path so an admin-typed punch time
+// earns exactly the same Present/Late verdict (see punch.ts).
+import { attendanceStatusForPunchIn } from "@/lib/attendance/punch";
+import { istTimeToInstant, normalizeISTTimeInput } from "@/lib/attendance/ist-date";
 // 2026-10-15 — typed update payload for the "correct an existing day" branch
 // below, so a partial update (only the punch times the admin actually typed)
 // is checked against the real attendance columns instead of a loose record.
@@ -198,13 +193,6 @@ export async function setWorkPlanTemplateActive(id: string, active: boolean): Pr
  * for a specific employee+date (e.g. a missed punch, an approved leave, a
  * one-off half day). Upserts by (employee_id, attendance_date), same unique
  * key the automatic punch-in path uses.
- *
- * 2026-10-16 — "manual correction me employee select nahi ho rahe to kese
- * manual punch karu": this action could only ever set a STATUS, so a missed
- * punch could be marked "Present" but never carry real IN/OUT times (and
- * work_hours — a GENERATED column off punch_in/punch_out — stayed empty).
- * Both times are now accepted as optional "HH:MM" IST values and written as
- * exact instants; leaving them blank keeps the old status-only behaviour.
  */
 export async function setManualAttendance(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
   const admin = await requireCapability("attendance_admin");
@@ -213,48 +201,26 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
   const date = str(formData, "attendance_date");
   const status = str(formData, "status");
   const remark = str(formData, "remark");
-  // 2026-10-15/16 — "manual punching kaam nahi kar raha ... usme ye bhi hona
+  // 2026-10-15 — "manual punching kaam nahi kar raha ... usme ye bhi hona
   // chahiye ki kitne baje ka punch dalna hai": the admin can now type the
   // actual punch times, so a manual entry is a real punch (with work hours
-  // computed by the generated column) and not just a status label. Both
-  // times are optional HH:MM IST values, converted against the SAME date the
-  // correction is for — never "now".
-  const rawIn = str(formData, "punch_in_time");
-  const rawOut = str(formData, "punch_out_time");
-  const punchInTime = normalizeISTTimeInput(rawIn);
-  const punchOutTime = normalizeISTTimeInput(rawOut);
+  // computed by the generated column) and not just a status label.
+  const punchInTime = normalizeISTTimeInput(str(formData, "punch_in_time"));
+  const punchOutTime = normalizeISTTimeInput(str(formData, "punch_out_time"));
   if (!employeeId || !companyId || !date) {
     return { error: "Employee, date and (if no time is entered) status are required.", success: false };
   }
-  // A typed-but-unparseable time is a user mistake to REPORT, never silently
-  // dropped as though the field had been left blank.
-  if (rawIn && !punchInTime) return { error: `Punch In "${rawIn}" is not a valid HH:MM time.`, success: false };
-  if (rawOut && !punchOutTime) return { error: `Punch Out "${rawOut}" is not a valid HH:MM time.`, success: false };
   if (!status && !punchInTime && !punchOutTime) {
     return { error: "Pick a status, or enter at least one punch time.", success: false };
   }
   if (punchInTime && punchOutTime && punchOutTime <= punchInTime) {
     return { error: "Punch Out time has to be after the Punch In time.", success: false };
   }
-  // Converted BEFORE touching the DB: an impossible date ("2026-02-31") is
-  // the same class of user mistake as an impossible time, so both come back
-  // as an error instead of a silently shifted row.
-  const punchInInstant = punchInTime ? istTimeToInstant(date, punchInTime) : null;
-  const punchOutInstant = punchOutTime ? istTimeToInstant(date, punchOutTime) : null;
-  if (punchInTime && !punchInInstant) {
-    return { error: `Punch In "${punchInTime}" is not a valid time for ${date}.`, success: false };
-  }
-  if (punchOutTime && !punchOutInstant) {
-    return { error: `Punch Out "${punchOutTime}" is not a valid time for ${date}.`, success: false };
-  }
   // One rule for both branches below: with a punch-in time typed, the status
   // follows the SAME late cutoff the live punch uses (Present up to 09:45
   // IST, Late after) unless the admin picked one explicitly.
   const derivedStatus = punchInTime ? attendanceStatusForPunchIn(punchInTime) : null;
   const effectiveStatus = status || derivedStatus || "";
-  // Each punch time above is stored as a real timestamptz (IST +05:30 — see
-  // istTimeToInstant), so work_hours (a generated column) and every existing
-  // report keep working unchanged.
   // 2026-08-12 (round 11 security review): see addHoliday's identical comment above.
   if (!admin.companyIds.includes(companyId)) {
     return { error: "You don't have access to that company.", success: false };
@@ -287,6 +253,12 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
     .eq("employee_id", employeeId)
     .eq("attendance_date", date)
     .maybeSingle();
+
+  // A punch time is stored as a real timestamptz (IST +05:30 — see
+  // istTimeToInstant), so work_hours (a generated column) and every existing
+  // report keep working unchanged.
+  const punchInInstant = punchInTime ? istTimeToInstant(date, punchInTime) : null;
+  const punchOutInstant = punchOutTime ? istTimeToInstant(date, punchOutTime) : null;
 
   if (existing) {
     // Only the fields the admin actually filled in are touched: a blank time
@@ -332,7 +304,6 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
     if (error) return { error: error.message, success: false };
   }
   revalidatePath("/dashboard/attendance/admin");
-  // The corrected day shows on the employee's own Attendance page too.
   revalidatePath("/dashboard/attendance");
   const saved = [
     `Saved — ${date}`,
