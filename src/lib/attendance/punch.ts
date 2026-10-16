@@ -10,7 +10,10 @@
 // server action, same pattern as sales_invoices/orders.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { todayIST, nowISOInstant, nowISTTime } from "./ist-date";
+// 2026-10-16 — LATE_CUTOFF_HHMM moved into ist-date.ts so the Manual
+// Correction form (a client component) can share the exact same cutoff
+// without importing this module's server-only Telegram/companion deps.
+import { todayIST, nowISOInstant, nowISTTime, LATE_CUTOFF_HHMM } from "./ist-date";
 import { notifyCompanion } from "@/lib/companion/notify";
 // 2026-09-29 — best-effort punch confirmation, fired AFTER the DB write
 // below succeeds, never blocks or fails the punch itself. 2026-09-30 —
@@ -18,17 +21,6 @@ import { notifyCompanion } from "@/lib/companion/notify";
 // telegram-notify.ts): every employee connects their own Telegram from the
 // Attendance page; WhatsApp sending for this flow is OFF entirely.
 import { notifyPunchInTelegram, notifyPunchOutTelegram } from "./telegram-notify";
-
-// HH:MM (IST, 24h) — same config-constant convention as the old system's
-// ATTENDANCE_LATE_CUTOFF_HOUR/MINUTE. No admin UI to change this yet
-// (flagged as a scope simplification) — edit this constant if the cutoff
-// needs to change again.
-//
-// 2026-09-02: "attendance 9:30 ke baad sabhi ko late dikhati hai punching
-// time 9:20 se 9:45 am tak agar koi present karta hai to vo present
-// dikhaye" — moved from 09:30 to 09:45. Anyone punching in AT or before
-// 9:45 AM IST now shows Present; only strictly after 9:45 shows Late.
-const LATE_CUTOFF_HHMM = "09:45";
 
 // 2026-10-02 — Web-Punch GPS capture (TeamOffice parity): the manual
 // Punch In/Out buttons send a one-shot browser geolocation fix along with

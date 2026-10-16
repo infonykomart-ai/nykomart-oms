@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { istInstantFromDateTime } from "@/lib/attendance/ist-date";
 
 export type SimpleActionState = { error: string | null; success: boolean };
 
@@ -179,6 +180,13 @@ export async function setWorkPlanTemplateActive(id: string, active: boolean): Pr
  * for a specific employee+date (e.g. a missed punch, an approved leave, a
  * one-off half day). Upserts by (employee_id, attendance_date), same unique
  * key the automatic punch-in path uses.
+ *
+ * 2026-10-16 — "manual correction me employee select nahi ho rahe to kese
+ * manual punch karu": this action could only ever set a STATUS, so a missed
+ * punch could be marked "Present" but never carry real IN/OUT times (and
+ * work_hours — a GENERATED column off punch_in/punch_out — stayed empty).
+ * Both times are now accepted as optional "HH:MM" IST values and written as
+ * exact instants; leaving them blank keeps the old status-only behaviour.
  */
 export async function setManualAttendance(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
   const admin = await requireCapability("attendance_admin");
@@ -187,8 +195,22 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
   const date = str(formData, "attendance_date");
   const status = str(formData, "status");
   const remark = str(formData, "remark");
+  // Optional manual punch times, typed as HH:MM IST (the office's own
+  // wall-clock time) — converted to real instants against the SAME date the
+  // correction is for, never "now".
+  const punchInTime = str(formData, "punch_in_time");
+  const punchOutTime = str(formData, "punch_out_time");
   if (!employeeId || !companyId || !date || !status) {
     return { error: "Employee, date, and status are all required.", success: false };
+  }
+  // Validate the optional times BEFORE touching the DB: an unparseable
+  // value is a user mistake to report, not something to silently drop.
+  const punchIn = punchInTime ? istInstantFromDateTime(date, punchInTime) : null;
+  const punchOut = punchOutTime ? istInstantFromDateTime(date, punchOutTime) : null;
+  if (punchInTime && !punchIn) return { error: `Punch In "${punchInTime}" is not a valid time.`, success: false };
+  if (punchOutTime && !punchOut) return { error: `Punch Out "${punchOutTime}" is not a valid time.`, success: false };
+  if (punchIn && punchOut && punchOut < punchIn) {
+    return { error: "Punch Out can't be earlier than Punch In.", success: false };
   }
   // 2026-08-12 (round 11 security review): see addHoliday's identical comment above.
   if (!admin.companyIds.includes(companyId)) {
@@ -216,6 +238,14 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
     return { error: "That employee doesn't belong to the selected company.", success: false };
   }
 
+  // Punch times are only written when actually supplied — an untouched
+  // blank field leaves whatever the automatic punch already recorded alone
+  // (this panel is also used for pure status corrections like Leave/Holiday).
+  const punchTimes = {
+    ...(punchIn ? { punch_in: punchIn } : {}),
+    ...(punchOut ? { punch_out: punchOut } : {}),
+  };
+
   const { data: existing } = await supabase
     .from("attendance")
     .select("id")
@@ -226,7 +256,7 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
   if (existing) {
     const { error } = await supabase
       .from("attendance")
-      .update({ status: status as never, remark: remark || null, entered_by_employee_id: admin.id })
+      .update({ status: status as never, remark: remark || null, entered_by_employee_id: admin.id, ...punchTimes })
       .eq("id", existing.id);
     if (error) return { error: error.message, success: false };
   } else {
@@ -238,9 +268,12 @@ export async function setManualAttendance(_prev: SimpleActionState, formData: Fo
       source: "Manual Entry",
       remark: remark || null,
       entered_by_employee_id: admin.id,
+      ...punchTimes,
     });
     if (error) return { error: error.message, success: false };
   }
   revalidatePath("/dashboard/attendance/admin");
+  // The corrected day shows on the employee's own Attendance page too.
+  revalidatePath("/dashboard/attendance");
   return { error: null, success: true };
 }

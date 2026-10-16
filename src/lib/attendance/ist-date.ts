@@ -70,6 +70,41 @@ export function istDateFromInstant(iso: string): string {
 }
 
 /**
+ * 2026-10-16 — Attendance Admin's Manual Correction: turns a date +
+ * "HH:MM" picked in the UI into the exact instant stored in
+ * attendance.punch_in / punch_out. IST has NO daylight saving, so a fixed
+ * +05:30 offset IS the correct timezone for every date (same reasoning as
+ * IST_OFFSET_MS above) — no local-timezone guessing, and the returned UTC
+ * ISO string is what a timestamptz column wants.
+ *
+ * Returns null for anything that isn't a real date/time ("2026-02-31",
+ * "25:99", empty) so callers can validate without duplicating the regexes.
+ */
+export function istInstantFromDateTime(dateStr: string, timeStr: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  if (!/^\d{2}:\d{2}$/.test(timeStr)) return null;
+  const d = new Date(`${dateStr}T${timeStr}:00+05:30`);
+  if (Number.isNaN(d.getTime())) return null;
+  // JS Date NORMALIZES an out-of-range day ("2026-02-31" silently becomes
+  // Mar 3) instead of failing, so a round-trip back to the IST calendar date
+  // is what actually rejects a non-existent date here.
+  if (istDateFromInstant(d.toISOString()) !== dateStr) return null;
+  return d.toISOString();
+}
+
+// HH:MM (IST, 24h) after which a punch-in counts as Late instead of
+// Present. Lives here (not in punch.ts) because the Manual Correction form
+// is a CLIENT component and needs the same cutoff to suggest a status from
+// the punch-in time the admin typed — punch.ts pulls in server-only
+// Telegram/companion modules a client component must never import.
+//
+// 2026-09-02: "attendance 9:30 ke baad sabhi ko late dikhati hai punching
+// time 9:20 se 9:45 am tak agar koi present karta hai to vo present
+// dikhaye" — moved from 09:30 to 09:45. Anyone punching in AT or before
+// 9:45 AM IST shows Present; only strictly after 9:45 shows Late.
+export const LATE_CUTOFF_HHMM = "09:45";
+
+/**
  * 2026-09-09 — splits a [startIso, endIso) stopped-timer interval into one
  * segment per IST calendar day it touches, e.g. a task timer left running
  * from 11pm to 1am IST produces 2 segments (yesterday's last hour, today's

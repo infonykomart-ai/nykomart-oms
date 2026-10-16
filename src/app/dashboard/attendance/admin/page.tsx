@@ -18,7 +18,7 @@ import {
 import { HolidayForm } from "./holiday-form";
 import { AttendanceAdminNav } from "./admin-nav";
 import { WeeklyOffForm } from "./weekly-off-form";
-import { ManualAttendanceForm } from "./manual-attendance-form";
+import { ManualAttendanceForm, type CorrectionEmployee } from "./manual-attendance-form";
 import { RemoveHolidayButton } from "./remove-holiday-button";
 import { PendingWorkPanel, type PendingWorkGroup } from "./pending-work-panel";
 import { WorkPlanTemplatesPanel, type WorkPlanTemplateRow } from "./work-plan-templates-panel";
@@ -533,6 +533,78 @@ export default async function AttendanceAdminPage({
 
   const taskNowMs = new Date().getTime();
 
+  // ==========================================================================
+  // 2026-10-16 — Manual Correction's employee list.
+  //
+  // "admin attendance page par manual correction me employee select nahi ho
+  // rahe to kese manual punch karu": the panel used to be handed
+  // `teamEmployees` — the SELECTED company's active team, read through the
+  // session client in the big query above. Two ways that renders an empty /
+  // useless dropdown with no visible reason: (a) the person you're correcting
+  // belongs to another company this login can act for (multi-company staff
+  // work from one login — that's exactly why setManualAttendance supports
+  // cross-company targets at all), and (b) a session-client read that RLS
+  // blocks returns zero rows and NOTHING surfaces the error (the same
+  // silent-empty failure this page already fixed for daily_work_logs in
+  // round 6 above). So: a dedicated service-role read across every company
+  // this admin can act for, PLUS everyone granted employee_company_access to
+  // those companies, with the error passed into the form instead of
+  // swallowed. Inactive employees are included (labelled) so a departed
+  // staffer's history can still be corrected.
+  // ==========================================================================
+  const correctionSupabase = createServiceRoleClient();
+  const companyNameById = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const [{ data: correctionTeam, error: correctionTeamError }, { data: crossCompanyAccess }] = await Promise.all([
+    correctionSupabase
+      .from("employees")
+      .select("id, name, company_id, active")
+      .in("company_id", employee.companyIds)
+      .order("name"),
+    correctionSupabase.from("employee_company_access").select("employee_id, company_id").in("company_id", employee.companyIds),
+  ]);
+  let correctionReadError: string | null = correctionTeamError?.message ?? null;
+  const correctionEmployees: CorrectionEmployee[] = (correctionTeam ?? []).map((e) => ({
+    id: e.id,
+    name: e.name,
+    companyId: e.company_id,
+    companyName: companyNameById.get(e.company_id) ?? "—",
+    active: e.active,
+  }));
+  // employeeId → the company that GRANTED them access (one of this admin's
+  // own), which is also the company their attendance row must be written to:
+  // setManualAttendance accepts a target employee either as a home-company
+  // match or via exactly this employee_company_access grant.
+  const accessCompanyByEmployee = new Map<string, string>();
+  for (const grant of crossCompanyAccess ?? []) {
+    if (!accessCompanyByEmployee.has(grant.employee_id)) {
+      accessCompanyByEmployee.set(grant.employee_id, grant.company_id);
+    }
+  }
+  const knownEmployeeIds = new Set(correctionEmployees.map((e) => e.id));
+  const crossCompanyIds = Array.from(new Set((crossCompanyAccess ?? []).map((a) => a.employee_id))).filter(
+    (id) => !knownEmployeeIds.has(id)
+  );
+  if (crossCompanyIds.length) {
+    const { data: crossCompanyEmployees, error: crossCompanyError } = await correctionSupabase
+      .from("employees")
+      .select("id, name, company_id, active")
+      .in("id", crossCompanyIds);
+    // Only ever fills a gap — never hides the first query's own error.
+    correctionReadError = correctionReadError ?? crossCompanyError?.message ?? null;
+    for (const e of crossCompanyEmployees ?? []) {
+      const writeCompanyId = accessCompanyByEmployee.get(e.id) ?? e.company_id;
+      correctionEmployees.push({
+        id: e.id,
+        name: e.name,
+        companyId: writeCompanyId,
+        companyName: companyNameById.get(writeCompanyId) ?? "—",
+        active: e.active,
+        crossCompany: true,
+      });
+    }
+  }
+  correctionEmployees.sort((a, b) => a.name.localeCompare(b.name));
+
   return (
     <div>
       {/* 2026-09-10 — near-live data sync (see src/components/auto-refresh.tsx). */}
@@ -769,10 +841,15 @@ export default async function AttendanceAdminPage({
 
       <Panel
         icon="✍️"
-        title="Manual Correction"
-        description="Missed punch, approved leave, or a one-off half day — sets/overrides that day's status directly."
+        title="Manual Correction &amp; Manual Punch"
+        description="Missed punch, approved leave, or a one-off half day. Set Punch In / Punch Out to record a real manual punch (hours are computed from them), or leave the times blank to only set that day's status."
       >
-        <ManualAttendanceForm companyId={selectedCompanyId} employees={teamEmployees ?? []} today={today} />
+        <ManualAttendanceForm
+          companyId={selectedCompanyId}
+          employees={correctionEmployees}
+          today={today}
+          readError={correctionReadError}
+        />
       </Panel>
 
       <Panel icon="🧾" title={`Team Daily Work Log — ${monthParam}`}>
