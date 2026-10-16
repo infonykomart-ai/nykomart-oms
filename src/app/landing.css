@@ -1,0 +1,335 @@
+/*
+ * 2026-10-16 — Landing page (/) motion + theme layer.
+ *
+ * Deliberately a SEPARATE stylesheet from globals.css: the landing is a
+ * public, dark, full-document-scroll page, while globals.css carries the
+ * dashboard's theme tokens and its `body:has([data-theme])` viewport lock
+ * (the dashboard contract is that the WINDOW never scrolls). Importing this
+ * only from src/app/page.tsx keeps those two worlds apart — the landing
+ * never sets data-theme, so the dashboard rules never touch it.
+ *
+ * The motion names below are the web translation of the transition/title
+ * styles asked for (shuffle, blur, ink, flash & burn, strobe, glitch,
+ * graphic wipe, lower thirds, kinetic titles, logo reveal): every one is
+ * driven by a data attribute flipped by IntersectionObserver
+ * (components/landing/reveal.tsx), not by scroll-listener math, and every
+ * one is switched OFF under prefers-reduced-motion.
+ */
+
+.landing-root {
+  --landing-bg: #04091a;
+  --landing-bg-soft: #0a1229;
+  --landing-line: rgba(148, 178, 255, 0.14);
+  --landing-ink: #eaf1ff;
+  --landing-muted: #97a8c9;
+  --landing-blue: #3b82f6;
+  --landing-cyan: #38bdf8;
+  --landing-amber: #ffb020;
+  --landing-orange: #ff7a18;
+  color: var(--landing-ink);
+  background: var(--landing-bg);
+}
+
+.landing-root ::selection {
+  background: rgba(255, 176, 32, 0.28);
+}
+
+/* Ambient mesh/glow backdrop — pure CSS, no image assets needed. */
+.landing-aurora {
+  background:
+    radial-gradient(1000px 620px at 12% -5%, rgba(59, 130, 246, 0.34), transparent 62%),
+    radial-gradient(820px 560px at 88% 6%, rgba(255, 122, 24, 0.2), transparent 60%),
+    radial-gradient(900px 700px at 50% 108%, rgba(56, 189, 248, 0.18), transparent 65%);
+}
+
+.landing-grid-lines {
+  background-image:
+    linear-gradient(to right, rgba(148, 178, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 178, 255, 0.07) 1px, transparent 1px);
+  background-size: 62px 62px;
+  mask-image: radial-gradient(70% 60% at 50% 35%, black, transparent 100%);
+}
+
+/* Glass surface used by every card/panel on the page. */
+.landing-card {
+  position: relative;
+  border: 1px solid var(--landing-line);
+  border-radius: 20px;
+  background: linear-gradient(160deg, rgba(20, 32, 66, 0.72), rgba(8, 14, 33, 0.6));
+  box-shadow: 0 24px 60px -34px rgba(3, 9, 26, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+}
+
+.landing-card::after {
+  /* Graphic-transition edge light: a thin accent line that sweeps across on
+     hover (the "graphic wipe" idea), never on idle. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(120deg, transparent 20%, rgba(56, 189, 248, 0.55), rgba(255, 176, 32, 0.5), transparent 80%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.45s ease;
+  pointer-events: none;
+}
+
+.landing-card:hover::after {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reveal system
+ * ------------------------------------------------------------------------- */
+.landing-reveal {
+  transition-duration: 0.85s;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-property: opacity, transform, filter, clip-path;
+  will-change: opacity, transform;
+}
+
+/* 1. Blur transition — content resolves out of a soft focus. */
+.landing-reveal--blur {
+  opacity: 0;
+  filter: blur(14px);
+  transform: translateY(26px) scale(0.98);
+}
+.landing-reveal--blur[data-shown="true"] {
+  opacity: 1;
+  filter: blur(0);
+  transform: none;
+}
+
+/* 2. Shuffle transition — slides in from alternating sides. */
+.landing-reveal--shuffle {
+  opacity: 0;
+  transform: translate3d(-38px, 18px, 0) rotate(-1.4deg);
+}
+.landing-reveal--shuffle[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* 3. Ink transition — a clip-path wipe bleeds the block into view. */
+.landing-reveal--ink {
+  opacity: 0;
+  clip-path: inset(0 100% 0 0 round 20px);
+}
+.landing-reveal--ink[data-shown="true"] {
+  opacity: 1;
+  clip-path: inset(0 0 0 0 round 20px);
+}
+
+/* 4. Flash & burn — a bright bloom that cools off. */
+.landing-reveal--flash {
+  opacity: 0;
+  filter: brightness(3.2) saturate(0.4);
+  transform: scale(1.03);
+}
+.landing-reveal--flash[data-shown="true"] {
+  opacity: 1;
+  filter: none;
+  transform: none;
+}
+
+/* 5. Strobe transition — three quick flickers then solid. */
+.landing-reveal--strobe[data-shown="true"] {
+  animation: landing-strobe 0.72s steps(1, end) both;
+}
+.landing-reveal--strobe {
+  opacity: 0;
+}
+@keyframes landing-strobe {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  32% { opacity: 0.15; }
+  48% { opacity: 1; }
+  62% { opacity: 0.3; }
+  78% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+/* 6. Glitch transition — RGB-split jolt on entry. */
+.landing-reveal--glitch {
+  opacity: 0;
+  transform: translateY(18px);
+}
+.landing-reveal--glitch[data-shown="true"] {
+  animation: landing-glitch-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes landing-glitch-in {
+  0% { opacity: 0; transform: translateY(18px); filter: none; }
+  22% { opacity: 1; text-shadow: -3px 0 rgba(255, 0, 90, 0.55), 3px 0 rgba(0, 190, 255, 0.55); transform: translate(-4px, 0); }
+  38% { text-shadow: 4px 0 rgba(255, 0, 90, 0.4), -4px 0 rgba(0, 190, 255, 0.4); transform: translate(3px, 0); }
+  56% { text-shadow: none; transform: translate(0, -2px); }
+  100% { opacity: 1; transform: none; text-shadow: none; }
+}
+
+/* 7. Graphic transition — rise + slight overshoot, the default. */
+.landing-reveal--rise {
+  opacity: 0;
+  transform: translateY(34px);
+}
+.landing-reveal--rise[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Kinetic title (word-by-word shuffle/blur-in, like the title templates)
+ * ------------------------------------------------------------------------- */
+.landing-word {
+  display: inline-block;
+  opacity: 0;
+  animation: landing-word-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes landing-word-in {
+  0% { opacity: 0; transform: translateY(0.55em) rotate(2deg); filter: blur(10px); }
+  60% { opacity: 1; filter: blur(0); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+
+/* Lower-third style kicker: a bar that wipes in behind the label. */
+.landing-kicker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.85rem 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 178, 255, 0.22);
+  background: rgba(12, 22, 48, 0.72);
+  font-size: 0.68rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #bcd0f7;
+}
+.landing-kicker::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--landing-amber);
+  box-shadow: 0 0 12px rgba(255, 176, 32, 0.9);
+  animation: landing-pulse 1.9s ease-in-out infinite;
+}
+@keyframes landing-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+/* Logo-reveal: the header marks brush in on first paint. */
+.landing-logo-reveal {
+  animation: landing-logo-in 1.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes landing-logo-in {
+  0% { opacity: 0; clip-path: inset(0 100% 0 0); transform: translateY(-6px) scale(0.96); filter: blur(8px); }
+  55% { clip-path: inset(0 0 0 0); filter: blur(0); }
+  100% { opacity: 1; transform: none; }
+}
+
+/* Marquee for the marketplace/courier strips (pauses on hover). */
+.landing-marquee {
+  display: flex;
+  width: max-content;
+  animation: landing-marquee 34s linear infinite;
+}
+.landing-marquee-wrap:hover .landing-marquee {
+  animation-play-state: paused;
+}
+@keyframes landing-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Flicker-light CTA (the "flicker light titles" idea, kept subtle). */
+.landing-cta-primary {
+  position: relative;
+  overflow: hidden;
+}
+.landing-cta-primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.5), transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.7s ease;
+}
+.landing-cta-primary:hover::after {
+  transform: translateX(120%);
+}
+
+.landing-float {
+  animation: landing-float 7.5s ease-in-out infinite;
+}
+.landing-float--slow {
+  animation-duration: 11s;
+}
+@keyframes landing-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+/* 3D tilt cards (see components/landing/tilt-card.tsx). */
+.landing-tilt {
+  transform-style: preserve-3d;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.landing-scanline {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(148, 178, 255, 0.06) 0px,
+    rgba(148, 178, 255, 0.06) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+/*
+ * No-JS resilience — found by loading the real page and reading its markup:
+ * every reveal primitive ships as `data-shown="false"` (hidden) and is only
+ * flipped once IntersectionObserver fires, so a visitor with JavaScript
+ * disabled — or a crawler that doesn't run scripts — would see a nearly
+ * blank page. Restore the content when scripting is unavailable.
+ * (`scripting: none` covers current engines; the <noscript> block in
+ * src/app/page.tsx covers older ones that don't understand the media
+ * feature.)
+ */
+@media (scripting: none) {
+  .landing-reveal,
+  .landing-reveal[data-shown="true"] {
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+    clip-path: none !important;
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-reveal,
+  .landing-reveal[data-shown="true"] {
+    opacity: 1 !important;
+    filter: none !important;
+    transform: none !important;
+    clip-path: none !important;
+    animation: none !important;
+  }
+  .landing-word,
+  .landing-kicker::before,
+  .landing-logo-reveal,
+  .landing-float,
+  .landing-marquee,
+  .landing-reveal--strobe[data-shown="true"],
+  .landing-reveal--glitch[data-shown="true"] {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .landing-marquee {
+    transform: none !important;
+  }
+}
