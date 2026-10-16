@@ -21,6 +21,36 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // 2026-10-17 — MISSING-CONFIG GUARD. createServerClient() below throws
+  // ("Your project's URL and Key are required to create a Supabase client!")
+  // when either value is absent, and because this middleware matches every
+  // non-asset route, that throw turned EVERY request — including the public
+  // landing page and /login itself — into an opaque HTTP 500. There is no
+  // session to refresh and no user to resolve without those two values, so
+  // the honest behaviour is:
+  //   - fail CLOSED on protected routes (a signed-out visitor can never be
+  //     waved through to /dashboard by a config gap), and
+  //   - let public pages render normally, with a loud server-side error so
+  //     the misconfiguration is still impossible to miss in the logs.
+  // When both values ARE set (production, and any properly configured
+  // environment) this branch is skipped entirely and the session flow below
+  // is byte-for-byte the original.
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error(
+      "[proxy] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not set — " +
+        "skipping Supabase session refresh. Protected routes redirect to /login; public pages still render."
+    );
+    if (request.nextUrl.pathname.startsWith("/dashboard")) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.next();
+  }
+
   // This is the official @supabase/ssr middleware pattern, not a
   // simplification of it: `response` gets REBUILT from the mutated
   // `request` inside setAll (not just cookies.set() on the original
@@ -35,24 +65,18 @@ export async function proxy(request: NextRequest) {
   // cleared — logging every user straight back out right after login.
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
       },
-    }
-  );
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        response = NextResponse.next({ request });
+        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+      },
+    },
+  });
 
   const {
     data: { user },
