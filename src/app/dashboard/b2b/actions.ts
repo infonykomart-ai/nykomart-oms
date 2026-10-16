@@ -34,7 +34,7 @@ import { todayIST } from "@/lib/attendance/ist-date";
 // (client computes the live sq ft / sq mtr / CBM preview; the server here
 // persists the parsed dimensions from the same spec text, so preview and
 // stored values can never disagree).
-import { parseSizeSpec } from "@/lib/b2b/erp";
+import { parseSizeSpec, type SizeUnit } from "@/lib/b2b/erp";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -400,7 +400,7 @@ function itemDimsFromSpec(sizeText: string | undefined | null): {
   size_length: number | null;
   size_width: number | null;
   size_thickness: number | null;
-  size_unit: string | null;
+  size_unit: SizeUnit | null;
 } {
   const parsed = parseSizeSpec(sizeText ?? "");
   return {

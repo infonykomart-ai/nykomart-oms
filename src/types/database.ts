@@ -617,7 +617,7 @@ export type Database = {
           {
             foreignKeyName: "b2b_export_profiles_company_id_fkey";
             columns: ["company_id"];
-            isOneToOne: true;
+            isOneToOne: false;
             referencedRelation: "companies";
             referencedColumns: ["id"];
           },
@@ -1279,7 +1279,7 @@ export type Database = {
           size_length: number | null;
           size_width: number | null;
           size_thickness: number | null;
-          size_unit: string | null;
+          size_unit: "ft" | "m" | "cm" | "inch" | null;
         };
         Insert: {
           id?: string;
@@ -1299,7 +1299,7 @@ export type Database = {
           size_length?: number | null;
           size_width?: number | null;
           size_thickness?: number | null;
-          size_unit?: string | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Update: {
           id?: string;
@@ -1319,7 +1319,7 @@ export type Database = {
           size_length?: number | null;
           size_width?: number | null;
           size_thickness?: number | null;
-          size_unit?: string | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Relationships: [
           {
