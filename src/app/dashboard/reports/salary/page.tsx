@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, computeDeduction } from "@/lib/attendance/payroll";
+import { categorizeMonth, computeMonthlyPayroll } from "@/lib/attendance/payroll";
 import { SalaryReportTable, type SalaryReportRow } from "./salary-report-table";
 
 // Salary / Attendance report (2026-08-22) — one of the 3 new report pages
@@ -85,25 +85,26 @@ export default async function SalaryReportPage({
       todayStr: today,
       joinDate: e.date_of_joining,
     });
-    const summary = summarizeCategories(days);
-    const deduction = salary
-      ? computeDeduction({
-          monthlySalary: Number(salary.monthly_salary),
-          allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
-          daysInThisMonth: daysThisMonth,
-          counts: summary,
-        })
-      : null;
+    // Same calculate-everything function as the Salary page + Pay Salary
+    // action, so Sunday/holiday extra duty and the no-leave bonus can never
+    // differ between the report and the payment.
+    const payroll = computeMonthlyPayroll({
+      monthlySalary: salary ? Number(salary.monthly_salary) : 0,
+      allowedLeavesPerMonth: salary ? Number(salary.allowed_leaves_per_month) : 0,
+      daysInThisMonth: daysThisMonth,
+      days,
+    });
+    const deduction = salary ? payroll : null;
     const paid = paidByEmployee.get(e.id);
     return {
       id: e.id,
       employee_name: e.name,
       monthly_salary: salary ? Number(salary.monthly_salary) : null,
       allowed_leaves: salary ? Number(salary.allowed_leaves_per_month) : null,
-      present: summary.Present + summary.Late,
-      half_day: summary["Half Day"],
-      leave: summary.Leave,
-      absent: summary.Absent,
+      present: payroll.counts.Present + payroll.counts.Late,
+      half_day: payroll.counts["Half Day"],
+      leave: payroll.counts.Leave,
+      absent: payroll.counts.Absent,
       deducted_days: deduction?.deductedDays ?? null,
       deduction_amount: deduction?.deductionAmount ?? null,
       net_pay: deduction?.netPay ?? null,

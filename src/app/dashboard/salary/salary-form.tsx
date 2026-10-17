@@ -141,6 +141,12 @@ export function SalaryForm({
     [ctcMode, ctcAnnual, basicPct, hraPct, employerPfPct, employeePfPct, pfCeiling, esiApplicable, esiEmployeePct, esiEmployerPct, ptAmount]
   );
 
+  // 2026-10-17 — the same per-day rule the payroll actually uses, shown live
+  // while deciding the salary (see src/lib/attendance/payroll.ts).
+  const payableMonthly = ctcMode ? (breakdown?.grossMonthly ?? 0) : monthlySalary;
+  const effectiveDays = daysInEffectiveMonth(effectiveFrom);
+  const perDayRate = effectiveDays > 0 ? payableMonthly / effectiveDays : 0;
+
   return (
     <form action={formAction} className="space-y-3">
       {state.error && <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
@@ -218,6 +224,14 @@ export function SalaryForm({
           {pending ? "Saving..." : "Save Salary"}
         </button>
       </div>
+
+      {employeeId && payableMonthly > 0 && (
+        <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+          Per day = ₹{perDayRate.toFixed(2)} ({effectiveDays} days in the chosen month). One extra
+          Sunday/holiday worked = +₹{perDayRate.toFixed(2)}. No leave taken all month = unused paid
+          leaves ({allowedLeaves}) also paid; a half day costs ₹{(perDayRate / 2).toFixed(2)}.
+        </p>
+      )}
 
       {/* Live "what's decided right now" banner for the selected employee. */}
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -315,6 +329,12 @@ export function SalaryForm({
       )}
     </form>
   );
+}
+
+function daysInEffectiveMonth(effectiveFrom: string): number {
+  const d = new Date(effectiveFrom);
+  if (Number.isNaN(d.getTime())) return 30;
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
 }
 
 function NumField({ label, name, value, onChange }: { label: string; name: string; value: number; onChange: (v: number) => void }) {

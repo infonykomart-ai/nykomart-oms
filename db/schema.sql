@@ -661,6 +661,21 @@ CREATE TABLE fx_rate_cache (
   PRIMARY KEY (base_currency, quote_currency)
 );
 
+-- 2026-10-17 — automatic customs/export rates (DGFT → ICEGATE → eximin.net)
+-- snapshot, refreshed by src/lib/fx/customs.ts when older than 12 hours. See
+-- db/2026-10-17-customs-exchange-rates.sql for the full rationale.
+CREATE TABLE customs_exchange_rates (
+  currency_code    varchar(3) PRIMARY KEY,
+  currency_name    text,
+  import_rate      numeric(14,6) CHECK (import_rate IS NULL OR import_rate > 0),
+  export_rate      numeric(14,6) NOT NULL CHECK (export_rate > 0),
+  effective_date   date,
+  notification_no  text,
+  source           text NOT NULL DEFAULT 'eximin.net',
+  source_url       text,
+  fetched_at       timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE OR REPLACE FUNCTION get_official_rate_as_of(p_currency_code varchar(3), p_as_of date)
 RETURNS TABLE (rate_to_inr numeric, effective_from date)
 LANGUAGE sql STABLE AS $$

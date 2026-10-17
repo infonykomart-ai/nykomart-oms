@@ -485,6 +485,41 @@ NAHI HAI".
   to a base unit (toFeet) — a quote must show the buyer exactly the unit they asked in.
 - **Verified**: `npx tsc --noEmit` → 0 errors; `npx eslint` on both changed files → clean.
 
+## 5n. Round 2026-10-17 — remaining print paths, payroll extras, auto customs FX, rug workflow
+
+Merged with the 2026-10-16 A4 view/print round above (that round covered the 6 flat types via
+`doc-entry-a4.tsx`; this one covers what it left out).
+
+- **Print for the remaining document types, same in-page A4 dialog**: `src/components/print-dialog.tsx`
+  embeds a doc's existing access-checked `/report` page in the shared `A4Dialog` and prints from the
+  iframe, so nothing navigates. Wired for Journal Voucher, Received Chalan, Shipment Chalan, and the
+  Courier/Duty report buttons (previously `<Link>` navigations); a new
+  `documents/shipment-chalans/[id]/report` page makes the handover chalan printable at all. Purchase
+  Bill / Courier / Duty / Credit Note / CSB keep their statement sheets, now labelled distinctly. The
+  bill/doc statement sheets also got `print:static/h-auto` so printing from their own dialog paginates
+  instead of clipping to one page.
+- **Payroll extras + deductions** (`src/lib/attendance/payroll.ts`): `computeMonthlyPayroll()` is now
+  the ONE month calculation — base + Sunday/company-holiday worked pay + unused-paid-leave encashment
+  (only for a completed, zero-leave month) − absent/half-day/excess-leave/manual deductions. Manual
+  Half/Full-day deduction is selectable in Pay Salary. September 2026 at ₹15,000 (30 days = ₹500/day),
+  one extra Sunday, no leave = **₹16,000**; one half day = **₹15,750** (verified by running the compiled
+  function). Salary versions and paid months are editable/deletable; deleting a payment reverses the
+  mirrored `bill_pass_register` row and the advance recovery. Salary page, salary reports and the
+  payment action all call the same function, so preview/report/payment cannot disagree.
+- **Automatic customs/export exchange rates** (`src/lib/fx/customs.ts`): provider chain DGFT → ICEGATE →
+  eximin.net for every currency, refreshed when older than 12 h (no cron), memoised per instance. The
+  **export** rate is written into `exchange_rates` for its notification date, never overwriting a
+  manual non-AUTO row. JPY/KRW are divided by 100 (customs quotes them per 100 units); provider names
+  are normalized to ISO codes (verified live: 23/23 eximin currencies mapped). New snapshot table
+  `customs_exchange_rates` — migration `db/2026-10-17-customs-exchange-rates.sql`; without it the page
+  still shows live rates (uncached, with a warning). DGFT currently returns 403 to server-side requests
+  and ICEGATE's screen is client-rendered, which is why the fallback chain is required.
+- **Cotton-rug bill workflow**: `/dashboard/printing-register` now shows the four-stage chain — Kacha
+  Maal (purchase bill without PO) → Block Print (PO-linked purchase bill) → Washing → Silai (JOB WORK
+  bill) — each with count, ₹ total and a link to its entry screen. No new tables.
+- **Verified**: scoped `tsc` over every changed file + import graph → 0 errors; ESLint clean; full
+  `tsc -b` cannot run in this 2 GB sandbox (OOM), so the platform post-turn typecheck is the final gate.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

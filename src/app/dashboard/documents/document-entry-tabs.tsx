@@ -38,6 +38,7 @@ import {
 } from "./actions";
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { PrintDialog } from "@/components/print-dialog";
 import {
   DocEntryA4,
   creditNoteDoc,
@@ -574,14 +575,20 @@ function ShipmentChalanList({ rows }: { rows: ShipmentChalanRow[] }) {
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
               <p className="text-red-600">{deleteError[r.id]}</p>
-              <button
-                type="button"
-                disabled={isPending}
-                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
-                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <div className="flex shrink-0 gap-1.5">
+                <PrintDialog
+                  href={`/dashboard/documents/shipment-chalans/${r.id}/report`}
+                  title={`Shipment Chalan — ${r.chalan_no ?? r.id}`}
+                />
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                  className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -758,12 +765,11 @@ function DocList<T extends { id: string }>({
                     </button>
                   )}
                   {r.printHref && (
-                    <Link
+                    <PrintDialog
                       href={r.printHref}
-                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      🖨 Print
-                    </Link>
+                      title={`Print — ${r.no}`}
+                      subtitle="A4 preview — prints exactly this document."
+                    />
                   )}
                   {r.statementBillId && <BillStatementDialog billId={r.statementBillId} label={r.statementLabel} />}
                   {r.docStatement && (

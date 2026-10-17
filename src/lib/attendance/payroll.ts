@@ -12,6 +12,14 @@ export type DayCategory = "Holiday" | "Week Off" | "Present" | "Late" | "Half Da
 export type DayResult = {
   date: string;
   category: DayCategory;
+  // 2026-10-17 — true when this day is ALSO the company's weekly off (or a
+  // declared holiday) in the calendar, even though an explicit attendance
+  // row made it Present/Late/Half Day. That combination is exactly "employee
+  // ne Sunday/holiday par kaam kiya" and is what earns the extra day's pay
+  // (see computeMonthlyPayroll below). Only set on worked days — a plain
+  // Week Off/Holiday day has no extra pay.
+  onWeeklyOff?: boolean;
+  onHoliday?: boolean;
   // 2026-09-11 (Payroll Phase 2): only meaningful when category === "Leave".
   // leaveTypeId undefined/null = an untyped Leave day, governed by the
   // original flat allowed_leaves_per_month pool exactly as before this
@@ -52,7 +60,15 @@ export function categorizeMonth({
       // holiday guess — e.g. someone who actually punched in on their
       // weekly-off day is Present that day, not Week Off.
       const status = row.status as DayCategory;
-      results.push({ date, category: status, leaveTypeId: row.leave_type_id ?? null, leaveUnpaid: row.leave_unpaid ?? false });
+      const worked = status === "Present" || status === "Late" || status === "Half Day";
+      results.push({
+        date,
+        category: status,
+        leaveTypeId: row.leave_type_id ?? null,
+        leaveUnpaid: row.leave_unpaid ?? false,
+        onWeeklyOff: worked && weeklyOffDays.includes(istDayOfWeek(date)),
+        onHoliday: worked && holidayDates.has(date),
+      });
       continue;
     }
     if (holidayDates.has(date)) {
@@ -115,6 +131,55 @@ export function summarizeLeaveDetail(days: DayResult[]): LeaveDetail {
 }
 
 /**
+ * 2026-10-17 — "Sunday or company ke decide leave ka pay milega agar us din
+ * koi employee work karta hai or present hota hai to usko extra milega" +
+ * "agar employee mahine me leave nahi leta hai to usko us din ka extra pay
+ * milega": the two EARNINGS this payroll round adds on top of the base
+ * monthly salary. Kept separate from computeDeduction so the same figures
+ * feed the on-screen preview and the payment action (via
+ * computeMonthlyPayroll below — one formula, never two).
+ *
+ *   extraDutyDays   = Present/Late on a weekly-off or holiday (full day) +
+ *                     Half Day on one of those days (0.5). This is the
+ *                     "Sunday extra kaam" case the user described.
+ *   unusedPaidLeaveDays = allowed_leaves_per_month minus the month's Leave
+ *                     days, never below zero. Taking NO leave therefore
+ *                     encashes the paid leave (1 day by default) instead of
+ *                     silently losing it.
+ */
+export function summarizeExtraPayDays(days: DayResult[]): {
+  extraDutyDays: number;
+  workedWeeklyOffDays: number;
+  workedHolidayDays: number;
+  leaveTakenDays: number;
+} {
+  let extraDutyDays = 0;
+  let workedWeeklyOffDays = 0;
+  let workedHolidayDays = 0;
+  let leaveTakenDays = 0;
+  for (const d of days) {
+    // ANY leave (paid or unpaid) means the employee did take leave — the
+    // encashment only applies to a month with zero leave days.
+    if (d.category === "Leave") leaveTakenDays++;
+    if (!d.onWeeklyOff && !d.onHoliday) continue;
+    const weight = d.category === "Half Day" ? 0.5 : 1;
+    if (d.onWeeklyOff) {
+      extraDutyDays += weight;
+      workedWeeklyOffDays += weight;
+    }
+    if (d.onHoliday) {
+      // A day that is both a weekly off and a holiday is one day's work, not
+      // two — the employee was physically there once.
+      if (!d.onWeeklyOff) {
+        extraDutyDays += weight;
+        workedHolidayDays += weight;
+      }
+    }
+  }
+  return { extraDutyDays, workedWeeklyOffDays, workedHolidayDays, leaveTakenDays };
+}
+
+/**
  * Deduction convention (a common/standard Indian-payroll default, NOT a
  * verified copy of this company's actual written policy — flagged in the
  * UI too, and easy to change here if their real policy differs):
@@ -142,6 +207,9 @@ export function computeDeduction({
   counts,
   untypedLeaveDays,
   unpaidTypedLeaveDays = 0,
+  extraDutyDays = 0,
+  unusedPaidLeaveDays = 0,
+  manualDeductionDays = 0,
 }: {
   monthlySalary: number;
   allowedLeavesPerMonth: number;
@@ -153,12 +221,74 @@ export function computeDeduction({
   // passes leave-type-aware counts (see summarizeLeaveDetail above).
   untypedLeaveDays?: number;
   unpaidTypedLeaveDays?: number;
+  // 2026-10-17 earnings — see summarizeExtraPayDays. Defaults to 0 so the
+  // attendance-admin summary keeps its original numbers unchanged.
+  extraDutyDays?: number;
+  unusedPaidLeaveDays?: number;
+  // A manual half-day/full-day deduction the salary admin chooses for one
+  // employee/month ("kisi ka deduction karna ho halfday full day").
+  manualDeductionDays?: number;
 }) {
   const effectiveUntypedLeaveDays = untypedLeaveDays ?? counts.Leave;
+  // Per-day rate is the calendar-day rate (monthly ÷ days in month), which
+  // is what the user's own worked example uses: ₹15,000 for Sep 2026 (30
+  // days) = ₹500/day, one extra Sunday = +₹500, no leave taken = +₹500,
+  // one half day = −₹250 → ₹15,750.
   const perDayRate = monthlySalary / daysInThisMonth;
   const excessLeaveDays = Math.max(0, effectiveUntypedLeaveDays - allowedLeavesPerMonth);
-  const deductedDays = counts.Absent + counts["Half Day"] * 0.5 + excessLeaveDays + unpaidTypedLeaveDays;
+  const deductedDays =
+    counts.Absent +
+    counts["Half Day"] * 0.5 +
+    excessLeaveDays +
+    unpaidTypedLeaveDays +
+    Math.max(0, manualDeductionDays);
   const deductionAmount = Math.round(deductedDays * perDayRate * 100) / 100;
-  const netPay = Math.round((monthlySalary - deductionAmount) * 100) / 100;
-  return { perDayRate, deductedDays, deductionAmount, netPay };
+  const extraDutyPay = Math.round(Math.max(0, extraDutyDays) * perDayRate * 100) / 100;
+  const noLeaveBonusPay = Math.round(Math.max(0, unusedPaidLeaveDays) * perDayRate * 100) / 100;
+  const grossPay = Math.round((monthlySalary + extraDutyPay + noLeaveBonusPay) * 100) / 100;
+  const netPay = Math.round((grossPay - deductionAmount) * 100) / 100;
+  return { perDayRate, deductedDays, deductionAmount, extraDutyPay, noLeaveBonusPay, grossPay, netPay };
+}
+
+/**
+ * The complete month calculation shared by the Salary page preview and the
+ * "Pay Salary" server action — base salary + Sunday/holiday extra duty pay +
+ * unused-paid-leave encashment − attendance/manual deductions.
+ */
+export function computeMonthlyPayroll({
+  monthlySalary,
+  allowedLeavesPerMonth,
+  daysInThisMonth,
+  days,
+  manualDeductionDays = 0,
+}: {
+  monthlySalary: number;
+  allowedLeavesPerMonth: number;
+  daysInThisMonth: number;
+  days: DayResult[];
+  manualDeductionDays?: number;
+}) {
+  const counts = summarizeCategories(days);
+  const leaveDetail = summarizeLeaveDetail(days);
+  const extras = summarizeExtraPayDays(days);
+  // The no-leave encashment is a MONTH-END reward: it can only be decided
+  // once every day of the month has happened. `Future` days remaining means
+  // the month is still in progress, so the preview shows 0 (and the payment
+  // action, which runs after the month, computes it for real).
+  const monthComplete = counts.Future === 0;
+  const unusedPaidLeaveDays = monthComplete
+    ? Math.max(0, allowedLeavesPerMonth - extras.leaveTakenDays)
+    : 0;
+  const deduction = computeDeduction({
+    monthlySalary,
+    allowedLeavesPerMonth,
+    daysInThisMonth,
+    counts,
+    untypedLeaveDays: leaveDetail.untypedLeaveDays,
+    unpaidTypedLeaveDays: leaveDetail.unpaidTypedLeaveDays,
+    extraDutyDays: extras.extraDutyDays,
+    unusedPaidLeaveDays,
+    manualDeductionDays,
+  });
+  return { counts, leaveDetail, extras, unusedPaidLeaveDays, monthComplete, ...deduction };
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import Link from "next/link";
+import { PrintDialog } from "@/components/print-dialog";
 import {
   saveDutyBill,
   deleteDutyBill,
@@ -289,12 +289,11 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
         <p className="text-red-600">{deleteError}</p>
         <div className="flex shrink-0 flex-wrap gap-1.5">
-          <Link
+          <PrintDialog
             href={`/dashboard/documents/duty-bills/${bill.id}/report`}
-            className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
-          >
-            📄 Report / PDF
-          </Link>
+            label="📄 Report / PDF"
+            title="Duty & Tax Bill"
+          />
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}

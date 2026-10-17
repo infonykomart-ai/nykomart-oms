@@ -14,7 +14,7 @@ import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, summarizeLeaveDetail, computeDeduction } from "@/lib/attendance/payroll";
+import { categorizeMonth, computeMonthlyPayroll } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
 import type { ReportColumnDef, ReportRow } from "@/lib/attendance/monthly-report";
 import { ReportResults } from "../report-results";
@@ -141,9 +141,18 @@ export default async function SalaryReportPage({
       todayStr: today,
       joinDate: e.date_of_joining,
     });
-    const counts = summarizeCategories(days);
-    const leaveDetail = summarizeLeaveDetail(days);
     const paid = paidByEmployee.get(e.id);
+    // One shared calculation for every salary surface (see
+    // src/lib/attendance/payroll.ts) — includes Sunday/holiday extra duty and
+    // the no-leave bonus, so this report can never disagree with the Salary
+    // page or with an actual salary payment.
+    const payroll = computeMonthlyPayroll({
+      monthlySalary: salary ? Number(salary.monthly_salary) : 0,
+      allowedLeavesPerMonth: salary ? Number(salary.allowed_leaves_per_month) : 0,
+      daysInThisMonth: daysThisMonth,
+      days,
+    });
+    const counts = payroll.counts;
 
     let gross: number | null = null;
     let attDed: number | null = null;
@@ -152,15 +161,8 @@ export default async function SalaryReportPage({
     let pt: number | null = null;
     let netPay: number | null = null;
     if (salary) {
-      const deduction = computeDeduction({
-        monthlySalary: Number(salary.monthly_salary),
-        allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
-        daysInThisMonth: daysThisMonth,
-        counts,
-        untypedLeaveDays: leaveDetail.untypedLeaveDays,
-        unpaidTypedLeaveDays: leaveDetail.unpaidTypedLeaveDays,
-      });
-      gross = Number(salary.monthly_salary);
+      const deduction = payroll;
+      gross = deduction.grossPay;
       attDed = deduction.deductionAmount;
       const statutory = salary.ctc_annual
         ? computeCtcBreakdown({
