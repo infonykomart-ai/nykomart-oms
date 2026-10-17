@@ -34,7 +34,7 @@ import { todayIST } from "@/lib/attendance/ist-date";
 // (client computes the live sq ft / sq mtr / CBM preview; the server here
 // persists the parsed dimensions from the same spec text, so preview and
 // stored values can never disagree).
-import { parseSizeSpec, type SizeUnit } from "@/lib/b2b/erp";
+import { lineAmount, parseSizeSpec, type SizeUnit } from "@/lib/b2b/erp";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -118,7 +118,9 @@ export type InquiryInput = {
   requirementNotes: string;
   remarks: string;
   followUpDate: string;
-  items: { description: string; qty: string; unit: string; unitPrice: string; remark: string }[];
+  // 2026-10-17b — each asked-for line can carry a Size ("2.6 × 10 ft");
+  // area units price by area via lineAmount() (see erp.ts).
+  items: { description: string; qty: string; unit: string; unitPrice: string; remark: string; size?: string }[];
 };
 
 export type SaveInquiryResult =
@@ -174,6 +176,8 @@ export async function createInquiry(input: InquiryInput): Promise<SaveInquiryRes
       unit_price: it.unitPrice ? Math.max(0, parseFloat(it.unitPrice) || 0) : null,
       remark: it.remark.trim() || null,
       display_order: idx,
+      size: it.size?.trim() || null,
+      ...itemDimsFromSpec(it.size),
     }))
     .filter((it) => it.description);
 
@@ -224,7 +228,7 @@ export type UpdateInquiryInput = {
   // 2026-10-13 — "ENQUARY EDIT, MODIFY, DELETE BHI HONI CHAHIYE": update
   // now also replaces the asked-for item rows (same wholesale replace the
   // quotation editor uses). Optional so older callers keep working.
-  items?: { description: string; qty: string; unit: string; unitPrice: string; remark: string }[];
+  items?: { description: string; qty: string; unit: string; unitPrice: string; remark: string; size?: string }[];
 };
 
 export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: boolean; error?: string }> {
@@ -279,6 +283,8 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
         unit_price: it.unitPrice ? Math.max(0, parseFloat(it.unitPrice) || 0) : null,
         remark: it.remark.trim() || null,
         display_order: idx,
+        size: it.size?.trim() || null,
+        ...itemDimsFromSpec(it.size),
       }))
       .filter((it) => it.description);
     await supabase.from("b2b_inquiry_items").delete().eq("inquiry_id", owned.inquiry.id);
@@ -466,7 +472,7 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
   // Line items are the source of truth for money since the documents part
   // (2026-09-30b): PI/CI print itemized tables, so the header subtotal is
   // app-computed as the SUM of item rows — the client never sends a total.
-  const items = (input.items ?? [])
+  const baseItems = (input.items ?? [])
     .map((it, idx) => ({
       description: it.description.trim(),
       hsn_code: it.hsnCode.trim() || null,
@@ -482,8 +488,16 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
       ...itemDimsFromSpec(it.size),
     }))
     .filter((it) => it.description);
-  if (items.length === 0) return { ok: false, error: "Add at least one item with a description." };
-  const subtotal = Math.round(items.reduce((s, it) => s + it.qty * it.unit_price, 0) * 100) / 100;
+  if (baseItems.length === 0) return { ok: false, error: "Add at least one item with a description." };
+  // 2026-10-17b — area-aware line amounts: "per sq ft / per sq mtr" lines
+  // with a Size bill qty × L × W × rate (lineAmount, erp.ts), everything
+  // else stays qty × rate. The stored line_total feeds the subtotal, the
+  // PI/CI print, the share message, reports and the B2B P&L — one formula.
+  const items = baseItems.map((it) => ({
+    ...it,
+    line_total: lineAmount({ qty: it.qty, unit: it.unit, unitPrice: it.unit_price, size: it.size }),
+  }));
+  const subtotal = Math.round(items.reduce((s, it) => s + it.line_total, 0) * 100) / 100;
 
   const { no, error: numError } = await reserveB2BNo(supabase, me.currentCompanyId, "B2B_QUOTE", "Q", quoteDate);
   if (errorImpossibleGuard(numError)) return { ok: false, error: numError ?? "Numbering failed." };
@@ -613,7 +627,7 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
   }
   // Same items-are-the-money rule as createQuotation: header subtotal is
   // the app-computed sum of the (replaced) item rows.
-  const items = (input.items ?? [])
+  const baseItems = (input.items ?? [])
     .map((it, idx) => ({
       description: it.description.trim(),
       hsn_code: it.hsnCode.trim() || null,
@@ -629,8 +643,16 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
       ...itemDimsFromSpec(it.size),
     }))
     .filter((it) => it.description);
-  if (items.length === 0) return { ok: false, error: "Add at least one item with a description." };
-  const subtotal = Math.round(items.reduce((s, it) => s + it.qty * it.unit_price, 0) * 100) / 100;
+  if (baseItems.length === 0) return { ok: false, error: "Add at least one item with a description." };
+  // 2026-10-17b — area-aware line amounts: "per sq ft / per sq mtr" lines
+  // with a Size bill qty × L × W × rate (lineAmount, erp.ts), everything
+  // else stays qty × rate. The stored line_total feeds the subtotal, the
+  // PI/CI print, the share message, reports and the B2B P&L — one formula.
+  const items = baseItems.map((it) => ({
+    ...it,
+    line_total: lineAmount({ qty: it.qty, unit: it.unit, unitPrice: it.unit_price, size: it.size }),
+  }));
+  const subtotal = Math.round(items.reduce((s, it) => s + it.line_total, 0) * 100) / 100;
   const taxPercent = Math.min(100, Math.max(0, parseFloat(input.taxPercent) || 0));
   const shipping = Math.max(0, parseFloat(input.shippingAmount) || 0);
   // Status transition only from the form's Draft/Sent choice; an edit

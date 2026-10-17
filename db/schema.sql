@@ -6147,7 +6147,17 @@ CREATE TABLE b2b_inquiry_items (
   -- 2026-10-02d — optional link to the product master so the quotation
   -- engine can pull cost/MOQ/lead-time for estimates (nullable: enquiries
   -- arrive as free text too).
-  product_id    uuid REFERENCES b2b_products(id) ON DELETE SET NULL
+  product_id    uuid REFERENCES b2b_products(id) ON DELETE SET NULL,
+  -- ── 2026-10-17b (db/2026-10-17b-b2b-area-pricing.sql) — SIZE × QTY for
+  -- asked-for lines: the free-typed spec plus its parsed dims, mirroring
+  -- b2b_quotation_items, so a "5000 pcs of 2.6 × 10 ft @ 5/sq ft" enquiry
+  -- can show its sq ft live and price by area. App formula:
+  -- computeItemDims() / lineAmount() in src/lib/b2b/erp.ts.
+  size            text,
+  size_length     numeric(10,2),
+  size_width      numeric(10,2),
+  size_thickness  numeric(10,3),
+  size_unit       text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
 );
 CREATE INDEX idx_b2b_inquiry_items_inquiry ON b2b_inquiry_items(inquiry_id, display_order);
 
@@ -6275,7 +6285,13 @@ CREATE TABLE b2b_quotation_items (
   qty           numeric(12,3) NOT NULL CHECK (qty > 0),
   unit          text DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL CHECK (unit_price >= 0),
-  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
+  -- 2026-10-17b — WAS `GENERATED ALWAYS AS (round(qty * unit_price, 2))`.
+  -- Area-priced lines ("per sq ft" + a size) must bill qty × L × W × rate,
+  -- which a generated qty × rate column can never express, so the column is
+  -- now APP-MAINTAINED: every writer sets it through lineAmount()
+  -- (src/lib/b2b/erp.ts) — createQuotation / updateQuotation /
+  -- saveEngineQuotation. Existing rows keep their qty × rate value.
+  line_total    numeric(14,2) NOT NULL DEFAULT 0,
   display_order integer NOT NULL DEFAULT 0,
   -- 2026-10-13 — per-item product specifications the PI must carry
   -- (Size / Material / Manufacturing / Colour-design / Packaging), printed
@@ -6402,9 +6418,20 @@ CREATE TABLE b2b_sales_order_items (
   unit          text NOT NULL DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
   unit_cost     numeric(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
-  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
+  -- 2026-10-17b — line_total was GENERATED (qty × unit_price); area-priced
+  -- lines need qty × L × W × rate, so it is APP-MAINTAINED through
+  -- lineAmount() like b2b_quotation_items.line_total. line_cost stays
+  -- generated: cost stays per-piece (the engine's unitCost is per-unit).
+  line_total    numeric(14,2) NOT NULL DEFAULT 0,
   line_cost     numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_cost, 2)) STORED,
-  display_order integer NOT NULL DEFAULT 0
+  display_order integer NOT NULL DEFAULT 0,
+  -- 2026-10-17b — same size spec + parsed dims as the quotation lines
+  -- ("kitna sq ft maal hua" must be answerable on the order too).
+  size          text,
+  size_length   numeric(10,2),
+  size_width    numeric(10,2),
+  size_thickness numeric(10,3),
+  size_unit     text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
 );
 CREATE INDEX idx_b2b_sales_order_items_order ON b2b_sales_order_items(order_id, display_order);
 

@@ -15,7 +15,12 @@ import {
   computeItemDims,
   fmtDocMoney,
   formatDims,
+  isAreaUnit,
   ITEM_UNITS,
+  lineAmount,
+  lineArea,
+  dimsFromSizeSpec,
+  SQFT_TO_SQM,
   QUOTE_CURRENCIES,
   parseSizeSpec,
   type ItemDims,
@@ -151,6 +156,9 @@ export type B2BItemRow = {
   unit: string | null;
   unit_price: number | null;
   remark: string | null;
+  // 2026-10-17b — size spec on asked-for lines (area pricing). Optional so
+  // a pre-migration load (or an older cached shape) still compiles.
+  size?: string | null;
 };
 
 export type B2BInquiryRow = {
@@ -266,6 +274,68 @@ function UnitSelect({ value, onChange }: { value: string; onChange: (next: strin
       )}
     </>
   );
+}
+
+// 2026-10-17b — "SABHI KI CALCULATION SAHI JAGAH MATCH HONI CHAHIYE": ONE
+// preview strip under every item row (New Inquiry, inquiry details, quote
+// form) showing the size × qty area AND the line's amount under the SAME
+// lineAmount() formula the server stores into subtotal / line_total. If the
+// maths here and on the server ever disagreed, that would be a bug — both
+// sides import the one function from @/lib/b2b/erp.
+function ItemCalcLine({
+  qty,
+  unit,
+  unitPrice,
+  size,
+  currency = "INR",
+}: {
+  qty: string;
+  unit: string;
+  unitPrice: string;
+  size: string;
+  currency?: string;
+}) {
+  const parsed = parseSizeSpec(size);
+  const dims = parsed
+    ? computeItemDims({
+        qty: parseFloat(qty) || 0,
+        length: parsed.length,
+        width: parsed.width,
+        thickness: parsed.thickness,
+        unit: parsed.unit,
+      })
+    : null;
+  const rate = parseFloat(unitPrice) || 0;
+  const amount = lineAmount({ qty: parseFloat(qty) || 0, unit, unitPrice: rate, size });
+  if (!dims && !rate) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 rounded bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800">
+      {dims && <span>📐 Size × Qty: {formatDims(dims)}</span>}
+      {rate > 0 && (
+        <span>
+          💰 Amount: {fmtDocMoney(amount, currency)}
+          {isAreaUnit(unit) && <span className="opacity-70"> (area × {rate}/unit)</span>}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Total sq ft across a set of lines — the "kitna sq ft maal hua" figure.
+ * Sized lines: qty × L × W. Area-unit lines with no size: qty IS the area
+ * ("5000 sq ft"). Lines sized but priced per piece still count (they are
+ * physical goods), non-area unsized lines contribute nothing.
+ */
+function sumSqFt(lines: { qty: number | string; unit?: string | null; size?: string | null }[]): number {
+  const total = lines.reduce((s, l) => {
+    const qty = typeof l.qty === "string" ? parseFloat(l.qty) || 0 : l.qty || 0;
+    const dims = dimsFromSizeSpec(qty, l.size);
+    if (dims) return s + dims.sqFt;
+    const area = lineArea({ qty, unit: l.unit });
+    return s + (area ? area.sqFt : 0);
+  }, 0);
+  return Math.round(total * 100) / 100;
 }
 
 // Editable quotation line — kept as STRINGS in UI state so typing "1." or
@@ -406,7 +476,12 @@ export function B2BInquiryManager({
       .filter((i) => i.follow_up_date && !["Won", "Lost", "Converted"].includes(i.status))
       .sort((a, b) => (a.follow_up_date! < b.follow_up_date! ? -1 : 1))
       .slice(0, 5);
-    return { open, won, lost, quoted, quotedValue, received, pending, byMode, followups };
+    // 2026-10-17b — total area asked for across the register (sized lines
+    // + area-unit lines): "kitna sq ft ka maal hai" at a glance.
+    const askedSqFt = Math.round(
+      inquiries.reduce((sum, i) => sum + sumSqFt(i.items ?? []), 0) * 100
+    ) / 100;
+    return { open, won, lost, quoted, quotedValue, received, pending, byMode, followups, askedSqFt };
   }, [inquiries]);
 
   const selected = inquiries.find((i) => i.id === selectedId) ?? null;
@@ -486,13 +561,18 @@ export function B2BInquiryManager({
             </div>
           )}
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
           <Kpi label="Open / Active" value={String(report.open)} tone="sky" />
           <Kpi label="Quoted" value={String(report.quoted)} tone="amber" />
           <Kpi label="Quoted Value" value={fmtMoney(report.quotedValue)} tone="slate" />
           <Kpi label="Received" value={fmtMoney(report.received)} tone="green" />
           <Kpi label="Payment Pending" value={fmtMoney(Math.max(0, report.pending))} tone={report.pending > 0 ? "red" : "slate"} />
           <Kpi label="Won / Lost" value={`${report.won} / ${report.lost}`} tone="slate" />
+          <Kpi
+            label="Asked Area"
+            value={report.askedSqFt > 0 ? `${report.askedSqFt.toLocaleString("en-US", { maximumFractionDigits: 0 })} sq ft` : "—"}
+            tone={report.askedSqFt > 0 ? "green" : "slate"}
+          />
         </div>
       </div>
 
@@ -782,7 +862,14 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone: "sky"
 function NewInquiryModal({ onClose }: { onClose: () => void }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [items, setItems] = useState([{ description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }]);
+  const [items, setItems] = useState([{ description: "", qty: "", unit: "pcs", unitPrice: "", remark: "", size: "" }]);
+  // 2026-10-17b — live totals under the item grid: total area (only when
+  // lines are sized) + total amount under the SAME lineAmount() formula the
+  // server stores, so "confirm ho sake ki kitna sq ft maal hua" at entry.
+  const totalAmount = items.reduce(
+    (s, it) => s + lineAmount({ qty: parseFloat(it.qty) || 0, unit: it.unit, unitPrice: parseFloat(it.unitPrice) || 0, size: it.size }),
+    0
+  );
 
   function submit(formData: FormData) {
     setError(null);
@@ -801,7 +888,7 @@ function NewInquiryModal({ onClose }: { onClose: () => void }) {
         requirementNotes: val("requirement_notes"),
         remarks: val("remarks"),
         followUpDate: val("follow_up_date"),
-        items: items.map((it) => ({ description: it.description, qty: it.qty, unit: it.unit, unitPrice: it.unitPrice, remark: it.remark })),
+        items: items.map((it) => ({ description: it.description, qty: it.qty, unit: it.unit, unitPrice: it.unitPrice, remark: it.remark, size: it.size })),
       });
       if (res.ok) onClose();
       else setError(res.error);
@@ -839,20 +926,43 @@ function NewInquiryModal({ onClose }: { onClose: () => void }) {
         <div>
           <div className="mb-1 flex items-center justify-between">
             <span className={labelClass}>Asked-for Items</span>
-            <button type="button" onClick={() => setItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }])} className="text-xs font-medium text-amber-600 hover:underline">
+            <button type="button" onClick={() => setItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "", size: "" }])} className="text-xs font-medium text-amber-600 hover:underline">
               + Add item
             </button>
           </div>
           <div className="space-y-2">
             {items.map((it, idx) => (
-              <div key={idx} className="grid grid-cols-12 gap-2">
-                <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
-                <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                <UnitSelect value={it.unit} onChange={(u) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
-                <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
-                <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
+              <div key={idx} className="space-y-1">
+                <div className="grid grid-cols-12 gap-2">
+                  <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
+                  <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
+                  <UnitSelect value={it.unit} onChange={(u) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
+                  <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
+                  <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
+                </div>
+                {/* 2026-10-17b — Size + the live area/amount preview: a
+                    "5000 pcs @ 5 per sq ft" line is only meaningful once its
+                    size (2.6 × 10 ft) is known. */}
+                <div className="grid grid-cols-12 items-center gap-2">
+                  <input
+                    className={`${inputClass} col-span-5 !py-1.5`}
+                    placeholder="Size (2.6 × 10 ft)"
+                    value={it.size}
+                    onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, size: e.target.value } : x)))}
+                  />
+                  <div className="col-span-7">
+                    <ItemCalcLine qty={it.qty} unit={it.unit} unitPrice={it.unitPrice} size={it.size} />
+                  </div>
+                </div>
               </div>
             ))}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <span>
+              {items.length} item(s)
+              {items.some((it) => parseSizeSpec(it.size)) && " · sized lines price by area"}
+            </span>
+            <span className="font-semibold text-slate-900">Estimated total: {fmtDocMoney(totalAmount)}</span>
           </div>
         </div>
 
@@ -880,19 +990,16 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
   // 2026-10-13 — the asked-for items are editable from the details form
   // ("enquiry edit, modify, delete bhi honi chahiye"). Kept as strings so
   // typing never fights the parser; the server action parses.
-  const [items, setItems] = useState(() =>
-    inquiry.items.map((it) => ({
-      description: it.description,
-      qty: String(it.qty),
-      unit: it.unit ?? "pcs",
-      unitPrice: it.unit_price == null ? "" : String(it.unit_price),
-      remark: it.remark ?? "",
-    }))
-  );
-
   // 2026-10-13 — "ENQUARY EDIT, MODIFY, DELETE BHI HONI CHAHIYE": the
-  // details tab's Save now also replaces the asked-for item rows (draft
-  // state mirrors the same string-typed pattern the quote form uses).
+  // details tab's Save replaces the asked-for item rows (draft state
+  // mirrors the string-typed pattern the quote form uses).
+  //
+  // 2026-10-17b — ONE item grid only. This dialog used to render TWO
+  // "Asked-for Items" blocks: the first one edited a dead `items` state
+  // that saveDetails never sent, so entries typed there (unit/rate) simply
+  // never reached the server — which is what "ye to kam hi nahi kar raha"
+  // looked like. The surviving block below is the one that saves, and each
+  // line now carries a Size too (area pricing: per sq ft / per sq mtr).
   const [inqItems, setInqItems] = useState(
     inquiry.items.length > 0
       ? inquiry.items.map((it) => ({
@@ -901,8 +1008,13 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
           unit: it.unit ?? "pcs",
           unitPrice: it.unit_price != null ? String(it.unit_price) : "",
           remark: it.remark ?? "",
+          size: it.size ?? "",
         }))
-      : [{ description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }]
+      : [{ description: "", qty: "", unit: "pcs", unitPrice: "", remark: "", size: "" }]
+  );
+  const inqTotalAmount = inqItems.reduce(
+    (s, it) => s + lineAmount({ qty: parseFloat(it.qty) || 0, unit: it.unit, unitPrice: parseFloat(it.unitPrice) || 0, size: it.size }),
+    0
   );
 
   function saveDetails(formData: FormData) {
@@ -962,11 +1074,18 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
             <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Asked-for items</div>
               <ul className="list-inside list-disc space-y-0.5 text-slate-700">
-                {inquiry.items.map((it, i) => (
-                  <li key={i}>
-                    {it.description} — {it.qty} {it.unit ?? ""}{it.unit_price != null ? ` @ ${fmtMoney(it.unit_price, inquiry.quote?.currency)}` : ""}
-                  </li>
-                ))}
+                {inquiry.items.map((it, i) => {
+                  const area = lineArea({ qty: it.qty, unit: it.unit, size: it.size });
+                  const amount = lineAmount({ qty: it.qty, unit: it.unit, unitPrice: it.unit_price ?? 0, size: it.size });
+                  return (
+                    <li key={i}>
+                      {it.description}
+                      {it.size ? ` (${it.size})` : ""} — {it.qty} {it.unit ?? ""}{it.unit_price != null ? ` @ ${fmtMoney(it.unit_price, inquiry.quote?.currency)}` : ""}
+                      {area && <span className="text-slate-500"> · 📐 {area.sqFt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft</span>}
+                      {it.unit_price != null && <span className="text-slate-500"> · 💰 {fmtMoney(amount, inquiry.quote?.currency)}</span>}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -998,49 +1117,20 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
                 <Field label="Follow-up Date"><input name="follow_up_date" type="date" defaultValue={inquiry.follow_up_date ?? ""} className={inputClass} /></Field>
               </div>
 
-              {/* Asked-for items — editable, saved with the inquiry */}
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <span className={labelClass}>Asked-for Items</span>
-                  <button
-                    type="button"
-                    onClick={() => setItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }])}
-                    className="text-xs font-medium text-amber-600 hover:underline"
-                  >
-                    + Add item
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {items.map((it, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2">
-                      <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
-                      <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                      <UnitSelect value={it.unit} onChange={(u) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
-                      <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
-                      <button
-                        type="button"
-                        className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50"
-                        onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))}
-                        aria-label="Remove item"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               <Field label="Requirement Notes"><textarea name="requirement_notes" rows={2} defaultValue={inquiry.requirement_notes ?? ""} className={inputClass} /></Field>
               <Field label="Remarks"><textarea name="remarks" rows={2} defaultValue={inquiry.remarks ?? ""} className={inputClass} /></Field>
 
               {/* 2026-10-13 — asked-for items are now EDITABLE here (edit /
-                  modify the enquiry itself, not just its header fields). */}
+                  modify the enquiry itself, not just its header fields);
+                  2026-10-17b — the ONLY item grid in this form (the dead
+                  duplicate above it is gone), now with Size + live
+                  area/amount per line and a running total. */}
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <span className={labelClass}>Asked-for Items</span>
                   <button
                     type="button"
-                    onClick={() => setInqItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "" }])}
+                    onClick={() => setInqItems((v) => [...v, { description: "", qty: "", unit: "pcs", unitPrice: "", remark: "", size: "" }])}
                     className="text-xs font-medium text-amber-600 hover:underline"
                   >
                     + Add item
@@ -1048,14 +1138,34 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
                 </div>
                 <div className="space-y-2">
                   {inqItems.map((it, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2">
-                      <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
-                      <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                      <UnitSelect value={it.unit} onChange={(u) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
-                      <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
-                      <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setInqItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
+                    <div key={idx} className="space-y-1">
+                      <div className="grid grid-cols-12 gap-2">
+                        <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
+                        <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
+                        <UnitSelect value={it.unit} onChange={(u) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
+                        <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
+                        <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setInqItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
+                      </div>
+                      <div className="grid grid-cols-12 items-center gap-2">
+                        <input
+                          className={`${inputClass} col-span-5 !py-1.5`}
+                          placeholder="Size (2.6 × 10 ft)"
+                          value={it.size}
+                          onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, size: e.target.value } : x)))}
+                        />
+                        <div className="col-span-7">
+                          <ItemCalcLine qty={it.qty} unit={it.unit} unitPrice={it.unitPrice} size={it.size} currency={inquiry.quote?.currency} />
+                        </div>
+                      </div>
                     </div>
                   ))}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  <span>
+                    {inqItems.length} item(s)
+                    {inqItems.some((it) => parseSizeSpec(it.size)) && " · sized lines price by area"}
+                  </span>
+                  <span className="font-semibold text-slate-900">Total: {fmtMoney(inqTotalAmount, inquiry.quote?.currency)}</span>
                 </div>
               </div>
 
@@ -1125,8 +1235,12 @@ function QuotePanel({
   const [isPending, startTransition] = useTransition();
   const [localError, setLocalError] = useState<string | null>(null);
   const q = inquiry.quote;
+  // 2026-10-17b — total sq ft of the SAVED lines (the number the buyer's
+  // documents and the register's reports read back).
+  const savedTotalSqFt = q ? sumSqFt(q.items ?? []) : 0;
 
-  // Line items drive the money (server computes subtotal = Σ qty×rate);
+  // Line items drive the money (server computes subtotal from the SAME
+  // lineAmount formula — area × rate for "per sq ft" lines with a Size);
   // used by BOTH the create form and the edit form below.
   const [items, setItems] = useState<QuoteItemDraft[]>([emptyQuoteItem()]);
   // 2026-10-13 round 2 — "CURRENCY SELECTION DROPDOWN, EK BAAR SELECT
@@ -1143,9 +1257,11 @@ function QuotePanel({
   const [addr, setAddr] = useState({ a1: "", a2: "", city: "", state: "", postal: "", country: "" });
 
   const liveSubtotal = items.reduce(
-    (s, it) => s + (parseFloat(it.qty) || 0) * (parseFloat(it.unitPrice) || 0),
+    (s, it) =>
+      s + lineAmount({ qty: parseFloat(it.qty) || 0, unit: it.unit, unitPrice: parseFloat(it.unitPrice) || 0, size: it.size }),
     0
   );
+  const liveTotalSqFt = sumSqFt(items);
 
   function buildPayload(formData: FormData) {
     const val = (k: string) => String(formData.get(k) ?? "");
@@ -1478,6 +1594,12 @@ function QuotePanel({
                     })}
                   </tbody>
                 </table>
+                {savedTotalSqFt > 0 && (
+                  <div className="border-t border-slate-100 bg-emerald-50 px-3 py-1.5 text-[11px] font-medium text-emerald-800">
+                    📐 Total: {savedTotalSqFt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft
+                    <span className="opacity-70"> ({(savedTotalSqFt * SQFT_TO_SQM).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq mtr)</span>
+                  </div>
+                )}
               </div>
             )}
             {canManage && (
@@ -1763,19 +1885,23 @@ function QuotePanel({
                     <input className={`${inputClass} !py-1.5`} placeholder="Colour / design" value={it.colourDesign} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, colourDesign: e.target.value } : x)))} />
                     <input className={`${inputClass} !py-1.5`} placeholder="Packaging" value={it.packaging} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, packaging: e.target.value } : x)))} />
                   </div>
-                  {/* 2026-10-13 r2 — "SIZE QUINTIY PCS SQ FT CBS FORMULA": live
-                      preview of the size × qty line totals (sq ft / sq mtr /
-                      CBM) — same computeItemDims the server stores from. */}
-                  {lineDims(it) && (
-                    <div className="mt-1.5 rounded bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800">
-                      📐 Size × Qty: {lineDims(it)!.text}
-                    </div>
-                  )}
+                  {/* 2026-10-13 r2 — SIZE × QTY preview (sq ft / sq mtr /
+                      CBM); 2026-10-17b — now also the line's AMOUNT under
+                      the same lineAmount() formula the server stores. */}
+                  <ItemCalcLine qty={it.qty} unit={it.unit} unitPrice={it.unitPrice} size={it.size} currency={currencySel} />
                 </div>
               ))}
             </div>
-            <div className="mt-2 flex items-center justify-between text-sm">
-              <span className="text-slate-500">{items.filter((it) => it.description.trim()).length} item(s)</span>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="text-slate-500">
+                {items.filter((it) => it.description.trim()).length} item(s)
+                {liveTotalSqFt > 0 && (
+                  <span className="ml-2 font-medium text-emerald-700">
+                    📐 {liveTotalSqFt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft
+                    <span className="text-emerald-600/70"> ({(liveTotalSqFt * SQFT_TO_SQM).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq mtr)</span>
+                  </span>
+                )}
+              </span>
               <span className="font-semibold text-slate-900">Subtotal ({currencySel}): {fmtDocMoney(liveSubtotal, currencySel)}</span>
             </div>
           </div>

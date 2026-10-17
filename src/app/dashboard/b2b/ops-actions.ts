@@ -17,7 +17,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import { todayIST } from "@/lib/attendance/ist-date";
-import { buildPaymentSchedule, computePacking, ORDER_STATUSES, round2, SHIPMENT_STATUSES } from "@/lib/b2b/erp";
+import { buildPaymentSchedule, computePacking, lineAmount, ORDER_STATUSES, parseSizeSpec, round2, SHIPMENT_STATUSES } from "@/lib/b2b/erp";
 import type { Database } from "@/types/database";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -96,6 +96,8 @@ export type OrderLineInput = {
   unit?: string;
   unitPrice: string;
   unitCost: string;
+  /** 2026-10-17b — size spec ("2.6 × 10 ft"): area units price by area. */
+  size?: string;
 };
 
 export type CreateOrderInput = {
@@ -126,7 +128,10 @@ export async function createSalesOrder(input: CreateOrderInput): Promise<SaveRes
   if (lines.length === 0) return { ok: false, error: "Add at least one line with a description and qty." };
   if (!input.orderDate) return { ok: false, error: "Order date is required." };
 
-  const salesValue = round2(lines.reduce((s, l) => s + num(l.qty) * num(l.unitPrice), 0));
+  // 2026-10-17b — sales value goes through the ONE lineAmount formula:
+  // "per sq ft" lines with a Size bill qty × L × W × rate. Product cost
+  // stays qty × unit cost (the engine's unitCost is per piece).
+  const salesValue = round2(lines.reduce((s, l) => s + lineAmount({ qty: num(l.qty), unit: l.unit, unitPrice: num(l.unitPrice), size: l.size }), 0));
   const productCost = round2(lines.reduce((s, l) => s + num(l.qty) * num(l.unitCost), 0));
 
   const reserved = await reserveNo(supabase, me.currentCompanyId, "B2B_SO", "SO", input.orderDate);
@@ -163,16 +168,25 @@ export async function createSalesOrder(input: CreateOrderInput): Promise<SaveRes
     .single();
   if (error) return { ok: false, error: error.message };
 
-  const itemRows = lines.map((l, idx) => ({
-    order_id: order.id,
-    product_id: l.productId || null,
-    description: l.description.trim(),
-    qty: num(l.qty),
-    unit: l.unit?.trim() || "pcs",
-    unit_price: Math.max(0, num(l.unitPrice)),
-    unit_cost: Math.max(0, num(l.unitCost)),
-    display_order: idx,
-  }));
+  const itemRows = lines.map((l, idx) => {
+    const parsed = parseSizeSpec(l.size ?? "");
+    return {
+      order_id: order.id,
+      product_id: l.productId || null,
+      description: l.description.trim(),
+      qty: num(l.qty),
+      unit: l.unit?.trim() || "pcs",
+      unit_price: Math.max(0, num(l.unitPrice)),
+      unit_cost: Math.max(0, num(l.unitCost)),
+      display_order: idx,
+      size: l.size?.trim() || null,
+      size_length: parsed?.length ?? null,
+      size_width: parsed?.width ?? null,
+      size_thickness: parsed?.thickness ?? null,
+      size_unit: parsed?.unit ?? null,
+      line_total: lineAmount({ qty: num(l.qty), unit: l.unit, unitPrice: num(l.unitPrice), size: l.size }),
+    };
+  });
   const { error: itemErr } = await supabase.from("b2b_sales_order_items").insert(itemRows);
   if (itemErr) return { ok: false, error: itemErr.message };
 

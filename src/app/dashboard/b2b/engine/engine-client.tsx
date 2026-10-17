@@ -9,8 +9,11 @@
 import { useMemo, useState, useTransition } from "react";
 import {
   computeCosting,
+  dimsFromSizeSpec,
   fmtMoney,
+  formatDims,
   INCOTERMS,
+  lineAmount,
   QUOTE_CURRENCIES,
 } from "@/lib/b2b/erp";
 import { saveEngineQuotation, type EngineLineInput } from "../erp-actions";
@@ -57,10 +60,14 @@ const btnClass =
 const btnGhost =
   "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60";
 
-type Line = { productId: string | null; description: string; qty: string; unit: string; unitPrice: string; unitCost: string };
+// 2026-10-17b — `size` ("2.6 × 10 ft") rides every line into BOTH saves:
+// the quotation (b2b_quotation_items.size) and the sales order
+// (b2b_sales_order_items.size), so area-priced lines stay area-priced all
+// the way down the pipeline.
+type Line = { productId: string | null; description: string; qty: string; unit: string; unitPrice: string; unitCost: string; size: string };
 
 function emptyLine(): Line {
-  return { productId: null, description: "", qty: "", unit: "pcs", unitPrice: "", unitCost: "" };
+  return { productId: null, description: "", qty: "", unit: "pcs", unitPrice: "", unitCost: "", size: "" };
 }
 
 export function EngineClient({
@@ -145,7 +152,7 @@ export function EngineClient({
       computeCosting({
         lines: lines
           .filter((l) => l.description.trim() || Number(l.qty))
-          .map((l) => ({ qty: Number(l.qty) || 0, unitCost: Number(l.unitCost) || 0, unitPrice: Number(l.unitPrice) || 0 })),
+          .map((l) => ({ qty: Number(l.qty) || 0, unitCost: Number(l.unitCost) || 0, unitPrice: Number(l.unitPrice) || 0, unit: l.unit, size: l.size })),
         packingCost: Number(packingCost) || 0,
         freight: Number(freightCost) || 0,
         otherCosts: Number(otherCosts) || 0,
@@ -175,6 +182,7 @@ export function EngineClient({
         unit: l.unit,
         unitPrice: l.unitPrice,
         unitCost: l.unitCost,
+        size: l.size,
       }));
     startTransition(async () => {
       const res = await saveEngineQuotation({
@@ -209,6 +217,7 @@ export function EngineClient({
         unit: l.unit,
         unitPrice: l.unitPrice,
         unitCost: l.unitCost,
+        size: l.size,
       }));
     if (payloadLines.length === 0) {
       setError("Add at least one product line before converting.");
@@ -351,6 +360,24 @@ export function EngineClient({
                     placeholder="Description"
                     className={inputClass}
                   />
+                  {/* 2026-10-17b — size + live area: the engine's line total
+                      is area × rate for "per sq ft" lines (lineAmount). */}
+                  <div className="flex gap-1.5">
+                    <input
+                      value={l.size}
+                      onChange={(e) => setLines((rows) => rows.map((r, j) => (j === i ? { ...r, size: e.target.value } : r)))}
+                      placeholder="Size (2.6 × 10 ft)"
+                      className={`${inputClass} !py-1.5`}
+                    />
+                    {(() => {
+                      const dims = dimsFromSizeSpec(Number(l.qty) || 0, l.size);
+                      return dims ? (
+                        <span className="whitespace-nowrap self-center rounded bg-emerald-50 px-1.5 py-1 text-[10px] font-medium text-emerald-700">
+                          📐 {formatDims(dims)}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
                 </div>
                 <input
                   type="number"
@@ -377,7 +404,7 @@ export function EngineClient({
                   className="col-span-2 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
                 />
                 <div className="col-span-2 flex items-center justify-end gap-1 text-sm font-semibold text-slate-800">
-                  {fmtMoney((Number(l.qty) || 0) * (Number(l.unitPrice) || 0), currency)}
+                  {fmtMoney(lineAmount({ qty: Number(l.qty) || 0, unit: l.unit, unitPrice: Number(l.unitPrice) || 0, size: l.size }), currency)}
                   <button
                     className="rounded px-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
                     onClick={() => setLines((rows) => (rows.length > 1 ? rows.filter((_, j) => j !== i) : rows))}

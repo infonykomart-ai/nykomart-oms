@@ -795,6 +795,11 @@ export type Database = {
           remark: string | null;
           display_order: number;
           product_id: string | null;
+          size: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -806,6 +811,11 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -817,6 +827,11 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -1548,9 +1563,14 @@ export type Database = {
           unit: string;
           unit_price: number;
           unit_cost: number;
-          line_total: number | null;
+          line_total: number;
           line_cost: number | null;
           display_order: number;
+          size: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -1561,9 +1581,14 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number | null;
+          line_total?: number;
           line_cost?: number | null;
           display_order?: number;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -1574,9 +1599,14 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number | null;
+          line_total?: number;
           line_cost?: number | null;
           display_order?: number;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Relationships: [
           {
