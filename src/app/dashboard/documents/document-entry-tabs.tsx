@@ -39,6 +39,15 @@ import {
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { PrintDialog } from "@/components/print-dialog";
+import {
+  DocEntryA4,
+  creditNoteDoc,
+  debitNoteDoc,
+  washingEntryDoc,
+  internalInvoiceDoc,
+  purchaseBillDoc,
+  csbFilingDoc,
+} from "./doc-entry-a4";
 import { RelatedNotesBadge } from "./related-notes-badge";
 import { BillStatementDialog } from "@/components/bill-statement-dialog";
 import { A4Dialog } from "@/components/a4-dialog";
@@ -63,7 +72,13 @@ type Recent = {
   debitNotes: (EditableDebitNote & { companyName: string })[];
   washingEntries: (EditableWashingEntry & { companyName: string; amount: number })[];
   internalInvoices: (EditableInternalInvoice & { fromCompanyName: string; toCompanyName: string; total_amount: number })[];
-  purchaseBills: (EditablePurchaseBill & { vendorName: string; total_amount: number; g_total_plus_gst: number | null; related_notes: RelatedNote[]; finance_bpr_id: string | null })[];
+  // company_id added 2026-10-16 — the new A4 View sheet shows which
+  // company the bill belongs to (page.tsx already spreads it through from
+  // the select, it just wasn't in this intersection type). Typed `string |
+  // null` because that's how database.ts types the column — the sheet
+  // falls back to a plain "PURCHASE BILL" header with no company line
+  // rather than assuming the column can't be null.
+  purchaseBills: (EditablePurchaseBill & { company_id: string | null; vendorName: string; total_amount: number; g_total_plus_gst: number | null; related_notes: RelatedNote[]; finance_bpr_id: string | null })[];
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
@@ -328,10 +343,14 @@ export function DocumentEntryTabs({
             sub: `${r.companyName} · ${r.buyer_name ?? ""}`,
             amount: `₹${r.refund_amount}`,
             record: r,
-            printHref: `/dashboard/documents/credit-notes/${r.id}/report`,
             docStatement: { type: "credit_note", id: r.id },
+            statementLabel: "🧾 Statement",
           }))}
           onDelete={deleteCreditNote}
+          // 2026-10-16 — View + Print both open in the A4 dialog on THIS
+          // page (printHref's /report navigation removed — see DocList's
+          // renderView comment).
+          renderView={(r) => <DocEntryA4 spec={creditNoteDoc(r)} />}
           renderEdit={(r, onDone) => (
             <CreditNoteEditForm note={r} stores={stores.filter((s) => s.company_id === r.company_id)} onDone={onDone} />
           )}
@@ -347,9 +366,9 @@ export function DocumentEntryTabs({
             sub: `${r.companyName} · ${r.particulars ?? ""}`,
             amount: `₹${r.debit_amount}`,
             record: r,
-            printHref: `/dashboard/documents/debit-notes/${r.id}/report`,
           }))}
           onDelete={deleteDebitNote}
+          renderView={(r) => <DocEntryA4 spec={debitNoteDoc(r, parties.find((p) => p.id === r.party_id)?.name ?? "—")} />}
           renderEdit={(r, onDone) => <DebitNoteEditForm note={r} parties={parties} onDone={onDone} />}
         />
         </div>
@@ -368,9 +387,16 @@ export function DocumentEntryTabs({
             sub: r.companyName,
             amount: `₹${r.amount}`,
             record: r,
-            printHref: `/dashboard/documents/washing-entries/${r.id}/report`,
           }))}
           onDelete={deleteWashingEntry}
+          renderView={(r) => (
+            <DocEntryA4
+              spec={washingEntryDoc(r, {
+                partyName: parties.find((p) => p.id === r.party_id)?.name ?? "—",
+                storeName: stores.find((s) => s.id === r.store_id)?.name ?? "—",
+              })}
+            />
+          )}
           renderEdit={(r, onDone) => (
             <WashingEntryEditForm entry={r} parties={parties} stores={stores.filter((s) => s.company_id === r.company_id)} onDone={onDone} />
           )}
@@ -386,9 +412,9 @@ export function DocumentEntryTabs({
             sub: `${r.fromCompanyName} → ${r.toCompanyName}`,
             amount: `₹${r.total_amount}`,
             record: r,
-            printHref: `/dashboard/documents/internal-invoices/${r.id}/report`,
           }))}
           onDelete={deleteInternalInvoice}
+          renderView={(r) => <DocEntryA4 spec={internalInvoiceDoc(r)} />}
           renderEdit={(r, onDone) => <InternalInvoiceEditForm invoice={r} onDone={onDone} />}
         />
         </div>
@@ -420,10 +446,13 @@ export function DocumentEntryTabs({
                   : `₹${r.total_amount}`,
             record: r,
             notes: r.related_notes,
-            printHref: `/dashboard/documents/purchase-bills/${r.id}/report`,
             statementBillId: r.finance_bpr_id ?? undefined,
+            statementLabel: "🧾 Statement",
           }))}
           onDelete={deletePurchaseBill}
+          renderView={(r) => (
+            <DocEntryA4 spec={purchaseBillDoc(r, companies.find((c) => c.id === r.company_id)?.name ?? "")} />
+          )}
           renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
         />
         </div>
@@ -438,8 +467,10 @@ export function DocumentEntryTabs({
             amount: r.fob_value_inr != null ? `₹${r.fob_value_inr}` : "—",
             record: r,
             docStatement: { type: "csb_filing", id: r.id },
+            statementLabel: "🧾 Statement",
           }))}
           onDelete={deleteCsbFiling}
+          renderView={(r) => <DocEntryA4 spec={csbFilingDoc(r)} />}
           renderEdit={(r, onDone) => <CsbFilingEditForm filing={r} currencies={currencies} onDone={onDone} />}
         />
         </div>
@@ -572,6 +603,7 @@ function DocList<T extends { id: string }>({
   total,
   rows,
   renderEdit,
+  renderView,
   onDelete,
 }: {
   title: string;
@@ -604,6 +636,24 @@ function DocList<T extends { id: string }>({
   // own field rather than overloading statementBillId since the access
   // check and API route genuinely differ per table (see that file's header
   // comment), even though the on-screen button looks identical.
+  //
+  // 2026-10-16 — `statementLabel`: with the new per-row "👁 View" A4
+  // preview (renderView below) sitting next to these statement triggers,
+  // both used to render a button literally labelled "📄 View" — callers
+  // now label the statement one "🧾 Statement" so the two are
+  // distinguishable (the statement sheet keeps the WhatsApp/Telegram/
+  // email/PDF action bar the plain preview doesn't have).
+  //
+  // 2026-10-16 — `renderView`: "view nahi kar sakte jo A4 dialog box me
+  // khulna chahiye tha, print naye page par lekar jata hai" — when set, a
+  // "👁 View" button opens the row's read-only A4 sheet inside the shared
+  // A4Dialog (NOT a navigation), with Print / Save PDF in the dialog
+  // footer. Wired for the 6 flat Document Entry types (Credit Note,
+  // Debit Note, Washing Entry, Internal Invoice, Purchase Bill, CSB
+  // Filing) via doc-entry-a4.tsx; their old printHref links (which
+  // navigated to a separate /report page) were removed for exactly these
+  // types. Journal Voucher / Received Chalan keep their report-page links
+  // unchanged — they weren't part of this request.
   rows: {
     id: string;
     no: string;
@@ -615,6 +665,7 @@ function DocList<T extends { id: string }>({
     printHref?: string;
     statementBillId?: string;
     docStatement?: { type: DocType; id: string };
+    statementLabel?: string;
   }[];
   // 2026-08-29 (evening, follow-up round) — optional: Material OUT Chalan
   // and Received Chalan (multi-item chalans, create+delete only, matching
@@ -622,9 +673,13 @@ function DocList<T extends { id: string }>({
   // omitted, the Edit button itself doesn't render rather than opening a
   // dead end. Every other caller still passes this and is unaffected.
   renderEdit?: (record: T, onDone: () => void) => ReactNode;
+  // 2026-10-16 — same shape as renderEdit: returns the read-only A4 sheet
+  // (a DocEntryA4 wrapped in its own PrintArea — see doc-entry-a4.tsx).
+  renderView?: (record: T) => ReactNode;
   onDelete: (id: string) => Promise<SimpleResult>;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
@@ -657,6 +712,28 @@ function DocList<T extends { id: string }>({
             >
               {renderEdit(r.record, () => setEditingId(null))}
             </A4Dialog>
+          ) : viewingId === r.id && renderView ? (
+            <A4Dialog
+              key={r.id}
+              open
+              onClose={() => setViewingId(null)}
+              title={`View — ${r.no}`}
+              subtitle="A4 preview — Print / Save PDF prints this document only; no page navigation."
+              footer={
+                <div className="flex items-center justify-end gap-2">
+                  <PrintButton label="🖨 Print / Save PDF" />
+                  <button
+                    type="button"
+                    onClick={() => setViewingId(null)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              }
+            >
+              {renderView(r.record)}
+            </A4Dialog>
           ) : (
             <div key={r.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
               <div className="flex items-center justify-between">
@@ -675,6 +752,18 @@ function DocList<T extends { id: string }>({
               <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
                 <p className="text-red-600">{deleteError[r.id]}</p>
                 <div className="flex shrink-0 gap-1.5">
+                  {renderView && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(null);
+                        setViewingId(r.id);
+                      }}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      👁 View
+                    </button>
+                  )}
                   {r.printHref && (
                     <PrintDialog
                       href={r.printHref}
@@ -682,15 +771,9 @@ function DocList<T extends { id: string }>({
                       subtitle="A4 preview — prints exactly this document."
                     />
                   )}
-                  {r.statementBillId && <BillStatementDialog billId={r.statementBillId} label="🖨 Print" />}
-                  {/* CSB Filing has no separate report route — its A4 statement
-                      sheet IS its print view, so label it as one. */}
+                  {r.statementBillId && <BillStatementDialog billId={r.statementBillId} label={r.statementLabel} />}
                   {r.docStatement && (
-                    <DocStatementDialog
-                      type={r.docStatement.type}
-                      id={r.docStatement.id}
-                      label={r.docStatement.type === "csb_filing" ? "🖨 Print" : "📄 View"}
-                    />
+                    <DocStatementDialog type={r.docStatement.type} id={r.docStatement.id} label={r.statementLabel} />
                   )}
                   {renderEdit && (
                     <button

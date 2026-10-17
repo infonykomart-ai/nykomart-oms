@@ -10,11 +10,7 @@
 // server action, same pattern as sales_invoices/orders.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-// 2026-10-15/16 — LATE_CUTOFF_HHMM and attendanceStatusForPunchIn live in
-// ist-date.ts (pure IST helpers) so the Manual Correction form — a CLIENT
-// component — can share the exact same cutoff and Present/Late verdict
-// without importing this module's server-only Telegram/companion deps.
-import { todayIST, nowISOInstant, nowISTTime, attendanceStatusForPunchIn } from "./ist-date";
+import { todayIST, nowISOInstant, nowISTTime } from "./ist-date";
 import { notifyCompanion } from "@/lib/companion/notify";
 // 2026-09-29 — best-effort punch confirmation, fired AFTER the DB write
 // below succeeds, never blocks or fails the punch itself. 2026-09-30 —
@@ -23,6 +19,30 @@ import { notifyCompanion } from "@/lib/companion/notify";
 // Attendance page; WhatsApp sending for this flow is OFF entirely.
 import { notifyPunchInTelegram, notifyPunchOutTelegram } from "./telegram-notify";
 
+// HH:MM (IST, 24h) — same config-constant convention as the old system's
+// ATTENDANCE_LATE_CUTOFF_HOUR/MINUTE. No admin UI to change this yet
+// (flagged as a scope simplification) — edit this constant if the cutoff
+// needs to change again.
+//
+// 2026-09-02: "attendance 9:30 ke baad sabhi ko late dikhati hai punching
+// time 9:20 se 9:45 am tak agar koi present karta hai to vo present
+// dikhaye" — moved from 09:30 to 09:45. Anyone punching in AT or before
+// 9:45 AM IST now shows Present; only strictly after 9:45 shows Late.
+export const LATE_CUTOFF_HHMM = "09:45";
+
+/**
+ * 2026-10-15 — which status a punch-in time earns, in IST terms. Extracted so
+ * the live punch below and the Attendance Admin's MANUAL punch (where the
+ * admin types the time — "kitne baje ka punch dalna hai") can never disagree
+ * about what counts as Late: at or before the cutoff is Present, strictly
+ * after it is Late. "HH:MM" compares correctly as a string because it is
+ * zero-padded 24-hour. A blank time (manual entry can leave it empty) is left
+ * to the caller's own default.
+ */
+export function attendanceStatusForPunchIn(hhmm: string): "Present" | "Late" | null {
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(hhmm)) return null;
+  return hhmm > LATE_CUTOFF_HHMM ? "Late" : "Present";
+}
 
 // 2026-10-02 — Web-Punch GPS capture (TeamOffice parity): the manual
 // Punch In/Out buttons send a one-shot browser geolocation fix along with
@@ -54,7 +74,7 @@ export async function recordPunchIn(
   // punched in for the day keeps whatever status was set then, even if this
   // function somehow ran again later; the `existing?.punch_in` check above
   // already returns early in that case, so this only ever runs once/day.
-  const status = attendanceStatusForPunchIn(nowISTTime()) ?? "Present";
+  const status = nowISTTime() > LATE_CUTOFF_HHMM ? "Late" : "Present";
 
   if (existing) {
     const { error } = await supabase

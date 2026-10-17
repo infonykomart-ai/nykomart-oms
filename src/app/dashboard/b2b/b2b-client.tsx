@@ -230,6 +230,44 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500";
 
+// 2026-10-16 — "QUOTATION VALE SECTION ME INQUIRY AGAR AAYEGI TO KESE
+// HANDLE HOYEGI — BS PCS SE CALCULATION HORI, BAKI CM, MTR, FEET, INCH,
+// SQ FT, SQ MTR, PER SQ FT, PER INCH VALE SECTION NAHI HAI": every item
+// editor in this file (New Inquiry modal, both "Asked-for Items" blocks
+// in the inquiry details form, and the quote form) now shares ONE unit
+// dropdown — the ITEM_UNITS list (extended the same day with feet / inch
+// / cm and the "per …" rate units) plus an "Other…" escape hatch for a
+// one-off unit the list doesn't have. Before this, the inquiry rows were
+// a free-text Unit box, so in practice only "pcs" ever got typed and the
+// PI printed whatever text happened to be there. Calculation is
+// untouched: subtotal = Σ qty × rate is unit-agnostic on the server too
+// (see actions.ts), so any unit computes correctly.
+function UnitSelect({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const known = (ITEM_UNITS as readonly string[]).includes(value);
+  return (
+    <>
+      <select
+        className={`${inputClass} ${known ? "col-span-2" : "col-span-1"}`}
+        value={known ? value : "__other"}
+        onChange={(e) => onChange(e.target.value === "__other" ? "" : e.target.value)}
+      >
+        {ITEM_UNITS.map((u) => (
+          <option key={u} value={u}>{u}</option>
+        ))}
+        <option value="__other">Other…</option>
+      </select>
+      {!known && (
+        <input
+          className={`${inputClass} col-span-1`}
+          placeholder="Unit"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </>
+  );
+}
+
 // Editable quotation line — kept as STRINGS in UI state so typing "1." or
 // "" mid-edit never fights the number parser; the server action parses.
 // 2026-10-13: each line also carries the product specifications the PI must
@@ -810,7 +848,7 @@ function NewInquiryModal({ onClose }: { onClose: () => void }) {
               <div key={idx} className="grid grid-cols-12 gap-2">
                 <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
                 <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                <input className={`${inputClass} col-span-2`} placeholder="Unit" value={it.unit} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))} />
+                <UnitSelect value={it.unit} onChange={(u) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
                 <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
                 <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
               </div>
@@ -977,7 +1015,7 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
                     <div key={idx} className="grid grid-cols-12 gap-2">
                       <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
                       <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                      <input className={`${inputClass} col-span-2`} placeholder="Unit" value={it.unit} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))} />
+                      <UnitSelect value={it.unit} onChange={(u) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
                       <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
                       <button
                         type="button"
@@ -1013,7 +1051,7 @@ function InquiryDetailDialog({ inquiry, canManage, companyName, onClose }: { inq
                     <div key={idx} className="grid grid-cols-12 gap-2">
                       <input className={`${inputClass} col-span-5`} placeholder="Item description" value={it.description} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, description: e.target.value } : x)))} />
                       <input className={`${inputClass} col-span-2`} placeholder="Qty" inputMode="decimal" value={it.qty} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                      <input className={`${inputClass} col-span-2`} placeholder="Unit" value={it.unit} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))} />
+                      <UnitSelect value={it.unit} onChange={(u) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
                       <input className={`${inputClass} col-span-2`} placeholder="Rate" inputMode="decimal" value={it.unitPrice} onChange={(e) => setInqItems((v) => v.map((x, i) => (i === idx ? { ...x, unitPrice: e.target.value } : x)))} />
                       <button type="button" className="col-span-1 rounded-lg border border-slate-200 text-slate-400 hover:bg-slate-50" onClick={() => setInqItems((v) => (v.length > 1 ? v.filter((_, i) => i !== idx) : v))} aria-label="Remove item">✕</button>
                     </div>
@@ -1697,31 +1735,10 @@ function QuotePanel({
                       value={it.qty}
                       onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))}
                     />
-                    {/* 2026-10-13 r2 — "INQUARY KESE BHI AASKATI AHI — PCS,
-                        SQ FT, SQ MTR, QTY": a real unit dropdown (pcs / sq ft /
-                        sq mtr / …) with an Other… escape hatch for one-offs. */}
-                    <select
-                      className={`${inputClass} col-span-2`}
-                      value={(ITEM_UNITS as readonly string[]).includes(it.unit) ? it.unit : "__other"}
-                      onChange={(e) =>
-                        setItems((v) =>
-                          v.map((x, i) => (i === idx ? { ...x, unit: e.target.value === "__other" ? "" : e.target.value } : x))
-                        )
-                      }
-                    >
-                      {ITEM_UNITS.map((u) => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
-                      <option value="__other">Other…</option>
-                    </select>
-                    {!(ITEM_UNITS as readonly string[]).includes(it.unit) && (
-                      <input
-                        className={`${inputClass} col-span-1`}
-                        placeholder="Unit"
-                        value={it.unit}
-                        onChange={(e) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: e.target.value } : x)))}
-                      />
-                    )}
+                    {/* 2026-10-13 r2 unit dropdown; 2026-10-16 se ye SAME UnitSelect
+                        har item editor me common hai (inquiry create/edit bhi), aur
+                        CM / FEET / INCH + "per …" rate units tak extended hai. */}
+                    <UnitSelect value={it.unit} onChange={(u) => setItems((v) => v.map((x, i) => (i === idx ? { ...x, unit: u } : x)))} />
                     <input
                       className={`${inputClass} ${!(ITEM_UNITS as readonly string[]).includes(it.unit) ? "col-span-1" : "col-span-2"}`}
                       placeholder="Rate"

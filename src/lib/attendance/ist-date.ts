@@ -70,62 +70,27 @@ export function istDateFromInstant(iso: string): string {
 }
 
 /**
- * 2026-10-15/16 — an admin-entered PUNCH TIME ("HH:MM" IST, as typed into the
- * Attendance Admin Manual Correction form — "kitne baje ka punch dalna hai")
- * to a real timestamptz for attendance.punch_in / punch_out. The IST offset is
+ * 2026-10-15 — an admin-entered PUNCH TIME ("HH:MM" IST, as typed into the
+ * Attendance Admin manual-entry form — "kitne baje ka punch dalna hai") to a
+ * real timestamptz for attendance.punch_in/punch_out. The IST offset is
  * written into the string itself ("+05:30"), so the stored instant is correct
- * no matter what timezone the server process runs in — IST has no daylight
- * saving, so a fixed +05:30 IS the correct offset for every date (same
- * reasoning as IST_OFFSET_MS above), and the returned UTC ISO string is what a
- * timestamptz column wants.
- *
- * Returns null for a blank/invalid time rather than throwing, so callers can
- * treat "no time entered" and "bad time entered" the same way. Rejects both
- * impossible times ("25:99") and impossible DATES ("2026-02-31"): JS Date
- * silently NORMALIZES an out-of-range day (Feb 31 → Mar 3) instead of
- * failing, so a round-trip back to the IST calendar date is what actually
- * rejects a non-existent date here.
+ * no matter what timezone the server process runs in — the same reason every
+ * other helper here exists. Returns null for a blank/invalid time rather than
+ * throwing, so callers can treat "no time entered" and "bad time entered"
+ * the same way (leave the column alone).
  */
 export function istTimeToInstant(dateStr: string, hhmm: string): string | null {
   const time = (hhmm ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
   if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(time)) return null;
   const parsed = new Date(`${dateStr}T${time}:00+05:30`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  if (istDateFromInstant(parsed.toISOString()) !== dateStr) return null;
-  return parsed.toISOString();
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 /** "HH:MM" IST as typed by a user, normalized to "HH:MM" or "" when blank/invalid. */
 export function normalizeISTTimeInput(value: string): string {
   const time = (value ?? "").trim();
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(time) ? time : "";
-}
-
-// HH:MM (IST, 24h) after which a punch-in counts as Late instead of
-// Present. Lives here (not in punch.ts) because the Manual Correction form
-// is a CLIENT component and needs the same cutoff to suggest a status from
-// the punch-in time the admin typed — punch.ts pulls in server-only
-// Telegram/companion modules a client component must never import.
-//
-// 2026-09-02: "attendance 9:30 ke baad sabhi ko late dikhati hai punching
-// time 9:20 se 9:45 am tak agar koi present karta hai to vo present
-// dikhaye" — moved from 09:30 to 09:45. Anyone punching in AT or before
-// 9:45 AM IST shows Present; only strictly after 9:45 shows Late.
-export const LATE_CUTOFF_HHMM = "09:45";
-
-/**
- * 2026-10-15 — which status a punch-in time earns, in IST terms. Shared by
- * the live punch below (punch.ts) and the Attendance Admin's MANUAL punch
- * (where the admin types the time — "kitne baje ka punch dalna hai"), so the
- * two can never disagree about what counts as Late: at or before the cutoff
- * is Present, strictly after it is Late. "HH:MM" compares correctly as a
- * string because it is zero-padded 24-hour. A blank/invalid time (manual
- * entry can leave it empty) returns null and is left to the caller's default.
- */
-export function attendanceStatusForPunchIn(hhmm: string): "Present" | "Late" | null {
-  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(hhmm)) return null;
-  return hhmm > LATE_CUTOFF_HHMM ? "Late" : "Present";
 }
 
 /**

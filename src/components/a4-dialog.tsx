@@ -20,6 +20,29 @@
 // print CSS makes every ancestor visible, so a document inside a modal
 // prints like any other page).
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+// 2026-10-16 — two additions for "print/edit/view sabhi same page par
+// dialog box me":
+//
+// (a) PORTAL: the dialog now renders into document.body instead of at its
+//     click-position inside the page tree. It is a fixed overlay either
+//     way, so nothing moves visually — but for PRINT it matters: a dialog
+//     opened from a Document Entry row lives inside the lists' shared
+//     #doc-lists-print-area, whose own PrintArea CSS marks EVERYTHING in
+//     that list visible (an id+universal selector beats `body * {
+//     visibility: hidden }`), so printing from inside the dialog would
+//     have printed the whole Recent list around it. Portalled to body, the
+//     dialog is outside every list PrintArea.
+//
+// (b) PRINT CSS below: with the dialog as a direct body child, printing
+//     hides every OTHER body child with `display: none` — display, unlike
+//     visibility, also removes it from layout, so the hidden shell/list
+//     above the dialog can't emit blank pages before the document. The
+//     overlay/panel go static + full width (a fixed overlay clips print
+//     output to one page — the exact bug print-view.tsx's 2026-08-19 fix
+//     documents), and the header/footer chrome is dropped so only the
+//     dialog body (the PrintArea'd document) prints.
 
 export const A4_DIALOG_WIDTH = "min(92vw, 850px)";
 
@@ -65,11 +88,11 @@ export function A4Dialog({
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4"
+      className="a4-dialog-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -80,11 +103,20 @@ export function A4Dialog({
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className="flex flex-col overflow-hidden rounded-xl bg-white shadow-2xl outline-none"
+        className="a4-dialog-panel flex flex-col overflow-hidden rounded-xl bg-white shadow-2xl outline-none"
         style={{ width: A4_DIALOG_WIDTH, height: "min(calc(92vw * 1.4142), 96vh)" }}
       >
+        <style>{`
+          @media print {
+            body > *:not(.a4-dialog-overlay) { display: none !important; }
+            .a4-dialog-overlay { position: static !important; inset: auto !important; background: transparent !important; padding: 0 !important; display: block !important; }
+            .a4-dialog-panel { width: 100% !important; height: auto !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; box-shadow: none !important; }
+            .a4-dialog-header, .a4-dialog-footer { display: none !important; }
+            .a4-dialog-body { overflow: visible !important; padding: 0 !important; background: #fff !important; }
+          }
+        `}</style>
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+        <div className="a4-dialog-header flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">{title}</h2>
             {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
@@ -100,10 +132,15 @@ export function A4Dialog({
         </div>
 
         {/* A4-proportioned scrollable body */}
-        <div className={`min-h-0 flex-1 overflow-y-auto ${flushBody ? "bg-white" : "bg-slate-50/60 p-4"}`}>{children}</div>
+        <div
+          className={`a4-dialog-body min-h-0 flex-1 overflow-y-auto ${flushBody ? "bg-white" : "bg-slate-50/60 p-4"}`}
+        >
+          {children}
+        </div>
 
-        {footer && <div className="border-t border-slate-200 bg-white px-4 py-2">{footer}</div>}
+        {footer && <div className="a4-dialog-footer border-t border-slate-200 bg-white px-4 py-2">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

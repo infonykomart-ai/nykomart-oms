@@ -491,7 +491,21 @@ export function amountInWords(amount: number, currency = "USD"): string {
 // live so every place that prints them (quote form, PI/CI, packing data)
 // agrees — all pure, all client-safe, all stub-testable.
 
-/** Common export line-item units — the select options on the quote form. */
+/**
+ * Common export line-item units — the select options on every item editor
+ * (inquiry create/edit + quote form — see UnitSelect in b2b-client.tsx).
+ *
+ * 2026-10-16 — "QUOTATION VALE SECTION ME INQUIRY AGAR AAYEGI TO KESE
+ * HANDLE HOYEGI — BS PCS SE CALCULATION HORI, BAKI CM, MTR, FEET, INCH,
+ * SQ FT, SQ MTR, PER SQ FT, PER INCH VALE SECTION NAHI HAI": added the
+ * length units (feet / inch / cm — mtr, yard, sq ft, sq mtr were already
+ * here) and the "per …" RATE units (per pcs / per mtr / per feet / per
+ * inch / per sq ft / per sq mtr) a carpet/rug inquiry actually prices
+ * by. Units are labels only — subtotal is Σ qty × rate server-side (see
+ * actions.ts), so every unit computes identically; nothing converts to a
+ * base unit here (unlike Purchase Bills' toFeet), because a quote must
+ * show the buyer exactly the unit they asked in.
+ */
 export const ITEM_UNITS = [
   "pcs",
   "nos",
@@ -499,9 +513,18 @@ export const ITEM_UNITS = [
   "pair",
   "kg",
   "mtr",
+  "feet",
+  "inch",
+  "cm",
   "yard",
   "sq ft",
   "sq mtr",
+  "per pcs",
+  "per mtr",
+  "per feet",
+  "per inch",
+  "per sq ft",
+  "per sq mtr",
   "box",
   "carton",
   "roll",
