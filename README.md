@@ -195,6 +195,20 @@ server pages and client previews so they can never disagree.
   (idempotent — 10 new tables + costing-engine columns on
   `b2b_quotations`/`b2b_inquiries`; folded into `db/schema.sql`, types
   regenerated, 146 tables/views).
+- **Area-based pricing (2026-10-17)** — a line priced "per sq ft / per sq
+  mtr" with a Size ("2.6 × 10 ft") bills **qty × L × W × rate**, not
+  qty × rate; everything goes through the one `lineAmount()` in
+  `src/lib/b2b/erp.ts` (inquiry lines, quotation `line_total` + subtotal,
+  the costing engine, sales orders, PI/CI print, the share message,
+  reports, Control Center, the B2B P&L). Size entry lives on the New
+  Inquiry modal, the inquiry details form, the quote form, the engine's
+  product lines and the sales-order lines; total sq ft shows on the
+  register KPI strip, the inquiry/quote/PI/CI/order screens and the
+  Reports/Control Center KPIs. `line_total` is therefore app-maintained
+  (no longer a `GENERATED` column). **Run once on the live DB:
+  `db/2026-10-17b-b2b-area-pricing.sql`** before this code goes live — it
+  adds the size columns and converts both `line_total` columns (existing
+  values are preserved).
 
 **Round 4 — fix pass (2026-10-03)** — five reported gaps, all fixed:
 

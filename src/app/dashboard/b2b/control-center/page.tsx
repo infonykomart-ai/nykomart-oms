@@ -3,7 +3,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { BarChart, DonutChart, LineChart, type BarDatum, type DonutDatum, type LineSeriesDef } from "@/components/simple-charts";
-import { fmtMoney, round2 } from "@/lib/b2b/erp";
+import { dimsFromSizeSpec, fmtMoney, lineArea, round2 } from "@/lib/b2b/erp";
 import { B2BNav } from "../b2b-nav";
 
 // 2026-10-02d — B2B EXPORT CONTROL CENTER (spec §1 + §27 + §30): the home
@@ -60,7 +60,9 @@ export default async function B2BControlCenterPage() {
       .eq("company_id", companyId)
       .order("order_date", { ascending: false }),
     supabase.from("b2b_order_payments").select("id, order_id, due_date, amount, received_amount").eq("company_id", companyId),
-    supabase.from("b2b_sales_order_items").select("order_id, product_id, description, line_total, line_cost"),
+    // `*` (2026-10-17b) — qty/unit/size feed the "kitna sq ft maal hua"
+    // KPI; `*` also keeps loading before the area-pricing migration runs.
+    supabase.from("b2b_sales_order_items").select("*"),
     supabase
       .from("b2b_inquiries")
       .select("id, status, follow_up_date, inquiry_date, buyer_name, buyer_id")
@@ -113,6 +115,20 @@ export default async function B2BControlCenterPage() {
   );
   const expensesYear = round2(expenses.reduce((s, e) => s + Number(e.amount_inr), 0));
   const netProfitYear = round2(grossProfitYear - expensesYear);
+
+  // 2026-10-17b — total area sold this FY (sized lines via size × qty,
+  // area-unit lines with no size via their qty) — the register's answer to
+  // "kitna sq ft maal hua" at a glance.
+  const fyOrderIds = new Set(activeOrders.filter((o) => o.order_date >= fyStart).map((o) => o.id));
+  const areaSqFtYear = round2(
+    items.reduce((s, it) => {
+      if (!fyOrderIds.has(it.order_id)) return s;
+      const dims = dimsFromSizeSpec(Number(it.qty) || 0, it.size);
+      if (dims) return s + dims.sqFt;
+      const area = lineArea({ qty: Number(it.qty) || 0, unit: it.unit });
+      return s + (area ? area.sqFt : 0);
+    }, 0)
+  );
 
   // ── receivable / overdue (the payment schedule, excluding cancelled orders)
   let receivable = 0;
@@ -273,6 +289,11 @@ export default async function B2BControlCenterPage() {
         <Kpi label="Raw Material Value" value={fmtMoney(rawMaterialValue)} tone="slate" />
         <Kpi label="Gross Profit (FY)" value={fmtMoney(grossProfitYear)} tone={grossProfitYear >= 0 ? "green" : "red"} />
         <Kpi label="Net Profit (FY)" value={fmtMoney(netProfitYear)} tone={netProfitYear >= 0 ? "green" : "red"} />
+        <Kpi
+          label="Area sold (FY)"
+          value={areaSqFtYear > 0 ? `${areaSqFtYear.toLocaleString("en-US", { maximumFractionDigits: 0 })} sq ft` : "—"}
+          tone={areaSqFtYear > 0 ? "green" : "slate"}
+        />
       </div>
 
       {/* ── alerts ───────────────────────────────────────────────────────── */}

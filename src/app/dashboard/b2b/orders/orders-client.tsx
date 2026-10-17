@@ -13,10 +13,14 @@ import { useMemo, useState, useTransition } from "react";
 import type { Database } from "@/types/database";
 import {
   computeOrderPnl,
+  dimsFromSizeSpec,
   fmtMoney,
+  formatDims,
+  lineArea,
   ORDER_STATUSES,
   PAYMENT_MODES,
   round2,
+  SQFT_TO_SQM,
   statusTone,
 } from "@/lib/b2b/erp";
 import {
@@ -233,10 +237,24 @@ export function OrdersClient({ orders }: { orders: OrderListItem[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {open.order_items.map((it) => (
+                  {open.order_items.map((it) => {
+                    // 2026-10-17b — size + area per line ("kitna sq ft maal
+                    // hua"); line_total is already the area-priced amount
+                    // (server stores it through lineAmount).
+                    const dims = dimsFromSizeSpec(num(it.qty), it.size);
+                    const area = dims ? { sqFt: dims.sqFt, sqMtr: dims.sqMtr } : lineArea({ qty: num(it.qty), unit: it.unit });
+                    return (
                     <tr key={it.id} className="border-b border-slate-100 last:border-0">
-                      <td className="py-1.5 pl-3 pr-3 text-slate-800">{it.description}</td>
-                      <td className="py-1.5 pr-3 text-right">{num(it.qty)}</td>
+                      <td className="py-1.5 pl-3 pr-3 text-slate-800">
+                        {it.description}
+                        {it.size && <span className="ml-1 text-[11px] text-slate-400">({it.size})</span>}
+                        {area && (
+                          <div className="text-[11px] font-medium text-emerald-700">
+                            📐 {formatDims({ sqFt: area.sqFt, sqMtr: area.sqMtr, cbm: dims?.cbm ?? 0 })}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-3 text-right">{num(it.qty)} <span className="text-[11px] text-slate-400">{it.unit}</span></td>
                       <td className="py-1.5 pr-3 text-right">{fmtMoney(num(it.unit_price), open.currency)}</td>
                       <td className="py-1.5 pr-3 text-right text-slate-500">{fmtMoney(num(it.unit_cost), open.currency)}</td>
                       <td className="py-1.5 pr-3 text-right font-semibold">{fmtMoney(it.line_total, open.currency)}</td>
@@ -244,9 +262,27 @@ export function OrdersClient({ orders }: { orders: OrderListItem[] }) {
                         {fmtMoney(it.line_total - it.line_cost, open.currency)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
+              {(() => {
+                const totalSqFt = round2(
+                  open.order_items.reduce((s, it) => {
+                    const dims = dimsFromSizeSpec(num(it.qty), it.size);
+                    if (dims) return s + dims.sqFt;
+                    const area = lineArea({ qty: num(it.qty), unit: it.unit });
+                    return s + (area ? area.sqFt : 0);
+                  }, 0)
+                );
+                if (!(totalSqFt > 0)) return null;
+                return (
+                  <div className="border-t border-slate-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-medium text-emerald-800">
+                    📐 Total: {totalSqFt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft
+                    <span className="opacity-70"> ({round2(totalSqFt * SQFT_TO_SQM).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq mtr)</span>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="mb-4 grid gap-4 lg:grid-cols-2">

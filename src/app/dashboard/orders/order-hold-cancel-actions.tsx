@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState, useMemo, useState, useTransition } from "react";
+import { A4Dialog } from "@/components/a4-dialog";
+import { PrintArea } from "@/components/print-view";
 import { holdOrder, cancelOrder, returnOrder, saveOrderRefund, type OrderRefundState } from "./actions";
 
 const inputClass =
@@ -83,6 +85,13 @@ export function OrderHoldCancelActions({
   const [shippingRefund, setShippingRefund] = useState("");
   const [dutyRefund, setDutyRefund] = useState("");
   const [refundAmount, setRefundAmount] = useState("");
+  // 2026-10-17 — "refund vala system … iske liye bhi A4 size dialog box
+  // open ho": the form now lives in the shared A4Dialog WITH a printable
+  // refund sheet below it, so date/reason are controlled state too (the
+  // sheet prints exactly what's on screen).
+  const [refundDate, setRefundDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [refundReason, setRefundReason] = useState("");
+  const [refundCurrency, setRefundCurrency] = useState(order.order_currency);
 
   const orderValueRefundAmount = useMemo(() => {
     if (!refundBasisPercent) return 0;
@@ -229,10 +238,50 @@ export function OrderHoldCancelActions({
       </div>
       {error && <p className="text-xs text-red-600">{error}</p>}
 
+      {/* 2026-10-17 — the refund form now opens in the SHARED A4 dialog
+          (same one every edit/view/print surface in the app uses) with a
+          printable refund sheet under it: fill the form, press Save — or
+          Print the sheet first for a paper/PDF record. Same server action,
+          same validation, same credit-note/restock behaviour as before. */}
       {showRefundForm && (
-        <form action={refundAction} className="w-72 space-y-1.5 rounded-lg border border-teal-200 bg-teal-50/50 p-2.5">
-          <input type="hidden" name="order_id" value={order.id} />
-          {refundState.error && <p className="text-xs text-red-600">{refundState.error}</p>}
+        <A4Dialog
+          open
+          onClose={() => setShowRefundForm(false)}
+          title={`Refund — ${order.ref_no}`}
+          subtitle={`Order value ${Number(order.order_value_original || 0).toFixed(2)} ${order.order_currency} · status ${order.status}`}
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                🖨 Print Refund Sheet
+              </button>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowRefundForm(false)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  form="order-refund-form"
+                  disabled={refundPending}
+                  className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                >
+                  {refundPending ? "Saving…" : "Save Refund"}
+                </button>
+              </div>
+            </div>
+          }
+        >
+          <div className="mx-auto w-full max-w-3xl space-y-4">
+            <form id="order-refund-form" action={refundAction} className="space-y-2.5 rounded-lg border border-teal-200 bg-teal-50/50 p-3">
+              <input type="hidden" name="order_id" value={order.id} />
+              {refundState.error && <p className="text-xs text-red-600">{refundState.error}</p>}
 
           {/* 2026-08-25 — refund calculator: pick a % of order value and/or
               type Shipping/Duty amounts, they auto-sum into Refund Amount
@@ -295,56 +344,130 @@ export function OrderHoldCancelActions({
           <input type="hidden" name="shipping_refund_amount" value={shippingRefund || 0} />
           <input type="hidden" name="duty_refund_amount" value={dutyRefund || 0} />
 
-          <div className="grid grid-cols-2 gap-1.5">
-            <div>
-              <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Refund Amount *</label>
-              <input
-                name="refund_amount"
-                type="number"
-                step="0.01"
-                min="0"
-                required
-                value={refundAmount}
-                onChange={(e) => setRefundAmount(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Currency</label>
-              <select name="refund_currency" defaultValue={order.order_currency} className={inputClass}>
-                {currencies.length > 0
-                  ? currencies.map((c) => (
-                      <option key={c.code} value={c.code}>{c.code}</option>
-                    ))
-                  : ["USD", "INR", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div>
+                  <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Refund Amount *</label>
+                  <input
+                    name="refund_amount"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={refundAmount}
+                    onChange={(e) => setRefundAmount(e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Currency</label>
+                  <select
+                    name="refund_currency"
+                    value={refundCurrency}
+                    onChange={(e) => setRefundCurrency(e.target.value)}
+                    className={inputClass}
+                  >
+                    {currencies.length > 0
+                      ? currencies.map((c) => (
+                          <option key={c.code} value={c.code}>{c.code}</option>
+                        ))
+                      : ["USD", "INR", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Refund Date *</label>
+                  <input
+                    name="refund_date"
+                    type="date"
+                    required
+                    value={refundDate}
+                    onChange={(e) => setRefundDate(e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Reason</label>
+                  <input name="reason" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} className={inputClass} />
+                </div>
+              </div>
+            </form>
+
+            {/* Printable refund sheet — prints A4 (the shared PrintArea's
+                @page) with only this sheet visible, exactly like every
+                other in-page dialog document in the app. */}
+            <PrintArea id={`refund-sheet-${order.id}`}>
+              <article className="rounded-lg border border-slate-200 bg-white p-6 text-slate-900 print:rounded-none print:border-0 print:p-0">
+                <header className="flex items-start justify-between gap-4 border-b-2 border-slate-800 pb-3">
+                  <div>
+                    <h1 className="text-lg font-bold tracking-wide text-slate-900">REFUND RECORD</h1>
+                    <p className="text-[11px] uppercase tracking-wider text-slate-500">
+                      Cancel / Return / Goodwill refund — order {order.ref_no}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-slate-500">
+                    <div className="text-sm font-semibold text-slate-900">{order.ref_no}</div>
+                    <div>Date: {refundDate}</div>
+                  </div>
+                </header>
+
+                <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 text-sm">
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Order Status</dt>
+                    <dd className="text-slate-800">{order.status}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Order Value</dt>
+                    <dd className="text-slate-800">
+                      {Number(order.order_value_original || 0).toFixed(2)} {order.order_currency}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Basis</dt>
+                    <dd className="text-slate-800">
+                      {refundBasisPercent ? `${refundBasisPercent}% of order value` : "Manual"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Order Value Portion</dt>
+                    <dd className="text-slate-800">
+                      {orderValueRefundAmount ? `${orderValueRefundAmount.toFixed(2)} ${order.order_currency}` : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Shipping Refund</dt>
+                    <dd className="text-slate-800">{Number(shippingRefund || 0) > 0 ? Number(shippingRefund).toFixed(2) : "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Duty &amp; Taxes Refund</dt>
+                    <dd className="text-slate-800">{Number(dutyRefund || 0) > 0 ? Number(dutyRefund).toFixed(2) : "—"}</dd>
+                  </div>
+                  <div className="col-span-2">
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reason</dt>
+                    <dd className="text-slate-800">{refundReason || "—"}</dd>
+                  </div>
+                </dl>
+
+                <div className="mt-5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 print:border-slate-300 print:bg-white">
+                  <span className="text-sm font-semibold text-slate-600">Refund Amount</span>
+                  <span className="text-lg font-bold text-slate-900">
+                    {(Number(refundAmount) || 0).toFixed(2)} {refundCurrency}
+                  </span>
+                </div>
+
+                <p className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600">
+                  On save: an invoiced order auto-generates a Credit Note for this amount, the goods are
+                  restocked, and the entry appears under Returns &amp; Refunds. Totals can never exceed the
+                  order&apos;s own value.
+                </p>
+
+                <div className="mt-12 flex justify-end">
+                  <div className="w-52 border-t border-slate-400 pt-1 text-center text-[11px] text-slate-500">
+                    Authorised Signatory
+                  </div>
+                </div>
+              </article>
+            </PrintArea>
           </div>
-          <div>
-            <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Refund Date *</label>
-            <input name="refund_date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} className={inputClass} />
-          </div>
-          <div>
-            <label className="mb-0.5 block text-[10px] font-medium text-slate-500">Reason</label>
-            <input name="reason" className={inputClass} />
-          </div>
-          <div className="flex gap-1.5">
-            <button
-              type="submit"
-              disabled={refundPending}
-              className="flex-1 rounded-lg bg-teal-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
-            >
-              {refundPending ? "Saving…" : "Save Refund"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowRefundForm(false)}
-              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
+        </A4Dialog>
       )}
     </div>
   );

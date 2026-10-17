@@ -66,9 +66,14 @@ export default async function B2BPage() {
         (r) => r,
         (err) => ({ data: null, error: err as { message: string } })
       ),
+    // 2026-10-17b — `*` (not an explicit column list) so the new Size
+    // column simply appears once db/2026-10-17b-b2b-area-pricing.sql has
+    // run, and the legacy shape still loads if it hasn't — an explicit
+    // select of a missing column would fail into the swallowing handler
+    // below and show an EMPTY items list instead of a partial one.
     supabase
       .from("b2b_inquiry_items")
-      .select("inquiry_id, description, qty, unit, unit_price, remark, display_order")
+      .select("*")
       .order("display_order")
       .then(
         (r) => r,

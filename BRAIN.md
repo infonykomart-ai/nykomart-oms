@@ -544,6 +544,44 @@ row. Now that page renders the same component and lists the order's existing ref
 
 No schema change, no new actions — the same server actions, caps and Credit Note/restock behavior.
 
+## 5p. Round 2026-10-17 — refund A4 dialog + B2B area (sq ft) pricing (2026-10-17)
+
+**A. Refund opens in the shared A4 dialog.** `orders/order-hold-cancel-actions.tsx`'s refund form
+(the one the Orders hub row AND the order's own page both render) now opens inside `A4Dialog` with a
+**printable REFUND RECORD sheet** under the form (PrintArea → A4 `@page`, prints sheet only, footer
+Print button). Form layout widened to the dialog; date/reason/currency became controlled state so the
+sheet always mirrors the screen. Same `saveOrderRefund` action, caps, Credit Note and restock — nothing
+server-side changed.
+
+**B. B2B area pricing — "RATE PER SQ FT ME HAI … CALCULATION BHI USI HISAB SE HO".**
+- **One formula**: `lineAmount()` (`src/lib/b2b/erp.ts`) — area unit (`sq ft` / `per sq ft` /
+  `sq mtr` / `per sq mtr`) + a Size → **qty × L × W × rate**; area unit without a Size → qty *is* the
+  area; every other unit → qty × rate (unchanged). `lineArea()`, `sumSqFt()` (per-view) and
+  `computeCosting()`'s selling value all route through it, so inquiry → quotation → PI/CI → share
+  message → sales order → reports → Control Center → B2B P&L can never disagree. Verified with the
+  compiled functions: 5,000 pcs of 2.6×10 ft @ 5/sq ft = **650,000** (qty×rate would say 25,000);
+  legacy `pcs` lines byte-identical to before.
+- **`parseSizeSpec` fixed**: per-part units (`"3 ft * 400 mtr"` used to parse as 3 m × 400 m). Mixed
+  units normalise to metres at full precision (no round2 in the middle of the maths).
+- **`computeItemDims` de-duplicated rounding**: `sqFt` now derives from the unrounded m² product
+  (the old `round2(round2(sqMtr)/0.09290304)` printed 130,000.05 sq ft on exactly 130,000).
+- **Schema** (`db/2026-10-17b-b2b-area-pricing.sql`, folded into `db/schema.sql`, types hand-updated):
+  size columns on `b2b_inquiry_items` AND `b2b_sales_order_items`; `line_total` on
+  `b2b_quotation_items` / `b2b_sales_order_items` stops being `GENERATED (qty × rate)` and becomes
+  app-maintained (existing rows keep their value). **Must run on the live DB before this ships.**
+- **Entry surfaces**: Size input + live 📐/💰 preview line + running total on the New Inquiry modal,
+  the inquiry details form, the quote form's item grid, the Quotation Engine's product lines, and the
+  sales-order line (engine carries `size` into both saves).
+- **Visibility**: register KPI "Asked Area", inquiry detail list, quote summary + item table
+  (Total sq ft · sq mtr), PI/CI/PL document sheet, Sales Order detail (per line + total), Reports
+  `Area sold (FY)`, Control Center `Area sold (FY)`.
+- **Bug fixed on the way**: the inquiry details dialog rendered TWO "Asked-for Items" grids — the
+  first edited a dead `items` state `saveDetails` never submitted, so unit/rate/size typed there never
+  reached the server ("ye to kam hi nahi kar raha"). One grid now, the one that saves.
+- **Verified**: scoped `tsc` over every changed file → 0 errors; ESLint on them → clean; pure-maths
+  spot checks above; full `tsc -b` still OOMs in this 2 GB sandbox, so CI's build (lint + tsc +
+  next build) + schema-check are the final gate.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

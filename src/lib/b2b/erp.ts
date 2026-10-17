@@ -76,7 +76,11 @@ export const PRODUCT_SPECS: Record<ProductType, SpecField[]> = {
 
 // ── Costing engine (spec §5 / §6) ───────────────────────────────────────────
 
-export type CostingLine = { qty: number; unitCost: number; unitPrice: number };
+// 2026-10-17b — optional unit/size: when the line is priced by area (per
+// sq ft / per sq mtr + a size spec) the SELLING value is area × rate, not
+// qty × rate, so computeCosting routes every line through lineAmount().
+// unitCost stays per-PIECE (product master cost), unchanged.
+export type CostingLine = { qty: number; unitCost: number; unitPrice: number; unit?: string | null; size?: string | null };
 
 export type CostingResult = {
   productCost: number; // Σ qty × unit cost
@@ -103,7 +107,9 @@ export function computeCosting(input: {
   discount?: number;
 }): CostingResult {
   const productCost = round2(input.lines.reduce((s, l) => s + (l.qty || 0) * (l.unitCost || 0), 0));
-  const sellingValue = round2(input.lines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0));
+  const sellingValue = round2(
+    input.lines.reduce((s, l) => s + lineAmount({ qty: l.qty, unit: l.unit, unitPrice: l.unitPrice, size: l.size }), 0)
+  );
   const packingCost = round2(input.packingCost ?? 0);
   const freightCost = round2(input.freight ?? 0);
   const otherCosts = round2(input.otherCosts ?? 0);
@@ -549,27 +555,52 @@ export type ParsedSize = { length: number; width: number; thickness: number | nu
  * Parses a free-typed size spec into length × width (× optional thickness)
  * + the unit. Accepts the shapes people actually type:
  *   "2 × 6 feet" / "2x6" / "2 * 6" / "60 x 90 cm" / "2×6×0.05 ft" / "4 x 6"
- * Separator: ×, x, X, * (not the letter x inside words). Unit is optional
- * (defaults to ft — this business's rug/dhurrie sizes are feet-first) and
- * recognised anywhere in the string. Returns null for anything unparseable
+ *   "3 ft * 400 mtr" — each part may carry its OWN unit (converted to a
+ *   common one below; the old single-unit parser read this as 3 m × 400 m).
+ * Separator: ×, x, X, * (not the letter x inside words). A part with no
+ * unit takes the FIRST unit written anywhere in the spec ("2.6 x 6 ft" →
+ * both in ft); with no unit at all it defaults to ft — this business's
+ * rug/dhurrie sizes are feet-first. Returns null for anything unparseable
  * so the UI can simply show no preview rather than a wrong number.
  */
 export function parseSizeSpec(text: string): ParsedSize | null {
   const raw = (text || "").trim().toLowerCase();
   if (!raw) return null;
 
-  // Unit: last word-ish token that matches an alias (also accepts bare ' / ").
-  let unit: SizeUnit = "ft";
-  const unitMatch = raw.match(/(?:^|[^a-z"])(ft|feet|foot|mtr|meter|metre|meters|metres|m|cm|centimeters?|centimetres?|inch|inches|in|["'])\s*$/);
-  if (unitMatch) unit = SIZE_UNIT_ALIASES[unitMatch[1]] ?? "ft";
+  const parts = raw.split(/\s*[×x*]\s*/).filter((p) => p.trim());
+  const parsedParts: { value: number; unit: SizeUnit | null }[] = [];
+  for (const part of parts) {
+    const m = part.match(/(\d+(?:\.\d+)?)\s*([a-z"'°]+)?/);
+    if (!m) continue;
+    const value = Number(m[1]);
+    if (!(value > 0)) continue;
+    const token = m[2] ? m[2].trim() : "";
+    parsedParts.push({ value, unit: token ? (SIZE_UNIT_ALIASES[token] ?? null) : null });
+  }
+  if (parsedParts.length < 2) return null;
 
-  // Numbers: pull every decimal number BEFORE stripping the unit word so
-  // "in" (inch alias) never leaks into the number list as part of a word.
-  const numbers = (raw.match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
-  if (numbers.length < 2) return null;
-  const [length, width, thickness] = numbers;
-  if (!(length > 0) || !(width > 0)) return null;
-  return { length, width, thickness: thickness && thickness > 0 ? thickness : null, unit };
+  // Default unit for the parts that didn't write one: the first unit the
+  // spec does mention (or ft — feet-first business default).
+  const explicit = parsedParts.find((p) => p.unit);
+  const fallback: SizeUnit = explicit?.unit ?? "ft";
+  const [l, w, t] = parsedParts.map((p) => ({ value: p.value, unit: p.unit ?? fallback }));
+  if (l.value <= 0 || w.value <= 0) return null;
+
+  // Mixed units ("3 ft * 400 mtr") → normalise everything to metres so the
+  // single-unit computeItemDims() maths stays exact.
+  const units = [l.unit, w.unit, ...(t ? [t.unit] : [])];
+  const sameUnit = units.every((u) => u === units[0]);
+  if (sameUnit) {
+    return { length: l.value, width: w.value, thickness: t ? t.value : null, unit: units[0] };
+  }
+  // Full precision (not round2) — these feed the area maths; rounding
+  // here would compound into a visibly wrong sq ft on large quantities.
+  return {
+    length: l.value * METERS_PER[l.unit],
+    width: w.value * METERS_PER[w.unit],
+    thickness: t ? t.value * METERS_PER[t.unit] : null,
+    unit: "m",
+  };
 }
 
 const METERS_PER: Record<SizeUnit, number> = { ft: 0.3048, m: 1, cm: 0.01, inch: 0.0254 };
@@ -601,9 +632,15 @@ export function computeItemDims(input: { qty: number; length: number; width: num
   const lM = lengthToMeters(input.length, input.unit);
   const wM = lengthToMeters(input.width, input.unit);
   const tM = input.thickness ? lengthToMeters(input.thickness, input.unit) : 0;
-  const sqMtr = round2(qty * lM * wM);
-  const sqFt = round2(sqMtr / SQFT_TO_SQM);
-  const cbm = tM > 0 ? round2(qty * lM * wM * tM) : 0;
+  // 2026-10-17 — both figures derive from the SAME unrounded product
+  // (sqFt from exact square metres ÷ 0.09290304). The old
+  // `sqFt = round2(round2(sqMtr) / SQFT_TO_SQM)` double-rounded and showed
+  // e.g. 130,000.05 sq ft on 5,000 pcs of 2.6 × 10 ft — wrong on a priced
+  // line, where the amount is area × rate.
+  const areaM2 = qty * lM * wM;
+  const sqMtr = round2(areaM2);
+  const sqFt = round2(areaM2 / SQFT_TO_SQM);
+  const cbm = tM > 0 ? round2(areaM2 * tM) : 0;
   return { sqFt, sqMtr, cbm };
 }
 
@@ -620,6 +657,61 @@ export function formatDims(d: ItemDims): string {
   if (d.sqFt > 0) parts.push(`${d.sqMtr.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq mtr`);
   if (d.cbm > 0) parts.push(`${d.cbm.toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} CBM`);
   return parts.join(" · ");
+}
+
+// ── Area-based line pricing (2026-10-17) ─────────────────────────────────────
+// "RATE PER SQ FT ME HAI KI 5 SQ FT TO CALCULATION BHI USI HISAB SE HO" —
+// when an item is priced by area (sq ft / sq mtr, with or without the
+// "per" prefix), qty × rate is WRONG for a sized piece: 5,000 pcs of
+// 2.6 × 10 ft at 5/sq ft is 65,000 sq ft × 5 = 325,000 — not 25,000.
+// Every money surface (inquiry lines, quotation subtotal + line_total,
+// engine, sales orders, PI/CI print, reports, control centre, payments
+// against them) goes through ONE lineAmount() so they can never disagree.
+//
+// Rules (deliberately small — units the app actually sells by):
+//   • area unit + a size spec → measure = qty × L × W in that unit
+//   • area unit + no size    → qty IS the area (e.g. "5000 sq ft")
+//   • anything else          → qty × rate, exactly as before
+// Length "per …" units (per mtr / per feet / per inch) stay qty × rate: a
+// single linear dimension for a sized piece is ambiguous (length vs width
+// of a rug) and guessing would silently price documents wrong.
+
+export const AREA_RATE_UNITS = ["sq ft", "sq mtr", "per sq ft", "per sq mtr"] as const;
+
+export function isAreaUnit(unit: string | null | undefined): boolean {
+  const u = (unit ?? "").trim().toLowerCase();
+  return (AREA_RATE_UNITS as readonly string[]).includes(u);
+}
+
+export type LineArea = { sqFt: number; sqMtr: number };
+
+/**
+ * The area a line covers, in both units — null for non-area units (they
+ * have no area meaning, callers must fall back to qty).
+ */
+export function lineArea(input: { qty: number; unit?: string | null; size?: string | null }): LineArea | null {
+  const unit = (input.unit ?? "").trim().toLowerCase();
+  if (!(AREA_RATE_UNITS as readonly string[]).includes(unit)) return null;
+  const dims = dimsFromSizeSpec(input.qty, input.size);
+  if (dims) return { sqFt: dims.sqFt, sqMtr: dims.sqMtr };
+  const qty = Math.max(0, input.qty || 0);
+  return unit.includes("sq mtr")
+    ? { sqFt: round2(qty / SQFT_TO_SQM), sqMtr: round2(qty) }
+    : { sqFt: round2(qty), sqMtr: round2(qty * SQFT_TO_SQM) };
+}
+
+/** The ONE line-amount formula: area × rate for area units, qty × rate otherwise. */
+export function lineAmount(input: { qty: number; unit?: string | null; unitPrice?: number | null; size?: string | null }): number {
+  const rate = Math.max(0, input.unitPrice || 0);
+  const area = lineArea(input);
+  if (!area) return round2(Math.max(0, input.qty || 0) * rate);
+  const measure = (input.unit ?? "").trim().toLowerCase().includes("sq mtr") ? area.sqMtr : area.sqFt;
+  return round2(measure * rate);
+}
+
+/** Σ lineAmount over a set of lines — the subtotal formula for every doc. */
+export function linesSubtotal<T extends { qty: number; unit?: string | null; unitPrice?: number | null; size?: string | null }>(lines: T[]): number {
+  return round2(lines.reduce((s, l) => s + lineAmount(l), 0));
 }
 
 // ── Professional send template (2026-10-13 round 2) ─────────────────────────

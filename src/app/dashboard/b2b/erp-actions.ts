@@ -15,7 +15,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import { todayIST } from "@/lib/attendance/ist-date";
-import { computeCosting, formatSku, PRODUCT_TYPES, SKU_PREFIX, type ProductType } from "@/lib/b2b/erp";
+import { computeCosting, formatSku, lineAmount, parseSizeSpec, PRODUCT_TYPES, SKU_PREFIX, type ProductType } from "@/lib/b2b/erp";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -392,6 +392,8 @@ export type EngineLineInput = {
   unit?: string;
   unitPrice: string;
   unitCost: string;
+  /** 2026-10-17b — size spec ("2.6 × 10 ft"): area units price by area. */
+  size?: string;
 };
 
 export type EngineQuotationInput = {
@@ -427,9 +429,11 @@ export async function saveEngineQuotation(input: EngineQuotationInput): Promise<
   const lines = input.lines.filter((l) => l.description.trim() && num(l.qty) > 0);
   if (lines.length === 0) return { ok: false, error: "Add at least one line with a description and qty." };
 
-  const subtotal = Math.round(lines.reduce((s, l) => s + num(l.qty) * num(l.unitPrice), 0) * 100) / 100;
+  // 2026-10-17b — area-aware: a "per sq ft" line with a Size bills
+  // qty × L × W × rate (lineAmount), same formula the register/PI/P&L read.
+  const subtotal = Math.round(lines.reduce((s, l) => s + lineAmount({ qty: num(l.qty), unit: l.unit, unitPrice: num(l.unitPrice), size: l.size }), 0) * 100) / 100;
   const costing = computeCosting({
-    lines: lines.map((l) => ({ qty: num(l.qty), unitCost: num(l.unitCost), unitPrice: num(l.unitPrice) })),
+    lines: lines.map((l) => ({ qty: num(l.qty), unitCost: num(l.unitCost), unitPrice: num(l.unitPrice), unit: l.unit, size: l.size })),
     packingCost: num(input.packingCost),
     freight: num(input.freightCost),
     otherCosts: num(input.otherCosts),
@@ -502,14 +506,23 @@ export async function saveEngineQuotation(input: EngineQuotationInput): Promise<
   // Replace line items (engine owns the item rows).
   const { error: del } = await supabase.from("b2b_quotation_items").delete().eq("quotation_id", quotationId);
   if (del) return { ok: false, error: del.message };
-  const itemRows = lines.map((l, idx) => ({
-    quotation_id: quotationId,
-    description: l.description.trim(),
-    qty: num(l.qty),
-    unit: l.unit?.trim() || "pcs",
-    unit_price: Math.max(0, num(l.unitPrice)),
-    display_order: idx,
-  }));
+  const itemRows = lines.map((l, idx) => {
+    const parsed = parseSizeSpec(l.size ?? "");
+    return {
+      quotation_id: quotationId,
+      description: l.description.trim(),
+      qty: num(l.qty),
+      unit: l.unit?.trim() || "pcs",
+      unit_price: Math.max(0, num(l.unitPrice)),
+      display_order: idx,
+      size: l.size?.trim() || null,
+      size_length: parsed?.length ?? null,
+      size_width: parsed?.width ?? null,
+      size_thickness: parsed?.thickness ?? null,
+      size_unit: parsed?.unit ?? null,
+      line_total: lineAmount({ qty: num(l.qty), unit: l.unit, unitPrice: num(l.unitPrice), size: l.size }),
+    };
+  });
   const { error: ins } = await supabase.from("b2b_quotation_items").insert(itemRows);
   if (ins) return { ok: false, error: ins.message };
 

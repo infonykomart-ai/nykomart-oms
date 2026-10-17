@@ -2,7 +2,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { BarChart, type BarDatum } from "@/components/simple-charts";
-import { fmtMoney, round2 } from "@/lib/b2b/erp";
+import { dimsFromSizeSpec, fmtMoney, lineArea, round2 } from "@/lib/b2b/erp";
 import { B2BNav } from "../b2b-nav";
 
 // 2026-10-02d — Analytics / Reports (spec §22 + §23 + §29): month-wise
@@ -26,7 +26,9 @@ export default async function B2BReportsPage() {
         "id, order_no, status, order_date, sales_value, exchange_rate, buyer_id, destination_country, product_cost, labour_cost, packing_cost, freight_cost, documentation_cost, bank_charges, other_costs"
       )
       .eq("company_id", companyId),
-    supabase.from("b2b_sales_order_items").select("order_id, product_id, description, qty, line_total, line_cost"),
+    // `*` (2026-10-17b) — includes unit/size for the sq-ft figure and
+    // keeps loading even before db/2026-10-17b-b2b-area-pricing.sql runs.
+    supabase.from("b2b_sales_order_items").select("*"),
     supabase.from("b2b_order_payments").select("order_id, amount, received_amount, due_date").eq("company_id", companyId),
     supabase.from("b2b_buyers").select("id, name, country, salesperson").eq("company_id", companyId),
     supabase.from("b2b_productions").select("status, planned_qty, produced_qty").eq("company_id", companyId),
@@ -145,6 +147,19 @@ export default async function B2BReportsPage() {
     }, 0)
   );
 
+  // 2026-10-17b — "kitna sq ft maal hua": total area of the FY's order
+  // lines (cancelled orders excluded, same set revenue is computed from).
+  const fyOrderIds = new Set(fyOrders.map((o) => o.id));
+  const areaSqFt = round2(
+    items.reduce((s, it) => {
+      if (!fyOrderIds.has(it.order_id)) return s;
+      const dims = dimsFromSizeSpec(Number(it.qty) || 0, it.size);
+      if (dims) return s + dims.sqFt;
+      const area = lineArea({ qty: Number(it.qty) || 0, unit: it.unit });
+      return s + (area ? area.sqFt : 0);
+    }, 0)
+  );
+
   const prodSummary = {
     planned: round2(productions.reduce((s, p) => s + Number(p.planned_qty), 0)),
     produced: round2(productions.reduce((s, p) => s + Number(p.produced_qty), 0)),
@@ -165,13 +180,18 @@ export default async function B2BReportsPage() {
       </header>
 
       {/* finance strip */}
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <Fin label="Revenue (FY)" value={fmtMoney(revenue)} />
         <Fin label="Cost (FY)" value={fmtMoney(cost)} />
         <Fin label="Gross profit" value={fmtMoney(grossProfit)} tone={grossProfit >= 0 ? "green" : "red"} />
         <Fin label="Expenses (FY)" value={fmtMoney(expenseTotal)} />
         <Fin label="Net profit" value={fmtMoney(round2(grossProfit - expenseTotal))} tone={grossProfit - expenseTotal >= 0 ? "green" : "red"} />
         <Fin label="Receivable" value={fmtMoney(receivable)} tone={receivable > 0 ? "amber" : "green"} />
+        <Fin
+          label="Area sold (FY)"
+          value={areaSqFt > 0 ? `${areaSqFt.toLocaleString("en-US", { maximumFractionDigits: 0 })} sq ft` : "—"}
+          tone={areaSqFt > 0 ? "green" : undefined}
+        />
       </div>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">

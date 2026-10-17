@@ -9,7 +9,7 @@ import { PrintArea, PrintButton } from "@/components/print-view";
 // document prints both the complete international layout AND the per-line
 // sq ft / sq mtr / CBM figures.
 import { amountInWords, formatDocMoney } from "@/lib/b2b/money-format";
-import { computeItemDims, formatDims, parseSizeSpec } from "@/lib/b2b/erp";
+import { computeItemDims, dimsFromSizeSpec, formatDims, lineArea, parseSizeSpec, SQFT_TO_SQM } from "@/lib/b2b/erp";
 import { recordDocumentPrinted } from "../../actions";
 
 // 2026-09-30 — the printable A4 face of every issued B2B commercial
@@ -178,6 +178,17 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
   const taxAmount = Math.round(subtotal * quote.tax_percent) / 100;
   const total = Math.round((subtotal * (1 + quote.tax_percent / 100) + quote.shipping_amount) * 100) / 100;
   const totalQty = (items ?? []).reduce((s, it) => s + it.qty, 0);
+  // 2026-10-17b — "confirm ho sake ki kitna sq ft maal hua": the document's
+  // total area, from the SAME dims maths every other surface uses (sized
+  // lines via size × qty; area-unit lines with no size count their qty).
+  const totalSqFt = Math.round(
+    (items ?? []).reduce((s, it) => {
+      const dims = dimsFromSizeSpec(it.qty, it.size);
+      if (dims) return s + dims.sqFt;
+      const area = lineArea({ qty: it.qty, unit: it.unit });
+      return s + (area ? area.sqFt : 0);
+    }, 0) * 100
+  ) / 100;
   const copyMark = COPY_MARKS[doc.copy_no] ?? `COPY ${doc.copy_no}`;
   const companyName = company?.name ?? "Nykomart";
 
@@ -390,6 +401,13 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                 )}
               </tbody>
             </table>
+
+            {totalSqFt > 0 && (
+              <div className="mt-3 border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                📐 Total area: {totalSqFt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft
+                <span className="opacity-70"> ({(totalSqFt * SQFT_TO_SQM).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq mtr)</span>
+              </div>
+            )}
 
             {!isPL && quote.product_specs?.trim() && (
               <div className="mt-3 border border-slate-200 bg-slate-50/60 px-3 py-2">
