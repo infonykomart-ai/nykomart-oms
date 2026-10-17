@@ -1,9 +1,10 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, summarizeLeaveDetail, computeDeduction } from "@/lib/attendance/payroll";
+import { categorizeMonth, computeMonthlyPayroll } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
 import { SalaryForm, type CurrentSalary } from "./salary-form";
+import { SalaryHistory, type SalaryHistoryRow } from "./salary-history";
 import { PayrollRow } from "./payroll-row";
 import { AdvanceSection, type AdvanceRow } from "./advance-section";
 import { FinanceLedger, type LedgerRow } from "./finance-ledger";
@@ -45,10 +46,7 @@ export default async function SalaryPage({
   // project (tasks table, daily_work_logs table): reads default to the
   // service-role client here from day one rather than waiting to get bitten
   // a third time. Writes (in actions.ts) already use it, as always.
-  const finSupabase = createServiceRoleClient();
-
-  const [
-    { data: teamEmployees },
+  const finSupabase = createServiceRoleClient();  const [{ data: teamEmployees },
     { data: salaryRows },
     { data: attendanceRows },
     { data: holidays },
@@ -63,7 +61,7 @@ export default async function SalaryPage({
     supabase
       .from("employee_salary")
       .select(
-        "employee_id, monthly_salary, allowed_leaves_per_month, effective_from, ctc_annual, basic_percent_of_ctc, hra_percent_of_basic, employer_pf_percent, employee_pf_percent, pf_wage_ceiling, esi_applicable, esi_employee_percent, esi_employer_percent, professional_tax_amount"
+        "id, employee_id, monthly_salary, allowed_leaves_per_month, effective_from, ctc_annual, basic_percent_of_ctc, hra_percent_of_basic, employer_pf_percent, employee_pf_percent, pf_wage_ceiling, esi_applicable, esi_employee_percent, esi_employer_percent, professional_tax_amount"
       )
       .order("effective_from", { ascending: false }),
     supabase
@@ -86,7 +84,7 @@ export default async function SalaryPage({
       .order("date_given", { ascending: false }),
     finSupabase
       .from("salary_payments")
-      .select("employee_id, net_paid_amount, payment_date, advance_deduction_amount, employee_pf_amount, employee_esi_amount, professional_tax_amount")
+      .select("id, employee_id, net_paid_amount, payment_date, advance_deduction_amount, employee_pf_amount, employee_esi_amount, professional_tax_amount")
       .eq("company_id", selectedCompanyId)
       .eq("pay_month", monthStart),
     finSupabase
@@ -157,20 +155,29 @@ export default async function SalaryPage({
       todayStr: today,
       joinDate: e.date_of_joining,
     });
-    const summary = summarizeCategories(days);
-    // 2026-09-11 (Payroll Phase 2): split Leave days into untyped (flat
-    // allowance, unchanged behavior) vs typed-paid (free, already covered
-    // by that leave type's own balance) vs typed-unpaid (always deducted —
-    // decided once at approval time, see leave/actions.ts).
-    const leaveDetail = summarizeLeaveDetail(days);
-    if (!salary) return { employee: e, salary: null, summary, deduction: null, statutory: null };
-    const deduction = computeDeduction({
+    // 2026-10-17 — one shared calculation (src/lib/attendance/payroll.ts's
+    // computeMonthlyPayroll) for base salary + Sunday/holiday extra-duty pay
+    // + unused-paid-leave encashment − attendance/manual deductions. The
+    // "Pay Salary" action calls the SAME function server-side, so this
+    // preview can never drift from what actually gets recorded.
+    if (!salary) {
+      return {
+        employee: e,
+        salary: null,
+        summary: computeMonthlyPayroll({
+          monthlySalary: 0,
+          allowedLeavesPerMonth: 0,
+          daysInThisMonth: daysThisMonth,
+          days,
+        }),
+        statutory: null,
+      };
+    }
+    const summary = computeMonthlyPayroll({
       monthlySalary: Number(salary.monthly_salary),
       allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
       daysInThisMonth: daysThisMonth,
-      counts: summary,
-      untypedLeaveDays: leaveDetail.untypedLeaveDays,
-      unpaidTypedLeaveDays: leaveDetail.unpaidTypedLeaveDays,
+      days,
     });
     // 2026-09-11 (Payroll Phase 1): a CTC-mode salary row (ctc_annual set)
     // also carries a live PF/ESI/PT preview — same calculation
@@ -191,16 +198,31 @@ export default async function SalaryPage({
           professionalTaxAmount: Number(salary.professional_tax_amount),
         })
       : null;
-    return { employee: e, salary, summary, deduction, statutory };
+    return { employee: e, salary, summary, statutory };
   });
 
   const employeeName = new Map((employeesForNames ?? []).map((e) => [e.id, e.name]));
+  const teamIds = new Set((teamEmployees ?? []).map((e) => e.id));
+  // 2026-10-17 — full version history (not just the latest per employee),
+  // so a wrong decision can actually be edited or deleted.
+  const salaryHistory: SalaryHistoryRow[] = (salaryRows ?? [])
+    .filter((r) => teamIds.has(r.employee_id))
+    .map((r) => ({
+      id: r.id,
+      employee_id: r.employee_id,
+      employee_name: employeeName.get(r.employee_id) ?? "—",
+      monthly_salary: Number(r.monthly_salary),
+      allowed_leaves_per_month: Number(r.allowed_leaves_per_month),
+      effective_from: r.effective_from,
+      ctc_annual: r.ctc_annual === null ? null : Number(r.ctc_annual),
+    }));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
   const paidByEmployee = new Map(
     (salaryPaymentsThisMonth ?? []).map((p) => [
       p.employee_id,
       {
+        id: p.id,
         net_paid_amount: Number(p.net_paid_amount),
         payment_date: p.payment_date,
         advance_deduction_amount: Number(p.advance_deduction_amount),
@@ -326,6 +348,8 @@ export default async function SalaryPage({
         <SalaryForm employees={teamEmployees ?? []} today={today} current={currentSalaryByEmployee} />
       </div>
 
+      <SalaryHistory rows={salaryHistory} />
+
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold text-slate-700">Payroll — {monthParam} ({daysThisMonth} days)</h2>
         <div className="overflow-x-auto">
@@ -334,10 +358,13 @@ export default async function SalaryPage({
               <tr className="text-slate-400">
                 <th className="py-1 pr-3">Employee</th>
                 <th className="px-2">Monthly Salary</th>
-                <th className="px-2">Allowed Leave</th>
+                <th className="px-2">Per Day</th>
                 <th className="px-2">Present/Late</th>
                 <th className="px-2">Leave</th>
                 <th className="px-2">Absent</th>
+                <th className="px-2">Extra Duty (Sun/Hol)</th>
+                <th className="px-2">Extra Duty Pay</th>
+                <th className="px-2">No-Leave Bonus</th>
                 <th className="px-2">Deducted Days</th>
                 <th className="px-2">Attendance Ded.</th>
                 <th className="px-2">Statutory Ded. (PF/ESI/PT)</th>
@@ -346,7 +373,7 @@ export default async function SalaryPage({
               </tr>
             </thead>
             <tbody>
-              {payroll.map(({ employee: e, salary, summary, deduction, statutory }) => (
+              {payroll.map(({ employee: e, salary, summary, statutory }) => (
                 <PayrollRow
                   key={e.id}
                   employeeId={e.id}
@@ -355,13 +382,17 @@ export default async function SalaryPage({
                   today={today}
                   monthlySalary={salary ? Number(salary.monthly_salary) : null}
                   allowedLeaves={salary ? Number(salary.allowed_leaves_per_month) : null}
-                  present={summary.Present + summary.Late}
-                  leave={summary.Leave}
-                  absent={summary.Absent}
-                  deductedDays={deduction?.deductedDays ?? null}
-                  deductionAmount={deduction?.deductionAmount ?? null}
-                  netPay={deduction?.netPay ?? null}
-                  hasSalarySet={!!(salary && deduction)}
+                  perDayRate={summary.perDayRate}
+                  present={summary.counts.Present + summary.counts.Late}
+                  leave={summary.counts.Leave}
+                  absent={summary.counts.Absent}
+                  extraDutyDays={summary.extras.extraDutyDays}
+                  extraDutyPay={summary.extraDutyPay}
+                  noLeaveBonusPay={summary.noLeaveBonusPay}
+                  deductedDays={summary.deductedDays}
+                  deductionAmount={summary.deductionAmount}
+                  netPay={summary.netPay}
+                  hasSalarySet={!!salary}
                   isCtc={!!statutory}
                   employeePf={statutory?.employeePf ?? 0}
                   employeeEsi={statutory?.esiEmployee ?? 0}
@@ -372,15 +403,19 @@ export default async function SalaryPage({
                 />
               ))}
               {payroll.length === 0 && (
-                <tr><td colSpan={11} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
+                <tr><td colSpan={13} className="py-3 text-center text-slate-400">No active employees in this company.</td></tr>
               )}
             </tbody>
           </table>
         </div>
         <p className="mt-3 text-xs text-slate-400">
-          Deduction = (Absent days + Half Days×0.5 + Leave days beyond the allowance) × (Monthly Salary ÷ days in month).
-          Holidays and Week Offs never cost anything. This is a common Indian-payroll convention, not a verified copy of
-          this company&apos;s written policy — tell me if the real rule is different and I&apos;ll change the formula.
+          Per Day = Monthly Salary ÷ days in that month. Extra Duty Pay = Sundays/company holidays actually worked
+          (Half Day on such a day counts 0.5) × Per Day. No-Leave Bonus = the unused paid leaves (default 1) × Per
+          Day, paid only when the employee took <strong>no</strong> leave that month and the month is complete (a
+          running month shows 0 until its last day). Deduction = (Absent days + Half
+          Days×0.5 + Leave beyond the allowance + a manual half/full-day deduction) × Per Day. Example: ₹15,000 in
+          Sep 2026 (30 days = ₹500/day) + 1 extra Sunday (+₹500) + no leave (+₹500) = ₹16,000; with one half day it
+          becomes ₹15,750.
           &quot;Pay Salary&quot; recomputes everything fresh from Attendance at the moment you click it — never from
           whatever this table happens to be showing. For an employee on a CTC Structure, Statutory Ded. (Employee
           PF + ESI + Professional Tax) is also subtracted to get Final Net — those rates are current published

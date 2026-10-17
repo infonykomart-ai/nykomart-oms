@@ -129,10 +129,18 @@ function Sheet({
   reload: () => void;
 }) {
   if (!open) return null;
+  // 2026-10-17 — print:static/print:h-auto: a fixed-position (or clipped)
+  // ancestor pins the statement to one viewport-height page, which is the
+  // same single-page clipping bug print-view.tsx documents for the dashboard
+  // shell. These classes put the sheet back into normal flow for print so
+  // "🖨 Print" from this A4 dialog paginates the whole document.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 md:p-6" onClick={close}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 md:p-6 print:static print:block print:bg-transparent print:p-0"
+      onClick={close}
+    >
       <div
-        className="flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl print:max-w-none print:rounded-none print:shadow-none"
+        className="flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl print:h-auto print:max-h-none print:max-w-none print:overflow-visible print:rounded-none print:shadow-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sheet header — sticky action bar, close button hidden in print. */}

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { daysInMonth, todayIST } from "@/lib/attendance/ist-date";
-import { categorizeMonth, summarizeCategories, summarizeLeaveDetail, computeDeduction } from "@/lib/attendance/payroll";
+import { categorizeMonth, computeMonthlyPayroll } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
 
 export type SimpleActionState = { error: string | null; success: boolean };
@@ -43,7 +43,42 @@ export async function setEmployeeSalary(_prev: SimpleActionState, formData: Form
   }
 
   const supabase = createServiceRoleClient();
-  const { error } = await supabase.from("employee_salary").insert({
+
+  // 2026-10-17 — same employee + same effective date means "edit this
+  // decision", not "insert a second row with the same date". Two rows with
+  // an identical effective_from made the "latest decided salary" pick
+  // arbitrary (both sort equal), which is exactly the confusing behaviour
+  // the user reported. Update in place when the date already exists; a NEW
+  // date still inserts a new version (history preserved).
+  const { data: existing } = await supabase
+    .from("employee_salary")
+    .select("id, employee_id")
+    .eq("employee_id", employeeId)
+    .eq("effective_from", effectiveFrom)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { error } = existing
+    ? await supabase
+        .from("employee_salary")
+        .update({
+          monthly_salary: monthlySalary,
+          allowed_leaves_per_month: allowedLeaves,
+          ctc_annual: ctcMode ? ctcAnnualRaw : null,
+          basic_percent_of_ctc: Number(formData.get("basic_percent_of_ctc") || 50),
+          hra_percent_of_basic: Number(formData.get("hra_percent_of_basic") || 50),
+          employer_pf_percent: Number(formData.get("employer_pf_percent") || 12),
+          employee_pf_percent: Number(formData.get("employee_pf_percent") || 12),
+          pf_wage_ceiling: Number(formData.get("pf_wage_ceiling") || 15000),
+          esi_applicable: ctcMode && String(formData.get("esi_applicable") || "") === "true",
+          esi_employee_percent: Number(formData.get("esi_employee_percent") || 0.75),
+          esi_employer_percent: Number(formData.get("esi_employer_percent") || 3.25),
+          professional_tax_amount: ctcMode ? Number(formData.get("professional_tax_amount") || 0) : 0,
+          pt_state: String(formData.get("pt_state") || "").trim() || null,
+        })
+        .eq("id", existing.id)
+    : await supabase.from("employee_salary").insert({
     employee_id: employeeId,
     monthly_salary: monthlySalary,
     allowed_leaves_per_month: allowedLeaves,
@@ -62,6 +97,134 @@ export async function setEmployeeSalary(_prev: SimpleActionState, formData: Form
     pt_state: String(formData.get("pt_state") || "").trim() || null,
   });
   if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/salary");
+  return { error: null, success: true };
+}
+
+/**
+ * 2026-10-17 — "sellery edit delet, modify updte, last step tak ho ye sara".
+ * Editing an existing versioned salary row (a typo / wrong figure) updates
+ * THAT row in place — it does not create another version — while a genuine
+ * raise still goes through setEmployeeSalary with a new effective date.
+ */
+export async function updateSalaryVersion(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
+  const admin = await requireCapability("salary_admin");
+  const supabase = createServiceRoleClient();
+  const id = String(formData.get("id") || "").trim();
+  const employeeId = String(formData.get("employee_id") || "").trim();
+  const monthlySalary = Number(formData.get("monthly_salary"));
+  const allowedLeaves = Number(formData.get("allowed_leaves_per_month") || 1);
+  const effectiveFrom = String(formData.get("effective_from") || "").trim();
+
+  if (!id || !employeeId) return { error: "Salary row not found.", success: false };
+  if (!monthlySalary || monthlySalary <= 0) return { error: "Monthly salary must be a positive number.", success: false };
+  if (!effectiveFrom) return { error: "Effective From date is required.", success: false };
+
+  // Same company-scoping as every other salary action — the row's employee
+  // must belong to a company this admin can act on.
+  const { data: emp } = await supabase.from("employees").select("company_id").eq("id", employeeId).maybeSingle();
+  if (!emp || !admin.companyIds.includes(emp.company_id)) return { error: "Employee not found.", success: false };
+
+  const { error } = await supabase
+    .from("employee_salary")
+    .update({ monthly_salary: monthlySalary, allowed_leaves_per_month: allowedLeaves, effective_from: effectiveFrom })
+    .eq("id", id)
+    .eq("employee_id", employeeId);
+  if (error) return { error: error.message, success: false };
+  revalidatePath("/dashboard/salary");
+  return { error: null, success: true };
+}
+
+/** Delete a salary version. Existing salary_payments keep their own
+ * snapshotted gross/deduction figures (they never re-derive from this
+ * table), so past paid months remain exactly as paid. */
+export async function deleteSalaryVersion(id: string): Promise<{ error: string | null }> {
+  const admin = await requireCapability("salary_admin");
+  const supabase = createServiceRoleClient();
+  const { data: row } = await supabase.from("employee_salary").select("id, employee_id").eq("id", id).maybeSingle();
+  if (!row) return { error: "Salary row not found." };
+  const { data: emp } = await supabase.from("employees").select("company_id").eq("id", row.employee_id).maybeSingle();
+  if (!emp || !admin.companyIds.includes(emp.company_id)) return { error: "You don't have access to this employee." };
+  const { error } = await supabase.from("employee_salary").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/dashboard/salary");
+  return { error: null };
+}
+
+/**
+ * Delete a recorded salary payment — reverses BOTH side effects it created
+ * when it was paid: the mirrored Finance ledger row (bill_pass_register,
+ * source='salary_payment') and any advance amount it recovered, so deleting
+ * a wrong payment leaves the advance balance and the Finance ledger exactly
+ * as they were before it. The ledger mirror is deleted rather than
+ * zeroed — it exists only because this payment exists.
+ */
+export async function deleteSalaryPayment(paymentId: string): Promise<{ error: string | null }> {
+  const admin = await requireCapability("salary_admin");
+  const supabase = createServiceRoleClient();
+
+  const { data: payment } = await supabase
+    .from("salary_payments")
+    .select("id, employee_id, company_id, pay_month, advance_id, advance_deduction_amount")
+    .eq("id", paymentId)
+    .maybeSingle();
+  if (!payment) return { error: "Payment not found." };
+  if (!admin.companyIds.includes(payment.company_id)) return { error: "You don't have access to this company." };
+
+  // Reverse the advance recovery first — a failed reversal must stop the
+  // delete rather than silently losing the employee's outstanding balance.
+  if (payment.advance_id && Number(payment.advance_deduction_amount) > 0) {
+    const { data: adv } = await supabase
+      .from("employee_advances")
+      .select("recovered_amount")
+      .eq("id", payment.advance_id)
+      .maybeSingle();
+    if (adv) {
+      const reversed = Math.max(0, Number(adv.recovered_amount) - Number(payment.advance_deduction_amount));
+      const { error: advError } = await supabase
+        .from("employee_advances")
+        .update({ recovered_amount: reversed })
+        .eq("id", payment.advance_id);
+      if (advError) return { error: `Could not reverse the advance recovery: ${advError.message}` };
+    }
+  }
+
+  await supabase
+    .from("bill_pass_register")
+    .delete()
+    .eq("source", "salary_payment")
+    .eq("source_id", payment.id);
+
+  const { error } = await supabase.from("salary_payments").delete().eq("id", payment.id);
+  if (error) return { error: error.message };
+  revalidatePath("/dashboard/salary");
+  return { error: null };
+}
+
+/** Correct a payment's date / remark without touching its snapshotted
+ * amounts (those must keep matching what was actually calculated + paid). */
+export async function updateSalaryPayment(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
+  const admin = await requireCapability("salary_admin");
+  const supabase = createServiceRoleClient();
+  const id = String(formData.get("id") || "").trim();
+  const paymentDate = String(formData.get("payment_date") || "").trim();
+  const remark = String(formData.get("remark") || "").trim() || null;
+  if (!id) return { error: "Payment not found.", success: false };
+  if (!paymentDate) return { error: "Payment date is required.", success: false };
+
+  const { data: payment } = await supabase.from("salary_payments").select("id, company_id").eq("id", id).maybeSingle();
+  if (!payment || !admin.companyIds.includes(payment.company_id)) {
+    return { error: "Payment not found.", success: false };
+  }
+  const { error } = await supabase.from("salary_payments").update({ payment_date: paymentDate, remark }).eq("id", id);
+  if (error) return { error: error.message, success: false };
+  // Keep the Finance ledger mirror in step — its date/remark came from this
+  // same payment, so a correction must not leave the two records disagreeing.
+  await supabase
+    .from("bill_pass_register")
+    .update({ invoice_date: paymentDate, invoice_recv_date: paymentDate, remark })
+    .eq("source", "salary_payment")
+    .eq("source_id", id);
   revalidatePath("/dashboard/salary");
   return { error: null, success: true };
 }
@@ -175,7 +338,14 @@ export async function submitSalaryPayment(_prev: FinanceActionState, formData: F
   const payMonth = String(formData.get("pay_month") || "").trim(); // "YYYY-MM"
   const paymentDate = String(formData.get("payment_date") || "").trim();
   const advanceDeductionRequested = Number(formData.get("advance_deduction_amount") || 0);
-  const remark = String(formData.get("remark") || "").trim() || null;
+  // 2026-10-17 — optional manual Half Day / Full Day deduction chosen per
+  // employee/month ("kisi ka deduction karna ho halfday full day").
+  const manualDeductionDays = Math.max(0, Number(formData.get("manual_deduction_days") || 0));
+  const remarkInput = String(formData.get("remark") || "").trim();
+  const remark =
+    [remarkInput, manualDeductionDays > 0 ? `Manual deduction ${manualDeductionDays} day(s)` : ""]
+      .filter(Boolean)
+      .join(" — ") || null;
 
   if (!employeeId) return { error: "Employee is required.", success: false };
   if (!/^\d{4}-\d{2}$/.test(payMonth)) return { error: "Pay month is required.", success: false };
@@ -243,21 +413,18 @@ export async function submitSalaryPayment(_prev: FinanceActionState, formData: F
     todayStr: today,
     joinDate: emp.date_of_joining,
   });
-  const summary = summarizeCategories(days);
-  // 2026-09-11 (Payroll Phase 2): same untyped/typed-paid/typed-unpaid
-  // split as the payroll preview (salary/page.tsx) — this is the
-  // AUTHORITATIVE recompute that actually gets snapshotted onto the
-  // payment row, so it must agree with what leave/actions.ts decided at
-  // approval time, never re-derive it differently.
-  const leaveDetail = summarizeLeaveDetail(days);
-  const deduction = computeDeduction({
+  // 2026-10-17 — THE authoritative month calculation, identical to the
+  // Salary page's preview (computeMonthlyPayroll): base salary +
+  // Sunday/holiday extra-duty pay + unused-paid-leave encashment −
+  // attendance/manual deductions. Never trusts a client-sent figure.
+  const payroll = computeMonthlyPayroll({
     monthlySalary: Number(salary.monthly_salary),
     allowedLeavesPerMonth: Number(salary.allowed_leaves_per_month),
     daysInThisMonth: daysInMonth(year, month),
-    counts: summary,
-    untypedLeaveDays: leaveDetail.untypedLeaveDays,
-    unpaidTypedLeaveDays: leaveDetail.unpaidTypedLeaveDays,
+    days,
+    manualDeductionDays,
   });
+  const deduction = payroll;
 
   // 2026-09-11 (Payroll Phase 1): when the salary row in effect for this
   // month has a CTC structure (ctc_annual set — see setEmployeeSalary
@@ -323,7 +490,11 @@ export async function submitSalaryPayment(_prev: FinanceActionState, formData: F
       employee_id: employeeId,
       company_id: emp.company_id,
       pay_month: monthStart,
-      gross_salary: Number(salary.monthly_salary),
+      // gross_salary is the month's EARNED gross (base + extra duty + no-leave
+      // bonus) so the generated net_paid_amount = gross − deductions lands on
+      // exactly the figure this action just computed (e.g. ₹16,000 − ₹250
+      // when one half day was taken).
+      gross_salary: payroll.grossPay,
       attendance_deduction_amount: deduction.deductionAmount,
       advance_deduction_amount: advanceDeduction,
       advance_id: advanceId,

@@ -220,6 +220,80 @@ export default async function PrintingRegisterPage({
       matchedBy: b.invoice_type === "Printing" ? "invoice_type" : "printing_vendor",
     }));
 
+  // ── 4. COTTON RUG WORKFLOW ──────────────────────────────────────────────
+  // "cotton rug ke jo bill aate hai vo is parkar hai: kache maal ka invoice
+  // (bina PO ke), phir block print (PO ke according), phir washing, phir
+  // silai" — the four stages the register itself did not show as a chain.
+  // These are read-only roll-ups of the tables each stage already writes:
+  // purchase_bills (raw material = no order/PO; block print = PO-linked),
+  // washing_entries, and JOB WORK bills in the Bill Pass Register (silai).
+  const [{ data: pbStageRows }, { data: washStageRows }, { data: silaiStageRows }] = await Promise.all([
+    supabase
+      .from("purchase_bills")
+      .select("id, order_id, total_amount, g_total_plus_gst, vendor_invoice_date")
+      .in("company_id", effectiveCompanyIds),
+    supabase
+      .from("washing_entries")
+      .select("id, amount, chalan_date, company_id")
+      .in("company_id", effectiveCompanyIds),
+    supabase
+      .from("bill_pass_register")
+      .select("id, invoice_type, total_amt, invoice_date, invoice_recv_date, company_id")
+      .in("company_id", effectiveCompanyIds)
+      .eq("invoice_type", "JOB WORK"),
+  ]);
+
+  const inRange = (d: string | null | undefined) => {
+    if (fromDate && d && d < fromDate) return false;
+    if (toDate && d && d > toDate) return false;
+    return true;
+  };
+  const pb = (pbStageRows ?? []).filter((b) => inRange(b.vendor_invoice_date));
+  const rawMaterial = pb.filter((b) => !b.order_id);
+  const blockPrint = pb.filter((b) => !!b.order_id);
+  const washing = (washStageRows ?? []).filter((w) => inRange(w.chalan_date));
+  const silai = (silaiStageRows ?? []).filter((s) => inRange(s.invoice_recv_date ?? s.invoice_date));
+  const sum = (rows: { amount?: number | string | null; total_amount?: number | string | null; total_amt?: number | string | null; g_total_plus_gst?: number | string | null }[], key: "amount" | "total_amount" | "total_amt") =>
+    rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
+  const workflow = [
+    {
+      step: 1,
+      title: "Kacha Maal (Raw Material)",
+      note: "Purchase bill without PO — cloth/yarn received from the supplier.",
+      count: rawMaterial.length,
+      amount: sum(rawMaterial, "total_amount"),
+      href: "/dashboard/documents?tab=purchase-bill",
+      tone: "bg-amber-50 text-amber-800 border-amber-200",
+    },
+    {
+      step: 2,
+      title: "Block Print (PO-wise)",
+      note: "Purchase bill / printing charges entered against a PO.",
+      count: blockPrint.length,
+      amount: sum(blockPrint, "total_amount"),
+      href: "/dashboard/documents?tab=purchase-bill",
+      tone: "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
+    },
+    {
+      step: 3,
+      title: "Washing",
+      note: "Washing chalan — sq.ft × rate expense against the same lot.",
+      count: washing.length,
+      amount: sum(washing, "amount"),
+      href: "/dashboard/documents?tab=washing-entry",
+      tone: "bg-sky-50 text-sky-800 border-sky-200",
+    },
+    {
+      step: 4,
+      title: "Silai (Stitching)",
+      note: "Stitching job-work bill, recorded as JOB WORK in the bill pass register.",
+      count: silai.length,
+      amount: sum(silai, "total_amt"),
+      href: "/dashboard/salary",
+      tone: "bg-emerald-50 text-emerald-800 border-emerald-200",
+    },
+  ];
+
   const register = buildPrintingRegister({
     outChalans,
     inChalans,
@@ -297,6 +371,31 @@ export default async function PrintingRegisterPage({
           <Stat label="Still with printer" value="" sub={qtyLabel(Math.max(t.outQtyFt - t.inQtyFt, 0), 0)} tone="slate" />
           <Stat label="Printing bills" value={`₹${t.billTotal.toFixed(2)}`} sub={`${t.billCount} bill${t.billCount === 1 ? "" : "s"}`} tone="indigo" />
           <Stat label="Still due" value={`₹${t.billDue.toFixed(2)}`} sub={`paid ₹${t.billPaid.toFixed(2)}`} tone="rose" />
+        </div>
+
+        <div className="mb-5 rounded-xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold text-slate-800">🧶 Cotton Rug Bill Workflow</h3>
+          <p className="mb-3 mt-0.5 text-[11px] text-slate-500">
+            The four bills a rug lot passes through, in order. Each card rolls up the entries already saved in its
+            own screen — click it to add or review that stage.
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {workflow.map((w) => (
+              <a
+                key={w.step}
+                href={w.href}
+                className={`rounded-lg border p-3 transition hover:shadow-sm ${w.tone}`}
+              >
+                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide">
+                  <span>Step {w.step}</span>
+                  <span>{w.count} entr{w.count === 1 ? "y" : "ies"}</span>
+                </div>
+                <div className="mt-1 text-sm font-semibold">{w.title}</div>
+                <div className="mt-0.5 text-[11px] opacity-80">{w.note}</div>
+                <div className="mt-2 text-base font-bold">₹{w.amount.toFixed(2)}</div>
+              </a>
+            ))}
+          </div>
         </div>
 
         <div className="space-y-4">

@@ -7,6 +7,7 @@
 // page/action just adds the missing maintenance screen for that table.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { loadCustomsRates } from "@/lib/fx/customs";
 import { revalidatePath } from "next/cache";
 
 export type ExchangeRateFormState = { error: string | null; success: boolean };
@@ -53,6 +54,27 @@ export async function saveExchangeRate(_prev: ExchangeRateFormState, formData: F
 
   revalidatePath("/dashboard/exchange-rates");
   return { error: null, success: true };
+}
+
+/**
+ * 2026-10-17 — "auto update rahe jisko chedna nahi pade". Forces an
+ * immediate re-fetch from the DGFT → ICEGATE → eximin.net chain for every
+ * currency, instead of waiting for the 12-hour automatic refresh.
+ */
+export async function refreshCustomsRates(): Promise<{ error: string | null; message?: string }> {
+  await requireCapability("exchange_rate_admin");
+  const supabase = createServiceRoleClient();
+  const snapshot = await loadCustomsRates(supabase, { force: true });
+  revalidatePath("/dashboard/exchange-rates");
+  if (snapshot.rows.length === 0) {
+    return { error: snapshot.warning ?? "No rates could be fetched from DGFT, ICEGATE or eximin.net." };
+  }
+  return {
+    error: null,
+    message: `${snapshot.rows.length} currencies refreshed from ${snapshot.provider}${
+      snapshot.effectiveDate ? ` (notification effective ${snapshot.effectiveDate})` : ""
+    }.`,
+  };
 }
 
 export async function deleteExchangeRate(id: string): Promise<{ error: string | null }> {

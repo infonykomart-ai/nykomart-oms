@@ -123,10 +123,16 @@ function Sheet({
   data: DocStatementData | null;
 }) {
   if (!open) return null;
+  // 2026-10-17 — same print-flow fix as bill-statement-dialog.tsx: fixed
+  // positioning/clipping caps print output to one page, so the sheet is
+  // returned to normal flow while printing.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 md:p-6" onClick={close}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 md:p-6 print:static print:block print:bg-transparent print:p-0"
+      onClick={close}
+    >
       <div
-        className="flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl print:max-w-none print:rounded-none print:shadow-none"
+        className="flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl print:h-auto print:max-h-none print:max-w-none print:overflow-visible print:rounded-none print:shadow-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 print:hidden">

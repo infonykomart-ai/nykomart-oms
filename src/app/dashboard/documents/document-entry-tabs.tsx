@@ -38,6 +38,7 @@ import {
 } from "./actions";
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { PrintDialog } from "@/components/print-dialog";
 import { RelatedNotesBadge } from "./related-notes-badge";
 import { BillStatementDialog } from "@/components/bill-statement-dialog";
 import { A4Dialog } from "@/components/a4-dialog";
@@ -367,6 +368,7 @@ export function DocumentEntryTabs({
             sub: r.companyName,
             amount: `₹${r.amount}`,
             record: r,
+            printHref: `/dashboard/documents/washing-entries/${r.id}/report`,
           }))}
           onDelete={deleteWashingEntry}
           renderEdit={(r, onDone) => (
@@ -418,6 +420,7 @@ export function DocumentEntryTabs({
                   : `₹${r.total_amount}`,
             record: r,
             notes: r.related_notes,
+            printHref: `/dashboard/documents/purchase-bills/${r.id}/report`,
             statementBillId: r.finance_bpr_id ?? undefined,
           }))}
           onDelete={deletePurchaseBill}
@@ -541,14 +544,20 @@ function ShipmentChalanList({ rows }: { rows: ShipmentChalanRow[] }) {
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
               <p className="text-red-600">{deleteError[r.id]}</p>
-              <button
-                type="button"
-                disabled={isPending}
-                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
-                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <div className="flex shrink-0 gap-1.5">
+                <PrintDialog
+                  href={`/dashboard/documents/shipment-chalans/${r.id}/report`}
+                  title={`Shipment Chalan — ${r.chalan_no ?? r.id}`}
+                />
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                  className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -667,15 +676,22 @@ function DocList<T extends { id: string }>({
                 <p className="text-red-600">{deleteError[r.id]}</p>
                 <div className="flex shrink-0 gap-1.5">
                   {r.printHref && (
-                    <Link
+                    <PrintDialog
                       href={r.printHref}
-                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      🖨 Print
-                    </Link>
+                      title={`Print — ${r.no}`}
+                      subtitle="A4 preview — prints exactly this document."
+                    />
                   )}
-                  {r.statementBillId && <BillStatementDialog billId={r.statementBillId} />}
-                  {r.docStatement && <DocStatementDialog type={r.docStatement.type} id={r.docStatement.id} />}
+                  {r.statementBillId && <BillStatementDialog billId={r.statementBillId} label="🖨 Print" />}
+                  {/* CSB Filing has no separate report route — its A4 statement
+                      sheet IS its print view, so label it as one. */}
+                  {r.docStatement && (
+                    <DocStatementDialog
+                      type={r.docStatement.type}
+                      id={r.docStatement.id}
+                      label={r.docStatement.type === "csb_filing" ? "🖨 Print" : "📄 View"}
+                    />
+                  )}
                   {renderEdit && (
                     <button
                       type="button"
