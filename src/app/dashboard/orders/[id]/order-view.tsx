@@ -6,6 +6,7 @@ import { VendorAssignmentSection } from "./vendor-assignment-section";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
 import { FlagErrorButton } from "./flag-error-button";
 import { ShippingDetailsForm } from "./shipping-details-form";
+import { OrderHoldCancelActions } from "../order-hold-cancel-actions";
 
 // Read-only order detail/print view — mirrors invoice-view.tsx's structure
 // (header block -> info grids -> item table -> value breakdown -> footer)
@@ -71,6 +72,12 @@ export type Invoice = {
 
 export type OrderDebitNote = { id: string; debit_note_no: string | null; debit_note_date: string; debit_amount: number };
 export type OrderCreditNote = { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number };
+export type OrderRefund = {
+  refund_amount: number;
+  refund_currency: string;
+  refund_date: string;
+  reason: string | null;
+};
 
 // 2026-08-26 — "PO SELECT KA OPTION NAHI HAI KISI PO KA JO EK SE JYADA
 // SELECT KAR KE DENA HO TO AGAR PRINT DE TO KESE DENGE 1/2 2/2 TYPE KE":
@@ -327,6 +334,9 @@ export function OrderView({
   vendorAssignmentParties = [],
   vendorAssignmentCycles = [],
   shippingDefaults = null,
+  canManageOrders = false,
+  refunds = [],
+  currencies = [],
 }: {
   order: Order;
   companyName: string;
@@ -364,6 +374,12 @@ export function OrderView({
     width_cm: number | null;
     height_cm: number | null;
   } | null;
+  /** "order_entry" capability — gates the Hold/Cancel/Return/Refund actions
+   * (the same gate the Orders hub itself has). */
+  canManageOrders?: boolean;
+  /** Already-recorded refunds for this order, newest first. */
+  refunds?: OrderRefund[];
+  currencies?: { code: string; name: string }[];
 }) {
   return (
     <div>
@@ -376,6 +392,45 @@ export function OrderView({
           <PrintButton label="🖨 Download PDF" />
         </div>
       </div>
+
+      {/* 2026-10-17 — "agar dispatch hone ke baad refund karte hai to kya
+          order page se hi refund kiya jayega": the exact same Hold / Cancel /
+          Return / Add-Refund controls the Orders hub row already exposes,
+          now also on the order's own page — so a post-dispatch goodwill
+          refund (status stays Dispatched/Delivered), or a Return & Refund,
+          doesn't require going back to the list and finding the row.
+          Same component, same server actions, same refund cap / Credit Note
+          / restock behavior — nothing is duplicated here. Screen-only
+          (print:hidden); gated on order_entry like the hub. */}
+      {canManageOrders && (
+        <div className="mb-4 flex justify-end print:hidden">
+          <OrderHoldCancelActions
+            order={{
+              id: order.id,
+              ref_no: order.ref_no,
+              status: order.status,
+              order_currency: order.order_currency,
+              order_value_original: Number(order.order_value_original || 0),
+            }}
+            hasExistingRefund={refunds.length > 0}
+            currencies={currencies}
+          />
+        </div>
+      )}
+
+      {refunds.length > 0 && (
+        <div className="mb-4 rounded-lg border border-teal-200 bg-teal-50/40 p-3 text-xs print:hidden">
+          <p className="mb-1.5 font-semibold text-teal-800">Refunds on this order</p>
+          <ul className="space-y-1">
+            {refunds.map((r, i) => (
+              <li key={i} className="text-slate-700">
+                💸 {r.refund_amount.toFixed(2)} {r.refund_currency} on {r.refund_date}
+                {r.reason ? <span className="text-slate-500"> · {r.reason}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <PrintArea id="order-print-area" companyName={companyName} companyLogoUrl={companyLogoUrl}>
         <OrderPrintSheet
