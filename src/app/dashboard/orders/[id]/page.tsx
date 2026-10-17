@@ -60,7 +60,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // Purchase Bill vendor when one exists, so that query was folded into this
   // one call instead of kept as a second, less-accurate source of the same
   // fact.
-  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }] =
+  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }, { data: refunds }, { data: currencies }] =
     await Promise.all([
       supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
       supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
@@ -106,6 +106,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         .select("invoice_no, invoice_date, courier_name, awb_no, shipping_weight_kg, length_cm, width_cm, height_cm")
         .eq("order_id", id)
         .maybeSingle(),
+      // 2026-10-17 — refunds recorded against this order, shown on the page
+      // next to the same Hold/Cancel/Return/Refund controls (see
+      // order-view.tsx). Was previously only visible on the Orders hub row.
+      supabase
+        .from("order_refunds")
+        .select("refund_amount, refund_currency, refund_date, reason")
+        .eq("order_id", id)
+        .order("refund_date", { ascending: false }),
+      supabase.from("currencies").select("code, name").order("code"),
     ]);
 
   const statusSummary = statusByOrder[order.id];
@@ -141,8 +150,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               width_cm: dispatchSummary.width_cm != null ? Number(dispatchSummary.width_cm) : null,
               height_cm: dispatchSummary.height_cm != null ? Number(dispatchSummary.height_cm) : null,
             }
-          : { awb_no: null, courier_name: null, invoice_no: null, invoice_date: null, weight_kg: null, length_cm: null, width_cm: null, height_cm: null }
+          : { awb_no: null, courier_name: null, invoice_no: null, invoice_date: null, weight_kg: null, length_cm: null, width_cm: null, height_cm: null        }
       }
+      canManageOrders={employee.capabilities.includes("order_entry")}
+      refunds={(refunds ?? []).map((r) => ({ ...r, refund_amount: Number(r.refund_amount) }))}
+      currencies={currencies ?? []}
     />
   );
 }

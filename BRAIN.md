@@ -520,6 +520,30 @@ Merged with the 2026-10-16 A4 view/print round above (that round covered the 6 f
 - **Verified**: scoped `tsc` over every changed file + import graph → 0 errors; ESLint clean; full
   `tsc -b` cannot run in this 2 GB sandbox (OOM), so the platform post-turn typecheck is the final gate.
 
+## 5o. Refund flow now reachable from the order's own page (2026-10-17)
+
+The refund flow itself already existed, in the Orders hub row's `OrderHoldCancelActions`:
+pre-dispatch → **✕ Cancel** (plain status change) → the same panel's refund form opens; post-dispatch
+→ **↩️ Return & Refund** (status `Returned`) or **💸 Add Refund** for a goodwill/duty-only refund that
+leaves the status `Dispatched`/`Delivered` alone. Amount is always manual, with a 10–100 % calculator
+against `order_value_original` plus separate Shipping/Duty add-ons; 100 % = full refund. Invoiced
+orders auto-generate a Credit Note; every refund restocks finished goods and is capped at order value
+(same-currency cap + an independent INR-converted safety cap).
+
+What was missing: `/dashboard/orders/[id]` (the order page users actually open) is read-only and had
+NO refund controls at all — a post-dispatch refund meant going back to the Orders list and finding the
+row. Now that page renders the same component and lists the order's existing refunds:
+
+- `orders/[id]/page.tsx` fetches `order_refunds` (newest first) + `currencies`, and passes
+  `canManageOrders={employee.capabilities.includes("order_entry")}` (the detail page itself is open to
+  any employee of the company, so the write controls stay capability-gated like the hub).
+- `orders/[id]/order-view.tsx` shows `OrderHoldCancelActions` + a screen-only "Refunds on this order"
+  list (both `print:hidden`, so the A4 print sheet is unchanged).
+- `orders/actions.ts` revalidates `/dashboard/orders/<id>` on hold/cancel/return/refund so the page's
+  status and refund list refresh in place.
+
+No schema change, no new actions — the same server actions, caps and Credit Note/restock behavior.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

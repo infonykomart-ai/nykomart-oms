@@ -265,6 +265,8 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   if (error) return { error: error.message, success: false };
 
   revalidatePath("/dashboard/orders");
+  // 2026-10-17 — the order's own page now has these controls too.
+  revalidatePath(`/dashboard/orders/${orderId}`);
   return { error: null, success: true };
 }
 
@@ -282,6 +284,7 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   if (error) return { error: error.message, success: false };
 
   revalidatePath("/dashboard/orders");
+  revalidatePath(`/dashboard/orders/${orderId}`);
   revalidatePath("/dashboard/invoices");
   return { error: null, success: true };
 }
@@ -313,6 +316,7 @@ export async function returnOrder(orderId: string): Promise<SimpleResult> {
   if (error) return { error: error.message, success: false };
 
   revalidatePath("/dashboard/orders");
+  revalidatePath(`/dashboard/orders/${orderId}`);
   revalidatePath("/dashboard/invoices");
   return { error: null, success: true };
 }
@@ -572,8 +576,9 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
+  const orderId = str(formData, "order_id");
   const result = await saveOrderRefundCore(employee, supabase, {
-    orderId: str(formData, "order_id"),
+    orderId,
     refundAmount: Number(str(formData, "refund_amount")),
     refundCurrency: str(formData, "refund_currency") || "USD",
     refundDate: str(formData, "refund_date"),
@@ -587,6 +592,8 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   if (result.error) return result;
 
   revalidatePath("/dashboard/orders");
+  // 2026-10-17 — the refund was saved from the order's own page too.
+  revalidatePath(`/dashboard/orders/${orderId}`);
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/returns");
