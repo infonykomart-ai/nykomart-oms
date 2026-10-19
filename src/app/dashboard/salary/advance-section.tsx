@@ -8,10 +8,18 @@
 // auto-mirrors into bill_pass_register so Finance sees the debit right
 // away, and (3) is what the Employees (HR) admin screen reads to show
 // "Advance Due: ₹X" per person — same underlying row, no separate entry.
-import { useActionState } from "react";
-import { giveAdvance, type FinanceActionState } from "./actions";
+import { useActionState, useState, useTransition } from "react";
+import { A4Dialog } from "@/components/a4-dialog";
+import {
+  deleteAdvance,
+  giveAdvance,
+  updateAdvance,
+  type FinanceActionState,
+  type SimpleActionState,
+} from "./actions";
 
 const initialState: FinanceActionState = { error: null, success: false };
+const initialSimpleState: SimpleActionState = { error: null, success: false };
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
@@ -38,6 +46,29 @@ export function AdvanceSection({
   advances: AdvanceRow[];
 }) {
   const [state, formAction, pending] = useActionState(giveAdvance, initialState);
+  // 2026-10-19 — "kisi ko sellery advance me gyi hai or vo galat gyi hai to
+  // usko delete edit modify karne ka option nahi hai": every advance row
+  // now has Edit (an A4 dialog, same one the rest of the app uses) and
+  // Delete. Both go through the server actions' own guards — an advance
+  // with recovered money can't be reduced below the recovered amount or
+  // deleted at all.
+  const [editing, setEditing] = useState<AdvanceRow | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleDelete(a: AdvanceRow) {
+    if (!window.confirm(`Delete ${a.employee_name}'s advance of ₹${a.amount} dated ${a.date_given}? Its Finance ledger entry is removed too.`)) {
+      return;
+    }
+    setRowError(null);
+    setBusyId(a.id);
+    startTransition(async () => {
+      const r = await deleteAdvance(a.id);
+      if (r.error) setRowError(r.error);
+      setBusyId(null);
+    });
+  }
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -118,10 +149,111 @@ export function AdvanceSection({
                 </p>
               )}
               {a.reason && <p className="mt-0.5 text-slate-500">{a.reason}</p>}
+              <div className="mt-1 flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEditing(a)}
+                  className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  disabled={isPending && busyId === a.id}
+                  onClick={() => handleDelete(a)}
+                  className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                >
+                  {isPending && busyId === a.id ? "Deleting…" : "Delete"}
+                </button>
+              </div>
             </div>
           ))}
         </div>
+        {rowError && <p className="mt-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{rowError}</p>}
       </div>
+
+      {editing && (
+        <A4Dialog
+          open
+          onClose={() => setEditing(null)}
+          title={`Edit Advance — ${editing.employee_name}`}
+          subtitle={`Given ${editing.date_given}. Correct a wrong amount, date, reason or recovery schedule; already-recovered money stays untouched.`}
+        >
+          <EditAdvanceForm row={editing} onDone={() => setEditing(null)} />
+        </A4Dialog>
+      )}
     </div>
+  );
+}
+
+function EditAdvanceForm({ row, onDone }: { row: AdvanceRow; onDone: () => void }) {
+  const [state, formAction, pending] = useActionState(updateAdvance, initialSimpleState);
+
+  if (state.success) {
+    return (
+      <div className="space-y-3">
+        <p className="rounded bg-green-50 px-2 py-1.5 text-xs text-green-800">✓ Advance updated.</p>
+        <button type="button" onClick={onDone} className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-semibold text-white">
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form action={formAction} className="space-y-3">
+      {state.error && <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">{state.error}</p>}
+      <input type="hidden" name="id" value={row.id} />
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        <strong>{row.employee_name}</strong> — ₹{row.amount} given on {row.date_given}. Already recovered: ₹
+        {row.recovered_amount} from salary payments (not editable here — correct the salary payment instead).
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelClass}>Amount (₹) *</label>
+          <input
+            name="amount"
+            type="number"
+            step="0.01"
+            min={row.recovered_amount}
+            defaultValue={row.amount}
+            required
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Date Given *</label>
+          <input name="date_given" type="date" defaultValue={row.date_given} required className={inputClass} />
+        </div>
+      </div>
+      <div>
+        <label className={labelClass}>Recover Over (months)</label>
+        <input
+          name="recovery_months"
+          type="number"
+          step="1"
+          min="1"
+          defaultValue={row.recovery_months ?? undefined}
+          placeholder="blank = no fixed schedule"
+          className={inputClass}
+        />
+      </div>
+      <div>
+        <label className={labelClass}>Reason</label>
+        <input name="reason" defaultValue={row.reason ?? ""} placeholder="optional" className={inputClass} />
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+        >
+          {pending ? "Saving…" : "Save Changes"}
+        </button>
+        <button type="button" onClick={onDone} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

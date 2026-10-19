@@ -337,6 +337,7 @@ export function OrderView({
   canManageOrders = false,
   refunds = [],
   currencies = [],
+  embedded = false,
 }: {
   order: Order;
   companyName: string;
@@ -380,13 +381,29 @@ export function OrderView({
   /** Already-recorded refunds for this order, newest first. */
   refunds?: OrderRefund[];
   currencies?: { code: string; name: string }[];
+  /**
+   * 2026-10-19 — rendered inside the Orders hub's A4 dialog iframe
+   * (/dashboard/orders/[id]?embed=1 — the same page, chrome-less; see
+   * src/proxy.ts and dashboard/layout.tsx). Hides the "← Back to Orders" link
+   * (which would navigate the frame to the full dashboard) and opens every
+   * other in-app link in a new tab instead.
+   */
+  embedded?: boolean;
 }) {
+  // In embedded (dialog) mode every in-app link must leave the frame — the
+  // frame is only meant to hold THIS order, never a whole page with the
+  // app shell around it.
+  const inAppLink = embedded ? { target: "_blank", rel: "noreferrer" } : {};
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between print:hidden">
-        <Link href="/dashboard/orders" className="text-sm text-slate-500 hover:underline">
-          ← Back to Orders
-        </Link>
+      <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
+        {embedded ? (
+          <span className="text-xs text-slate-400">Order {order.ref_no}</span>
+        ) : (
+          <Link href="/dashboard/orders" className="text-sm text-slate-500 hover:underline">
+            ← Back to Orders
+          </Link>
+        )}
         <div className="flex items-center gap-2">
           <FlagErrorButton orderId={order.id} orderRefNo={order.ref_no} />
           <PrintButton label="🖨 Download PDF" />
@@ -447,7 +464,7 @@ export function OrderView({
 
       {invoice && (
         <div className="mt-4 print:hidden">
-          <Link href={`/dashboard/invoices/${invoice.id}`} className="text-sm text-amber-600 underline">
+          <Link href={`/dashboard/invoices/${invoice.id}`} {...inAppLink} className="text-sm text-amber-600 underline">
             View full Invoice →
           </Link>
         </div>
@@ -536,7 +553,7 @@ export function OrderView({
           <ul className="space-y-1">
             {debitNotes.map((d) => (
               <li key={d.id}>
-                <Link href="/dashboard/documents" className="text-amber-600 hover:underline">
+                <Link href="/dashboard/documents" {...inAppLink} className="text-amber-600 hover:underline">
                   Debit Note {d.debit_note_no ?? "—"}
                 </Link>{" "}
                 <span className="text-slate-500">
@@ -546,7 +563,7 @@ export function OrderView({
             ))}
             {creditNotes.map((c) => (
               <li key={c.id}>
-                <Link href="/dashboard/documents" className="text-amber-600 hover:underline">
+                <Link href="/dashboard/documents" {...inAppLink} className="text-amber-600 hover:underline">
                   Credit Note {c.cn_no ?? "—"}
                 </Link>{" "}
                 <span className="text-slate-500">

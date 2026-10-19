@@ -539,6 +539,62 @@ kitne din pahle aaya hai".
 - **Verified**: `npx tsc --noEmit` → 0 errors; `npx eslint` on all 7 touched TS files → clean.
   Not yet run against the live DB (migration pending, see above) and not yet committed.
 
+## 5o. Build fix + dialogs hold the page only, salary structure split out, advance corrections, TeamOffice matrix import (2026-10-19)
+
+User request: "ye error thik karna hai", "dusra order page ho ya koi or page agar dilog box me open ho to sirf
+page hi open ho puri ki puri window open nahi ho. order page me view me puri window open ho rahi hai", "sallery set
+karne ka stracture sahi nahi hai isko alag se bano sahi se", "kisi ko payment ho gaya ya sellery advance me gyi hai
+or vo galat gyi hai to usko delet edit modify karne ka opetion nahi hai", "attendance sheet sahi se campair ho rahi
+ahi kya".
+
+- **The Vercel/typecheck failure (root cause)**: a later commit (`94346ec`, "Add files via upload") replaced
+  `db/schema.sql` + `src/types/database.ts` with copies made BEFORE the 2026-10-17b B2B area-pricing round, so
+  every column that round added vanished from the types while the code still wrote them — `b2b_inquiry_items`
+  lost `size/size_length/size_width/size_thickness/size_unit`, `b2b_sales_order_items` lost the same plus the
+  app-maintained `line_total`, and `customs_exchange_rates` disappeared entirely (breaking `src/lib/fx/customs.ts`,
+  the B2B control-centre/reports screens and `orders-client.tsx`). Both files were re-merged: the upload's leave
+  work kept, the 2026-10-17b columns/table restored verbatim (see `git diff e79389d -- db/schema.sql` — it now
+  shows ONLY the leave additions).
+- **Dialogs now show the page, not the whole window** (`?embed=1`): the Orders hub's View button framed
+  `/dashboard/orders/[id]`, which renders inside the dashboard layout — so the dialog contained the entire app
+  (sidebar, header, module tabs) around one order. `src/proxy.ts` now turns `?embed=1` into an `x-embed` request
+  header and `dashboard/layout.tsx` skips ONLY the chrome for it (every provider still mounts, so the page behaves
+  identically; auth and the cookie-refresh flow are untouched). `A4Dialog`'s iframe and every `PrintDialog` preview
+  (`src/components/print-dialog.tsx`, used by all Document Entry print buttons) append the param themselves, and
+  `OrderView` gained `embedded` (hides "← Back to Orders", opens other links in a new tab) so a framed page can
+  never navigate itself to the full shell. The detail page's data loading moved to
+  `orders/[id]/order-detail-loader.ts` — one loader, so page and dialog can't disagree.
+- **Salary Structure is now its own screen** (`/dashboard/salary/structure` + `salary-structure-editor.tsx`): the
+  old "Decide & Feed" strip squeezed Monthly Salary / Allowed Leave / Effective Date into one unlabelled 5-column
+  row with the CTC block revealed underneath ("stracture sahi nahi hai"). It is now an A4-dialog editor in labelled
+  sections — 1 Employee & Effective Date, 2 Pay Mode (Flat vs CTC), 3 Earnings split (Basic %/HRA %), 4 Statutory
+  (PF %/ceiling, ESI %, Professional Tax + state), 5 What This Pays (payable monthly, per-day, extra-duty, no-leave
+  bonus, full CTC breakdown). Same server action (`setEmployeeSalary`): a new effective date inserts a version, an
+  existing date corrects it. `salary-form.tsx` was deleted; the Salary page keeps the month's payroll and links here.
+- **Wrong payments / wrong advances can now be corrected**: `deleteSalaryPayment` + `updateSalaryPayment` already
+  existed but were 10px underlined text — now real buttons. For advances there was NO correction path at all, so
+  two new ops were added to `salary/actions.ts`: `updateAdvance` (amount/date/reason/recovery schedule, refuses to
+  go below what salary payments already recovered, keeps the `bill_pass_register` mirror in step) and
+  `deleteAdvance` (removes the advance + its Finance ledger mirror; refuses while any of it is recovered, so an
+  employee's outstanding balance can never be silently rewritten), both wired into the Advances list behind an A4
+  dialog.
+- **Attendance import now reads TeamOffice's real export**: the block/matrix shape (a wide day-column header, then
+  a 10-row block per employee — Dept. Name / Empcode / IN / OUT / WORK / Break / OT / Status) was previously fed to
+  the row parser, which produced exactly the "no IN/OUT time — skipped" + "no active employee matches code 'WORK'"
+  wall the import page was showing. `parseBlockLayout()` in `src/lib/attendance/punch-import.ts` detects that shape
+  (day columns → dates; `Month: 07/2026`-style titles or the fallback date supply the month for columns printed as
+  plain day numbers), and the ordinary row/headerless/CSV layouts still parse byte-identically (verified with a
+  compiled-module harness). Employee matching also tolerates `2` vs `0002` (leading-zero-insensitive code index).
+- **The comparison itself is now visible** ("attendance sheet sahi se campair ho rahi hai kya"): the device-vs-web
+  result was stored in `attendance.match_flag` but shown nowhere. `importPunchReport` now returns a per-row
+  comparison table (employee, date, web IN/OUT, sheet IN/OUT, verdict) plus matched/mismatched counts, rendered on
+  the import page — mismatches highlighted, and Leave/Holiday/Week-Off rows explicitly say the recorded status was
+  kept on purpose.
+- **Verified**: scoped `npx tsc --noEmit` (every touched file, in one project) → 0 errors; `npm run lint` → 0 errors
+  (7 pre-existing warnings elsewhere); block/row parser behaviour exercised through the compiled module (matrix
+  paste → one row per employee per dated column; plain and headerless pastes unchanged; month-year title wins over
+  the fallback date). Full `npx tsc --noEmit` still OOMs in the 2 GB sandbox — CI's build job carries it.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

@@ -38,6 +38,12 @@ export function PrintDialog({
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // 2026-10-19 — "dialog box me open ho to sirf page hi open ho": the page
+  // this previews is a normal dashboard route, so without ?embed=1 the
+  // frame would render the whole app shell (sidebar/header/tabs) around the
+  // one document being printed. proxy.ts turns that param into the x-embed
+  // header dashboard/layout.tsx reads to skip just the chrome.
+  const src = `${href}${href.includes("?") ? "&" : "?"}embed=1`;
 
   // A fresh open re-runs the page (so the document is always current after
   // an edit) — keep the "loaded" flag honest for the Print button state.
@@ -118,7 +124,7 @@ export function PrintDialog({
         {open && (
           <iframe
             ref={iframeRef}
-            src={href}
+            src={src}
             title={title ?? "Print preview"}
             onLoad={() => setLoaded(true)}
             className="h-full w-full border-0 bg-white"

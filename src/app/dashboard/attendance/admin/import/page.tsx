@@ -57,6 +57,11 @@ export default async function ImportPunchReportPage() {
             TeamOffice&apos;s Daily IN/OUT report has the date only in its title — leave the fallback date filled and it is applied to
             every row.
           </li>
+          <li>
+            <strong>TeamOffice block / matrix export</strong> (Dept. Name / Empcode / IN / OUT / WORK / Break / OT / Status rows, one
+            column per day) is read directly: the day columns supply each date, the Empcode row supplies the employee, and the
+            fallback date only supplies the month for columns printed as plain day numbers 1–31.
+          </li>
         </ul>
         <p className="text-slate-500">
           Existing rows are never clobbered: a recorded web punch / approved leave stays as-is — the imported device punch is stored

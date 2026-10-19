@@ -939,8 +939,12 @@ export function OrderListTable({
                           subtitle="A4-size dialog — the full detail view; this page does not change."
                           flushBody
                         >
+                          {/* 2026-10-19 — ?embed=1 (see src/proxy.ts +
+                              dashboard/layout.tsx) drops the app shell, so the
+                              dialog holds this ONE order's page and not the
+                              whole window with sidebar/header/tabs around it. */}
                           <iframe
-                            src={`/dashboard/orders/${o.id}`}
+                            src={`/dashboard/orders/${o.id}?embed=1`}
                             title={`Order ${o.ref_no}`}
                             className="h-full min-h-[60vh] w-full border-0"
                           />
