@@ -108,6 +108,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     { data: companionCharacterImage },
     { count: pendingLeaveCount },
     { count: onLeaveTodayCount },
+    { data: onLeaveTodayRows },
   ] =
     await Promise.all([
       getHelpArticles().catch((err) => {
@@ -284,7 +285,42 @@ export default async function DashboardLayout({ children }: { children: ReactNod
               }
             )
         : { count: 0 },
+      // 2026-10-19 — WHO is on leave today, not just how many ("admin ko md ko
+      // ye dikh jaye ki aaj ye employee leave par hai"). Same indexed window
+      // as the count above; names are resolved against the employees list this
+      // layout already fetched for the messenger, so this adds no extra query.
+      // Only the base columns here — this runs on every page load and must not
+      // depend on the 2026-10-17 audit migration (see leave-queries.ts).
+      employee.capabilities.includes("leave_admin")
+        ? bprClient
+            .from("leave_requests")
+            .select("employee_id")
+            .eq("company_id", employee.currentCompanyId)
+            .eq("status", "Approved")
+            .lte("from_date", todayIST())
+            .gte("to_date", todayIST())
+            .then(
+              (r) => r,
+              (err) => {
+                console.error("[dashboard/layout] onLeaveTodayRows failed", err);
+                return { data: [] as { employee_id: string }[] };
+              }
+            )
+        : { data: [] as { employee_id: string }[] },
     ]);
+
+  // 2026-10-19 — names for the "On leave today" bell item, resolved against
+  // the employee list this layout already loaded (no extra query). A lookup
+  // miss (e.g. someone since deactivated) shows "—" rather than being
+  // dropped, so the names always match the item's own count.
+  const onLeaveTodayNameById = new Map((messagingEmployees ?? []).map((e) => [e.id, e.name]));
+  const onLeaveTodayAll = Array.from(new Set((onLeaveTodayRows ?? []).map((r) => r.employee_id)))
+    .map((id) => onLeaveTodayNameById.get(id) ?? "—")
+    .sort((a, b) => a.localeCompare(b));
+  const onLeaveTodayNames =
+    onLeaveTodayAll.length === 0
+      ? null
+      : `${onLeaveTodayAll.slice(0, 4).join(", ")}${onLeaveTodayAll.length > 4 ? ` +${onLeaveTodayAll.length - 4} more` : ""}`;
 
   const notificationItems = [
     employee.capabilities.includes("approve_level1")
@@ -303,9 +339,17 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       ? { key: "pending_leaves", label: "Leave requests pending approval", count: pendingLeaveCount ?? 0, href: "/dashboard/leave/admin" }
       : null,
     employee.capabilities.includes("leave_admin")
-      ? { key: "on_leave_today", label: "Employees on leave today", count: onLeaveTodayCount ?? 0, href: "/dashboard/leave/admin" }
+      ? {
+          key: "on_leave_today",
+          label: "On leave today",
+          count: onLeaveTodayCount ?? 0,
+          href: "/dashboard/leave/admin",
+          details: onLeaveTodayNames,
+        }
       : null,
-  ].filter((i): i is { key: string; label: string; count: number; href: string } => i !== null);
+  ].filter(
+    (i): i is { key: string; label: string; count: number; href: string; details?: string | null } => i !== null
+  );
 
   const employeesById = Object.fromEntries(
     (messagingEmployees ?? []).map((e) => [e.id, { name: e.name, photo_url: e.photo_url }])

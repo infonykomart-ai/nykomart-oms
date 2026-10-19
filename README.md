@@ -232,6 +232,19 @@ server pages and client previews so they can never disagree.
   removed, keeping the `bill_pass_register` mirror in step and refusing any
   change that would drop an advance below what salary payments already
   recovered from it.
+- **Leave lists survive a missing migration (2026-10-19)** — the leave
+  screens used to select the 2026-10-17 audit columns
+  (`applied_lat`/`cancelled_*`) and the `leave_request_events` table
+  unconditionally, so on a database where that migration hadn't been run
+  the query failed and both leave lists silently rendered their EMPTY state
+  ("No leave requests yet.") over real pending and approved requests, and
+  applying for leave failed too. `src/app/dashboard/leave/leave-queries.ts`
+  now reads tolerantly — full row first, base columns on a
+  missing-column/table error, a real error surfaced instead of swallowed —
+  and both screens name
+  `db/2026-10-17-leave-audit-and-lifecycle.sql` while the audit extras are
+  unavailable. The bell's "On leave today" item also names the employees
+  (not just a count) via the layout's existing query.
 - **TeamOffice matrix import + visible comparison (2026-10-19)** — the
   biometric export's block layout (Dept. Name / Empcode / IN / OUT / WORK /
   Break / OT / Status with one column per day) is now parsed natively by

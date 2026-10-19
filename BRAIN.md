@@ -595,6 +595,43 @@ ahi kya".
   paste → one row per employee per dated column; plain and headerless pastes unchanged; month-year title wins over
   the fallback date). Full `npx tsc --noEmit` still OOMs in the 2 GB sandbox — CI's build job carries it.
 
+## 5p. Leave lists went blank, and WHO is on leave today (2026-10-19)
+
+User request: "pichlli leave jo approve ki hai vo nahi dikh rahi or na hi pending me padi — leave request nahi
+ dikh rahi", "kis employee ne kitne baje or kab request dali hai or uski application request ko kisne approve kiya or
+ kitne baje kiya", "admin ko md ko ye dikh jaye ki aaj ye employee leave par hai, bell notification chala jaye".
+
+- **Root cause of the invisible lists** — the 2026-10-17 audit round (see §5n) added
+  `applied_lat/applied_lng/applied_accuracy_m/cancelled_*` to `leave_requests` and the
+  `leave_request_events` table, and both leave SCREENS then selected those columns unconditionally. On a database
+  where that one-time migration has not been run, PostgREST answers "column does not exist", Supabase returns
+  `data: null`, and the page rendered its EMPTY state — "No leave requests yet." / "No leave requests for this
+  company yet." — over data that was never missing. Applying for leave failed the same way (the insert wrote the
+  geo columns). Verified against history: `git show e79389d:src/app/dashboard/leave/page.tsx` selected only base
+  columns.
+- **Fix (`src/app/dashboard/leave/leave-queries.ts`)** — one migration-tolerant reader: try the full row, and on a
+  missing-column/missing-table error (42703 / 42P01 / PGRST204 / PGRST205, or "does not exist"/"schema cache" in the
+  message) retry with the base columns the workflow has always had, reporting which one it used. Anything else
+  (permissions, network) still surfaces as a real error instead of being swallowed. `fetchLeaveEvents` returns
+  `available: false` for the absent events table; `isMissingSchemaPiece()` is the single classifier. Both screens use
+  it, so every pending and approved request shows either way and only the audit extras (location, approver, timeline)
+  go missing. `submitLeaveRequest` now writes the request itself first and adds the location only when the database
+  can take it; `cancelLeaveRequest` explains the missing migration instead of echoing a raw Postgres error. Both
+  screens show a one-line amber banner naming `db/2026-10-17-leave-audit-and-lifecycle.sql` while it's outstanding,
+  and a red banner if the read genuinely failed.
+- **Who requested when / who approved when** — already rendered per row (`applied 17 Oct 2026, 09:42`, `✓ Approved by
+  <name> on <date, time>`, plus the per-request History timeline); it was invisible purely because the rows never
+  loaded.
+- **Bell now names today's leave, not just counts it** — `notification-bell.tsx`'s item type gained an optional
+  `details` line, and `dashboard/layout.tsx` resolves the employee_ids from its existing "approved leave covering
+  today" query against the employee list it already fetches for the messenger (no extra query, base columns only, so
+  it works before the audit migration too). The item reads "On leave today — Ajay Mahawar, Sahil +1 more" with the
+  count badge, linking to Leave Approvals, where the On Leave board already highlights TODAY.
+- **Verified**: scoped `npx tsc --noEmit` over every touched file → 0 errors; the fallback itself exercised through
+  the compiled module with a stub client — audit present → rows + `audit: true`; audit missing → **rows still
+  returned**, `audit: false`; permission error → surfaced, not swallowed; missing events table → `available: false`;
+  classifier true for PGRST204/42P01/"does not exist" and false for permission errors.
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

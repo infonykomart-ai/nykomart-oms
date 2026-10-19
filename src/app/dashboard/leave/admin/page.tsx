@@ -4,6 +4,7 @@ import { addDaysToDateStr, istDateFromInstant, todayIST } from "@/lib/attendance
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveApprovalRow, type CoverageRow } from "./leave-approval-row";
 import { LeaveTypesPanel } from "./leave-types-panel";
+import { fetchLeaveEvents, fetchLeaveRequests, isMissingSchemaPiece, LEAVE_AUDIT_MIGRATION_HINT } from "../leave-queries";
 
 // 2026-08-12 (round 8): "MD ADMIN KO YE POWER HO KI MERI ABSENCE ME WORK
 // KON KAREGA USKO ASSING KARNE PAR AUTO MATIC ROLE ME ACTIN HO JAYE" — the
@@ -32,15 +33,14 @@ export default async function LeaveAdminPage({
   const yearStart = `${leaveYear}-01-01`;
   const yearEnd = `${leaveYear}-12-31`;
 
-  const [{ data: requests }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }] = await Promise.all([
-    finSupabase
-      .from("leave_requests")
-      .select(
-        "id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id, decided_by_employee_id, decided_at, applied_lat, applied_lng, cancelled_by_employee_id, cancelled_at, cancelled_remark"
-      )
-      .eq("company_id", selectedCompanyId)
-      .order("requested_at", { ascending: false })
-      .limit(100),
+  // 2026-10-19 — "pichhli leave jo approve ki hai vo nahi dikh rahi or na hi
+  // pending me padi": this list used to select the 2026-10-17 audit columns
+  // unconditionally, so on a database where that migration hasn't been run
+  // PostgREST failed the whole query and the page rendered "No leave requests
+  // for this company yet." over real data. Read through the tolerant helper
+  // instead — every request shows either way (see ../leave-queries.ts).
+  const [{ rows: requests, audit: auditColumns, error: requestsError }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }] = await Promise.all([
+    fetchLeaveRequests(finSupabase, { companyId: selectedCompanyId, limit: 100 }),
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("stores").select("id, name").eq("company_id", selectedCompanyId).order("name"),
     // 2026-09-11 (Payroll Phase 2): ALL leave types (including inactive) so
@@ -138,14 +138,8 @@ export default async function LeaveAdminPage({
       (requests ?? []).flatMap((r) => [r.decided_by_employee_id, r.cancelled_by_employee_id]).filter((v): v is string => Boolean(v))
     )
   );
-  const [{ data: eventsRaw }, { data: decisionActors }] = await Promise.all([
-    allRequestIds.length > 0
-      ? finSupabase
-          .from("leave_request_events")
-          .select("id, leave_request_id, event_type, actor_employee_id, event_at, details")
-          .in("leave_request_id", allRequestIds)
-          .order("event_at", { ascending: true })
-      : Promise.resolve({ data: [] as { id: string; leave_request_id: string; event_type: string; actor_employee_id: string | null; event_at: string; details: string | null }[] }),
+  const [{ rows: eventsRaw, available: eventsAvailable }, { data: decisionActors }] = await Promise.all([
+    fetchLeaveEvents(finSupabase, allRequestIds),
     decisionActorIds.length > 0 ? supabase.from("employees").select("id, name").in("id", decisionActorIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
   ]);
   const decisionActorName = new Map((decisionActors ?? []).map((e) => [e.id, e.name]));
@@ -171,17 +165,38 @@ export default async function LeaveAdminPage({
   for (let i = 13; i >= 0; i--) recordDays.push(addDaysToDateStr(today, -i));
   const recordStartIso = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const dailyRecord = new Map(recordDays.map((d) => [d, { applied: 0, approved: 0, rejected: 0, cancelled: 0 }]));
-  const { data: recentRequests } = await finSupabase
-    .from("leave_requests")
-    .select("requested_at, status, decided_at, cancelled_at")
-    .eq("company_id", selectedCompanyId)
-    // Any of the three timestamps inside the window — NOT just requested_at:
-    // a decision made today on an application from three weeks ago must
-    // still land in today's Approved/Rejected column ("daily record" is
-    // about what happened that day, either side of the workflow).
-    .or(
-      `requested_at.gte.${recordStartIso},decided_at.gte.${recordStartIso},cancelled_at.gte.${recordStartIso}`
-    );
+  // Any of the three timestamps inside the window — NOT just requested_at:
+  // a decision made today on an application from three weeks ago must still
+  // land in today's Approved/Rejected column ("daily record" is about what
+  // happened that day, either side of the workflow). cancelled_at only
+  // exists once the 2026-10-17 audit migration has been run, so the query
+  // falls back to the two timestamps the workflow always had (the Cancelled
+  // column simply stays 0) instead of failing and showing an empty day.
+  type DailyRecordRow = {
+    requested_at: string;
+    status: string;
+    decided_at: string | null;
+    cancelled_at?: string | null;
+  };
+  async function loadDailyRecordRows(): Promise<DailyRecordRow[]> {
+    const withCancelled = await finSupabase
+      .from("leave_requests")
+      .select("requested_at, status, decided_at, cancelled_at")
+      .eq("company_id", selectedCompanyId)
+      .or(`requested_at.gte.${recordStartIso},decided_at.gte.${recordStartIso},cancelled_at.gte.${recordStartIso}`);
+    if (!withCancelled.error) return (withCancelled.data ?? []) as unknown as DailyRecordRow[];
+    if (!isMissingSchemaPiece(withCancelled.error)) {
+      console.error("[leave/admin] daily record read failed", withCancelled.error.message);
+      return [];
+    }
+    const base = await finSupabase
+      .from("leave_requests")
+      .select("requested_at, status, decided_at")
+      .eq("company_id", selectedCompanyId)
+      .or(`requested_at.gte.${recordStartIso},decided_at.gte.${recordStartIso}`);
+    return (base.data ?? []) as unknown as DailyRecordRow[];
+  }
+  const recentRequests = await loadDailyRecordRows();
   for (const r of recentRequests ?? []) {
     const key = istDateFromInstant(r.requested_at);
     const bucket = dailyRecord.get(key);
@@ -356,6 +371,22 @@ export default async function LeaveAdminPage({
           </p>
         </div>
       </div>
+
+      {/* 2026-10-19 — "leave request nahi dikh rahi": the empty state below
+          used to be shown even when the query itself had failed (missing
+          2026-10-17 audit columns), which is exactly how approved and
+          pending requests went invisible. Now a real failure says so, and a
+          missing-migration read explains itself. */}
+      {requestsError && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          Could not load leave requests: {requestsError}
+        </p>
+      )}
+      {!requestsError && !(auditColumns && eventsAvailable) && (
+        <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {LEAVE_AUDIT_MIGRATION_HINT}
+        </p>
+      )}
 
       <div className="space-y-3">
         {sorted.map((r) => (
