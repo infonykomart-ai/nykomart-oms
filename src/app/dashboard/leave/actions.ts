@@ -32,6 +32,7 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { addDaysToDateStr, istDayOfWeek, nowISOInstant } from "@/lib/attendance/ist-date";
 import { allocateLeaveDays } from "@/lib/attendance/leave-balance";
+import { isMissingSchemaPiece } from "./leave-queries";
 
 export type LeaveActionState = { error: string | null; success: boolean; message?: string };
 
@@ -162,22 +163,29 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     }
   }
 
-  const { data: created, error } = await supabase
+  // 2026-10-19 — the geo columns only exist once
+  // db/2026-10-17-leave-audit-and-lifecycle.sql has been run. Applying for
+  // leave must NOT depend on that: write the request itself first (the fields
+  // the workflow has always had), then add the location when the database can
+  // take it. "Leave request nahi dikh rahi" covered the read side; this is the
+  // write side of the same missing-migration failure.
+  const baseInsert = {
+    employee_id: employee.id,
+    company_id: employee.currentCompanyId,
+    from_date: fromDate,
+    to_date: toDate,
+    reason,
+    leave_type_id: leaveTypeId,
+  };
+  let { data: created, error } = await supabase
     .from("leave_requests")
-    .insert({
-      employee_id: employee.id,
-      company_id: employee.currentCompanyId,
-      from_date: fromDate,
-      to_date: toDate,
-      reason,
-      leave_type_id: leaveTypeId,
-      applied_lat: appliedLat,
-      applied_lng: appliedLng,
-      applied_accuracy_m: appliedAccuracyM,
-    })
+    .insert({ ...baseInsert, applied_lat: appliedLat, applied_lng: appliedLng, applied_accuracy_m: appliedAccuracyM })
     .select("id")
     .single();
-  if (error) return { error: error.message, success: false };
+  if (error && isMissingSchemaPiece(error)) {
+    ({ data: created, error } = await supabase.from("leave_requests").insert(baseInsert).select("id").single());
+  }
+  if (error || !created) return { error: error?.message ?? "Could not save the leave request.", success: false };
 
   // 2026-10-17 — "usme date & time nahi aata with location": requested_at
   // is the DB default now(), and the location fix (when granted) is echoed
@@ -637,6 +645,18 @@ export async function cancelLeaveRequest(_prev: LeaveActionState, formData: Form
     .eq("id", leaveRequestId)
     .eq("status", leave.status)
     .select("id");
+  // 2026-10-19 — cancelling writes cancelled_by/cancelled_at/cancelled_remark,
+  // which only exist once db/2026-10-17-leave-audit-and-lifecycle.sql has been
+  // run. Say that plainly instead of showing the raw Postgres "column does not
+  // exist" text (the rest of the screen still works either way — see
+  // ./leave-queries.ts).
+  if (updateError && isMissingSchemaPiece(updateError)) {
+    return {
+      error:
+        "Cancelling needs the 2026-10-17 leave migration — run db/2026-10-17-leave-audit-and-lifecycle.sql in the Supabase SQL Editor, then try again.",
+      success: false,
+    };
+  }
   if (updateError) return { error: updateError.message, success: false };
   if (!updated || updated.length === 0) {
     return { error: "This leave request just changed — refresh and check its current status.", success: false };

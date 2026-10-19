@@ -4,6 +4,7 @@ import { todayIST } from "@/lib/attendance/ist-date";
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveRequestForm } from "./leave-request-form";
 import { LeaveLifecycleActions } from "./leave-lifecycle-actions";
+import { fetchLeaveEvents, fetchLeaveRequests, LEAVE_AUDIT_MIGRATION_HINT } from "./leave-queries";
 
 // 2026-08-12 (round 8): "LEAVE REQUESST BHEJ DU APPLIATION KE SATH TO VO MD
 // KE PASS APPROVAL KE LIYE CHLI JAYE" — every employee's own Leave screen:
@@ -20,15 +21,11 @@ export default async function LeavePage() {
   const yearStart = `${leaveYear}-01-01`;
   const yearEnd = `${leaveYear}-12-31`;
 
-  const [{ data: myRequests }, { data: myCoverage }, { data: leaveTypesRaw }, { data: myProfile }] = await Promise.all([
-    supabase
-      .from("leave_requests")
-      .select(
-        "id, from_date, to_date, reason, status, requested_at, decided_at, decision_remark, decided_by_employee_id, applied_lat, applied_lng, cancelled_at, cancelled_remark"
-      )
-      .eq("employee_id", employee.id)
-      .order("requested_at", { ascending: false })
-      .limit(50),
+  // 2026-10-19 — read through the migration-tolerant helper, so a database
+  // without the 2026-10-17 audit columns still lists every request instead of
+  // rendering the empty state (see ./leave-queries.ts).
+  const [{ rows: myRequests, audit: auditColumns, error: requestsError }, { data: myCoverage }, { data: leaveTypesRaw }, { data: myProfile }] = await Promise.all([
+    fetchLeaveRequests(supabase, { employeeId: employee.id, limit: 50 }),
     // "MERE PASS ... ACCESS HAI" — the flip side: any store THIS login is
     // currently covering for someone else, active right now.
     supabase
@@ -106,14 +103,8 @@ export default async function LeavePage() {
   const actorIds = Array.from(
     new Set((myRequests ?? []).flatMap((r) => [r.decided_by_employee_id]).filter((v): v is string => Boolean(v)))
   );
-  const [{ data: eventsRaw }, { data: actors }] = await Promise.all([
-    requestIds.length > 0
-      ? supabase
-          .from("leave_request_events")
-          .select("id, leave_request_id, event_type, actor_employee_id, event_at, details")
-          .in("leave_request_id", requestIds)
-          .order("event_at", { ascending: true })
-      : Promise.resolve({ data: [] as { id: string; leave_request_id: string; event_type: string; actor_employee_id: string | null; event_at: string; details: string | null }[] }),
+  const [{ rows: eventsRaw, available: eventsAvailable }, { data: actors }] = await Promise.all([
+    fetchLeaveEvents(supabase, requestIds),
     actorIds.length > 0 ? supabase.from("employees").select("id, name").in("id", actorIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
   ]);
   const actorName = new Map((actors ?? []).map((e) => [e.id, e.name]));
@@ -215,6 +206,17 @@ export default async function LeavePage() {
         <div className="lg:col-span-2">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">My Leave Requests</h2>
+            {/* 2026-10-19 — "leave request nahi dikh rahi": when the audit
+                columns/table are missing this now SAYS so instead of quietly
+                rendering an empty list over data that exists. */}
+            {requestsError && (
+              <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">
+                Could not load your leave requests: {requestsError}
+              </p>
+            )}
+            {!requestsError && !(auditColumns && eventsAvailable) && (
+              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">{LEAVE_AUDIT_MIGRATION_HINT}</p>
+            )}
             <div className="space-y-3">
               {(myRequests ?? []).map((r) => {
                 const coverage = coverageByRequest.get(r.id) ?? [];
@@ -250,14 +252,19 @@ export default async function LeavePage() {
                     </div>
                     {/* 2026-10-17 — "leave approve kisne ki hai kis time
                         par ki hai". */}
-                    {r.status === "Approved" && r.decided_at && r.decided_by_employee_id && (
+                    {/* 2026-10-19 — the WHEN is what was asked for ("kisne
+                        approve kiya or kitne baje kiya"), so it shows on every
+                        decided request: if the decider can no longer be
+                        resolved the time still prints and the name falls back
+                        to "MD/Admin", instead of hiding the whole line. */}
+                    {r.status === "Approved" && r.decided_at && (
                       <p className="mt-2 text-xs text-green-700">
-                        ✓ Approved by {actorName.get(r.decided_by_employee_id) ?? "MD/Admin"} on {formatIST(r.decided_at)}
+                        ✓ Approved by {r.decided_by_employee_id ? actorName.get(r.decided_by_employee_id) ?? "MD/Admin" : "MD/Admin"} on {formatIST(r.decided_at)}
                       </p>
                     )}
-                    {r.status === "Rejected" && r.decided_at && r.decided_by_employee_id && (
+                    {r.status === "Rejected" && r.decided_at && (
                       <p className="mt-2 text-xs text-red-700">
-                        ✕ Rejected by {actorName.get(r.decided_by_employee_id) ?? "MD/Admin"} on {formatIST(r.decided_at)}
+                        ✕ Rejected by {r.decided_by_employee_id ? actorName.get(r.decided_by_employee_id) ?? "MD/Admin" : "MD/Admin"} on {formatIST(r.decided_at)}
                       </p>
                     )}
                     {r.status === "Rejected" && r.decision_remark && (

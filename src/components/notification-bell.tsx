@@ -8,6 +8,12 @@ export type NotificationItem = {
   label: string;
   count: number;
   href: string;
+  /**
+   * 2026-10-19 — "admin ko md ko ye dikh jaye ki aaj ye employee leave par
+   * hai": a count alone ("Employees on leave today — 2") never says WHO, so
+   * the item can carry one short line of names/details under its label.
+   */
+  details?: string | null;
 };
 
 /**
@@ -63,10 +69,17 @@ export function NotificationBell({ items }: { items: NotificationItem[] }) {
                     key={i.key}
                     href={i.href}
                     onClick={() => setOpen(false)}
-                    className="flex items-center justify-between rounded-md px-2 py-2 text-xs text-[var(--oms-text)] transition-colors hover:bg-[var(--oms-canvas)]"
+                    className="flex items-start justify-between gap-2 rounded-md px-2 py-2 text-xs text-[var(--oms-text)] transition-colors hover:bg-[var(--oms-canvas)]"
                   >
-                    <span>{i.label}</span>
-                    <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">{i.count}</span>
+                    <span className="min-w-0">
+                      <span className="block">{i.label}</span>
+                      {i.details && (
+                        <span className="mt-0.5 block truncate text-[11px] text-[var(--oms-text-muted)]" title={i.details}>
+                          {i.details}
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-0.5 shrink-0 rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">{i.count}</span>
                   </Link>
                 ))
             )}
