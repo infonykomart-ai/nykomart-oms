@@ -795,11 +795,6 @@ export type Database = {
           remark: string | null;
           display_order: number;
           product_id: string | null;
-          size: string | null;
-          size_length: number | null;
-          size_width: number | null;
-          size_thickness: number | null;
-          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -811,11 +806,6 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -827,11 +817,6 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -1563,14 +1548,9 @@ export type Database = {
           unit: string;
           unit_price: number;
           unit_cost: number;
-          line_total: number;
+          line_total: number | null;
           line_cost: number | null;
           display_order: number;
-          size: string | null;
-          size_length: number | null;
-          size_width: number | null;
-          size_thickness: number | null;
-          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -1581,14 +1561,9 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number;
+          line_total?: number | null;
           line_cost?: number | null;
           display_order?: number;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -1599,14 +1574,9 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number;
+          line_total?: number | null;
           line_cost?: number | null;
           display_order?: number;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -5707,46 +5677,6 @@ export type Database = {
         };
         Relationships: [];
       };
-      // 2026-10-17 — automatic customs/export exchange rates (DGFT → ICEGATE
-      // → eximin.net chain). See db/2026-10-17-customs-exchange-rates.sql and
-      // src/lib/fx/customs.ts. Kept apart from exchange_rates so an API feed
-      // can never rewrite a manually entered CBIC notification.
-      customs_exchange_rates: {
-        Row: {
-          currency_code: string;
-          currency_name: string | null;
-          import_rate: number | null;
-          export_rate: number;
-          effective_date: string | null;
-          notification_no: string | null;
-          source: string;
-          source_url: string | null;
-          fetched_at: string;
-        };
-        Insert: {
-          currency_code: string;
-          currency_name?: string | null;
-          import_rate?: number | null;
-          export_rate: number;
-          effective_date?: string | null;
-          notification_no?: string | null;
-          source?: string;
-          source_url?: string | null;
-          fetched_at?: string;
-        };
-        Update: {
-          currency_code?: string;
-          currency_name?: string | null;
-          import_rate?: number | null;
-          export_rate?: number;
-          effective_date?: string | null;
-          notification_no?: string | null;
-          source?: string;
-          source_url?: string | null;
-          fetched_at?: string;
-        };
-        Relationships: [];
-      };
       exchange_rates: {
         Row: {
           id: string;
@@ -6686,13 +6616,19 @@ export type Database = {
           from_date: string;
           to_date: string;
           reason: string;
-          status: "Pending" | "Approved" | "Rejected";
+          status: "Pending" | "Approved" | "Rejected" | "Cancelled";
           requested_at: string;
           decided_by_employee_id: string | null;
           decided_at: string | null;
           decision_remark: string | null;
           created_at: string;
           leave_type_id: string | null;
+          applied_lat: number | null;
+          applied_lng: number | null;
+          applied_accuracy_m: number | null;
+          cancelled_by_employee_id: string | null;
+          cancelled_at: string | null;
+          cancelled_remark: string | null;
         };
         Insert: {
           id?: string;
@@ -6701,13 +6637,19 @@ export type Database = {
           from_date: string;
           to_date: string;
           reason: string;
-          status?: "Pending" | "Approved" | "Rejected";
+          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
           requested_at?: string;
           decided_by_employee_id?: string | null;
           decided_at?: string | null;
           decision_remark?: string | null;
           created_at?: string;
           leave_type_id?: string | null;
+          applied_lat?: number | null;
+          applied_lng?: number | null;
+          applied_accuracy_m?: number | null;
+          cancelled_by_employee_id?: string | null;
+          cancelled_at?: string | null;
+          cancelled_remark?: string | null;
         };
         Update: {
           id?: string;
@@ -6716,13 +6658,19 @@ export type Database = {
           from_date?: string;
           to_date?: string;
           reason?: string;
-          status?: "Pending" | "Approved" | "Rejected";
+          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
           requested_at?: string;
           decided_by_employee_id?: string | null;
           decided_at?: string | null;
           decision_remark?: string | null;
           created_at?: string;
           leave_type_id?: string | null;
+          applied_lat?: number | null;
+          applied_lng?: number | null;
+          applied_accuracy_m?: number | null;
+          cancelled_by_employee_id?: string | null;
+          cancelled_at?: string | null;
+          cancelled_remark?: string | null;
         };
         Relationships: [
           {
@@ -6751,6 +6699,51 @@ export type Database = {
             columns: ["leave_type_id"];
             isOneToOne: false;
             referencedRelation: "leave_types";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      leave_request_events: {
+        Row: {
+          id: string;
+          leave_request_id: string;
+          event_type: string;
+          actor_employee_id: string | null;
+          event_at: string;
+          details: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          leave_request_id: string;
+          event_type: string;
+          actor_employee_id?: string | null;
+          event_at?: string;
+          details?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          leave_request_id?: string;
+          event_type?: string;
+          actor_employee_id?: string | null;
+          event_at?: string;
+          details?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_request_events_leave_request_id_fkey";
+            columns: ["leave_request_id"];
+            isOneToOne: false;
+            referencedRelation: "leave_requests";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_request_events_actor_employee_id_fkey";
+            columns: ["actor_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
             referencedColumns: ["id"];
           },
         ];

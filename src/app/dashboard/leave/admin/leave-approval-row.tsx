@@ -5,12 +5,27 @@
 // reject). Approved -> an "Assign Coverage" mini-form (covering employee +
 // store + date range, defaulting to the leave's own range) that is ITSELF
 // the access grant — see assignCoverage/getAuthedEmployee().
+//
+// 2026-10-17 (leave audit + lifecycle): the row now also SHOWS the full
+// audit facts — applied-at with location, approved-by name + time,
+// cancelled-on — the event timeline, and the cancel/modify actions
+// (shared component, server-gated) so an admin can handle the
+// "leave lekr bhi office aa gaya" case right here.
 import { useActionState, useState, useTransition } from "react";
 import { decideLeaveRequest, assignCoverage, removeCoverage, type LeaveActionState } from "../actions";
+import { LeaveLifecycleActions } from "../leave-lifecycle-actions";
 
 const initialState: LeaveActionState = { error: null, success: false };
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
+
+export type RequestEventRow = {
+  id: string;
+  event_type: string;
+  actor_name: string | null;
+  event_at: string;
+  details: string | null;
+};
 
 export type CoverageRow = {
   id: string;
@@ -29,6 +44,14 @@ export function LeaveApprovalRow({
   status,
   requestedAt,
   decisionRemark,
+  decidedByName,
+  decidedAt,
+  cancelledAt,
+  cancelledRemark,
+  appliedLat,
+  appliedLng,
+  events,
+  today,
   leaveTypeName,
   employees,
   stores,
@@ -42,6 +65,15 @@ export function LeaveApprovalRow({
   status: string;
   requestedAt: string;
   decisionRemark: string | null;
+  // 2026-10-17 audit fields.
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  cancelledAt?: string | null;
+  cancelledRemark?: string | null;
+  appliedLat?: number | null;
+  appliedLng?: number | null;
+  events?: RequestEventRow[];
+  today: string;
   // 2026-09-11 (Payroll Phase 2): null = untyped request, governed by the
   // original flat allowed_leaves_per_month pool exactly as before.
   leaveTypeName?: string | null;
@@ -65,10 +97,34 @@ export function LeaveApprovalRow({
               <span className="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">{leaveTypeName}</span>
             )}
           </p>
+          {/* 2026-10-17 — "usme date & time nahi aata with location" /
+              "approve kisne ki hai kis time par ki hai". */}
           <p className="text-xs text-slate-500">
-            {fromDate} → {toDate} · applied {requestedAt.slice(0, 10)}
+            {fromDate} → {toDate} · applied {formatIST(requestedAt)}
+            {appliedLat != null && appliedLng != null && (
+              <>
+                {" "}
+                ·{" "}
+                <a
+                  href={`https://www.google.com/maps?q=${appliedLat},${appliedLng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sky-600 hover:underline"
+                >
+                  📍 {appliedLat.toFixed(4)}, {appliedLng.toFixed(4)}
+                </a>
+              </>
+            )}
           </p>
           <p className="mt-1 text-xs text-slate-600">{reason}</p>
+          {(status === "Approved" || status === "Rejected") && decidedAt && (
+            <p className={`mt-1 text-xs ${status === "Approved" ? "text-green-700" : "text-red-700"}`}>
+              {status === "Approved" ? "✓ Approved" : "✕ Rejected"} by {decidedByName ?? "MD/Admin"} on {formatIST(decidedAt)}
+            </p>
+          )}
+          {status === "Cancelled" && cancelledAt && (
+            <p className="mt-1 text-xs text-slate-500">🗑 Cancelled on {formatIST(cancelledAt)}{cancelledRemark ? ` — ${cancelledRemark}` : ""}</p>
+          )}
         </div>
         <StatusBadge status={status} />
       </div>
@@ -102,6 +158,30 @@ export function LeaveApprovalRow({
       )}
 
       {status === "Rejected" && decisionRemark && <p className="mt-2 text-xs text-red-700">Remark: {decisionRemark}</p>}
+
+      {/* 2026-10-17 — cancel/modify for the "came to office anyway" case
+          (server action gates own-vs-admin; see canActOnRequest). */}
+      {(status === "Pending" || status === "Approved") && (
+        <LeaveLifecycleActions requestId={requestId} status={status} fromDate={fromDate} toDate={toDate} today={today} />
+      )}
+
+      {/* 2026-10-17 — full audit timeline (always shown when there is more
+          than the single Applied event, e.g. after a cancel or a half-day
+          conversion). */}
+      {(events?.length ?? 0) > 1 && (
+        <div className="mt-2 border-t border-slate-100 pt-2">
+          <p className="mb-1 text-[11px] font-medium text-slate-400">History</p>
+          <ul className="space-y-0.5 text-[11px] text-slate-500">
+            {events!.map((ev) => (
+              <li key={ev.id}>
+                <span className="font-medium text-slate-600">{ev.event_type}</span>
+                {ev.actor_name ? ` by ${ev.actor_name}` : ""} · {formatIST(ev.event_at)}
+                {ev.details ? ` — ${ev.details}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {status === "Approved" && (
         <div className="mt-3 border-t border-slate-100 pt-3">
@@ -203,6 +283,20 @@ function StatusBadge({ status }: { status: string }) {
       ? "bg-green-50 text-green-700"
       : status === "Rejected"
         ? "bg-red-50 text-red-700"
-        : "bg-amber-50 text-amber-700";
+        : status === "Cancelled"
+          ? "bg-slate-100 text-slate-500"
+          : "bg-amber-50 text-amber-700";
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{status}</span>;
+}
+
+/** Full "17 Oct 2026, 09:42" IST rendering for audit timestamps. */
+function formatIST(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

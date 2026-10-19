@@ -1,34 +1,82 @@
-PENDING CHANGES v2 — 2026-10-16 (sabhi uncommitted files, dono repos se)
-========================================================================
-Repo paths bilkul same hain — extract karke seedha overlay kar sakte ho.
-Zip ke andar koi .zip artifact nahi, na node_modules/.next.
+LEAVE UPDATE — 2026-10-17
+=========================
 
-LAYER 1 — repo root = github.com/artsofjaipur/NCR-OMS (outer repo)
-- public/index.html        — naya 3D animated homepage (navy/blue/white/orange)
-- public/nav.js            — sidebar me "Homepage -> /" link (2026-10-15)
-- public/brand/nyko.svg    — naya NYKO INFOTEC logo (added)
-- public/photos/README.md  — homepage 3D photos ke naam/slots (added)
-- BRAIN.md                 — change-log entries
+AAPKI REQUEST (jo is zip me pura hua hai)
+----------------------------------------
+1. Leave apply karte waqt DATE & TIME + LOCATION record hona chahiye.
+2. Approve hone ke baad dikhna chahiye ki kisne approve kiya aur kis time.
+3. Daily basis par record: kitno ki leave application aayi, kitni approve hui.
+4. Admin ko hamesha dikhta rahe ki kaun kis date ko leave par hai.
+5. Leave lekr office aa jaye to leave CANCEL ya MODIFY ho sake
+   (full day -> half day, ya kam din ki leave).
 
-LAYER 2 — repo root = nykomart-oms/ (nested repo, github.com/infonykomart-ai/nykomart-oms)
 
-Aaj ke rounds:
-1) Document Entry — View/Print/Edit sabhi same page par A4 dialog me (2026-10-16):
-   - src/app/dashboard/documents/doc-entry-a4.tsx        — NAYA: 6 doc types ki A4 sheets
-   - src/app/dashboard/documents/document-entry-tabs.tsx — View + in-dialog Print wiring
-   - src/components/a4-dialog.tsx                        — portal-to-body + print CSS
-2) B2B Inquiry/Quotation — full unit dropdown, PCS-only calculation gone (2026-10-16):
-   - src/lib/b2b/erp.ts             — ITEM_UNITS extended (feet/inch/cm + per ... rate units)
-   - src/app/dashboard/b2b/b2b-client.tsx — common UnitSelect har item editor me
-3) BRAIN.md — sections 5l + 5m change-log entries
+FILES — KAISE LAGANI HAIN
+-------------------------
+Repo root = nykomart-oms (jahan src/ aur db/ folders hain).
 
-Pichhle rounds ka pending kaam (2026-10-15):
-- src/lib/fx/rates.ts + db/2026-10-15b-fx-rate-cache.sql + db/schema.sql
-  + src/types/database.ts — live FX rate cache (Amazon spend INR conversion)
-- src/app/dashboard/ad-spend/* — Amazon country split + statement verification
-- src/app/dashboard/attendance/* + lib/attendance/* — manual punch ab actual time record karta hai
-- UPDATED-FILES.txt
+NAYE FILES (CREATE karo, pehle se nahi hain):
+  [NEW] db/2026-10-17-leave-audit-and-lifecycle.sql
+  [NEW] src/app/dashboard/leave/leave-lifecycle-actions.tsx
 
-Kaise lagayein: zip extract karo, do repo-roots ke hisaab se files usi path
-par copy/overwrite kar do. SQL migration (db/2026-10-15b-fx-rate-cache.sql)
-Supabase SQL editor me ek baar chalana hoga.
+PURANI FILES KO REPLACE karo:
+  [REPLACE] db/schema.sql
+  [REPLACE] src/types/database.ts
+  [REPLACE] src/app/dashboard/leave/actions.ts
+  [REPLACE] src/app/dashboard/leave/leave-request-form.tsx
+  [REPLACE] src/app/dashboard/leave/page.tsx
+  [REPLACE] src/app/dashboard/leave/admin/page.tsx
+  [REPLACE] src/app/dashboard/leave/admin/leave-approval-row.tsx
+  [REPLACE] src/app/dashboard/layout.tsx
+  [REPLACE] BRAIN.md   (sirf documentation/notes — optional)
+
+
+SUPABASE ME SQL CHALANA ZAROORI HAI (NAHI KIYA TO APP ERROR DEGA)
+-----------------------------------------------------------------
+Supabase SQL Editor me is file ka pura content chalao:
+
+    db/2026-10-17-leave-audit-and-lifecycle.sql
+
+Uske baad ye file DOBARA chalao (idempotent / safe hai, kuch delete nahi
+karta) taaki naye table par bhi login-only policy lag jaye:
+
+    db/2026-08-08-enable-rls.sql
+
+Bas — iske baad naye columns aur leave_request_events table live ho
+jayenge. Migration ke bina leave page/actions "column does not exist"
+error denge, kyunki code naye columns par kaam karta hai.
+
+
+KYA-KYA NAYA HAI (short)
+------------------------
+- Apply form ab browser se location (lat/lng/accuracy) leta hai —
+  best-effort, permission na ho to bhi application submit hoti hai —
+  aur har request par "Applied <date, time> ... location (Maps link)"
+  dikhta hai (employee page + admin).
+- "Approved by <naam> on <date, time>" dikhta hai; har request ke neeche
+  History timeline (Applied / Approved / Rejected / Cancelled /
+  Half Day / Shortened — kisne, kab, remark ke saath).
+- Admin Leave Approvals par:
+    * "On Leave — today & upcoming (7 days)" board (TODAY highlighted)
+    * "Daily Leave Record (last 14 days)" table — Applied/Approved/
+      Rejected/Cancelled per din
+    * Header bell me 2 naye items — "Leave requests pending approval"
+      aur "Employees on leave today"
+- Cancel / Modify (employee ya admin dono kar sakte hain):
+    * Cancel — pending ya approved leave cancel; us leave ki auto-marked
+      attendance (Leave/Half Day) hat jaati hai aur coverage access band.
+    * Half Day — ek din full leave ki jagah half day (payroll me 0.5
+      count hota hai, alag se kuch nahi karna).
+    * Shorten — pehle wapas aa gaya to end date peeche kar do; baaki din
+      ka attendance aur extra coverage clean ho jaata hai.
+- leave_requests me naye columns: applied_lat, applied_lng,
+  applied_accuracy_m, cancelled_by_employee_id, cancelled_at,
+  cancelled_remark. Status me naya value: 'Cancelled'.
+- Naya table: leave_request_events (append-only audit trail).
+
+
+VERIFICATION (is zip banane wale session me)
+--------------------------------------------
+- npx tsc --noEmit  -> 0 errors
+- npx eslint (saare changed files) -> clean
+- Zip ke andar ke saare files disk se byte-identical (cmp pass)

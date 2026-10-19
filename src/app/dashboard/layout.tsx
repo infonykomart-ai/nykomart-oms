@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
+import { todayIST } from "@/lib/attendance/ist-date";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { DashboardMain } from "@/components/dashboard-main";
@@ -94,6 +95,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     { data: myThemePrefs },
     { data: unreadGroupMessageCount },
     { data: companionCharacterImage },
+    { count: pendingLeaveCount },
+    { count: onLeaveTodayCount },
   ] =
     await Promise.all([
       getHelpArticles().catch((err) => {
@@ -233,6 +236,43 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             return { data: null };
           }
         ),
+      // 2026-10-17 — two leave_admin counts for the bell: applications
+      // still awaiting a decision, and who is ON LEAVE RIGHT NOW (so the
+      // admin is reminded at every screen not to mark them present).
+      // Same capability gate + .catch fallback as the approval counts
+      // above; both are single indexed count queries (idx_leave_requests_
+      // company_status). "Today" is an IST range overlap on the
+      // from_date/to_date date columns.
+      employee.capabilities.includes("leave_admin")
+        ? bprClient
+            .from("leave_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", employee.currentCompanyId)
+            .eq("status", "Pending")
+            .then(
+              (r) => r,
+              (err) => {
+                console.error("[dashboard/layout] pendingLeaveCount failed", err);
+                return { count: 0 };
+              }
+            )
+        : { count: 0 },
+      employee.capabilities.includes("leave_admin")
+        ? bprClient
+            .from("leave_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("company_id", employee.currentCompanyId)
+            .eq("status", "Approved")
+            .lte("from_date", todayIST())
+            .gte("to_date", todayIST())
+            .then(
+              (r) => r,
+              (err) => {
+                console.error("[dashboard/layout] onLeaveTodayCount failed", err);
+                return { count: 0 };
+              }
+            )
+        : { count: 0 },
     ]);
 
   const notificationItems = [
@@ -244,6 +284,15 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       : null,
     employee.capabilities.includes("bill_payment")
       ? { key: "overdue_bills", label: "Overdue vendor bills", count: overdueBillsCount ?? 0, href: "/dashboard/bill-payment" }
+      : null,
+    // 2026-10-17 — "admin ko notification dikhta rahna chahiye" — pending
+    // leave applications needing a decision + how many people are on
+    // approved leave TODAY (attendance-marking reminder).
+    employee.capabilities.includes("leave_admin")
+      ? { key: "pending_leaves", label: "Leave requests pending approval", count: pendingLeaveCount ?? 0, href: "/dashboard/leave/admin" }
+      : null,
+    employee.capabilities.includes("leave_admin")
+      ? { key: "on_leave_today", label: "Employees on leave today", count: onLeaveTodayCount ?? 0, href: "/dashboard/leave/admin" }
       : null,
   ].filter((i): i is { key: string; label: string; count: number; href: string } => i !== null);
 

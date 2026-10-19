@@ -28,15 +28,76 @@
 //     now" fresh on every request, so access starts the instant this is
 //     saved and ends automatically after to_date.
 import { revalidatePath } from "next/cache";
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { addDaysToDateStr, istDayOfWeek } from "@/lib/attendance/ist-date";
+import { addDaysToDateStr, istDayOfWeek, nowISOInstant } from "@/lib/attendance/ist-date";
 import { allocateLeaveDays } from "@/lib/attendance/leave-balance";
 
 export type LeaveActionState = { error: string | null; success: boolean; message?: string };
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
+}
+
+// 2026-10-17 (leave audit + lifecycle): every real lifecycle transition
+// writes an append-only row here — "kisne kab kya kiya" that survives any
+// number of later modifications. Best-effort by design (same philosophy as
+// everything else in this module): a failed audit insert never blocks the
+// actual operation, it only logs.
+async function logLeaveEvent(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  leaveRequestId: string,
+  eventType: "Applied" | "Approved" | "Rejected" | "Cancelled" | "Half Day" | "Shortened",
+  actorEmployeeId: string,
+  details: string | null
+): Promise<void> {
+  const { error } = await supabase.from("leave_request_events").insert({
+    leave_request_id: leaveRequestId,
+    event_type: eventType,
+    actor_employee_id: actorEmployeeId,
+    details,
+  });
+  if (error) console.error("[leave/actions] logLeaveEvent failed", error.message);
+}
+
+/**
+ * 2026-10-17 — the auto-marked "Approved leave request" attendance rows
+ * for a request's date range (CANCELLED / SHORTENED cleanup). Deletes ONLY
+ * rows this module itself wrote (remark = 'Approved leave request') that
+ * are still status 'Leave' — a day the employee actually punched (kept as
+ * Present by decideLeaveRequest's own guard) or an admin-entered row is
+ * never touched.
+ */
+async function removeAutoMarkedLeaveDays(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  employeeId: string,
+  fromDate: string,
+  toDate: string
+): Promise<void> {
+  if (toDate < fromDate) return;
+  // Prefix match + both statuses on purpose: a day converted by
+  // markLeaveHalfDay keeps a DIFFERENT remark ("Approved leave — half
+  // day…"), and a full cancel must undo that conversion too — otherwise
+  // a cancelled leave would still leave a 0.5-day deduction behind.
+  await supabase
+    .from("attendance")
+    .delete()
+    .eq("employee_id", employeeId)
+    .in("status", ["Leave", "Half Day"])
+    .like("remark", "Approved leave%")
+    .gte("attendance_date", fromDate)
+    .lte("attendance_date", toDate);
+}
+
+/**
+ * Caller may act on a leave request only if it is their OWN request, or
+ * they hold leave_admin in one of the request's company. Used by the
+ * 2026-10-17 cancel/modify actions, which are available to both sides
+ * ("vo apni leave approve ko cancel karvayega ya phir modify karvayega").
+ */
+function canActOnRequest(actor: AuthedEmployee, request: { employee_id: string; company_id: string }): boolean {
+  if (request.employee_id === actor.id) return true;
+  return actor.capabilities.includes("leave_admin") && actor.companyIds.includes(request.company_id);
 }
 
 /** All "YYYY-MM-DD" dates from fromDate to toDate inclusive. Bounded to a sane range (see submitLeaveRequest). */
@@ -65,6 +126,19 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   // round. A company that hasn't set up any leave_types never sees this
   // field at all (see leave-request-form.tsx).
   const leaveTypeId = str(formData, "leave_type_id") || null;
+  // 2026-10-17 — application-time browser geolocation, best-effort exactly
+  // like the punch buttons (GPS can never block a submission): the client
+  // sends lat/lng only when the browser granted a fix; absent/garbage values
+  // all normalize to NULL here.
+  const appliedLatRaw = Number(formData.get("lat"));
+  const appliedLngRaw = Number(formData.get("lng"));
+  const appliedAccuracyRaw = Number(formData.get("accuracy_m"));
+  const appliedLat = Number.isFinite(appliedLatRaw) && Math.abs(appliedLatRaw) <= 90 ? appliedLatRaw : null;
+  const appliedLng = Number.isFinite(appliedLngRaw) && Math.abs(appliedLngRaw) <= 180 ? appliedLngRaw : null;
+  const appliedAccuracyM =
+    appliedLat !== null && appliedLng !== null && Number.isFinite(appliedAccuracyRaw) && appliedAccuracyRaw >= 0
+      ? appliedAccuracyRaw
+      : null;
 
   if (!fromDate || !toDate) return { error: "From and To dates are both required.", success: false };
   if (toDate < fromDate) return { error: "To date cannot be before From date.", success: false };
@@ -88,15 +162,35 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     }
   }
 
-  const { error } = await supabase.from("leave_requests").insert({
-    employee_id: employee.id,
-    company_id: employee.currentCompanyId,
-    from_date: fromDate,
-    to_date: toDate,
-    reason,
-    leave_type_id: leaveTypeId,
-  });
+  const { data: created, error } = await supabase
+    .from("leave_requests")
+    .insert({
+      employee_id: employee.id,
+      company_id: employee.currentCompanyId,
+      from_date: fromDate,
+      to_date: toDate,
+      reason,
+      leave_type_id: leaveTypeId,
+      applied_lat: appliedLat,
+      applied_lng: appliedLng,
+      applied_accuracy_m: appliedAccuracyM,
+    })
+    .select("id")
+    .single();
   if (error) return { error: error.message, success: false };
+
+  // 2026-10-17 — "usme date & time nahi aata with location": requested_at
+  // is the DB default now(), and the location fix (when granted) is echoed
+  // back in the audit event so the trail reads human-legibly.
+  await logLeaveEvent(
+    supabase,
+    created.id,
+    "Applied",
+    employee.id,
+    appliedLat !== null && appliedLng !== null
+      ? `Location: ${appliedLat.toFixed(5)}, ${appliedLng.toFixed(5)}${appliedAccuracyM !== null ? ` (±${Math.round(appliedAccuracyM)}m)` : ""}`
+      : "Location not shared"
+  );
 
   revalidatePath("/dashboard/leave");
   revalidatePath("/dashboard/leave/admin");
@@ -143,6 +237,11 @@ export async function decideLeaveRequest(_prev: LeaveActionState, formData: Form
   if (!updated || updated.length === 0) {
     return { error: "This leave request was just decided by someone else — refresh and check its current status.", success: false };
   }
+
+  // 2026-10-17 — "approve hone ke baad ye bhi aana chahiye ki leave approve
+  // kisne ki hai kis time par ki hai": decided_by/decided_at were already
+  // stored above; the audit event mirrors the same fact into the timeline.
+  await logLeaveEvent(supabase, leaveRequestId, decision as "Approved" | "Rejected", admin.id, decisionRemark);
 
   if (decision === "Approved") {
     // Auto-mark Attendance as "Leave" for every working day in the range —
@@ -486,4 +585,194 @@ export async function removeCoverage(coverageId: string): Promise<LeaveActionSta
 
   revalidatePath("/dashboard/leave/admin");
   return { error: null, success: true };
+}
+
+// =============================================================================
+// 2026-10-17 (leave audit + lifecycle) — "agar koi leave lekr bhi office
+// aajata hai to vo apni leave approve ko cancel karvayega ya phir modify
+// karvayega ki full day ki jagah halfday ya jitne din ki application hai
+// usme kitne din pahle aaya hai". Three actions, each usable by the
+// request's OWN employee or by any leave_admin of its company (see
+// canActOnRequest above), each writing an audit event, each cleaning up
+// the auto-marked attendance rows it invalidates.
+// =============================================================================
+
+/**
+ * Cancel a Pending (withdrawn before decision) or Approved (came to office
+ * anyway) request. Rejected requests can't be cancelled — they're already
+ * over. On an Approved one, the auto-marked "Approved leave request"
+ * attendance days are deleted so the employee doesn't stay absent in
+ * payroll, and any coverage assignments end with the leave they belonged
+ * to (they were access grants FOR that absence).
+ */
+export async function cancelLeaveRequest(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {
+  const actor = await requireCapability("leave_management");
+  const supabase = createServiceRoleClient();
+
+  const leaveRequestId = str(formData, "leave_request_id");
+  const remark = str(formData, "remark") || null;
+  if (!leaveRequestId) return { error: "Leave request is required.", success: false };
+
+  const { data: leave, error: leaveError } = await supabase
+    .from("leave_requests")
+    .select("id, employee_id, company_id, from_date, to_date, status")
+    .eq("id", leaveRequestId)
+    .single();
+  if (leaveError || !leave) return { error: "Leave request not found.", success: false };
+  if (!canActOnRequest(actor, leave)) return { error: "Leave request not found.", success: false };
+  if (leave.status !== "Pending" && leave.status !== "Approved") {
+    return { error: "Only a pending or approved leave request can be cancelled.", success: false };
+  }
+
+  // Compare-and-swap on the status we actually read (same double-click /
+  // two-admins race the decide action already guards against).
+  const { data: updated, error: updateError } = await supabase
+    .from("leave_requests")
+    .update({
+      status: "Cancelled" as never,
+      cancelled_by_employee_id: actor.id,
+      cancelled_at: nowISOInstant(),
+      cancelled_remark: remark,
+    })
+    .eq("id", leaveRequestId)
+    .eq("status", leave.status)
+    .select("id");
+  if (updateError) return { error: updateError.message, success: false };
+  if (!updated || updated.length === 0) {
+    return { error: "This leave request just changed — refresh and check its current status.", success: false };
+  }
+
+  if (leave.status === "Approved") {
+    // Only the auto-marked rows go; a real punch or an admin-entered row
+    // (guard identical to decideLeaveRequest's) is never deleted.
+    await removeAutoMarkedLeaveDays(supabase, leave.employee_id, leave.from_date, leave.to_date);
+    // Coverage assignments were access grants FOR this absence — they end
+    // with it (getAuthedEmployee() reads them live, so deleting them cuts
+    // the granted store access immediately).
+    await supabase.from("leave_coverage_assignments").delete().eq("leave_request_id", leaveRequestId);
+  }
+
+  await logLeaveEvent(supabase, leaveRequestId, "Cancelled", actor.id, remark);
+
+  revalidatePath("/dashboard/leave");
+  revalidatePath("/dashboard/leave/admin");
+  revalidatePath("/dashboard/attendance/admin");
+  revalidatePath("/dashboard/salary");
+  return { error: null, success: true, message: "Leave request cancelled." };
+}
+
+/**
+ * "full day ki jagah halfday" — flip ONE day of an approved leave from a
+ * full Leave day to a Half Day. Payroll already counts Half Day as 0.5 of
+ * a deducted day (see payroll.ts), so the salary side needs no change; the
+ * day keeps its leave_type_id/leave_unpaid so the balance ledger stays
+ * honest about which pool it came from.
+ */
+export async function markLeaveHalfDay(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {
+  const actor = await requireCapability("leave_management");
+  const supabase = createServiceRoleClient();
+
+  const leaveRequestId = str(formData, "leave_request_id");
+  const date = str(formData, "date");
+  const remark = str(formData, "remark") || null;
+  if (!leaveRequestId || !date) return { error: "Leave request and date are both required.", success: false };
+
+  const { data: leave, error: leaveError } = await supabase
+    .from("leave_requests")
+    .select("id, employee_id, company_id, from_date, to_date, status")
+    .eq("id", leaveRequestId)
+    .single();
+  if (leaveError || !leave) return { error: "Leave request not found.", success: false };
+  if (!canActOnRequest(actor, leave)) return { error: "Leave request not found.", success: false };
+  if (leave.status !== "Approved") return { error: "Only an approved leave can be converted to half day.", success: false };
+  if (date < leave.from_date || date > leave.to_date) {
+    return { error: `Date must fall inside the approved leave window (${leave.from_date} to ${leave.to_date}).`, success: false };
+  }
+
+  const { data: attendanceRow } = await supabase
+    .from("attendance")
+    .select("id, status")
+    .eq("employee_id", leave.employee_id)
+    .eq("attendance_date", date)
+    .maybeSingle();
+  // Only the auto-marked full Leave day can be converted — a missing row
+  // (holiday/week-off) or a real punch (Present) has nothing to half here.
+  if (!attendanceRow || attendanceRow.status !== "Leave") {
+    return { error: "No full-day leave attendance found for that date — nothing to convert.", success: false };
+  }
+
+  const { error: updateError } = await supabase
+    .from("attendance")
+    .update({ status: "Half Day" as never, remark: remark ? `Approved leave — half day: ${remark}` : "Approved leave — half day (came to office)" })
+    .eq("id", attendanceRow.id);
+  if (updateError) return { error: updateError.message, success: false };
+
+  await logLeaveEvent(supabase, leaveRequestId, "Half Day", actor.id, `${date}${remark ? ` — ${remark}` : ""}`);
+
+  revalidatePath("/dashboard/leave");
+  revalidatePath("/dashboard/leave/admin");
+  revalidatePath("/dashboard/attendance/admin");
+  revalidatePath("/dashboard/salary");
+  return { error: null, success: true, message: `${date} converted to half day.` };
+}
+
+/**
+ * "jitne din ki application hai usme kitne din pahle aaya hai" — shorten
+ * an approved leave's end date (the employee returned early). Days after
+ * the new end lose their auto-marked Leave attendance, and coverage
+ * assignments sticking out past the new end are trimmed back so no access
+ * grant outlives the leave it belonged to.
+ */
+export async function shortenLeaveRequest(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {
+  const actor = await requireCapability("leave_management");
+  const supabase = createServiceRoleClient();
+
+  const leaveRequestId = str(formData, "leave_request_id");
+  const newToDate = str(formData, "new_to_date");
+  const remark = str(formData, "remark") || null;
+  if (!leaveRequestId || !newToDate) return { error: "Leave request and new end date are both required.", success: false };
+
+  const { data: leave, error: leaveError } = await supabase
+    .from("leave_requests")
+    .select("id, employee_id, company_id, from_date, to_date, status")
+    .eq("id", leaveRequestId)
+    .single();
+  if (leaveError || !leave) return { error: "Leave request not found.", success: false };
+  if (!canActOnRequest(actor, leave)) return { error: "Leave request not found.", success: false };
+  if (leave.status !== "Approved") return { error: "Only an approved leave request can be shortened.", success: false };
+  if (newToDate < leave.from_date || newToDate >= leave.to_date) {
+    return { error: `New end date must be between ${leave.from_date} and the current end ${leave.to_date} (earlier).`, success: false };
+  }
+
+  const { error: updateError } = await supabase
+    .from("leave_requests")
+    .update({ to_date: newToDate })
+    .eq("id", leaveRequestId)
+    .eq("status", "Approved")
+    .select("id");
+  if (updateError) return { error: updateError.message, success: false };
+
+  // Attendance for the chopped-off days (new end + 1 .. old end).
+  await removeAutoMarkedLeaveDays(supabase, leave.employee_id, addDaysToDateStr(newToDate, 1), leave.to_date);
+  // Coverage past the new end: fully-past-the-end rows go, straddling
+  // ones are clamped to the new end.
+  const { data: coverages } = await supabase
+    .from("leave_coverage_assignments")
+    .select("id, from_date, to_date")
+    .eq("leave_request_id", leaveRequestId);
+  for (const c of coverages ?? []) {
+    if (c.from_date > newToDate) {
+      await supabase.from("leave_coverage_assignments").delete().eq("id", c.id);
+    } else if (c.to_date > newToDate) {
+      await supabase.from("leave_coverage_assignments").update({ to_date: newToDate }).eq("id", c.id);
+    }
+  }
+
+  await logLeaveEvent(supabase, leaveRequestId, "Shortened", actor.id, `${leave.to_date} → ${newToDate}${remark ? ` — ${remark}` : ""}`);
+
+  revalidatePath("/dashboard/leave");
+  revalidatePath("/dashboard/leave/admin");
+  revalidatePath("/dashboard/attendance/admin");
+  revalidatePath("/dashboard/salary");
+  return { error: null, success: true, message: `Leave shortened — now ends ${newToDate}.` };
 }

@@ -1,6 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
-import { todayIST } from "@/lib/attendance/ist-date";
+import { addDaysToDateStr, istDateFromInstant, todayIST } from "@/lib/attendance/ist-date";
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveApprovalRow, type CoverageRow } from "./leave-approval-row";
 import { LeaveTypesPanel } from "./leave-types-panel";
@@ -35,7 +35,9 @@ export default async function LeaveAdminPage({
   const [{ data: requests }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }] = await Promise.all([
     finSupabase
       .from("leave_requests")
-      .select("id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id")
+      .select(
+        "id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id, decided_by_employee_id, decided_at, applied_lat, applied_lng, cancelled_by_employee_id, cancelled_at, cancelled_remark"
+      )
       .eq("company_id", selectedCompanyId)
       .order("requested_at", { ascending: false })
       .limit(100),
@@ -126,6 +128,104 @@ export default async function LeaveAdminPage({
     requesterIds.length > 0 ? await supabase.from("employees").select("id, name").in("id", requesterIds) : { data: [] as { id: string; name: string }[] };
   const requesterName = new Map((requesters ?? []).map((e) => [e.id, e.name]));
 
+  // 2026-10-17 — "leave approve kisne ki hai kis time par ki hai" + the
+  // per-request audit timeline. Deciders/cancellers are resolved by name
+  // (they may be a different login than any requester); events are grouped
+  // per request for the row's History list.
+  const allRequestIds = (requests ?? []).map((r) => r.id);
+  const decisionActorIds = Array.from(
+    new Set(
+      (requests ?? []).flatMap((r) => [r.decided_by_employee_id, r.cancelled_by_employee_id]).filter((v): v is string => Boolean(v))
+    )
+  );
+  const [{ data: eventsRaw }, { data: decisionActors }] = await Promise.all([
+    allRequestIds.length > 0
+      ? finSupabase
+          .from("leave_request_events")
+          .select("id, leave_request_id, event_type, actor_employee_id, event_at, details")
+          .in("leave_request_id", allRequestIds)
+          .order("event_at", { ascending: true })
+      : Promise.resolve({ data: [] as { id: string; leave_request_id: string; event_type: string; actor_employee_id: string | null; event_at: string; details: string | null }[] }),
+    decisionActorIds.length > 0 ? supabase.from("employees").select("id, name").in("id", decisionActorIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const decisionActorName = new Map((decisionActors ?? []).map((e) => [e.id, e.name]));
+  const eventsByRequest = new Map<string, { id: string; event_type: string; actor_name: string | null; event_at: string; details: string | null }[]>();
+  for (const ev of eventsRaw ?? []) {
+    const list = eventsByRequest.get(ev.leave_request_id) ?? [];
+    list.push({
+      id: ev.id,
+      event_type: ev.event_type,
+      actor_name: ev.actor_employee_id ? decisionActorName.get(ev.actor_employee_id) ?? null : null,
+      event_at: ev.event_at,
+      details: ev.details,
+    });
+    eventsByRequest.set(ev.leave_request_id, list);
+  }
+
+  // 2026-10-17 — "daily bases par bhi record hona chahiye ki kitne logo ki
+  // leave application aayi hai or kitno ki approve hui hai": last 14 days,
+  // grouped by the IST day the application ARRIVED (requested_at) with the
+  // decision split shown on the same row. Live aggregation, no stored
+  // counter — same convention as every other report in this app.
+  const recordDays: string[] = [];
+  for (let i = 13; i >= 0; i--) recordDays.push(addDaysToDateStr(today, -i));
+  const recordStartIso = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const dailyRecord = new Map(recordDays.map((d) => [d, { applied: 0, approved: 0, rejected: 0, cancelled: 0 }]));
+  const { data: recentRequests } = await finSupabase
+    .from("leave_requests")
+    .select("requested_at, status, decided_at, cancelled_at")
+    .eq("company_id", selectedCompanyId)
+    // Any of the three timestamps inside the window — NOT just requested_at:
+    // a decision made today on an application from three weeks ago must
+    // still land in today's Approved/Rejected column ("daily record" is
+    // about what happened that day, either side of the workflow).
+    .or(
+      `requested_at.gte.${recordStartIso},decided_at.gte.${recordStartIso},cancelled_at.gte.${recordStartIso}`
+    );
+  for (const r of recentRequests ?? []) {
+    const key = istDateFromInstant(r.requested_at);
+    const bucket = dailyRecord.get(key);
+    if (bucket) bucket.applied += 1;
+    if (r.decided_at) {
+      const dKey = istDateFromInstant(r.decided_at);
+      const dBucket = dailyRecord.get(dKey);
+      if (dBucket && r.status === "Approved") dBucket.approved += 1;
+      if (dBucket && r.status === "Rejected") dBucket.rejected += 1;
+    }
+    if (r.cancelled_at) {
+      const cKey = istDateFromInstant(r.cancelled_at);
+      const cBucket = dailyRecord.get(cKey);
+      if (cBucket) cBucket.cancelled += 1;
+    }
+  }
+
+  // 2026-10-17 — "admin ko notification dikhta rahna chahiye ki ye bande
+  // itni itni date ko leave par hai" — the ON LEAVE board: today + next 7
+  // days, one row per date, every approved (not cancelled) employee whose
+  // window covers it. This is the standing "don't mark them present" view.
+  const boardEnd = addDaysToDateStr(today, 7);
+  const { data: onLeaveRequests } = await finSupabase
+    .from("leave_requests")
+    .select("employee_id, from_date, to_date, leave_type_id")
+    .eq("company_id", selectedCompanyId)
+    .eq("status", "Approved")
+    .lte("from_date", boardEnd)
+    .gte("to_date", today);
+  const boardDays: { date: string; isToday: boolean; people: { name: string; typeName: string | null }[] }[] = [];
+  for (let d = today; d <= boardEnd; d = addDaysToDateStr(d, 1)) {
+    boardDays.push({
+      date: d,
+      isToday: d === today,
+      people: (onLeaveRequests ?? [])
+        .filter((r) => r.from_date <= d && r.to_date >= d)
+        .map((r) => ({
+          name: requesterName.get(r.employee_id) ?? "—",
+          typeName: r.leave_type_id ? leaveTypeName.get(r.leave_type_id) ?? null : null,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  }
+
   const approvedIds = (requests ?? []).filter((r) => r.status === "Approved").map((r) => r.id);
   const { data: coverageRaw } =
     approvedIds.length > 0
@@ -185,6 +285,78 @@ export default async function LeaveAdminPage({
         </button>
       </form>
 
+      <div className="mb-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {/* 2026-10-17 — ON LEAVE board (today + next 7 days): the standing
+            "kaun kis tareekh ko leave par hai" view an admin keeps open
+            while marking attendance. */}
+        <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+          <p className="mb-2 text-sm font-semibold text-amber-800">🟡 On Leave — today & upcoming (7 days)</p>
+          <div className="space-y-1.5">
+            {boardDays.map((d) => (
+              <div key={d.date} className="flex items-start gap-2 text-xs">
+                <span
+                  className={`w-24 shrink-0 font-medium ${
+                    d.isToday ? "text-amber-800" : d.people.length > 0 ? "text-slate-700" : "text-slate-400"
+                  }`}
+                >
+                  {d.date}
+                  {d.isToday && <span className="ml-1 rounded bg-amber-200 px-1 text-[10px]">TODAY</span>}
+                </span>
+                <span className={d.people.length > 0 ? "text-slate-700" : "text-slate-300"}>
+                  {d.people.length > 0
+                    ? d.people
+                        .map((p) => `${p.name}${p.typeName ? ` (${p.typeName})` : ""}`)
+                        .join(", ")
+                    : "— everyone present (no approved leave)"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 2026-10-17 — daily record: kitne application aayi / kitni
+            approved — one row per day, last 14 days. */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="mb-2 text-sm font-semibold text-slate-700">📅 Daily Leave Record (last 14 days)</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="py-1 pr-3">Day</th>
+                  <th className="px-2 text-right">Applied</th>
+                  <th className="px-2 text-right">Approved</th>
+                  <th className="px-2 text-right">Rejected</th>
+                  <th className="px-2 text-right">Cancelled</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recordDays
+                  .slice()
+                  .reverse()
+                  .map((d) => {
+                    const row = dailyRecord.get(d)!;
+                    return (
+                      <tr key={d} className={`border-t border-slate-100 ${d === today ? "bg-amber-50/60" : ""}`}>
+                        <td className="py-1 pr-3 font-medium text-slate-700">
+                          {d}
+                          {d === today && <span className="ml-1 rounded bg-amber-200 px-1 text-[10px]">TODAY</span>}
+                        </td>
+                        <td className="px-2 text-right font-semibold text-slate-800">{row.applied}</td>
+                        <td className="px-2 text-right text-green-700">{row.approved}</td>
+                        <td className="px-2 text-right text-red-600">{row.rejected}</td>
+                        <td className="px-2 text-right text-slate-500">{row.cancelled}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400">
+            Counts are by the day the application arrived / the decision was made (IST).
+          </p>
+        </div>
+      </div>
+
       <div className="space-y-3">
         {sorted.map((r) => (
           <LeaveApprovalRow
@@ -197,6 +369,14 @@ export default async function LeaveAdminPage({
             status={r.status}
             requestedAt={r.requested_at}
             decisionRemark={r.decision_remark}
+            decidedByName={r.decided_by_employee_id ? decisionActorName.get(r.decided_by_employee_id) ?? null : null}
+            decidedAt={r.decided_at}
+            cancelledAt={r.cancelled_at}
+            cancelledRemark={r.cancelled_remark}
+            appliedLat={r.applied_lat}
+            appliedLng={r.applied_lng}
+            events={eventsByRequest.get(r.id) ?? []}
+            today={today}
             leaveTypeName={r.leave_type_id ? leaveTypeName.get(r.leave_type_id) ?? null : null}
             employees={teamEmployees ?? []}
             stores={stores ?? []}

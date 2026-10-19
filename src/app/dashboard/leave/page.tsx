@@ -3,6 +3,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveRequestForm } from "./leave-request-form";
+import { LeaveLifecycleActions } from "./leave-lifecycle-actions";
 
 // 2026-08-12 (round 8): "LEAVE REQUESST BHEJ DU APPLIATION KE SATH TO VO MD
 // KE PASS APPROVAL KE LIYE CHLI JAYE" — every employee's own Leave screen:
@@ -22,7 +23,9 @@ export default async function LeavePage() {
   const [{ data: myRequests }, { data: myCoverage }, { data: leaveTypesRaw }, { data: myProfile }] = await Promise.all([
     supabase
       .from("leave_requests")
-      .select("id, from_date, to_date, reason, status, requested_at, decided_at, decision_remark")
+      .select(
+        "id, from_date, to_date, reason, status, requested_at, decided_at, decision_remark, decided_by_employee_id, applied_lat, applied_lng, cancelled_at, cancelled_remark"
+      )
       .eq("employee_id", employee.id)
       .order("requested_at", { ascending: false })
       .limit(50),
@@ -97,6 +100,35 @@ export default async function LeavePage() {
   }
 
   const requestIds = (myRequests ?? []).map((r) => r.id);
+
+  // 2026-10-17 — audit trail: who decided/cancelled (names) + the full
+  // per-request event timeline (Applied/Approved/Cancelled/Half Day/...).
+  const actorIds = Array.from(
+    new Set((myRequests ?? []).flatMap((r) => [r.decided_by_employee_id]).filter((v): v is string => Boolean(v)))
+  );
+  const [{ data: eventsRaw }, { data: actors }] = await Promise.all([
+    requestIds.length > 0
+      ? supabase
+          .from("leave_request_events")
+          .select("id, leave_request_id, event_type, actor_employee_id, event_at, details")
+          .in("leave_request_id", requestIds)
+          .order("event_at", { ascending: true })
+      : Promise.resolve({ data: [] as { id: string; leave_request_id: string; event_type: string; actor_employee_id: string | null; event_at: string; details: string | null }[] }),
+    actorIds.length > 0 ? supabase.from("employees").select("id, name").in("id", actorIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const actorName = new Map((actors ?? []).map((e) => [e.id, e.name]));
+  const eventsByRequest = new Map<string, { id: string; event_type: string; actor_name: string | null; event_at: string; details: string | null }[]>();
+  for (const ev of eventsRaw ?? []) {
+    const list = eventsByRequest.get(ev.leave_request_id) ?? [];
+    list.push({
+      id: ev.id,
+      event_type: ev.event_type,
+      actor_name: ev.actor_employee_id ? actorName.get(ev.actor_employee_id) ?? null : null,
+      event_at: ev.event_at,
+      details: ev.details,
+    });
+    eventsByRequest.set(ev.leave_request_id, list);
+  }
   const coverageStoreIds = (myCoverage ?? []).map((c) => c.store_id);
   const allStoreIds = Array.from(new Set(coverageStoreIds));
 
@@ -186,6 +218,7 @@ export default async function LeavePage() {
             <div className="space-y-3">
               {(myRequests ?? []).map((r) => {
                 const coverage = coverageByRequest.get(r.id) ?? [];
+                const events = eventsByRequest.get(r.id) ?? [];
                 return (
                   <div key={r.id} className="rounded-lg border border-slate-200 p-3">
                     <div className="flex items-start justify-between gap-3">
@@ -194,11 +227,47 @@ export default async function LeavePage() {
                           {r.from_date} → {r.to_date}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500">{r.reason}</p>
+                        {/* 2026-10-17 — "usme date & time nahi aata with
+                            location": exactly that, on every request. */}
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          Applied {formatIST(r.requested_at)}
+                          {r.applied_lat !== null && r.applied_lng !== null && (
+                            <>
+                              {" · "}
+                              <a
+                                href={`https://www.google.com/maps?q=${r.applied_lat},${r.applied_lng}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sky-600 hover:underline"
+                              >
+                                📍 {r.applied_lat.toFixed(4)}, {r.applied_lng.toFixed(4)}
+                              </a>
+                            </>
+                          )}
+                        </p>
                       </div>
                       <StatusBadge status={r.status} />
                     </div>
+                    {/* 2026-10-17 — "leave approve kisne ki hai kis time
+                        par ki hai". */}
+                    {r.status === "Approved" && r.decided_at && r.decided_by_employee_id && (
+                      <p className="mt-2 text-xs text-green-700">
+                        ✓ Approved by {actorName.get(r.decided_by_employee_id) ?? "MD/Admin"} on {formatIST(r.decided_at)}
+                      </p>
+                    )}
+                    {r.status === "Rejected" && r.decided_at && r.decided_by_employee_id && (
+                      <p className="mt-2 text-xs text-red-700">
+                        ✕ Rejected by {actorName.get(r.decided_by_employee_id) ?? "MD/Admin"} on {formatIST(r.decided_at)}
+                      </p>
+                    )}
                     {r.status === "Rejected" && r.decision_remark && (
-                      <p className="mt-2 text-xs text-red-700">MD/Admin remark: {r.decision_remark}</p>
+                      <p className="mt-1 text-xs text-red-700">MD/Admin remark: {r.decision_remark}</p>
+                    )}
+                    {r.status === "Cancelled" && r.cancelled_at && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        🗑 Cancelled on {formatIST(r.cancelled_at)}
+                        {r.cancelled_remark ? ` — ${r.cancelled_remark}` : ""}
+                      </p>
                     )}
                     {coverage.length > 0 && (
                       <div className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
@@ -208,6 +277,31 @@ export default async function LeavePage() {
                             {employeeName.get(c.covering_employee_id) ?? "—"} → {storeName.get(c.store_id) ?? "—"} ({c.from_date} to {c.to_date})
                           </p>
                         ))}
+                      </div>
+                    )}
+                    {/* 2026-10-17 — "cancel karvayega ya phir modify
+                        karvayega" — cancel for any not-yet-cancelled
+                        request; modify only shows for Approved ones inside
+                        the component itself. */}
+                    <LeaveLifecycleActions
+                      requestId={r.id}
+                      status={r.status}
+                      fromDate={r.from_date}
+                      toDate={r.to_date}
+                      today={today}
+                    />
+                    {events.length > 1 && (
+                      <div className="mt-2 border-t border-slate-100 pt-2">
+                        <p className="mb-1 text-[11px] font-medium text-slate-400">History</p>
+                        <ul className="space-y-0.5 text-[11px] text-slate-500">
+                          {events.map((ev) => (
+                            <li key={ev.id}>
+                              <span className="font-medium text-slate-600">{ev.event_type}</span>
+                              {ev.actor_name ? ` by ${ev.actor_name}` : ""} · {formatIST(ev.event_at)}
+                              {ev.details ? ` — ${ev.details}` : ""}
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </div>
@@ -230,6 +324,21 @@ function StatusBadge({ status }: { status: string }) {
       ? "bg-green-50 text-green-700"
       : status === "Rejected"
         ? "bg-red-50 text-red-700"
-        : "bg-amber-50 text-amber-700";
+        : status === "Cancelled"
+          ? "bg-slate-100 text-slate-500"
+          : "bg-amber-50 text-amber-700";
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{status}</span>;
+}
+
+/** Full "17 Oct 2026, 09:42" IST rendering for audit timestamps — the
+ * half of "date & time" that was missing everywhere before this round. */
+function formatIST(iso: string): string {
+  return new Date(iso).toLocaleString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

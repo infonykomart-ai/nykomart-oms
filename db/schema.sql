@@ -661,21 +661,6 @@ CREATE TABLE fx_rate_cache (
   PRIMARY KEY (base_currency, quote_currency)
 );
 
--- 2026-10-17 — automatic customs/export rates (DGFT → ICEGATE → eximin.net)
--- snapshot, refreshed by src/lib/fx/customs.ts when older than 12 hours. See
--- db/2026-10-17-customs-exchange-rates.sql for the full rationale.
-CREATE TABLE customs_exchange_rates (
-  currency_code    varchar(3) PRIMARY KEY,
-  currency_name    text,
-  import_rate      numeric(14,6) CHECK (import_rate IS NULL OR import_rate > 0),
-  export_rate      numeric(14,6) NOT NULL CHECK (export_rate > 0),
-  effective_date   date,
-  notification_no  text,
-  source           text NOT NULL DEFAULT 'eximin.net',
-  source_url       text,
-  fetched_at       timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE OR REPLACE FUNCTION get_official_rate_as_of(p_currency_code varchar(3), p_as_of date)
 RETURNS TABLE (rate_to_inr numeric, effective_from date)
 LANGUAGE sql STABLE AS $$
@@ -3918,7 +3903,11 @@ $$;
 -- exactly the assigned dates (see leave_coverage_assignments below and
 -- getAuthedEmployee() in src/lib/auth/require-capability.ts).
 -- =============================================================================
-CREATE TYPE leave_request_status AS ENUM ('Pending', 'Approved', 'Rejected');
+-- 2026-10-17: 'Cancelled' added — a withdrawn application (employee came
+-- to office / changed plans) or an admin-pulled approval. Distinct from
+-- Rejected: nobody denied it, it was pulled back. See
+-- db/2026-10-17-leave-audit-and-lifecycle.sql.
+CREATE TYPE leave_request_status AS ENUM ('Pending', 'Approved', 'Rejected', 'Cancelled');
 
 CREATE TABLE leave_requests (
   id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3936,13 +3925,42 @@ CREATE TABLE leave_requests (
   -- 2026-09-11 (Payroll Phase 2) — see db/2026-09-11-leave-types-and-balances.sql.
   -- NULL = untyped request, original behavior unchanged (flat monthly allowance).
   leave_type_id           uuid REFERENCES leave_types(id),
+  -- 2026-10-17 (leave audit + lifecycle) — see
+  -- db/2026-10-17-leave-audit-and-lifecycle.sql. Application-time browser
+  -- geolocation, best-effort exactly like punch GPS (NULL when denied).
+  applied_lat             double precision,
+  applied_lng             double precision,
+  applied_accuracy_m      numeric(8, 2),
+  -- Set when a Pending/Approved request is withdrawn (employee) or pulled
+  -- back (admin). decided_at stays as the original decision time.
+  cancelled_by_employee_id uuid REFERENCES employees(id),
+  cancelled_at            timestamptz,
+  cancelled_remark        text,
   CHECK (to_date >= from_date)
 );
 CREATE INDEX idx_leave_requests_employee ON leave_requests(employee_id, from_date DESC);
 CREATE INDEX idx_leave_requests_company_status ON leave_requests(company_id, status);
 COMMENT ON TABLE leave_requests IS
-  'Real leave application + MD/Admin approval workflow. status starts Pending; once decided (Approved/'
-  'Rejected) it is never re-decided — decided_by/decided_at/decision_remark are all set together.';
+  'Real leave application + MD/Admin approval workflow. status starts Pending; a decided request (Approved/'
+  'Rejected) is never re-decided — decided_by/decided_at/decision_remark are set together — but an Approved one '
+  'can later be Cancelled (withdrawn), with cancelled_by/cancelled_at recorded separately.';
+
+-- Append-only audit trail for every lifecycle event on a request —
+-- Applied / Approved / Rejected / Cancelled / Half Day / Shortened —
+-- so "kisne kab kya kiya" survives later modifications (2026-10-17).
+CREATE TABLE leave_request_events (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  leave_request_id   uuid NOT NULL REFERENCES leave_requests(id) ON DELETE CASCADE,
+  -- plain text on purpose — the lifecycle set is expected to grow
+  event_type         text NOT NULL,
+  actor_employee_id  uuid REFERENCES employees(id),
+  event_at           timestamptz NOT NULL DEFAULT now(),
+  details            text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_leave_request_events_request ON leave_request_events(leave_request_id, event_at);
+COMMENT ON TABLE leave_request_events IS
+  'Append-only audit trail of every lifecycle event on a leave request (who did what, when, remark). Never updated; deleted only with the request (CASCADE).';
 
 -- Who covers an absent (on-approved-leave) employee's store work, and for
 -- exactly which dates. This row IS the access grant — getAuthedEmployee()
@@ -6147,17 +6165,7 @@ CREATE TABLE b2b_inquiry_items (
   -- 2026-10-02d — optional link to the product master so the quotation
   -- engine can pull cost/MOQ/lead-time for estimates (nullable: enquiries
   -- arrive as free text too).
-  product_id    uuid REFERENCES b2b_products(id) ON DELETE SET NULL,
-  -- ── 2026-10-17b (db/2026-10-17b-b2b-area-pricing.sql) — SIZE × QTY for
-  -- asked-for lines: the free-typed spec plus its parsed dims, mirroring
-  -- b2b_quotation_items, so a "5000 pcs of 2.6 × 10 ft @ 5/sq ft" enquiry
-  -- can show its sq ft live and price by area. App formula:
-  -- computeItemDims() / lineAmount() in src/lib/b2b/erp.ts.
-  size            text,
-  size_length     numeric(10,2),
-  size_width      numeric(10,2),
-  size_thickness  numeric(10,3),
-  size_unit       text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
+  product_id    uuid REFERENCES b2b_products(id) ON DELETE SET NULL
 );
 CREATE INDEX idx_b2b_inquiry_items_inquiry ON b2b_inquiry_items(inquiry_id, display_order);
 
@@ -6285,13 +6293,7 @@ CREATE TABLE b2b_quotation_items (
   qty           numeric(12,3) NOT NULL CHECK (qty > 0),
   unit          text DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL CHECK (unit_price >= 0),
-  -- 2026-10-17b — WAS `GENERATED ALWAYS AS (round(qty * unit_price, 2))`.
-  -- Area-priced lines ("per sq ft" + a size) must bill qty × L × W × rate,
-  -- which a generated qty × rate column can never express, so the column is
-  -- now APP-MAINTAINED: every writer sets it through lineAmount()
-  -- (src/lib/b2b/erp.ts) — createQuotation / updateQuotation /
-  -- saveEngineQuotation. Existing rows keep their qty × rate value.
-  line_total    numeric(14,2) NOT NULL DEFAULT 0,
+  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
   display_order integer NOT NULL DEFAULT 0,
   -- 2026-10-13 — per-item product specifications the PI must carry
   -- (Size / Material / Manufacturing / Colour-design / Packaging), printed
@@ -6418,20 +6420,9 @@ CREATE TABLE b2b_sales_order_items (
   unit          text NOT NULL DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
   unit_cost     numeric(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
-  -- 2026-10-17b — line_total was GENERATED (qty × unit_price); area-priced
-  -- lines need qty × L × W × rate, so it is APP-MAINTAINED through
-  -- lineAmount() like b2b_quotation_items.line_total. line_cost stays
-  -- generated: cost stays per-piece (the engine's unitCost is per-unit).
-  line_total    numeric(14,2) NOT NULL DEFAULT 0,
+  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
   line_cost     numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_cost, 2)) STORED,
-  display_order integer NOT NULL DEFAULT 0,
-  -- 2026-10-17b — same size spec + parsed dims as the quotation lines
-  -- ("kitna sq ft maal hua" must be answerable on the order too).
-  size          text,
-  size_length   numeric(10,2),
-  size_width    numeric(10,2),
-  size_thickness numeric(10,3),
-  size_unit     text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
+  display_order integer NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_b2b_sales_order_items_order ON b2b_sales_order_items(order_id, display_order);
 

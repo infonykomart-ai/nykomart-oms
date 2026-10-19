@@ -485,102 +485,59 @@ NAHI HAI".
   to a base unit (toFeet) — a quote must show the buyer exactly the unit they asked in.
 - **Verified**: `npx tsc --noEmit` → 0 errors; `npx eslint` on both changed files → clean.
 
-## 5n. Round 2026-10-17 — remaining print paths, payroll extras, auto customs FX, rug workflow
+## 5n. Leave — full audit trail (applied date/time + location, approved-by), daily record, on-leave board, cancel/modify (2026-10-17)
 
-Merged with the 2026-10-16 A4 view/print round above (that round covered the 6 flat types via
-`doc-entry-a4.tsx`; this one covers what it left out).
+User request: "leave apply karta hai to usme date & time nahi aata with location", "approve
+hone ke baad ye bhi aana chahiye ki leave approve kisne ki hai kis time par ki hai", "daily
+bases par record hona chahiye ki kitne logo ki leave application aayi hai or kitno ki approve
+hui hai", "admin ko notification dikhta rahna chahiye ki ye bande itni itni date ko leave par
+hai", "agar koi leave lekr bhi office aajata hai to vo apni leave approve ko cancel karvayega
+ya phir modify karvayega ki full day ki jagah halfday ya jitne din ki application hai usme
+kitne din pahle aaya hai".
 
-- **Print for the remaining document types, same in-page A4 dialog**: `src/components/print-dialog.tsx`
-  embeds a doc's existing access-checked `/report` page in the shared `A4Dialog` and prints from the
-  iframe, so nothing navigates. Wired for Journal Voucher, Received Chalan, Shipment Chalan, and the
-  Courier/Duty report buttons (previously `<Link>` navigations); a new
-  `documents/shipment-chalans/[id]/report` page makes the handover chalan printable at all. Purchase
-  Bill / Courier / Duty / Credit Note / CSB keep their statement sheets, now labelled distinctly. The
-  bill/doc statement sheets also got `print:static/h-auto` so printing from their own dialog paginates
-  instead of clipping to one page.
-- **Payroll extras + deductions** (`src/lib/attendance/payroll.ts`): `computeMonthlyPayroll()` is now
-  the ONE month calculation — base + Sunday/company-holiday worked pay + unused-paid-leave encashment
-  (only for a completed, zero-leave month) − absent/half-day/excess-leave/manual deductions. Manual
-  Half/Full-day deduction is selectable in Pay Salary. September 2026 at ₹15,000 (30 days = ₹500/day),
-  one extra Sunday, no leave = **₹16,000**; one half day = **₹15,750** (verified by running the compiled
-  function). Salary versions and paid months are editable/deletable; deleting a payment reverses the
-  mirrored `bill_pass_register` row and the advance recovery. Salary page, salary reports and the
-  payment action all call the same function, so preview/report/payment cannot disagree.
-- **Automatic customs/export exchange rates** (`src/lib/fx/customs.ts`): provider chain DGFT → ICEGATE →
-  eximin.net for every currency, refreshed when older than 12 h (no cron), memoised per instance. The
-  **export** rate is written into `exchange_rates` for its notification date, never overwriting a
-  manual non-AUTO row. JPY/KRW are divided by 100 (customs quotes them per 100 units); provider names
-  are normalized to ISO codes (verified live: 23/23 eximin currencies mapped). New snapshot table
-  `customs_exchange_rates` — migration `db/2026-10-17-customs-exchange-rates.sql`; without it the page
-  still shows live rates (uncached, with a warning). DGFT currently returns 403 to server-side requests
-  and ICEGATE's screen is client-rendered, which is why the fallback chain is required.
-- **Cotton-rug bill workflow**: `/dashboard/printing-register` now shows the four-stage chain — Kacha
-  Maal (purchase bill without PO) → Block Print (PO-linked purchase bill) → Washing → Silai (JOB WORK
-  bill) — each with count, ₹ total and a link to its entry screen. No new tables.
-- **Verified**: scoped `tsc` over every changed file + import graph → 0 errors; ESLint clean; full
-  `tsc -b` cannot run in this 2 GB sandbox (OOM), so the platform post-turn typecheck is the final gate.
-
-## 5o. Refund flow now reachable from the order's own page (2026-10-17)
-
-The refund flow itself already existed, in the Orders hub row's `OrderHoldCancelActions`:
-pre-dispatch → **✕ Cancel** (plain status change) → the same panel's refund form opens; post-dispatch
-→ **↩️ Return & Refund** (status `Returned`) or **💸 Add Refund** for a goodwill/duty-only refund that
-leaves the status `Dispatched`/`Delivered` alone. Amount is always manual, with a 10–100 % calculator
-against `order_value_original` plus separate Shipping/Duty add-ons; 100 % = full refund. Invoiced
-orders auto-generate a Credit Note; every refund restocks finished goods and is capped at order value
-(same-currency cap + an independent INR-converted safety cap).
-
-What was missing: `/dashboard/orders/[id]` (the order page users actually open) is read-only and had
-NO refund controls at all — a post-dispatch refund meant going back to the Orders list and finding the
-row. Now that page renders the same component and lists the order's existing refunds:
-
-- `orders/[id]/page.tsx` fetches `order_refunds` (newest first) + `currencies`, and passes
-  `canManageOrders={employee.capabilities.includes("order_entry")}` (the detail page itself is open to
-  any employee of the company, so the write controls stay capability-gated like the hub).
-- `orders/[id]/order-view.tsx` shows `OrderHoldCancelActions` + a screen-only "Refunds on this order"
-  list (both `print:hidden`, so the A4 print sheet is unchanged).
-- `orders/actions.ts` revalidates `/dashboard/orders/<id>` on hold/cancel/return/refund so the page's
-  status and refund list refresh in place.
-
-No schema change, no new actions — the same server actions, caps and Credit Note/restock behavior.
-
-## 5p. Round 2026-10-17 — refund A4 dialog + B2B area (sq ft) pricing (2026-10-17)
-
-**A. Refund opens in the shared A4 dialog.** `orders/order-hold-cancel-actions.tsx`'s refund form
-(the one the Orders hub row AND the order's own page both render) now opens inside `A4Dialog` with a
-**printable REFUND RECORD sheet** under the form (PrintArea → A4 `@page`, prints sheet only, footer
-Print button). Form layout widened to the dialog; date/reason/currency became controlled state so the
-sheet always mirrors the screen. Same `saveOrderRefund` action, caps, Credit Note and restock — nothing
-server-side changed.
-
-**B. B2B area pricing — "RATE PER SQ FT ME HAI … CALCULATION BHI USI HISAB SE HO".**
-- **One formula**: `lineAmount()` (`src/lib/b2b/erp.ts`) — area unit (`sq ft` / `per sq ft` /
-  `sq mtr` / `per sq mtr`) + a Size → **qty × L × W × rate**; area unit without a Size → qty *is* the
-  area; every other unit → qty × rate (unchanged). `lineArea()`, `sumSqFt()` (per-view) and
-  `computeCosting()`'s selling value all route through it, so inquiry → quotation → PI/CI → share
-  message → sales order → reports → Control Center → B2B P&L can never disagree. Verified with the
-  compiled functions: 5,000 pcs of 2.6×10 ft @ 5/sq ft = **650,000** (qty×rate would say 25,000);
-  legacy `pcs` lines byte-identical to before.
-- **`parseSizeSpec` fixed**: per-part units (`"3 ft * 400 mtr"` used to parse as 3 m × 400 m). Mixed
-  units normalise to metres at full precision (no round2 in the middle of the maths).
-- **`computeItemDims` de-duplicated rounding**: `sqFt` now derives from the unrounded m² product
-  (the old `round2(round2(sqMtr)/0.09290304)` printed 130,000.05 sq ft on exactly 130,000).
-- **Schema** (`db/2026-10-17b-b2b-area-pricing.sql`, folded into `db/schema.sql`, types hand-updated):
-  size columns on `b2b_inquiry_items` AND `b2b_sales_order_items`; `line_total` on
-  `b2b_quotation_items` / `b2b_sales_order_items` stops being `GENERATED (qty × rate)` and becomes
-  app-maintained (existing rows keep their value). **Must run on the live DB before this ships.**
-- **Entry surfaces**: Size input + live 📐/💰 preview line + running total on the New Inquiry modal,
-  the inquiry details form, the quote form's item grid, the Quotation Engine's product lines, and the
-  sales-order line (engine carries `size` into both saves).
-- **Visibility**: register KPI "Asked Area", inquiry detail list, quote summary + item table
-  (Total sq ft · sq mtr), PI/CI/PL document sheet, Sales Order detail (per line + total), Reports
-  `Area sold (FY)`, Control Center `Area sold (FY)`.
-- **Bug fixed on the way**: the inquiry details dialog rendered TWO "Asked-for Items" grids — the
-  first edited a dead `items` state `saveDetails` never submitted, so unit/rate/size typed there never
-  reached the server ("ye to kam hi nahi kar raha"). One grid now, the one that saves.
-- **Verified**: scoped `tsc` over every changed file → 0 errors; ESLint on them → clean; pure-maths
-  spot checks above; full `tsc -b` still OOMs in this 2 GB sandbox, so CI's build (lint + tsc +
-  next build) + schema-check are the final gate.
+- **Schema** (`db/2026-10-17-leave-audit-and-lifecycle.sql`, folded into `db/schema.sql`):
+  `leave_requests` gained `applied_lat/lng/accuracy_m` (application-time browser geolocation,
+  best-effort like punch GPS) and `cancelled_by_employee_id/cancelled_at/cancelled_remark`;
+  `leave_request_status` gained a 4th value **`Cancelled`** (withdrawn — distinct from
+  Rejected); new append-only **`leave_request_events`** table (event_type/actor/event_at/
+  details) is the per-request audit trail. Hand-types added to `src/types/database.ts`.
+  ⚠️ **Supabase me manually chalana hoga** — run the migration, then re-run
+  `db/2026-08-08-enable-rls.sql` (idempotent) so the new table gets the blanket
+  authenticated-only policy.
+- **Apply captures date + time + location**: the form takes a one-shot best-effort geolocation
+  fix (same `geolocationBestEffort` contract as punch-buttons — GPS can never block a submit),
+  stores lat/lng/accuracy, and every request now DISPLAYS "Applied 17 Oct 2026, 09:42 · 📍
+  26.9124, 75.7873" (Maps link) on both the employee's My Leave Requests and the admin row.
+- **Approved-by is now visible**: `decided_by/decided_at` were already stored but never shown —
+  both UIs now show "✓ Approved by <name> on <date, time>" (and the Rejected/Cancelled
+  equivalents), plus a per-request **History** list built from `leave_request_events`
+  (Applied/Approved/Rejected/Cancelled/Half Day/Shortened — actor + IST time + remark).
+  Every lifecycle transition in `actions.ts` writes an event (`logLeaveEvent`, best-effort so
+  an audit failure never blocks the operation itself).
+- **Daily record**: admin Leave Approvals now has a "Daily Leave Record (last 14 days)" table —
+  per IST day: Applied / Approved / Rejected / Cancelled counts, live-aggregated from
+  `leave_requests` (no stored counters).
+- **On-leave board + bell**: admin page shows "On Leave — today & upcoming (7 days)" (one row
+  per date, who is away, TODAY row highlighted) so attendance is never marked for someone on
+  leave; the header notification bell gained two `leave_admin`-gated items — "Leave requests
+  pending approval" and "Employees on leave today" (both plain indexed counts, same
+  `.catch`-guarded pattern as the L1/L2 bill counts in layout.tsx).
+- **Cancel / Modify** (the "came to office anyway" case) — three new server actions in
+  `leave/actions.ts`, all usable by the request's OWN employee or any `leave_admin` of its
+  company (`canActOnRequest`), all CAS-guarded on status, all writing audit events:
+  - `cancelLeaveRequest` — Pending or Approved → `Cancelled`; on an Approved one it deletes
+    ONLY the auto-marked `remark='Approved leave request'` attendance rows (real punches and
+    admin-entered rows untouched) and removes its coverage assignments (those grants existed
+    FOR the absence).
+  - `markLeaveHalfDay` — flips one already-taken full Leave day to `Half Day` (payroll already
+    counts Half Day as 0.5 — payroll.ts:160, no payroll change needed).
+  - `shortenLeaveRequest` — new earlier `to_date`; chops the auto-marked attendance beyond it
+    and trims/clamps coverage rows sticking past the new end.
+  - Shared UI `leave-lifecycle-actions.tsx` renders the buttons on BOTH the employee page and
+    the admin row (server re-gates who may act); modify form only shows for Approved requests,
+    half-day select only offers dates up to today.
+- **Verified**: `npx tsc --noEmit` → 0 errors; `npx eslint` on all 7 touched TS files → clean.
+  Not yet run against the live DB (migration pending, see above) and not yet committed.
 
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
