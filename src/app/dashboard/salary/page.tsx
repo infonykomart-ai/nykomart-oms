@@ -3,7 +3,7 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST, daysInMonth } from "@/lib/attendance/ist-date";
 import { categorizeMonth, computeMonthlyPayroll } from "@/lib/attendance/payroll";
 import { computeCtcBreakdown } from "@/lib/attendance/statutory";
-import { SalaryForm, type CurrentSalary } from "./salary-form";
+import Link from "next/link";
 import { SalaryHistory, type SalaryHistoryRow } from "./salary-history";
 import { PayrollRow } from "./payroll-row";
 import { AdvanceSection, type AdvanceRow } from "./advance-section";
@@ -105,35 +105,17 @@ export default async function SalaryPage({
     if (!salaryAsOf.has(row.employee_id)) salaryAsOf.set(row.employee_id, row); // rows are already newest-first
   }
 
-  // 2026-10-03 — "employee ki salary decide karne or feed karne ka ek
-  // proper form nahi hai": the Set/Update form used to be a blind
-  // dropdown + blank number — you could never SEE what was already
-  // decided for the employee you were editing. salaryRows is already
-  // fetched newest-first across ALL months, so the FIRST row seen per
-  // employee is simply their latest decided salary — that's what feeds
-  // SalaryForm's prefill so editing starts from the real current values.
+  // 2026-10-19 — the structure DECISION moved to its own screen
+  // (/dashboard/salary/structure, see that page's header): this page keeps
+  // the month's payroll + the history of what was decided. salaryRows is
+  // already fetched newest-first across ALL months, so the FIRST row seen
+  // per employee is their latest decided salary — exactly the same rule the
+  // structure page uses to show what is currently in force.
   const latestSalaryByEmployee = new Map<string, NonNullable<typeof salaryRows>[number]>();
   for (const row of salaryRows ?? []) {
     if (!latestSalaryByEmployee.has(row.employee_id)) latestSalaryByEmployee.set(row.employee_id, row);
   }
-  const currentSalaryByEmployee: Record<string, CurrentSalary> = {};
-  for (const [id, row] of latestSalaryByEmployee) {
-    currentSalaryByEmployee[id] = {
-      monthly_salary: Number(row.monthly_salary),
-      allowed_leaves_per_month: Number(row.allowed_leaves_per_month),
-      effective_from: row.effective_from,
-      ctc_annual: row.ctc_annual === null ? null : Number(row.ctc_annual),
-      basic_percent_of_ctc: Number(row.basic_percent_of_ctc),
-      hra_percent_of_basic: Number(row.hra_percent_of_basic),
-      employer_pf_percent: Number(row.employer_pf_percent),
-      employee_pf_percent: Number(row.employee_pf_percent),
-      pf_wage_ceiling: Number(row.pf_wage_ceiling),
-      esi_applicable: row.esi_applicable,
-      esi_employee_percent: Number(row.esi_employee_percent),
-      esi_employer_percent: Number(row.esi_employer_percent),
-      professional_tax_amount: Number(row.professional_tax_amount),
-    };
-  }
+  const undecidedNames = (teamEmployees ?? []).filter((e) => !latestSalaryByEmployee.has(e.id)).map((e) => e.name);
 
   const holidayDates = new Set((holidays ?? []).map((h) => h.holiday_date));
   const weeklyOffDays = (selectedCompany?.weekly_off_days as number[] | undefined) ?? [0];
@@ -338,14 +320,31 @@ export default async function SalaryPage({
         <SummaryStat label="Advance Outstanding" value={`₹${totalOutstandingAdvance.toFixed(2)}`} />
       </div>
 
+      {/* 2026-10-19 — was a 5-column "Decide & Feed" strip crammed in here
+          ("sallery set karne ka stracture sahi nahi hai isko alag se bano
+          sahi se"). Deciding/revising a structure now happens on its own
+          page; this box only shows the state of it and links there. */}
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-700">Employee Salary — Decide &amp; Feed</h2>
-          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
-            {(teamEmployees ?? []).filter((e) => currentSalaryByEmployee[e.id]).length} of {" "}{(teamEmployees ?? []).length} employees have a salary decided
-          </span>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-700">Salary Structure — Decide &amp; Revise</h2>
+          <Link
+            href={`/dashboard/salary/structure?company=${selectedCompanyId}`}
+            className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600"
+          >
+            Open Salary Structure →
+          </Link>
         </div>
-        <SalaryForm employees={teamEmployees ?? []} today={today} current={currentSalaryByEmployee} />
+        <p className="text-xs text-slate-500">
+          {(teamEmployees ?? []).length - undecidedNames.length} of {(teamEmployees ?? []).length} employees have a salary
+          decided. Set the monthly figure (or the full CTC structure with PF/ESI/Professional Tax) there, per employee,
+          with a proper save/version flow.
+        </p>
+        {undecidedNames.length > 0 && (
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            ⚠️ No salary decided yet: {undecidedNames.join(", ")} — their payroll row shows nothing until a structure is
+            saved.
+          </p>
+        )}
       </div>
 
       <SalaryHistory rows={salaryHistory} />

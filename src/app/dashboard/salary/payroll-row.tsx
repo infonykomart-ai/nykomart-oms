@@ -164,20 +164,23 @@ export function PayrollRow({
                   <Link href={`/dashboard/salary/payslip/${employeeId}/${monthParam}`} className="mt-0.5 inline-block font-medium text-blue-600 underline">
                     🧾 View Payslip
                   </Link>
-                  <div>
+                  {/* 2026-10-19 — "payment ... galat gyi hai to usko delete
+                      edit modify karne ka option nahi hai": the correction
+                      controls existed but were 10px underlined text, easy to
+                      miss entirely. Same actions, now real buttons. */}
+                  <div className="mt-1 flex flex-wrap gap-1.5">
                     <button
                       type="button"
                       disabled={isPending}
                       onClick={handleDeletePayment}
-                      className="mt-0.5 text-[10px] font-medium text-red-600 underline disabled:opacity-50"
+                      className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
                     >
                       {isPending ? "Deleting…" : "Delete payment"}
                     </button>
-                    <span className="mx-1 text-slate-300">·</span>
                     <button
                       type="button"
                       onClick={() => setEditingPayment((v) => !v)}
-                      className="text-[10px] font-medium text-slate-500 underline"
+                      className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50"
                     >
                       {editingPayment ? "Cancel edit" : "Edit payment"}
                     </button>

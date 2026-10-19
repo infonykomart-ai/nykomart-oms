@@ -21,6 +21,19 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 2026-10-19 — "agar dialog box me open ho to sirf page hi open ho, puri
+  // ki puri window open nahi ho": a dialog that previews a dashboard page
+  // in an <iframe> (the Orders hub's View button, every Print button's A4
+  // preview) used to pull in the WHOLE app shell — sidebar, header, module
+  // tabs — around the one page it was asked for. ?embed=1 now forwards an
+  // x-embed header to the request, and dashboard/layout.tsx skips just the
+  // chrome (providers stay mounted, so the page still works identically).
+  // Purely a header flip — auth, redirects and cookie refreshes below are
+  // byte-for-byte unchanged.
+  if (request.nextUrl.searchParams.get("embed") === "1") {
+    request.headers.set("x-embed", "1");
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 

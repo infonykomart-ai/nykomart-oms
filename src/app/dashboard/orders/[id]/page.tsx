@@ -1,9 +1,7 @@
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { getAuthedEmployee } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
-import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
-import { listVendorAssignments } from "../vendor-assignment-actions";
 import { OrderView } from "./order-view";
+import { loadOrderDetail } from "./order-detail-loader";
 
 // Order detail / view page (2026-08-22) — until now the Orders hub
 // (order-list-table.tsx) had no separate read-only page at all: "Edit"
@@ -34,127 +32,20 @@ import { OrderView } from "./order-view";
 // list/Report use (getOrderStatusSummaries, see
 // src/lib/orders/order-status-summary.ts), which is what keeps this from
 // becoming a second, divergent place: there's one function computing these
-// 5 facts, just called from 3 pages instead of 1. Full package/box-level
-// detail (dimensions, per-package weight, multiple AWBs listed
-// individually) still only lives on /dashboard/order-packages — this page
-// shows the summarized 5 fields only, linking there is left for later if
-// asked for.
+// 5 facts, just called from 3 pages instead of 1.
+//
+// 2026-10-19 — the data loading moved to ./order-detail-loader.ts so the
+// same view can also be rendered chrome-less inside the Orders hub's A4
+// dialog (?embed=1 — see src/proxy.ts and dashboard/layout.tsx) from one
+// source of data (see that file's header).
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const employee = await getAuthedEmployee();
   const { id } = await params;
-  const supabase = await createClient();
-
-  const { data: order } = await supabase
-    .from("orders")
-    .select(
-      "id, ref_no, company_id, store_id, order_date, po_date, delivery_date, dispatch_date, estimated_dispatch_date, status, shipment_status, marketplace_order_no, buyer_name_address, contact_no, email_id, address_type, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, item_category_id, sku_label, size_label, qty, colour, photo_type, photo_url, photo_urls, order_currency, order_value_original, order_value_usd, order_value_inr, exchange_rate_source, invoice_id, vendor_party_id, remark, entry_timestamp, advance_tracking, final_tracking"
-    )
-    .eq("id", id)
-    .maybeSingle();
-
-  if (!order || !employee.companyIds.includes(order.company_id)) notFound();
-
-  // 2026-09-04 — the old standalone `vendor` query (order.vendor_party_id ->
-  // parties.name) only ever knew the PLANNED vendor. getOrderStatusSummaries
-  // below already resolves the same party name AND prefers the ACTUAL
-  // Purchase Bill vendor when one exists, so that query was folded into this
-  // one call instead of kept as a second, less-accurate source of the same
-  // fact.
-  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }, { data: refunds }, { data: currencies }] =
-    await Promise.all([
-      supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
-      supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
-      supabase.from("item_categories").select("id, name, hsn_code").eq("id", order.item_category_id).single(),
-      order.invoice_id
-        ? supabase
-            .from("sales_invoices")
-            .select("id, invoice_no, master_invoice_no, invoice_date, csb_type, courier_company")
-            .eq("id", order.invoice_id)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      // 2026-08-27 — "kisi order ke against me bhi agar credit debit note
-      // bana na pade to vo bhi link ho": debit_notes.order_id /
-      // credit_notes.order_id already existed (pre-this-round), but this
-      // detail page never surfaced them — the only place they showed was
-      // OrderLookupBox's own inline results while CREATING a new note, not
-      // here on the order itself.
-      supabase.from("debit_notes").select("id, debit_note_no, debit_note_date, debit_amount").eq("order_id", id).order("debit_note_date", { ascending: false }),
-      supabase.from("credit_notes").select("id, cn_no, credit_note_date, refund_amount").eq("order_id", id).order("credit_note_date", { ascending: false }),
-      getOrderStatusSummaries(supabase, [
-        {
-          id: order.id,
-          vendor_party_id: order.vendor_party_id,
-          advance_tracking: order.advance_tracking,
-          final_tracking: order.final_tracking,
-        },
-      ]),
-      // 2026-09-08 — parties list for the new Vendor Assignment History
-      // section's "assign to a party" select. Same plain id/name fetch
-      // order-form.tsx/order-edit-form.tsx already use for their own
-      // (unrelated) "Purchasing From" select.
-      supabase.from("parties").select("id, name").order("name"),
-      listVendorAssignments(id),
-      // 2026-09-13 (#5+#6) — the order's CURRENT shipping/invoice summary
-      // values, pre-filling the manual shipping-details form. This is the
-      // same summary row resyncDispatchSummary recomputes after every
-      // shipment write (awb/courier/weight/dims mirrored from
-      // order_shipments/order_packages), plus its independently-managed
-      // invoice_no/invoice_date — so the form always shows the truth from
-      // the same single source every other page reads.
-      supabase
-        .from("dispatch_invoices")
-        .select("invoice_no, invoice_date, courier_name, awb_no, shipping_weight_kg, length_cm, width_cm, height_cm")
-        .eq("order_id", id)
-        .maybeSingle(),
-      // 2026-10-17 — refunds recorded against this order, shown on the page
-      // next to the same Hold/Cancel/Return/Refund controls (see
-      // order-view.tsx). Was previously only visible on the Orders hub row.
-      supabase
-        .from("order_refunds")
-        .select("refund_amount, refund_currency, refund_date, reason")
-        .eq("order_id", id)
-        .order("refund_date", { ascending: false }),
-      supabase.from("currencies").select("code, name").order("code"),
-    ]);
-
-  const statusSummary = statusByOrder[order.id];
-
-  return (
-    <OrderView
-      order={order}
-      companyName={company?.name ?? ""}
-      companyLogoUrl={company?.logo_url ?? null}
-      storeName={store?.name ?? ""}
-      itemCategoryName={itemCategory?.name ?? ""}
-      hsnCode={itemCategory?.hsn_code ?? ""}
-      invoice={invoice ?? null}
-      vendorName={
-        statusSummary?.purchasedFromName
-          ? `${statusSummary.purchasedFromName}${statusSummary.purchasedFromIsPlanned ? " (planned)" : ""}`
-          : null
-      }
-      statusSummary={statusSummary ?? null}
-      debitNotes={(debitNotes ?? []).map((d) => ({ ...d, debit_amount: Number(d.debit_amount) }))}
-      creditNotes={(creditNotes ?? []).map((c) => ({ ...c, refund_amount: Number(c.refund_amount) }))}
-      vendorAssignmentParties={parties ?? []}
-      vendorAssignmentCycles={vendorAssignments}
-      shippingDefaults={
-        dispatchSummary
-          ? {
-              awb_no: dispatchSummary.awb_no,
-              courier_name: dispatchSummary.courier_name,
-              invoice_no: dispatchSummary.invoice_no,
-              invoice_date: dispatchSummary.invoice_date,
-              weight_kg: dispatchSummary.shipping_weight_kg != null ? Number(dispatchSummary.shipping_weight_kg) : null,
-              length_cm: dispatchSummary.length_cm != null ? Number(dispatchSummary.length_cm) : null,
-              width_cm: dispatchSummary.width_cm != null ? Number(dispatchSummary.width_cm) : null,
-              height_cm: dispatchSummary.height_cm != null ? Number(dispatchSummary.height_cm) : null,
-            }
-          : { awb_no: null, courier_name: null, invoice_no: null, invoice_date: null, weight_kg: null, length_cm: null, width_cm: null, height_cm: null        }
-      }
-      canManageOrders={employee.capabilities.includes("order_entry")}
-      refunds={(refunds ?? []).map((r) => ({ ...r, refund_amount: Number(r.refund_amount) }))}
-      currencies={currencies ?? []}
-    />
-  );
+  const detail = await loadOrderDetail(id);
+  if (!detail) notFound();
+  // ?embed=1 (set by the Orders hub's View dialog iframe) drops the app
+  // shell in dashboard/layout.tsx; the view then also drops its own
+  // "Back to Orders" link and opens in-app links in a new tab, so the
+  // frame can never navigate itself to a full page.
+  const embed = (await headers()).get("x-embed") === "1";
+  return <OrderView {...detail} embedded={embed} />;
 }

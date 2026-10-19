@@ -125,6 +125,241 @@ function isBlankRow(row: (string | null | undefined)[]): boolean {
   return row.every((c) => String(c ?? "").trim() === "");
 }
 
+// =============================================================================
+// 2026-10-19 — TeamOffice's own Daily IN/OUT export is a MATRIX, not a row
+// table: one column per day of the month and a 10-row block per employee
+// (
+//   Dept. Name | ...
+//   Empcode    | 0002 | GAJANAND BHANKARIVAL
+//   <blank rows>
+//   IN         | 09:29 | 09:31 |  --  | ...
+//   OUT        | 14:39 |  --   | ...
+//   WORK       | 5:10  | ...
+//   Break / OT / Status ...
+// ).
+//
+// The row-based parser below can only ever read that as ONE line per printed
+// row, which is why an import of the real export produced a wall of "no
+// IN/OUT time — skipped" / "no active employee matches code 'WORK'" issues
+// and imported nothing. This reads the block shape instead: the wide date
+// header row gives each column its DATE, the Empcode row names the employee,
+// and the IN/OUT rows carry that employee's times per column.
+// =============================================================================
+
+const BLOCK_LABELS = {
+  empcode: ["empcode", "employeecode", "code", "empid", "employeeid", "empno", "employeeno"],
+  name: ["name", "employeename", "empname", "employeenameandcode"],
+  dept: ["deptname", "department", "dept", "departmentname"],
+  in: ["in", "intime", "punchin", "timein", "intime1", "firstin"],
+  out: ["out", "outtime", "punchout", "timeout", "outtime1", "lastout"],
+  // Recognized so they END a block cleanly rather than being read as data.
+  other: ["work", "worked", "workhours", "break", "breaktime", "ot", "overtime", "status", "present", "absent", "total", "grandtotal", "designation", "shift", "shiftname"],
+};
+
+function blockLabel(cell: string): keyof typeof BLOCK_LABELS | null {
+  const h = normalizeHeader(cell);
+  if (!h) return null;
+  for (const key of Object.keys(BLOCK_LABELS) as (keyof typeof BLOCK_LABELS)[]) {
+    if (BLOCK_LABELS[key].includes(h)) return key;
+  }
+  return null;
+}
+
+/** First non-empty cell of a row, with its column index. */
+function labelOf(row: unknown[]): { label: keyof typeof BLOCK_LABELS; index: number } | null {
+  for (let i = 0; i < row.length; i++) {
+    const text = String(row[i] ?? "").trim();
+    if (!text) continue;
+    const label = blockLabel(text);
+    return label ? { label, index: i } : null;
+  }
+  return null;
+}
+
+/**
+ * A row is a date header when enough of its cells are dates (or bare day
+ * numbers 1..31, as TeamOffice prints them). Returns column → YYYY-MM-DD,
+ * filling bare day numbers from `month` (a date seen elsewhere in the
+ * sheet, or the fallback date).
+ */
+function mapDateHeader(row: unknown[], month: string | null): Map<number, string> | null {
+  const map = new Map<number, string>();
+  for (let i = 0; i < row.length; i++) {
+    const raw = String(row[i] ?? "").trim();
+    if (!raw) continue;
+    const asDate = parseDateCell(raw);
+    if (asDate) {
+      map.set(i, asDate);
+      continue;
+    }
+    if (/^\d{1,2}$/.test(raw)) {
+      const day = Number(raw);
+      if (day >= 1 && day <= 31 && month) {
+        map.set(i, `${month.slice(0, 7)}-${String(day).padStart(2, "0")}`);
+      }
+    }
+  }
+  return map.size >= 2 ? map : null;
+}
+
+const MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/**
+ * A month/year mention — what a report's title actually prints
+ * ("Month: 07/2026", "Oct-2026", "Attendance Report for October 2026").
+ * Returned as a full date (the 1st) so the day-number columns can borrow
+ * its year+month.
+ */
+function monthFromText(text: string): string | null {
+  const s = text.trim();
+  if (!s) return null;
+  let m = /^(\d{1,2})[/\-](\d{4})$/.exec(s);
+  if (m) {
+    const month = Number(m[1]);
+    if (month >= 1 && month <= 12) return `${m[2]}-${String(month).padStart(2, "0")}-01`;
+  }
+  m = /(\d{4})[/\-](\d{1,2})$/.exec(s);
+  if (m) {
+    const month = Number(m[2]);
+    if (month >= 1 && month <= 12) return `${m[1]}-${String(month).padStart(2, "0")}-01`;
+  }
+  // Same thing inside a title cell ("Month: 07/2026"). The look-behind
+  // excludes "10/2026" out of a dd/mm/yyyy date, so a full date can never be
+  // misread as a month hint.
+  m = /(?:^|[^\d/])(\d{1,2})[/\-](\d{4})(?![\d/\-])/.exec(s);
+  if (m) {
+    const month = Number(m[1]);
+    if (month >= 1 && month <= 12) return `${m[2]}-${String(month).padStart(2, "0")}-01`;
+  }
+  const lower = s.toLowerCase();
+  const nameIdx = MONTH_NAMES.findIndex((name) => lower.includes(name));
+  if (nameIdx >= 0) {
+    const year = /(20\d{2}|19\d{2})/.exec(s);
+    if (year) return `${year[1]}-${String(nameIdx + 1).padStart(2, "0")}-01`;
+  }
+  return null;
+}
+
+/** Any date (or month/year) in the first rows — gives the month for day-number headers. */
+function findMonthHint(aoa: unknown[][], limit: number): string | null {
+  for (let r = 0; r < Math.min(aoa.length, limit); r++) {
+    for (const cell of aoa[r] ?? []) {
+      const d = parseDateCell(cell);
+      if (d) return d;
+    }
+  }
+  for (let r = 0; r < Math.min(aoa.length, limit); r++) {
+    for (const cell of aoa[r] ?? []) {
+      const hint = monthFromText(String(cell ?? ""));
+      if (hint) return hint;
+    }
+  }
+  return null;
+}
+
+function parseBlockLayout(aoa: unknown[][], fallbackDate: string | null): { rows: PunchImportRow[]; note: string | null } {
+  const monthHint = findMonthHint(aoa, 12) ?? fallbackDate;
+
+  // Which row is the date header? The one with the most date-ish cells.
+  let headerRow = -1;
+  let headerMap: Map<number, string> | null = null;
+  for (let r = 0; r < Math.min(aoa.length, 40); r++) {
+    const candidate = mapDateHeader(aoa[r] ?? [], monthHint);
+    if (candidate && (!headerMap || candidate.size > headerMap.size)) {
+      headerMap = candidate;
+      headerRow = r;
+    }
+  }
+  if (!headerMap || headerRow < 0) return { rows: [], note: null };
+
+  const rows: PunchImportRow[] = [];
+  let blocks = 0;
+
+  let block: {
+    code: string;
+    name: string;
+    inLine: number;
+    in: Map<number, string | null>;
+    out: Map<number, string | null>;
+  } | null = null;
+
+  const flush = () => {
+    if (!block) return;
+    if (!block.code && !block.name) {
+      block = null;
+      return;
+    }
+    blocks++;
+    let pushed = 0;
+    for (const [col, date] of headerMap!) {
+      const inTime = block.in.get(col) ?? null;
+      const outTime = block.out.get(col) ?? null;
+      if (!inTime && !outTime) continue;
+      rows.push({ line: block.inLine, code: block.code, name: block.name, date, inTime, outTime });
+      pushed++;
+    }
+    if (pushed === 0) {
+      // A named employee with no punch at all in this report — nothing to
+      // write, and not an error (their IN/OUT cells are all "--").
+      blocks--;
+    }
+    block = null;
+  };
+
+  for (let r = headerRow + 1; r < aoa.length; r++) {
+    const raw = aoa[r] ?? [];
+    if (isBlankRow(raw as (string | null | undefined)[])) continue;
+    const found = labelOf(raw);
+    if (!found) continue;
+    const { label, index } = found;
+
+    if (label === "empcode" || label === "dept") {
+      // A new employee block starts here (Dept. Name is the block's first
+      // printed row, Empcode the second) — so flush whatever was open first.
+      flush();
+      const values = raw.slice(index + 1).map((c) => String(c ?? "").trim());
+      const code = values.find((v) => v && v.length <= 20 && /^[A-Za-z0-9._\-/]+$/.test(v) && /\d/.test(v)) ?? "";
+      const nameFromRow = values.find((v) => v !== code && /[A-Za-z]{2,}/.test(v)) ?? "";
+      if (label === "empcode" || code || nameFromRow) {
+        block = { code, name: nameFromRow, inLine: r + 1, in: new Map(), out: new Map() };
+      }
+      continue;
+    }
+
+    if (!block && label !== "name") continue;
+    if (!block) block = { code: "", name: "", inLine: r + 1, in: new Map(), out: new Map() };
+
+    if (label === "name") {
+      if (!block.name) {
+        const value = raw.slice(index + 1).map((c) => String(c ?? "").trim()).find((v) => /[A-Za-z]{2,}/.test(v));
+        if (value) block.name = value;
+      }
+      continue;
+    }
+
+    if (label === "in" || label === "out") {
+      const target = label === "in" ? block.in : block.out;
+      for (const col of headerMap.keys()) {
+        const value = parseTimeCell(raw[col]);
+        if (value) target.set(col, value);
+      }
+      if (label === "in") block.inLine = r + 1;
+      continue;
+    }
+
+    // "other" labels (WORK / Break / OT / Status …) — part of the block, no
+    // punch of their own. Keep reading; the NEXT Empcode row closes it.
+  }
+  flush();
+
+  if (blocks === 0 || rows.length === 0) return { rows: [], note: null };
+  const dates = new Set(rows.map((r) => r.date));
+  return {
+    rows,
+    note: `TeamOffice block layout detected — ${blocks} employee(s) × ${dates.size} date(s) read from the day-columns; ${rows.length} punch row(s).`,
+  };
+}
+
 /**
  * aoa → normalized rows. `fallbackDate` (YYYY-MM-DD) is used when the
  * file has no date column (TeamOffice's Daily IN/OUT report carries its
@@ -140,6 +375,14 @@ export function parsePunchRows(aoa: unknown[][], fallbackDate: string | null): P
 
   const dataRows = (aoa ?? []).filter((r) => !isBlankRow(r as (string | null | undefined)[]));
   if (!dataRows.length) return { rows, issues: ["The file/paste has no non-empty rows."] };
+
+  // 2026-10-19 — try the wide "one column per day" block export first. It is
+  // detected only by its own shape (a date/day-number header row + Empcode
+  // blocks), so an ordinary row-per-punch sheet is untouched by this.
+  const blockParsed = parseBlockLayout(aoa, fallbackDate);
+  if (blockParsed.rows.length > 0) {
+    return { rows: blockParsed.rows, issues: blockParsed.note ? [blockParsed.note] : [] };
+  }
 
   let map = mapColumns(dataRows[0] as (string | null)[]);
   let bodyStart = 1;

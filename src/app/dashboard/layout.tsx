@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
 import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
@@ -38,6 +39,16 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     if (e instanceof UnauthorizedError) redirect("/login");
     throw e;
   }
+
+  // 2026-10-19 — embed mode. src/proxy.ts sets x-embed for ?embed=1
+  // requests, which is what any dialog that previews a dashboard page in
+  // an <iframe> sends (the Orders hub's View button, every Print button's
+  // A4 preview). Only the visible chrome below is skipped: the sidebar,
+  // header, module tab strip, celebrations banner and the floating
+  // messenger/companion widgets — all the PROVIDERS still mount, so a page
+  // rendered this way behaves exactly like it does normally, just without
+  // the surrounding window.
+  const embed = (await headers()).get("x-embed") === "1";
 
   const supabase = await createClient();
   const { data: companies } = await supabase
@@ -318,27 +329,29 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <ThemeProvider initialThemeId={myThemePrefs?.theme_id ?? null} initialCustomAccent={myThemePrefs?.custom_accent_color ?? null}>
             <ThemedShell>
               <ModuleTabsProvider>
-                <DashboardSidebar capabilities={employee.capabilities} />
+                {!embed && <DashboardSidebar capabilities={employee.capabilities} />}
                 <div className="flex flex-1 flex-col overflow-hidden">
-                  <DashboardHeader
-                    companyName={currentCompany?.name ?? ""}
-                    logoUrl={currentCompany?.logo_url ?? null}
-                    employeeName={employee.name}
-                    roleName={employee.roleName}
-                    companies={companies ?? []}
-                    currentCompanyId={employee.currentCompanyId}
-                    meId={employee.id}
-                    myPhotoUrl={employee.photoUrl}
-                    unreadMessageCount={unreadMessageCount ?? 0}
-                    notificationItems={notificationItems}
-                  />
+                  {!embed && (
+                    <DashboardHeader
+                      companyName={currentCompany?.name ?? ""}
+                      logoUrl={currentCompany?.logo_url ?? null}
+                      employeeName={employee.name}
+                      roleName={employee.roleName}
+                      companies={companies ?? []}
+                      currentCompanyId={employee.currentCompanyId}
+                      meId={employee.id}
+                      myPhotoUrl={employee.photoUrl}
+                      unreadMessageCount={unreadMessageCount ?? 0}
+                      notificationItems={notificationItems}
+                    />
+                  )}
                   {/* 2026-09-13 (#1) — module tab strip: every module you
                       visit stays open as a tab, so several can be worked
                       at once. Inside ModuleTabsProvider (above) so the
                       bar and the sidebar share one tab state. */}
-                  <ModuleTabBar />
+                  {!embed && <ModuleTabBar />}
                   <DashboardMain>
-                    <TodaysCelebrationsBanner celebrations={celebrations} />
+                    {!embed && <TodaysCelebrationsBanner celebrations={celebrations} />}
                     <PageTransition>{children}</PageTransition>
                   </DashboardMain>
                 </div>
@@ -349,18 +362,20 @@ export default async function DashboardLayout({ children }: { children: ReactNod
               </ModuleTabsProvider>
             </ThemedShell>
           </ThemeProvider>
-          <MessageToastProvider meId={employee.id} employeesById={employeesById} />
-          <MessengerPopup
-            meId={employee.id}
-            employeesById={employeesById}
-            initialDirectUnread={unreadMessageCount ?? 0}
-            initialGroupUnread={typeof unreadGroupMessageCount === "number" ? unreadGroupMessageCount : 0}
-          />
+          {!embed && <MessageToastProvider meId={employee.id} employeesById={employeesById} />}
+          {!embed && (
+            <MessengerPopup
+              meId={employee.id}
+              employeesById={employeesById}
+              initialDirectUnread={unreadMessageCount ?? 0}
+              initialGroupUnread={typeof unreadGroupMessageCount === "number" ? unreadGroupMessageCount : 0}
+            />
+          )}
           {/* 2026-09-05 — AI Companion, live. Only mounted (subscribes to
               nothing, renders nothing) for employees an Admin/MD has
               explicitly turned on via /dashboard/admin/companion-access —
               everyone else pays zero cost for this feature existing. */}
-          {myThemePrefs?.companion_enabled ? (
+          {!embed && myThemePrefs?.companion_enabled ? (
             <CompanionLiveProvider
               employeeId={employee.id}
               employeeName={employee.name}

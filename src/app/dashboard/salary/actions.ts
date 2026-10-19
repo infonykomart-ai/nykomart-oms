@@ -18,7 +18,8 @@ export type SimpleActionState = { error: string | null; success: boolean };
  *
  * 2026-09-11 (Payroll Phase 1): monthly_salary is now EITHER typed directly
  * (flat mode, exactly as before) OR auto-computed client-side from a CTC
- * structure and submitted as the same field (see salary-form.tsx) — this
+ * structure and submitted as the same field (see the structure editor,
+ * src/app/dashboard/salary/structure/salary-structure-editor.tsx) — this
  * action doesn't care which; it just stores whatever monthly_salary it
  * receives, plus the CTC breakdown fields when ctc_mode="true" so
  * submitSalaryPayment() can later re-derive Employee/Employer PF, ESI, and
@@ -321,6 +322,109 @@ export async function giveAdvance(_prev: FinanceActionState, formData: FormData)
   revalidatePath("/dashboard/admin/employees");
   const scheduleNote = recoveryMonths ? ` — ₹${Math.round((amount / recoveryMonths) * 100) / 100}/month over ${recoveryMonths} months` : "";
   return { error: null, success: true, message: `Advance of ₹${amount} recorded for ${emp.name}.${scheduleNote}` };
+}
+
+/**
+ * 2026-10-19 — "kisi ko sellery advance me gyi hai or vo galat gyi hai to
+ * usko delete edit modify karne ka option nahi hai": an advance could only
+ * ever be CREATED. A wrong amount, wrong date or a mistaken entry had no
+ * correction path at all.
+ *
+ * Editing keeps the money real (the payout happened) while fixing the
+ * record: amount, date, reason and the recovery schedule. It refuses to go
+ * below what has ALREADY been recovered through salary payments, since that
+ * would leave the recovery ledger owing more than the advance itself.
+ * The Finance ledger mirror (bill_pass_register, source='employee_advance')
+ * is kept in step — it exists only because this advance exists.
+ */
+export async function updateAdvance(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
+  const admin = await requireCapability("salary_admin");
+  const supabase = createServiceRoleClient();
+
+  const id = String(formData.get("id") || "").trim();
+  const amount = Number(formData.get("amount"));
+  const dateGiven = String(formData.get("date_given") || "").trim();
+  const reason = String(formData.get("reason") || "").trim() || null;
+  const recoveryMonthsRaw = String(formData.get("recovery_months") || "").trim();
+  const recoveryMonths = recoveryMonthsRaw ? Number(recoveryMonthsRaw) : null;
+
+  if (!id) return { error: "Advance not found.", success: false };
+  if (!amount || amount <= 0) return { error: "Amount must be a positive number.", success: false };
+  if (!dateGiven) return { error: "Date is required.", success: false };
+  if (recoveryMonths !== null && (!Number.isInteger(recoveryMonths) || recoveryMonths <= 0)) {
+    return { error: "Recover Over (months) must be a positive whole number.", success: false };
+  }
+
+  const { data: advance } = await supabase
+    .from("employee_advances")
+    .select("id, employee_id, company_id, recovered_amount")
+    .eq("id", id)
+    .maybeSingle();
+  if (!advance) return { error: "Advance not found.", success: false };
+  if (!admin.companyIds.includes(advance.company_id)) return { error: "You don't have access to this advance.", success: false };
+  if (amount < Number(advance.recovered_amount)) {
+    return {
+      error: `₹${Number(advance.recovered_amount).toFixed(2)} of this advance is already recovered from salary payments — the amount can't be set below that.`,
+      success: false,
+    };
+  }
+
+  const { data: emp } = await supabase.from("employees").select("name").eq("id", advance.employee_id).maybeSingle();
+
+  const { error } = await supabase
+    .from("employee_advances")
+    .update({ amount, date_given: dateGiven, reason, recovery_months: recoveryMonths })
+    .eq("id", id);
+  if (error) return { error: error.message, success: false };
+
+  await supabase
+    .from("bill_pass_register")
+    .update({
+      invoice_date: dateGiven,
+      invoice_recv_date: dateGiven,
+      total_amt: amount,
+      total_paid: amount,
+      remark: `Advance — ${emp?.name ?? "employee"}${reason ? ` — ${reason}` : ""}`,
+    })
+    .eq("source", "employee_advance")
+    .eq("source_id", id);
+
+  revalidatePath("/dashboard/salary");
+  revalidatePath("/dashboard/salary/structure");
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null, success: true };
+}
+
+/**
+ * 2026-10-19 — delete an advance given by mistake. Refuses while any of it
+ * has been recovered through salary payments (delete/correct those payments
+ * first — deleteSalaryPayment already reverses its own recovery), so the
+ * employee's outstanding balance can never be silently rewritten. The
+ * Finance ledger mirror row is removed with it.
+ */
+export async function deleteAdvance(advanceId: string): Promise<{ error: string | null }> {
+  const admin = await requireCapability("salary_admin");
+  const supabase = createServiceRoleClient();
+
+  const { data: advance } = await supabase
+    .from("employee_advances")
+    .select("id, company_id, recovered_amount")
+    .eq("id", advanceId)
+    .maybeSingle();
+  if (!advance) return { error: "Advance not found." };
+  if (!admin.companyIds.includes(advance.company_id)) return { error: "You don't have access to this advance." };
+  if (Number(advance.recovered_amount) > 0) {
+    return {
+      error: `₹${Number(advance.recovered_amount).toFixed(2)} of this advance has already been recovered from salary payments. Delete or correct those payments first, then delete the advance.`,
+    };
+  }
+
+  await supabase.from("bill_pass_register").delete().eq("source", "employee_advance").eq("source_id", advanceId);
+  const { error } = await supabase.from("employee_advances").delete().eq("id", advanceId);
+  if (error) return { error: error.message };
+  revalidatePath("/dashboard/salary");
+  revalidatePath("/dashboard/admin/employees");
+  return { error: null };
 }
 
 /**

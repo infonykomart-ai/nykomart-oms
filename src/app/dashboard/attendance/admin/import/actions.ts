@@ -27,11 +27,41 @@ import { parsePunchRows, splitDelimitedText, type PunchImportRow } from "@/lib/a
 
 export type ImportState = {
   error: string | null;
-  summary: { total: number; imported: number; updated: number; skipped: number } | null;
+  summary: {
+    total: number;
+    imported: number;
+    updated: number;
+    skipped: number;
+    /** Rows that already had a punch and disagreed with the device's (⚠️). */
+    mismatched: number;
+    /** Rows that already had a punch and agreed exactly (✅). */
+    matched: number;
+  } | null;
   issues: string[];
+  /**
+   * 2026-10-19 — "attendance sheet sahi se compare ho rahi hai kya": the
+   * device-vs-web comparison was written into the attendance row's
+   * match_flag but shown to nobody, so there was no way to answer that
+   * question. Every row the import touched now reports its own comparison
+   * here, and the form renders it as a table.
+   */
+  comparison: ComparisonRow[];
 };
 
-const EMPTY: ImportState = { error: null, summary: null, issues: [] };
+export type ComparisonRow = {
+  line: number;
+  employee: string;
+  date: string;
+  webIn: string | null;
+  webOut: string | null;
+  deviceIn: string | null;
+  deviceOut: string | null;
+  verdict: string;
+};
+
+const EMPTY: ImportState = { error: null, summary: null, issues: [], comparison: [] };
+/** Cap on the returned comparison table (a month's import is ~31 × headcount). */
+const MAX_COMPARISON_ROWS = 400;
 const MAX_ROWS = 1000;
 const MAX_FILE_BYTES = 900_000;
 // Same "after 9:45 AM" cut-off the web punch uses (src/lib/attendance/punch.ts).
@@ -127,9 +157,20 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
   // never guess which one, report it instead.
   const byCode = new Map<string, (typeof employees)[number] | null>();
   const byName = new Map<string, (typeof employees)[number] | null>();
+  // 2026-10-19 — Excel (and TeamOffice's own matrix export) happily hands
+  // back "2" where the employee_code is stored as "0002". Keep a second,
+  // leading-zero-insensitive index so a code typed either way still finds
+  // its employee instead of reporting "no active employee matches code".
+  const byCodeLoose = new Map<string, (typeof employees)[number] | null>();
   for (const e of employees) {
     const code = (e.employee_code ?? "").trim().toLowerCase();
-    if (code) byCode.set(code, byCode.has(code) ? null : e);
+    if (code) {
+      byCode.set(code, byCode.has(code) ? null : e);
+      if (/^\d+$/.test(code)) {
+        const loose = code.replace(/^0+/, "") || "0";
+        byCodeLoose.set(loose, byCodeLoose.has(loose) ? null : e);
+      }
+    }
     const name = e.name.trim().toLowerCase().replace(/\s+/g, " ");
     if (name) byName.set(name, byName.has(name) ? null : e);
   }
@@ -155,6 +196,9 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
     const nameKey = row.name.toLowerCase().replace(/\s+/g, " ");
     let emp: (typeof employees)[number] | null | undefined;
     if (codeKey) emp = byCode.get(codeKey);
+    if (emp === undefined && codeKey && /^\d+$/.test(codeKey)) {
+      emp = byCodeLoose.get(codeKey.replace(/^0+/, "") || "0");
+    }
     if (emp === undefined || emp === null) emp = nameKey ? byName.get(nameKey) : undefined;
     if (emp === null) {
       skipped++;
@@ -203,8 +247,14 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
 
   const inserts: Record<string, unknown>[] = [];
   const updates: { id: string; patch: Record<string, unknown> }[] = [];
+  const comparison: ComparisonRow[] = [];
   let imported = 0;
   let updated = 0;
+  let mismatched = 0;
+  let matched = 0;
+  const pushComparison = (row: ComparisonRow) => {
+    if (comparison.length < MAX_COMPARISON_ROWS) comparison.push(row);
+  };
 
   for (const { row, emp, existing } of resolved) {
     const devIn = row.inTime;
@@ -229,10 +279,22 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
         entered_by_employee_id: admin.id,
         ...deviceFields,
       });
+      pushComparison({
+        line: row.line,
+        employee: emp.name,
+        date: row.date,
+        webIn: null,
+        webOut: null,
+        deviceIn: devIn,
+        deviceOut: devOut,
+        verdict: "➕ Imported (no web punch that day)",
+      });
       continue;
     }
 
     const patch: Record<string, unknown> = { ...deviceFields, entered_by_employee_id: admin.id };
+    const webIn = isoToIstHM(existing.punch_in);
+    const webOut = isoToIstHM(existing.punch_out);
 
     if (existing.punch_in) {
       // Web/manual punch already recorded — keep it authoritative, only
@@ -248,6 +310,24 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
       if (existing.status !== "Half Day") patch.status = deriveStatus(devIn);
       patch.match_flag = buildMatchFlag(existing.punch_in, existing.punch_out, devIn, devOut);
     }
+
+    const flag = String(patch.match_flag);
+    if (flag.startsWith("⚠️")) mismatched++;
+    else if (flag === "✅ Match") matched++;
+    // A Leave/Holiday/Week Off row is deliberately NOT overwritten — say so
+    // in the comparison instead of leaving the reader to guess why the times
+    // on screen still don't match the sheet.
+    const kept = existing.status === "Leave" || existing.status === "Holiday" || existing.status === "Week Off";
+    pushComparison({
+      line: row.line,
+      employee: emp.name,
+      date: row.date,
+      webIn,
+      webOut,
+      deviceIn: devIn,
+      deviceOut: devOut,
+      verdict: `${flag}${kept ? ` · ${existing.status} kept as-is (imported punch stored separately)` : ""}`,
+    });
     updates.push({ id: existing.id, patch });
     updated++;
   }
@@ -268,7 +348,8 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
 
   return {
     error: null,
-    summary: { total: parsed.rows.length, imported, updated, skipped },
+    summary: { total: parsed.rows.length, imported, updated, skipped, matched, mismatched },
     issues,
+    comparison,
   };
 }

@@ -795,6 +795,11 @@ export type Database = {
           remark: string | null;
           display_order: number;
           product_id: string | null;
+          size: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -806,6 +811,11 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -817,6 +827,11 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -1548,9 +1563,14 @@ export type Database = {
           unit: string;
           unit_price: number;
           unit_cost: number;
-          line_total: number | null;
+          line_total: number;
           line_cost: number | null;
           display_order: number;
+          size: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -1561,9 +1581,14 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number | null;
+          line_total?: number;
           line_cost?: number | null;
           display_order?: number;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -1574,9 +1599,14 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number | null;
+          line_total?: number;
           line_cost?: number | null;
           display_order?: number;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -5673,6 +5703,46 @@ export type Database = {
           rate?: number;
           source?: string;
           market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Relationships: [];
+      };
+      // 2026-10-17 — automatic customs/export exchange rates (DGFT → ICEGATE
+      // → eximin.net chain). See db/2026-10-17-customs-exchange-rates.sql and
+      // src/lib/fx/customs.ts. Kept apart from exchange_rates so an API feed
+      // can never rewrite a manually entered CBIC notification.
+      customs_exchange_rates: {
+        Row: {
+          currency_code: string;
+          currency_name: string | null;
+          import_rate: number | null;
+          export_rate: number;
+          effective_date: string | null;
+          notification_no: string | null;
+          source: string;
+          source_url: string | null;
+          fetched_at: string;
+        };
+        Insert: {
+          currency_code: string;
+          currency_name?: string | null;
+          import_rate?: number | null;
+          export_rate: number;
+          effective_date?: string | null;
+          notification_no?: string | null;
+          source?: string;
+          source_url?: string | null;
+          fetched_at?: string;
+        };
+        Update: {
+          currency_code?: string;
+          currency_name?: string | null;
+          import_rate?: number | null;
+          export_rate?: number;
+          effective_date?: string | null;
+          notification_no?: string | null;
+          source?: string;
+          source_url?: string | null;
           fetched_at?: string;
         };
         Relationships: [];

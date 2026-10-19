@@ -209,6 +209,36 @@ server pages and client previews so they can never disagree.
   `db/2026-10-17b-b2b-area-pricing.sql`** before this code goes live — it
   adds the size columns and converts both `line_total` columns (existing
   values are preserved).
+- **Embedded pages in dialogs (2026-10-19)** — anything previewed inside an
+  `A4Dialog` frame (the Orders hub's **View**, every Document Entry **Print**
+  button's A4 preview) now requests `?embed=1`. `src/proxy.ts` turns that into
+  an `x-embed` request header and `dashboard/layout.tsx` skips only the
+  visible chrome for it — sidebar, header, module tabs, celebrations banner,
+  the floating messenger/companion widgets — while every provider still
+  mounts, so the framed page behaves exactly like the real one. Result: a
+  dialog contains the ONE page it asked for, not the whole window. Auth,
+  session refresh and redirects are untouched; a page that must never be
+  framed simply ignores the header.
+- **Salary Structure has its own screen (2026-10-19)** —
+  `/dashboard/salary/structure` decides and revises what each employee is
+  paid, in labelled sections (employee & effective date / pay mode / CTC
+  earnings split / PF-ESI-PT / live "what this pays" breakdown), with the
+  same versioned `setEmployeeSalary` semantics as before (new date = new
+  version, existing date = correction). The Salary & Payroll page keeps the
+  month's payroll, payslips and the salary/advance/payment history where each
+  row can be edited or deleted.
+- **Advance corrections (2026-10-19)** — `updateAdvance` / `deleteAdvance`
+  (salary actions) let a wrongly-given or wrongly-typed advance be fixed or
+  removed, keeping the `bill_pass_register` mirror in step and refusing any
+  change that would drop an advance below what salary payments already
+  recovered from it.
+- **TeamOffice matrix import + visible comparison (2026-10-19)** — the
+  biometric export's block layout (Dept. Name / Empcode / IN / OUT / WORK /
+  Break / OT / Status with one column per day) is now parsed natively by
+  `parseBlockLayout()` in `src/lib/attendance/punch-import.ts`, and the import
+  reports a per-row **sheet-vs-recorded-attendance** comparison table
+  (web IN/OUT, sheet IN/OUT, match/mismatch) instead of storing the verdict
+  invisibly on the attendance row.
 
 **Round 4 — fix pass (2026-10-03)** — five reported gaps, all fixed:
 

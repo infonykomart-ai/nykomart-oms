@@ -9,7 +9,7 @@
 import { useActionState } from "react";
 import { importPunchReport, type ImportState } from "./actions";
 
-const initialState: ImportState = { error: null, summary: null, issues: [] };
+const initialState: ImportState = { error: null, summary: null, issues: [], comparison: [] };
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
@@ -21,8 +21,50 @@ export function ImportPunchForm({ today }: { today: string }) {
       {state.error && <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
       {state.summary && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-          ✓ {state.summary.total} row(s) read — <strong>{state.summary.imported}</strong> imported,{" "}
-          <strong>{state.summary.updated}</strong> updated, <strong>{state.summary.skipped}</strong> skipped.
+          ✓ {state.summary.total} punch row(s) read — <strong>{state.summary.imported}</strong> imported,{" "}
+          <strong>{state.summary.updated}</strong> updated, <strong>{state.summary.skipped}</strong> skipped.{" "}
+          Compared with existing web punches: <strong>{state.summary.matched}</strong> matched, <strong>{state.summary.mismatched}</strong>{" "}
+          mismatched.
+        </div>
+      )}
+      {/* 2026-10-19 — "attendance sheet sahi se compare ho rahi hai kya": the
+          device-vs-web comparison now shows as the sheet itself, so a
+          mismatch is visible and checkable instead of being a flag buried on
+          the attendance row. */}
+      {state.comparison.length > 0 && (
+        <div className="rounded-lg border border-slate-200">
+          <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-1.5">
+            <p className="text-xs font-semibold text-slate-700">Imported sheet vs recorded attendance</p>
+            <p className="text-[11px] text-slate-500">Web punch = what this app recorded; Device = what the sheet said.</p>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 bg-white text-slate-400">
+                <tr>
+                  <th className="px-2 py-1">Employee</th>
+                  <th className="px-2 py-1">Date</th>
+                  <th className="px-2 py-1">Web IN</th>
+                  <th className="px-2 py-1">Sheet IN</th>
+                  <th className="px-2 py-1">Web OUT</th>
+                  <th className="px-2 py-1">Sheet OUT</th>
+                  <th className="px-2 py-1">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.comparison.map((c, i) => (
+                  <tr key={i} className={`border-t border-slate-100 ${c.verdict.startsWith("⚠️") ? "bg-amber-50" : ""}`}>
+                    <td className="px-2 py-1 font-medium text-slate-700">{c.employee}</td>
+                    <td className="px-2 py-1 text-slate-500">{c.date}</td>
+                    <td className="px-2 py-1 text-slate-600">{c.webIn ?? "—"}</td>
+                    <td className="px-2 py-1 text-slate-600">{c.deviceIn ?? "—"}</td>
+                    <td className="px-2 py-1 text-slate-600">{c.webOut ?? "—"}</td>
+                    <td className="px-2 py-1 text-slate-600">{c.deviceOut ?? "—"}</td>
+                    <td className="px-2 py-1 text-slate-600">{c.verdict}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {state.issues.length > 0 && (
