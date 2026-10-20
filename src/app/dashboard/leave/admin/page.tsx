@@ -4,7 +4,8 @@ import { addDaysToDateStr, istDateFromInstant, todayIST } from "@/lib/attendance
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveApprovalRow, type CoverageRow } from "./leave-approval-row";
 import { LeaveTypesPanel } from "./leave-types-panel";
-import { fetchLeaveEvents, fetchLeaveRequests, isMissingSchemaPiece, LEAVE_AUDIT_MIGRATION_HINT } from "../leave-queries";
+import { LeaveApproversPanel } from "./leave-approvers-panel";
+import { fetchLeaveApprovers, fetchLeaveEvents, fetchLeaveRequests, isMissingSchemaPiece, LEAVE_AUDIT_MIGRATION_HINT } from "../leave-queries";
 
 // 2026-08-12 (round 8): "MD ADMIN KO YE POWER HO KI MERI ABSENCE ME WORK
 // KON KAREGA USKO ASSING KARNE PAR AUTO MATIC ROLE ME ACTIN HO JAYE" — the
@@ -39,7 +40,7 @@ export default async function LeaveAdminPage({
   // PostgREST failed the whole query and the page rendered "No leave requests
   // for this company yet." over real data. Read through the tolerant helper
   // instead — every request shows either way (see ../leave-queries.ts).
-  const [{ rows: requests, audit: auditColumns, error: requestsError }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }] = await Promise.all([
+  const [{ rows: requests, audit: auditColumns, error: requestsError }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }, { approvers: currentApprovers, available: approversAvailable }] = await Promise.all([
     fetchLeaveRequests(finSupabase, { companyId: selectedCompanyId, limit: 100 }),
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("stores").select("id, name").eq("company_id", selectedCompanyId).order("name"),
@@ -51,6 +52,9 @@ export default async function LeaveAdminPage({
       .select("id, name, code, paid, annual_accrual_days, accrual_frequency, carry_forward_cap, active")
       .eq("company_id", selectedCompanyId)
       .order("name"),
+    // 2026-10-19 — who is currently a leave approver for this company, so the
+    // panel below can offer add/remove. Empty when the migration hasn't run.
+    fetchLeaveApprovers(finSupabase, selectedCompanyId),
   ]);
 
   // accrual_frequency is a plain `text` column (no DB-level enum), so
@@ -123,7 +127,9 @@ export default async function LeaveAdminPage({
   // Requesters might not all be in teamEmployees (e.g. since deactivated,
   // or the request predates a company switch) — resolve names for exactly
   // the employee_ids actually present in the fetched requests.
-  const requesterIds = Array.from(new Set((requests ?? []).map((r) => r.employee_id)));
+  const requesterIds = Array.from(
+    new Set((requests ?? []).flatMap((r) => [r.employee_id, r.approver_employee_id]).filter((v): v is string => Boolean(v)))
+  );
   const { data: requesters } =
     requesterIds.length > 0 ? await supabase.from("employees").select("id, name").in("id", requesterIds) : { data: [] as { id: string; name: string }[] };
   const requesterName = new Map((requesters ?? []).map((e) => [e.id, e.name]));
@@ -402,6 +408,7 @@ export default async function LeaveAdminPage({
             decisionRemark={r.decision_remark}
             decidedByName={r.decided_by_employee_id ? decisionActorName.get(r.decided_by_employee_id) ?? null : null}
             decidedAt={r.decided_at}
+            approverName={r.approver_employee_id ? requesterName.get(r.approver_employee_id) ?? null : null}
             cancelledAt={r.cancelled_at}
             cancelledRemark={r.cancelled_remark}
             appliedLat={r.applied_lat}
@@ -451,6 +458,15 @@ export default async function LeaveAdminPage({
           </div>
         </div>
       )}
+
+      <div className="mt-6">
+        <LeaveApproversPanel
+          companyId={selectedCompanyId}
+          employees={(teamEmployees ?? []).map((e) => ({ id: e.id, name: e.name }))}
+          approvers={currentApprovers}
+          available={approversAvailable}
+        />
+      </div>
 
       <div className="mt-6">
         <LeaveTypesPanel leaveTypes={leaveTypes} employees={teamEmployees ?? []} currentYear={leaveYear} />

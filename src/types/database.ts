@@ -6610,6 +6610,52 @@ export type Database = {
           },
         ];
       };
+      leave_approver_assignments: {
+        Row: {
+          id: string;
+          company_id: string;
+          employee_id: string;
+          assigned_by_employee_id: string | null;
+          assigned_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          employee_id: string;
+          assigned_by_employee_id?: string | null;
+          assigned_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          employee_id?: string;
+          assigned_by_employee_id?: string | null;
+          assigned_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_approver_assignments_assigned_by_employee_id_fkey";
+            columns: ["assigned_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_approver_assignments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_approver_assignments_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       leave_coverage_assignments: {
         Row: {
           id: string;
@@ -6699,6 +6745,7 @@ export type Database = {
           cancelled_by_employee_id: string | null;
           cancelled_at: string | null;
           cancelled_remark: string | null;
+          approver_employee_id: string | null;
         };
         Insert: {
           id?: string;
@@ -6720,6 +6767,7 @@ export type Database = {
           cancelled_by_employee_id?: string | null;
           cancelled_at?: string | null;
           cancelled_remark?: string | null;
+          approver_employee_id?: string | null;
         };
         Update: {
           id?: string;
@@ -6741,6 +6789,7 @@ export type Database = {
           cancelled_by_employee_id?: string | null;
           cancelled_at?: string | null;
           cancelled_remark?: string | null;
+          approver_employee_id?: string | null;
         };
         Relationships: [
           {

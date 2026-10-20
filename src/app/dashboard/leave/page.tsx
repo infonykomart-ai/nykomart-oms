@@ -4,7 +4,8 @@ import { todayIST } from "@/lib/attendance/ist-date";
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveRequestForm } from "./leave-request-form";
 import { LeaveLifecycleActions } from "./leave-lifecycle-actions";
-import { fetchLeaveEvents, fetchLeaveRequests, LEAVE_AUDIT_MIGRATION_HINT } from "./leave-queries";
+import { fetchLeaveApprovers, fetchLeaveEvents, fetchLeaveRequests, LEAVE_AUDIT_MIGRATION_HINT } from "./leave-queries";
+import { LeaveApproverQueue } from "./leave-approver-queue";
 
 // 2026-08-12 (round 8): "LEAVE REQUESST BHEJ DU APPLIATION KE SATH TO VO MD
 // KE PASS APPROVAL KE LIYE CHLI JAYE" — every employee's own Leave screen:
@@ -24,7 +25,16 @@ export default async function LeavePage() {
   // 2026-10-19 — read through the migration-tolerant helper, so a database
   // without the 2026-10-17 audit columns still lists every request instead of
   // rendering the empty state (see ./leave-queries.ts).
-  const [{ rows: myRequests, audit: auditColumns, error: requestsError }, { data: myCoverage }, { data: leaveTypesRaw }, { data: myProfile }] = await Promise.all([
+  const [
+    { rows: myRequests, audit: auditColumns, error: requestsError },
+    { data: myCoverage },
+    { data: leaveTypesRaw },
+    { data: myProfile },
+    // 2026-10-19 — approvers to offer on the Apply form, plus (if THIS login
+    // is a designated approver) the requests routed to them and still
+    // Pending, so they can decide without holding leave_admin.
+    { approvers: approverOptions, available: approversAvailable },
+  ] = await Promise.all([
     fetchLeaveRequests(supabase, { employeeId: employee.id, limit: 50 }),
     // "MERE PASS ... ACCESS HAI" — the flip side: any store THIS login is
     // currently covering for someone else, active right now.
@@ -46,9 +56,21 @@ export default async function LeavePage() {
       .eq("active", true)
       .order("name"),
     supabase.from("employees").select("date_of_joining").eq("id", employee.id).single(),
+    fetchLeaveApprovers(supabase, employee.currentCompanyId),
   ]);
 
   const leaveTypes = leaveTypesRaw ?? [];
+  const isApprover = approverOptions.some((a) => a.employee_id === employee.id);
+
+  // Requests THIS login is designated to approve (not their own) — Pending
+  // first. Reuses the same tolerant fetch, filtered to Pending server-side.
+  let pendingForApprover: Awaited<ReturnType<typeof fetchLeaveRequests>>["rows"] = [];
+  if (isApprover) {
+    const { rows } = await fetchLeaveRequests(supabase, { companyId: employee.currentCompanyId, limit: 100 });
+    pendingForApprover = rows.filter(
+      (r) => r.status === "Pending" && r.employee_id !== employee.id && r.approver_employee_id === employee.id
+    );
+  }
   let myBalances: { id: string; name: string; code: string | null; paid: boolean; balance: number }[] = [];
   if (leaveTypes.length > 0) {
     const typeIds = leaveTypes.map((t) => t.id);
@@ -160,7 +182,19 @@ export default async function LeavePage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1 space-y-6">
-          <LeaveRequestForm today={today} leaveTypes={leaveTypes.map((t) => ({ id: t.id, name: t.name, code: t.code, paid: t.paid }))} />
+          <LeaveRequestForm
+            today={today}
+            leaveTypes={leaveTypes.map((t) => ({ id: t.id, name: t.name, code: t.code, paid: t.paid }))}
+            // Only offer approvers other than yourself — you can't approve
+            // your own leave.
+            approvers={approverOptions.filter((a) => a.employee_id !== employee.id).map((a) => ({ employee_id: a.employee_id, name: a.name }))}
+          />
+          {!approversAvailable && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Approver selection is off because this database doesn&apos;t have the 2026-10-19 leave-approver migration yet —
+              applications go to MD/Admin. Run db/2026-10-19-leave-approvers.sql to enable choosing an approver.
+            </p>
+          )}
 
           {myBalances.length > 0 && (
             <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -204,6 +238,7 @@ export default async function LeavePage() {
         </div>
 
         <div className="lg:col-span-2">
+          {isApprover && <LeaveApproverQueue requests={pendingForApprover} />}
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-sm font-semibold text-slate-700">My Leave Requests</h2>
             {/* 2026-10-19 — "leave request nahi dikh rahi": when the audit

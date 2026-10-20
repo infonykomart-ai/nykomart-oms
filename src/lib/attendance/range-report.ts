@@ -34,6 +34,10 @@
 import { categorizeMonth, type DayCategory } from "./payroll";
 import { EXPECTED_WORK_MINUTES } from "./work-hours";
 import { istDayOfWeek } from "./ist-date";
+// 2026-10-19 — "koi bhi entry ho ... uska time and date aani chahiye": the
+// per-attendance report rows also carry WHEN the row was entered (attendance.
+// entered_on), so a manual entry or an imported punch can be audited.
+import { formatISTShort } from "@/lib/format-ist";
 import {
   OFFICE_START_MIN,
   OFFICE_END_MIN,
@@ -443,6 +447,7 @@ export function buildRangeReport({
           work_hours: att?.work_hours ?? null,
           late_in: worked && inMin !== null ? hhmm(Math.max(0, inMin - OFFICE_START_MIN)) : "—",
           early_out: worked && outMin !== null ? hhmm(Math.max(0, OFFICE_END_MIN - outMin)) : "—",
+          entered: formatISTShort(att?.entered_on),
         });
       } else if (reportKey === "present") {
         if (d.category !== "Present" && d.category !== "Late") continue;
@@ -465,6 +470,7 @@ export function buildRangeReport({
           punch_in: istTimeLabel(att?.punch_in ?? null),
           punch_out: istTimeLabel(att?.punch_out ?? null),
           work_hours: att?.work_hours ?? null,
+          entered: formatISTShort(att?.entered_on),
         });
       } else if (reportKey === "absent" && d.category === "Absent") {
         rows.push({ date: fmtDate(d.date), day: weekdayLabel(d.date), employee: emp.name, employee_code: emp.employee_code, company: emp.company_name });
@@ -528,6 +534,7 @@ export function buildRangeReport({
           punch_in: istTimeLabel(att.punch_in ?? null),
           punch_out: istTimeLabel(att.punch_out ?? null),
           source: att.source ?? "—",
+          entered: formatISTShort(att.entered_on),
         });
       } else if (reportKey === "gps" && att?.punch_in) {
         // 2026-10-02 — GPS Report: one row per punch, coordinates + a
@@ -558,6 +565,7 @@ export function buildRangeReport({
           // Approvals screen ('None' = nothing to review).
           gps_status: att.gps_status ?? "None",
           map: link ? `https://maps.google.com/?q=${encodeURIComponent(link)}` : "—",
+          entered: formatISTShort(att.entered_on),
         });
       }
     }
@@ -595,6 +603,7 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
         { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" }, { key: "status", label: "Status" },
         { key: "punch_in", label: "IN" }, { key: "punch_out", label: "OUT" }, { key: "work_hours", label: "Work Hrs" },
         { key: "late_in", label: "Late IN" }, { key: "early_out", label: "Early OUT" },
+        { key: "entered", label: "Entered" },
       ];
     case "performance":
       return [
@@ -614,7 +623,7 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
       return [
         { key: "date", label: "Date" }, { key: "employee", label: "Employee" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "status", label: "Status" }, { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" },
-        { key: "work_hours", label: "Work Hours" },
+        { key: "work_hours", label: "Work Hours" }, { key: "entered", label: "Entered" },
       ];
     case "absent":
     case "half_day":
@@ -654,6 +663,7 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
         { key: "employee_code", label: "Code" }, { key: "department", label: "Department" }, { key: "company", label: "Company" },
         { key: "status", label: "Status" }, { key: "location", label: "Location" },
         { key: "punch_in", label: "Punch In" }, { key: "punch_out", label: "Punch Out" }, { key: "source", label: "Source" },
+        { key: "entered", label: "Entered" },
       ];
     case "gps":
       return [
@@ -662,7 +672,7 @@ function rangeColumnsFor(reportKey: RangeReportKey): ReportColumnDef[] {
         { key: "punch_in", label: "Punch In" }, { key: "in_gps", label: "In GPS" },
         { key: "punch_out", label: "Punch Out" }, { key: "out_gps", label: "Out GPS" },
         { key: "gps_status", label: "GPS Review" },
-        { key: "map", label: "Map Link" },
+        { key: "map", label: "Map Link" }, { key: "entered", label: "Entered" },
       ];
     case "leave":
       return [

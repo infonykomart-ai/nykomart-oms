@@ -4,6 +4,7 @@ import { listCreditNoteRegister, findUnregisteredManualCreditNotes } from "@/app
 import { cnKindLabel } from "../bill-payment/credit-note-kinds";
 import { CreditNoteRegisterActions } from "./register-actions-bar";
 import { DocStatementDialog } from "@/components/doc-statement-dialog";
+import { formatISTShort } from "@/lib/format-ist";
 
 // Credit Note Register — 2026-09-13. "us se ye hoga ki apne ko pata chal
 // jayega ki kis party se apne ko kitne ammonut ka credit mil gaya tha."
@@ -106,6 +107,9 @@ export default async function CreditNotesRegisterPage({
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Party&apos;s CN No.</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">GST (total)</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
+                    {/* 2026-10-19 — the CN date is the party's business date;
+                        this is when the note was actually entered. */}
+                    <th className="px-3 py-2 text-left font-semibold text-slate-500">Entered</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Against Invoice</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Orders (via AWB)</th>
                     <th className="px-3 py-2 text-left font-semibold text-slate-500">Status</th>
@@ -136,6 +140,7 @@ export default async function CreditNotesRegisterPage({
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.vendor_cn_no ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.gst_rate_pct != null ? `${n.gst_rate_pct * 2}%` : "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.credit_note_date}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5 text-[11px] text-slate-400">{formatISTShort(n.created_at)}</td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{n.invoice_no ?? "—"}</td>
                       {/* 2026-09-30 — "usme kon konse order PO/RG/RF ke against
                           me AWB hai": each AWB's resolved order(s), or "AWB → ?"

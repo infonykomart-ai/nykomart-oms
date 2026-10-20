@@ -61,7 +61,9 @@ export default async function SalaryPage({
     supabase
       .from("employee_salary")
       .select(
-        "id, employee_id, monthly_salary, allowed_leaves_per_month, effective_from, ctc_annual, basic_percent_of_ctc, hra_percent_of_basic, employer_pf_percent, employee_pf_percent, pf_wage_ceiling, esi_applicable, esi_employee_percent, esi_employer_percent, professional_tax_amount"
+        // 2026-10-19 — created_at rides along so the history table can show
+        // WHEN the version was entered, not just its effective date.
+        "id, employee_id, monthly_salary, allowed_leaves_per_month, effective_from, ctc_annual, basic_percent_of_ctc, hra_percent_of_basic, employer_pf_percent, employee_pf_percent, pf_wage_ceiling, esi_applicable, esi_employee_percent, esi_employer_percent, professional_tax_amount, created_at"
       )
       .order("effective_from", { ascending: false }),
     supabase
@@ -79,7 +81,7 @@ export default async function SalaryPage({
     supabase.from("employees").select("id, name").eq("company_id", selectedCompanyId),
     finSupabase
       .from("employee_advances")
-      .select("id, employee_id, amount, date_given, reason, recovered_amount, outstanding_amount, recovery_months, monthly_installment")
+      .select("id, employee_id, amount, date_given, reason, recovered_amount, outstanding_amount, recovery_months, monthly_installment, created_at")
       .eq("company_id", selectedCompanyId)
       .order("date_given", { ascending: false }),
     finSupabase
@@ -197,6 +199,7 @@ export default async function SalaryPage({
       allowed_leaves_per_month: Number(r.allowed_leaves_per_month),
       effective_from: r.effective_from,
       ctc_annual: r.ctc_annual === null ? null : Number(r.ctc_annual),
+      created_at: r.created_at,
     }));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
@@ -223,6 +226,7 @@ export default async function SalaryPage({
     outstanding_amount: Number(a.outstanding_amount),
     recovery_months: a.recovery_months,
     monthly_installment: a.monthly_installment === null ? null : Number(a.monthly_installment),
+    created_at: a.created_at,
   }));
 
   // Outstanding advance total PER EMPLOYEE — used for the company-wide

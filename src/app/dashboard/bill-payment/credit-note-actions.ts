@@ -569,6 +569,8 @@ export type RegisterCnRow = {
   party_name: string;
   /** "AWB → PO/RF/RG (Company)" lines for the note's AWBs (empty when none/unknown). */
   awb_orders: string[];
+  /** 2026-10-19 — credit_notes.created_at: when the note was entered. */
+  created_at: string;
 };
 
 export type RegisterPartyGroup = {
@@ -593,7 +595,7 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
   const [{ data: notes }, { data: parties }] = await Promise.all([
     supabase
       .from("credit_notes")
-      .select("id, cn_no, vendor_cn_no, cn_kind, buyer_name, awb_no, gst_rate_pct, company_id, credit_note_date, invoice_no, refund_amount, remark, credit_note_status, party_id")
+      .select("id, cn_no, vendor_cn_no, cn_kind, buyer_name, awb_no, gst_rate_pct, company_id, credit_note_date, invoice_no, refund_amount, remark, credit_note_status, party_id, created_at")
       .in("company_id", scoped)
       .order("credit_note_date", { ascending: false }),
     supabase.from("parties").select("id, name"),
@@ -628,6 +630,7 @@ export async function listCreditNoteRegister(companyIds: string[]): Promise<Regi
       company_id: n.company_id,
       party_id: n.party_id,
       party_name: n.party_id ? nameById.get(n.party_id) ?? "—" : "(No party)",
+      created_at: n.created_at,
       awb_orders: normalizeAwbList(n.awb_no).map((a) =>
         awbOrderMap.get(a) ? `${a} → ${awbOrderMap.get(a)}` : `${a} → ?`
       ),

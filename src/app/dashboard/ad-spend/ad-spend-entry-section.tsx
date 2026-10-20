@@ -3,6 +3,7 @@
 import { useActionState, useState, useTransition } from "react";
 import { saveAdSpendAction, deleteAdSpendAction, type AdSpendFormState } from "./actions";
 import { AMAZON_COUNTRIES, amazonCountryLabel, isAmazonStore } from "./amazon-countries";
+import { formatIST } from "@/lib/format-ist";
 
 const initialState: AdSpendFormState = { error: null, success: false };
 const inputClass =
@@ -20,6 +21,8 @@ type RecentEntry = {
   countryCode: string;
   budget: number;
   spend: number;
+  /** When these numbers were last saved (store_ad_spend.updated_at). */
+  enteredAt: string;
 };
 
 // Daily entry — just Budget (USD) + Spend (USD) per store per day.
@@ -233,7 +236,11 @@ function RecentEntries({
                 </div>
               </div>
               <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
-                <p className="text-red-600">{deleteError[e.id]}</p>
+                {/* 2026-10-19 — when the entry was made (IST), not just the
+                    spend date: re-saving the same store+date+country
+                    overwrites the row, so this is the last entry time. */}
+                <p className="text-[10px] text-slate-400">Entered {formatIST(e.enteredAt)}</p>
+                <p className="ml-auto text-red-600">{deleteError[e.id]}</p>
                 <button
                   type="button"
                   disabled={isPending}

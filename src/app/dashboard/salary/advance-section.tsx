@@ -10,6 +10,7 @@
 // "Advance Due: ₹X" per person — same underlying row, no separate entry.
 import { useActionState, useState, useTransition } from "react";
 import { A4Dialog } from "@/components/a4-dialog";
+import { formatIST } from "@/lib/format-ist";
 import {
   deleteAdvance,
   giveAdvance,
@@ -34,6 +35,8 @@ export type AdvanceRow = {
   outstanding_amount: number;
   recovery_months: number | null;
   monthly_installment: number | null;
+  /** employee_advances.created_at — when the advance was actually entered. */
+  created_at: string;
 };
 
 export function AdvanceSection({
@@ -149,6 +152,9 @@ export function AdvanceSection({
                 </p>
               )}
               {a.reason && <p className="mt-0.5 text-slate-500">{a.reason}</p>}
+              {/* 2026-10-19 — separate from the date given: this is when the
+                  entry was made in the system. */}
+              <p className="mt-0.5 text-[10px] text-slate-400">Entered {formatIST(a.created_at)}</p>
               <div className="mt-1 flex gap-1.5">
                 <button
                   type="button"

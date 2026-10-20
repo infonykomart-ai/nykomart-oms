@@ -127,6 +127,11 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   // round. A company that hasn't set up any leave_types never sees this
   // field at all (see leave-request-form.tsx).
   const leaveTypeId = str(formData, "leave_type_id") || null;
+  // 2026-10-19 — "jaruri nahi hai ki leave MD approve kare ... jisko leave
+  // approval ke liye assign kiya jaye uska naam aaye selection option aaye".
+  // Optional: which designated approver this application is being sent to.
+  // Resolved against the DB below (never trusted from the client).
+  const approverId = str(formData, "approver_employee_id") || null;
   // 2026-10-17 — application-time browser geolocation, best-effort exactly
   // like the punch buttons (GPS can never block a submission): the client
   // sends lat/lng only when the browser granted a fix; absent/garbage values
@@ -163,6 +168,23 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     }
   }
 
+  // 2026-10-19 — resolve the chosen approver. Must be a REAL designated
+  // approver for this company (or MD/Admin, who can always approve), never
+  // an id the browser made up. An unknown/unassigned id is silently ignored
+  // (falls back to "MD/Admin") rather than blocking the application: the
+  // employee's primary goal is to submit, and the approver routing is
+  // secondary.
+  let approverToStamp: string | null = null;
+  if (approverId) {
+    const { data: approver } = await supabase
+      .from("leave_approver_assignments")
+      .select("employee_id")
+      .eq("company_id", employee.currentCompanyId)
+      .eq("employee_id", approverId)
+      .maybeSingle();
+    if (approver) approverToStamp = approver.employee_id;
+  }
+
   // 2026-10-19 — the geo columns only exist once
   // db/2026-10-17-leave-audit-and-lifecycle.sql has been run. Applying for
   // leave must NOT depend on that: write the request itself first (the fields
@@ -176,14 +198,43 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     to_date: toDate,
     reason,
     leave_type_id: leaveTypeId,
+    approver_employee_id: approverToStamp,
   };
   let { data: created, error } = await supabase
     .from("leave_requests")
     .insert({ ...baseInsert, applied_lat: appliedLat, applied_lng: appliedLng, applied_accuracy_m: appliedAccuracyM })
     .select("id")
     .single();
+  // Cascade: each step drops the newest optional column(s) on a
+  // missing-migration error, oldest-first, so an application NEVER fails
+  // just because a later migration hasn't run. Step 2 drops the geo columns
+  // (2026-10-17), step 3 also drops approver_employee_id (2026-10-19).
+  const withoutGeo = {
+    employee_id: employee.id,
+    company_id: employee.currentCompanyId,
+    from_date: fromDate,
+    to_date: toDate,
+    reason,
+    leave_type_id: leaveTypeId,
+    approver_employee_id: approverToStamp,
+  };
+  const withoutGeoOrApprover = {
+    employee_id: employee.id,
+    company_id: employee.currentCompanyId,
+    from_date: fromDate,
+    to_date: toDate,
+    reason,
+    leave_type_id: leaveTypeId,
+  };
   if (error && isMissingSchemaPiece(error)) {
-    ({ data: created, error } = await supabase.from("leave_requests").insert(baseInsert).select("id").single());
+    ({ data: created, error } = await supabase.from("leave_requests").insert(withoutGeo).select("id").single());
+  }
+  if (error && isMissingSchemaPiece(error)) {
+    ({ data: created, error } = await supabase
+      .from("leave_requests")
+      .insert(withoutGeoOrApprover)
+      .select("id")
+      .single());
   }
   if (error || !created) return { error: error?.message ?? "Could not save the leave request.", success: false };
 
@@ -206,7 +257,12 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
 }
 
 export async function decideLeaveRequest(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {
-  const admin = await requireCapability("leave_admin");
+  // 2026-10-19 — "jaruri nahi hai ki leave MD approve kare". This action used
+  // to hard-require the leave_admin capability, which MD (Ajay Lohra / RD
+  // Lohra) does NOT hold — so a request routed to MD could never be decided.
+  // Now EITHER a leave_admin OR a designated leave approver for this company
+  // may decide. leave_management is the floor every real login already has.
+  const actor = await requireCapability("leave_management");
   const supabase = createServiceRoleClient();
 
   const leaveRequestId = str(formData, "leave_request_id");
@@ -222,8 +278,27 @@ export async function decideLeaveRequest(_prev: LeaveActionState, formData: Form
     .eq("id", leaveRequestId)
     .single();
   if (leaveError || !leave) return { error: "Leave request not found.", success: false };
-  if (!admin.companyIds.includes(leave.company_id)) return { error: "Leave request not found.", success: false };
+  if (!actor.companyIds.includes(leave.company_id)) return { error: "Leave request not found.", success: false };
   if (leave.status !== "Pending") return { error: "This leave request has already been decided.", success: false };
+
+  // Authorization: leave_admin (MD/Admin) may decide any request of a company
+  // they manage; anyone else must be a designated leave approver FOR THIS
+  // request's company. Both checked against the request's own company_id, so a
+  // login can never decide another company's leave.
+  const isAdmin = actor.capabilities.includes("leave_admin");
+  let isApprover = false;
+  if (!isAdmin) {
+    const { data: assignment } = await supabase
+      .from("leave_approver_assignments")
+      .select("id")
+      .eq("company_id", leave.company_id)
+      .eq("employee_id", actor.id)
+      .maybeSingle();
+    isApprover = Boolean(assignment);
+  }
+  if (!isAdmin && !isApprover) {
+    return { error: "Only MD/Admin or a leave approver assigned to this company can decide leave requests.", success: false };
+  }
 
   // Compare-and-swap on status, not just a check-then-act read above — two
   // near-simultaneous decisions (double-click, or two admins) could both
@@ -234,7 +309,7 @@ export async function decideLeaveRequest(_prev: LeaveActionState, formData: Form
     .from("leave_requests")
     .update({
       status: decision as never,
-      decided_by_employee_id: admin.id,
+      decided_by_employee_id: actor.id,
       decided_at: new Date().toISOString(),
       decision_remark: decisionRemark,
     })
@@ -249,7 +324,7 @@ export async function decideLeaveRequest(_prev: LeaveActionState, formData: Form
   // 2026-10-17 — "approve hone ke baad ye bhi aana chahiye ki leave approve
   // kisne ki hai kis time par ki hai": decided_by/decided_at were already
   // stored above; the audit event mirrors the same fact into the timeline.
-  await logLeaveEvent(supabase, leaveRequestId, decision as "Approved" | "Rejected", admin.id, decisionRemark);
+  await logLeaveEvent(supabase, leaveRequestId, decision as "Approved" | "Rejected", actor.id, decisionRemark);
 
   if (decision === "Approved") {
     // Auto-mark Attendance as "Leave" for every working day in the range —
@@ -364,7 +439,7 @@ export async function decideLeaveRequest(_prev: LeaveActionState, formData: Form
           .update({
             status: "Leave" as never,
             remark: "Approved leave request",
-            entered_by_employee_id: admin.id,
+            entered_by_employee_id: actor.id,
             leave_type_id: leaveTypeId,
             leave_unpaid: leaveUnpaid,
           })
@@ -377,7 +452,7 @@ export async function decideLeaveRequest(_prev: LeaveActionState, formData: Form
           status: "Leave" as never,
           source: "Manual Entry",
           remark: "Approved leave request",
-          entered_by_employee_id: admin.id,
+          entered_by_employee_id: actor.id,
           leave_type_id: leaveTypeId,
           leave_unpaid: leaveUnpaid,
         });
@@ -593,6 +668,68 @@ export async function removeCoverage(coverageId: string): Promise<LeaveActionSta
 
   revalidatePath("/dashboard/leave/admin");
   return { error: null, success: true };
+}
+
+// =============================================================================
+// 2026-10-19 — leave approvers ("jaruri nahi hai ki leave MD approve kare ...
+// jisko leave approval ke liye assign kiya jaye uska naam aaye selection
+// option aaye"). Admin (leave_admin) designates any active employee as a
+// leave approver for the selected company. That person then appears by name
+// on the Apply form and can decide requests without holding leave_admin.
+// =============================================================================
+
+/** Designate an employee as a leave approver for `companyId`. */
+export async function assignLeaveApprover(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {
+  const admin = await requireCapability("leave_admin");
+  const supabase = createServiceRoleClient();
+
+  const companyId = str(formData, "company_id");
+  const employeeId = str(formData, "employee_id");
+  if (!companyId || !employeeId) return { error: "Employee is required.", success: false };
+  if (!admin.companyIds.includes(companyId)) return { error: "Company not found.", success: false };
+
+  // Same "client dropdown isn't a security boundary" lesson as everywhere:
+  // the employee must be a real, active employee OF THIS company.
+  const { data: emp } = await supabase
+    .from("employees")
+    .select("id, company_id, active, name")
+    .eq("id", employeeId)
+    .maybeSingle();
+  if (!emp || emp.company_id !== companyId || !emp.active) {
+    return { error: "Employee not found (must be active in this company).", success: false };
+  }
+
+  const { error } = await supabase
+    .from("leave_approver_assignments")
+    .upsert(
+      { company_id: companyId, employee_id: employeeId, assigned_by_employee_id: admin.id },
+      { onConflict: "company_id,employee_id" }
+    );
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/leave/admin");
+  return { error: null, success: true, message: `${emp.name} can now approve leave.` };
+}
+
+/** Remove a designated leave approver for `companyId`. */
+export async function removeLeaveApprover(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {
+  const admin = await requireCapability("leave_admin");
+  const supabase = createServiceRoleClient();
+
+  const companyId = str(formData, "company_id");
+  const employeeId = str(formData, "employee_id");
+  if (!companyId || !employeeId) return { error: "Approver is required.", success: false };
+  if (!admin.companyIds.includes(companyId)) return { error: "Company not found.", success: false };
+
+  const { error } = await supabase
+    .from("leave_approver_assignments")
+    .delete()
+    .eq("company_id", companyId)
+    .eq("employee_id", employeeId);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/leave/admin");
+  return { error: null, success: true, message: "Approver removed." };
 }
 
 // =============================================================================

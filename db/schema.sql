@@ -3333,6 +3333,34 @@ COMMENT ON TABLE leave_types IS
   'Real leave categories, admin-configurable per company from /dashboard/leave/admin. A company with zero rows '
   'here keeps the original single-pool leave behavior (employee_salary.allowed_leaves_per_month) unchanged.';
 
+-- 2026-10-19 — WHO may approve leave. "jaruri nahi hai ki leave MD
+-- approve kare ... jisko leave approval ke liye assign kiya jaye uska naam
+-- aaye selection option aaye": instead of the workflow being hard-wired to
+-- MD/Admin (users 40 & 41, who hold leave_admin), an admin can designate
+-- any active employee as a leave approver. That person then appears by name
+-- in the employee's own Apply-for-Leave dropdown, the application is
+-- stamped with who it went to, and they can approve/reject it without
+-- holding leave_admin at all. Deliberately its OWN table rather than an
+-- employees.is_leave_approver flag: one row per approver keeps an audit
+-- trail (who assigned them, when) and lets an approver be added/removed
+-- without touching the employee master.
+CREATE TABLE leave_approver_assignments (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  employee_id       uuid NOT NULL REFERENCES employees(id),
+  assigned_by_employee_id uuid REFERENCES employees(id),
+  assigned_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, employee_id)
+);
+CREATE INDEX idx_leave_approver_assignments_company ON leave_approver_assignments(company_id);
+ALTER TABLE leave_approver_assignments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_authenticated_all ON leave_approver_assignments;
+CREATE POLICY allow_authenticated_all ON leave_approver_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
+COMMENT ON TABLE leave_approver_assignments IS
+  'Designated leave approvers, one row per approver per company. An employee named here can approve/reject any '
+  'Pending leave request of this company without holding the leave_admin capability, and is offered by name on the '
+  'Apply-for-Leve form. MD/Admin (leave_admin) can always approve as before — being listed here is additive, not a replacement.';
+
 CREATE TABLE leave_balance_adjustments (
   id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id             uuid NOT NULL REFERENCES employees(id),
@@ -3951,6 +3979,13 @@ CREATE TABLE leave_requests (
   cancelled_by_employee_id uuid REFERENCES employees(id),
   cancelled_at            timestamptz,
   cancelled_remark        text,
+  -- 2026-10-19 — "jaruri nahi hai ki leave MD approve kare ... jisko leave
+  -- approval ke liye assign kiya jaye uska naam aaye selection option aaye".
+  -- Which designated approver the employee chose on the Apply form (stamped
+  -- at submit time, NULL = unassigned / MD). Does NOT replace the leave_admin
+  -- capability — MD/Admin can still always approve — it routes the request to
+  -- a named approver who can then decide it without holding leave_admin.
+  approver_employee_id   uuid REFERENCES employees(id),
   CHECK (to_date >= from_date)
 );
 CREATE INDEX idx_leave_requests_employee ON leave_requests(employee_id, from_date DESC);

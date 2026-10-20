@@ -37,8 +37,10 @@ export function validDate(s: unknown, fallback: string): string {
 // 2026-10-02 — extended for the Location/GPS/Leave/COFF report types:
 // store/source + the four punch-geo columns + the leave day's type/paid
 // flag. The day-level report types ignore the extras.
+// 2026-10-19 — entered_on rides along so the day/inout/location/gps report
+// rows can show when the attendance was actually entered (see range-report.ts).
 const ATT_SELECT =
-  "employee_id, attendance_date, punch_in, punch_out, work_hours, status, store_id, source, punch_in_lat, punch_in_lng, punch_out_lat, punch_out_lng, leave_type_id, leave_unpaid, gps_status";
+  "employee_id, attendance_date, punch_in, punch_out, work_hours, status, store_id, source, punch_in_lat, punch_in_lng, punch_out_lat, punch_out_lng, leave_type_id, leave_unpaid, gps_status, entered_on";
 const PAGE = 1000;
 
 async function fetchAttendancePaged(
