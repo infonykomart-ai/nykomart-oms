@@ -33,7 +33,7 @@ export default async function LeavePage() {
     // 2026-10-19 — approvers to offer on the Apply form, plus (if THIS login
     // is a designated approver) the requests routed to them and still
     // Pending, so they can decide without holding leave_admin.
-    { approvers: approverOptions, available: approversAvailable },
+    { approvers: approverOptions, available: approversAvailable, error: approversError },
   ] = await Promise.all([
     fetchLeaveRequests(supabase, { employeeId: employee.id, limit: 50 }),
     // "MERE PASS ... ACCESS HAI" — the flip side: any store THIS login is
@@ -189,10 +189,23 @@ export default async function LeavePage() {
             // your own leave.
             approvers={approverOptions.filter((a) => a.employee_id !== employee.id).map((a) => ({ employee_id: a.employee_id, name: a.name }))}
           />
+          {/* 2026-10-20 — two DIFFERENT problems used to share one message.
+              "available: false" means the table really is absent (migration
+              not run, or PostgREST hasn't reloaded its schema cache yet); an
+              error with the table present is a read failure and must not
+              tell anyone to re-run SQL that is already applied. */}
           {!approversAvailable && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Approver selection is off because this database doesn&apos;t have the 2026-10-19 leave-approver migration yet —
-              applications go to MD/Admin. Run db/2026-10-19-leave-approvers.sql to enable choosing an approver.
+              applications go to MD/Admin. Run db/2026-10-19-leave-approvers.sql in the Supabase SQL Editor (it ends with
+              a PostgREST schema-cache reload) — if you have already run it, run it once more or execute{" "}
+              <code className="rounded bg-amber-100 px-1">NOTIFY pgrst, &apos;reload schema&apos;;</code> by itself.
+            </p>
+          )}
+          {approversAvailable && approversError && (
+            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+              The approver list couldn&apos;t be loaded ({approversError}). The migration is applied — this is a read error,
+              not a missing table. Applications still work and go to MD/Admin.
             </p>
           )}
 

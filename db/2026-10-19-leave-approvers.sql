@@ -31,3 +31,13 @@ CREATE POLICY allow_authenticated_all ON leave_approver_assignments FOR ALL TO a
 -- the approvals queue can be routed to a named person (and MD still sees it
 -- too). NULL = unassigned / MD.
 ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS approver_employee_id uuid REFERENCES employees(id);
+
+-- 2026-10-20 — Supabase's PostgREST keeps a cache of the schema it exposes.
+-- A brand-new table is normally picked up within moments, but when it isn't,
+-- the API answers PGRST205 ("Could not find the table
+-- 'public.leave_approver_assignments' in the schema cache") even though the
+-- table plainly exists in the SQL Editor — which is exactly what a screen
+-- like Leave reads as "the migration hasn't been run", no matter how many
+-- times it is re-run. This forces the reload. It is a no-op on a plain
+-- Postgres (the notification just goes nowhere), so it is safe in this file.
+NOTIFY pgrst, 'reload schema';
