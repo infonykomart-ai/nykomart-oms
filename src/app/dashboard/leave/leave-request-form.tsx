@@ -30,8 +30,17 @@ const inputClass =
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 export type LeaveTypeOption = { id: string; name: string; code: string | null; paid: boolean };
+export type ApproverOption = { employee_id: string; name: string };
 
-export function LeaveRequestForm({ today, leaveTypes = [] }: { today: string; leaveTypes?: LeaveTypeOption[] }) {
+export function LeaveRequestForm({
+  today,
+  leaveTypes = [],
+  approvers = [],
+}: {
+  today: string;
+  leaveTypes?: LeaveTypeOption[];
+  approvers?: ApproverOption[];
+}) {
   const [state, formAction, pending] = useActionState(submitLeaveRequest, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   // "Waiting for location fix" — shown between the click and the action
@@ -81,6 +90,20 @@ export function LeaveRequestForm({ today, leaveTypes = [] }: { today: string; le
         </div>
       )}
 
+      {approvers.length > 0 && (
+        <div>
+          <label className={labelClass}>Send for approval to</label>
+          <select name="approver_employee_id" defaultValue="" className={inputClass}>
+            <option value="">— MD / Admin —</option>
+            {approvers.map((a) => (
+              <option key={a.employee_id} value={a.employee_id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass}>From Date *</label>
@@ -102,7 +125,7 @@ export function LeaveRequestForm({ today, leaveTypes = [] }: { today: string; le
         disabled={pending || locating}
         className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
       >
-        {locating ? "📍 Locating..." : pending ? "Sending..." : "Send for MD Approval"}
+        {locating ? "📍 Locating..." : pending ? "Sending..." : "Submit Leave Application"}
       </button>
       <p className="text-[11px] text-slate-400">
         Your application is recorded with its date, time and (if you allow) location.

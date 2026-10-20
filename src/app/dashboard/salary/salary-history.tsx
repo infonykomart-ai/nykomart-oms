@@ -8,6 +8,7 @@
 // dialog used across Document Entry, and deletable.
 import { useActionState, useState, useTransition } from "react";
 import { A4Dialog } from "@/components/a4-dialog";
+import { formatIST } from "@/lib/format-ist";
 import { deleteSalaryVersion, updateSalaryVersion, type SimpleActionState } from "./actions";
 
 export type SalaryHistoryRow = {
@@ -19,6 +20,8 @@ export type SalaryHistoryRow = {
   effective_from: string;
   ctc_annual: number | null;
   employee_pf_amount_note?: string | null;
+  /** employee_salary.created_at — when this version was entered. */
+  created_at: string;
 };
 
 const initialState: SimpleActionState = { error: null, success: false };
@@ -60,6 +63,9 @@ export function SalaryHistory({ rows }: { rows: SalaryHistoryRow[] }) {
               <th className="px-2">Monthly Salary</th>
               <th className="px-2">Paid Leave/mo</th>
               <th className="px-2">Effective From</th>
+              {/* 2026-10-19 — the effective date is a business date; this is
+                  when the decision was actually entered. */}
+              <th className="px-2">Entered</th>
               <th className="px-2">Structure</th>
               <th className="px-2 text-right">Actions</th>
             </tr>
@@ -71,6 +77,7 @@ export function SalaryHistory({ rows }: { rows: SalaryHistoryRow[] }) {
                 <td className="px-2">₹{r.monthly_salary.toLocaleString("en-IN")}</td>
                 <td className="px-2">{r.allowed_leaves_per_month}</td>
                 <td className="px-2">{r.effective_from}</td>
+                <td className="whitespace-nowrap px-2 text-slate-500">{formatIST(r.created_at)}</td>
                 <td className="px-2">{r.ctc_annual != null ? `CTC ₹${r.ctc_annual.toLocaleString("en-IN")}/yr` : "Flat"}</td>
                 <td className="px-2 py-1.5 text-right">
                   <div className="inline-flex gap-1.5">
@@ -95,7 +102,7 @@ export function SalaryHistory({ rows }: { rows: SalaryHistoryRow[] }) {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-3 text-center text-slate-400">
+                <td colSpan={7} className="py-3 text-center text-slate-400">
                   No salary decided yet.
                 </td>
               </tr>

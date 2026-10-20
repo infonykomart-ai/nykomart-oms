@@ -106,6 +106,7 @@ export default async function AdSpendPage({
     countryCode: string;
     budget: number;
     spend: number;
+    enteredAt: string;
   }[] = [];
   if (tab === "entry") {
     const allStoreIds = (stores ?? []).map((s) => s.id);
@@ -114,7 +115,11 @@ export default async function AdSpendPage({
           .from("store_ad_spend")
           // 2026-10-15 — country_code rides along so an Amazon day's rows
           // are told apart in this list (see the entry form).
-          .select("id, store_id, spend_date, country_code, budget_usd, spend_usd")
+          // 2026-10-19 — "koi bhi entry ho ... uska time and date aani
+          // chahiye": updated_at is when these numbers were last entered/
+          // re-saved (the row is an upsert, see saveAdSpendAction), so the
+          // list can show the entry timestamp next to the spend date.
+          .select("id, store_id, spend_date, country_code, budget_usd, spend_usd, updated_at")
           .in("store_id", allStoreIds)
           .order("spend_date", { ascending: false })
           .limit(30)
@@ -128,6 +133,7 @@ export default async function AdSpendPage({
       countryCode: r.country_code ?? "",
       budget: Number(r.budget_usd ?? 0),
       spend: Number(r.spend_usd ?? 0),
+      enteredAt: r.updated_at,
     }));
   }
 

@@ -27,7 +27,7 @@ type Client = SupabaseClient<Database>;
 
 /** Columns every leave_requests row has had since 2026-08-12. */
 export const LEAVE_BASE_COLUMNS =
-  "id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id, decided_by_employee_id, decided_at";
+  "id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id, decided_by_employee_id, decided_at, approver_employee_id";
 
 /** Columns added by db/2026-10-17-leave-audit-and-lifecycle.sql. */
 export const LEAVE_AUDIT_COLUMNS =
@@ -70,6 +70,8 @@ export type LeaveRequestRow = {
   cancelled_by_employee_id: string | null;
   cancelled_at: string | null;
   cancelled_remark: string | null;
+  /** Designated approver (2026-10-19); null = unassigned / MD. */
+  approver_employee_id: string | null;
 };
 
 function normalize(row: Record<string, unknown>): LeaveRequestRow {
@@ -93,6 +95,7 @@ function normalize(row: Record<string, unknown>): LeaveRequestRow {
     cancelled_by_employee_id: str(row.cancelled_by_employee_id),
     cancelled_at: str(row.cancelled_at),
     cancelled_remark: str(row.cancelled_remark),
+    approver_employee_id: str(row.approver_employee_id),
   };
 }
 
@@ -166,3 +169,74 @@ export async function fetchLeaveEvents(
 /** The one-line notice both leave screens show while the audit migration is outstanding. */
 export const LEAVE_AUDIT_MIGRATION_HINT =
   "This database hasn't got the 2026-10-17 leave audit columns yet (applied time/location, cancelled-by, event history) — every request below still shows, but those extra details are off. Run db/2026-10-17-leave-audit-and-lifecycle.sql in the Supabase SQL Editor to switch them on.";
+
+// =============================================================================
+// 2026-10-19 — leave approvers ("jaruri nahi hai ki leave MD approve kare ...
+// jisko leave approval ke liye assign kiya jaye uska naam aaye selection
+// option aaye").
+// =============================================================================
+
+export type LeaveApprover = {
+  employee_id: string;
+  name: string;
+  assigned_at: string;
+};
+
+/**
+ * The designated leave approvers for a company, newest assignment first.
+ *
+ * Reads only the base columns of leave_approver_assignments (the migration
+ * that creates it is brand-new), so this does NOT go through the audit-column
+ * fallback the request/event reads use. If that migration hasn't run, the
+ * query errors with a missing-table code and we return an empty list (flagged
+ * `available: false`) — the Apply form then simply shows no approver dropdown
+ * and falls back to MD, exactly the pre-2026-10-19 behavior. Permission or
+ * network failures are logged (not silently swallowed) but still yield an
+ * empty list so applying is never blocked by a routing lookup.
+ */
+export async function fetchLeaveApprovers(
+  supabase: Client,
+  companyId: string
+): Promise<{ approvers: LeaveApprover[]; available: boolean }> {
+  const { data, error } = await supabase
+    .from("leave_approver_assignments")
+    .select("employee_id, assigned_at, employees(name)")
+    .eq("company_id", companyId)
+    .order("assigned_at", { ascending: false });
+  if (!error) {
+    const rows = (data ?? []) as unknown as {
+      employee_id: string;
+      assigned_at: string;
+      employees: { name: string } | null;
+    }[];
+    return {
+      approvers: rows.map((r) => ({
+        employee_id: r.employee_id,
+        name: r.employees?.name ?? "(unknown)",
+        assigned_at: r.assigned_at,
+      })),
+      available: true,
+    };
+  }
+  if (!isMissingSchemaPiece(error)) console.error("[leave] fetchLeaveApprovers failed", error.message);
+  return { approvers: [], available: false };
+}
+
+/**
+ * Whether THIS login is a designated leave approver for the company — used to
+ * gate the "Awaiting your decision" queue on the employee's Leave page. False
+ * when the migration hasn't run (no approvers can exist yet).
+ */
+export async function isLeaveApprover(supabase: Client, companyId: string, employeeId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("leave_approver_assignments")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("employee_id", employeeId)
+    .maybeSingle();
+  if (error) {
+    if (!isMissingSchemaPiece(error)) console.error("[leave] isLeaveApprover failed", error.message);
+    return false;
+  }
+  return Boolean(data);
+}

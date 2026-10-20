@@ -46,6 +46,7 @@ export function LeaveApprovalRow({
   decisionRemark,
   decidedByName,
   decidedAt,
+  approverName,
   cancelledAt,
   cancelledRemark,
   appliedLat,
@@ -68,6 +69,8 @@ export function LeaveApprovalRow({
   // 2026-10-17 audit fields.
   decidedByName?: string | null;
   decidedAt?: string | null;
+  /** 2026-10-19 — who the application was routed to (designated approver). */
+  approverName?: string | null;
   cancelledAt?: string | null;
   cancelledRemark?: string | null;
   appliedLat?: number | null;
@@ -117,6 +120,9 @@ export function LeaveApprovalRow({
             )}
           </p>
           <p className="mt-1 text-xs text-slate-600">{reason}</p>
+          {status === "Pending" && approverName && (
+            <p className="mt-1 text-xs text-teal-700">📨 Routed to {approverName} for approval</p>
+          )}
           {(status === "Approved" || status === "Rejected") && decidedAt && (
             <p className={`mt-1 text-xs ${status === "Approved" ? "text-green-700" : "text-red-700"}`}>
               {status === "Approved" ? "✓ Approved" : "✕ Rejected"} by {decidedByName ?? "MD/Admin"} on {formatIST(decidedAt)}

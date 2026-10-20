@@ -66,6 +66,10 @@ export type AttendanceRow = {
   leave_unpaid?: boolean | null;
   // 2026-10-02c — GPS review workflow (None/Pending/Approved/Rejected).
   gps_status?: string | null;
+  // 2026-10-19 — attendance.entered_on: when the row was entered in the app
+  // (web punch, manual mark or TeamOffice import). Optional for the same
+  // reason as the extras above — only the range loader selects it.
+  entered_on?: string | null;
 };
 
 export type ReportEmployee = {

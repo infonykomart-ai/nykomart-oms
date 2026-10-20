@@ -13,6 +13,7 @@ import { PrintArea } from "@/components/print-view";
 import { A4Dialog } from "@/components/a4-dialog";
 import type { OrderStatusSummary } from "@/lib/orders/order-status-summary";
 import { BulkVendorAssignBar } from "./bulk-vendor-assign-bar";
+import { formatISTShort } from "@/lib/format-ist";
 
 // company_id isn't part of EditableOrder (that type is shared with the Edit
 // form, which never needs to change an order's company) but it IS selected
@@ -301,6 +302,18 @@ export function OrderListTable({
       tdClass: "whitespace-nowrap",
       filterValue: (o) => o.order_date ?? "",
       cell: (o) => o.order_date,
+    },
+    {
+      // 2026-10-19 — "koi bhi entry ho ... uska time and date aani chahiye":
+      // the order's business dates are all date-only columns, so this is the
+      // one place that shows WHEN the order was actually entered
+      // (orders.entry_timestamp).
+      key: "entered",
+      label: "Entered",
+      filter: "text",
+      tdClass: "whitespace-nowrap text-[11px] text-slate-500",
+      filterValue: (o) => o.entry_timestamp ?? "",
+      cell: (o) => formatISTShort(o.entry_timestamp),
     },
     {
       key: "poNo",
@@ -643,6 +656,7 @@ export function OrderListTable({
   type ExportRow = {
     ref_no: string;
     order_date: string;
+    entered: string;
     status: string;
     buyer_name_address: string | null;
     contact_no: string | null;
@@ -664,6 +678,7 @@ export function OrderListTable({
     return {
       ref_no: o.ref_no,
       order_date: o.order_date,
+      entered: formatISTShort(o.entry_timestamp),
       status: o.status,
       buyer_name_address: o.buyer_name_address,
       contact_no: o.contact_no,
@@ -684,6 +699,7 @@ export function OrderListTable({
   const EXPORT_COLUMNS: ExportColumn<ExportRow>[] = [
     { key: "ref_no", label: "PO/RF/RG No.", value: (r) => r.ref_no },
     { key: "order_date", label: "Order Date", value: (r) => r.order_date },
+    { key: "entered", label: "Entered", value: (r) => r.entered },
     { key: "status", label: "Status", value: (r) => r.status },
     { key: "buyer_name_address", label: "Buyer", value: (r) => r.buyer_name_address },
     { key: "contact_no", label: "Contact No.", value: (r) => r.contact_no },

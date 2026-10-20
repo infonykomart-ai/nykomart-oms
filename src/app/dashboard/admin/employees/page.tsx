@@ -11,6 +11,7 @@ import { EmployeeTelegramCell } from "./employee-telegram-cell";
 // token (getMe) when TELEGRAM_BOT_USERNAME isn't configured — see
 // telegram-notify.ts.
 import { resolveTelegramBotUsername } from "@/lib/attendance/telegram-notify";
+import { formatISTShort } from "@/lib/format-ist";
 import Link from "next/link";
 
 // 2026-09-29 — FedEx-style upgrade: the bare "Employees" h1 row became a
@@ -37,7 +38,9 @@ export default async function EmployeesAdminPage() {
       supabase
         .from("employees")
         .select(
-          "id, name, email, active, designation, department_id, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id"
+          // 2026-10-19 — created_at rides along so the table can show WHEN the
+          // employee record was entered (separate from date_of_joining).
+          "id, name, email, active, designation, department_id, employee_code, company_id, role_id, date_of_joining, whatsapp_no, telegram_chat_id, gender, marital_status, dob, anniversary_date, photo_url, family_contact_1_name, family_contact_1_relation, family_contact_1_number, family_contact_2_name, family_contact_2_relation, family_contact_2_number, pan_number, uan_number, pf_number, esi_number, bank_account_holder_name, bank_account_no, bank_ifsc, bank_name, reports_to_employee_id, created_at"
         )
         .order("created_at", { ascending: false }),
       supabase.from("roles").select("id, name").order("name"),
@@ -149,6 +152,8 @@ export default async function EmployeesAdminPage() {
                   <th className="px-4 py-3">Role / Company</th>
                   <th className="px-4 py-3">Telegram</th>
                   <th className="px-4 py-3">Status</th>
+                  {/* 2026-10-19 — when the row was created in the system. */}
+                  <th className="px-4 py-3">Added</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -189,6 +194,9 @@ export default async function EmployeesAdminPage() {
                         </div>
                       )}
                     </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
+                      {formatISTShort(e.created_at)}
+                    </td>
                     <td className="px-4 py-3">
                       <EmployeeRowActions
                         employeeId={e.id}
@@ -210,7 +218,7 @@ export default async function EmployeesAdminPage() {
                 ))}
                 {list.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-400">
+                    <td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-400">
                       No employees yet.
                     </td>
                   </tr>
