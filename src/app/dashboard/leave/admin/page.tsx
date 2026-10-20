@@ -3,6 +3,7 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { addDaysToDateStr, istDateFromInstant, todayIST } from "@/lib/attendance/ist-date";
 import { computeLeaveBalance } from "@/lib/attendance/leave-balance";
 import { LeaveApprovalRow, type CoverageRow } from "./leave-approval-row";
+import { LeaveRequestForm } from "../leave-request-form";
 import { LeaveTypesPanel } from "./leave-types-panel";
 import { LeaveApproversPanel } from "./leave-approvers-panel";
 import { fetchLeaveApprovers, fetchLeaveEvents, fetchLeaveRequests, isMissingSchemaPiece, LEAVE_AUDIT_MIGRATION_HINT } from "../leave-queries";
@@ -305,6 +306,30 @@ export default async function LeaveAdminPage({
           View
         </button>
       </form>
+
+      {/* 2026-10-20 — "kisi employee ki khud admin apsent application dale to vo
+          option bhi hona chahiye": MD/Admin can file an absence application FOR
+          any active employee of the selected company (an employee who is
+          already away can't fill the form himself). Same form component as the
+          employee screen — picking an employee just switches whose name the
+          request is saved under, plus the optional "approve immediately". */}
+      <details className="mb-6 rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-sky-900">
+          📝 File a leave application for an employee
+        </summary>
+        <p className="mt-1 text-xs text-sky-800">
+          Employee ki taraf se absence application file karein — usi ke naam par request banegi, approval ke baad usi ki
+          Attendance &quot;Leave&quot; mark hogi. &quot;Approve immediately&quot; tick karenge to attendance abhi hi mark ho jayegi.
+        </p>
+        <div className="mt-3">
+          <LeaveRequestForm
+            today={today}
+            leaveTypes={leaveTypes.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, code: t.code, paid: t.paid }))}
+            employees={(teamEmployees ?? []).filter((e) => e.id !== admin.id).map((e) => ({ id: e.id, name: e.name }))}
+            selfName={admin.name}
+          />
+        </div>
+      </details>
 
       <div className="mb-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* 2026-10-17 — ON LEAVE board (today + next 7 days): the standing

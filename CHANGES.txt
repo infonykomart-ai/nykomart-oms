@@ -1,70 +1,69 @@
-BACK-DATED LEAVE APPLICATION (2026-10-20)
-=========================================
+ADMIN EMPLOYEE KI LEAVE FILE KAR SAKTA HAI (2026-10-20)
+======================================================
 
-REPO CHECK PEHLE: ye files aapke GitHub ke LATEST code par bani hain
-(origin/main = cbb67df "Merge pull request #17 ... leave-submit-current-target",
-33 commits jo aapne update kiye). Purani local copy par nahi — is liye koi
-conflict/error nahi aayega.
+KOI SQL / MIGRATION NAHI. Koi naya column/table nahi. Sirf 4 code files
+replace karni hain (+ BRAIN.md).
 
-KOI SQL / MIGRATION NAHI CHALANI. Sirf 4 code files replace karni hain
-(+ BRAIN.md). Koi naya column/table nahi.
-
-
-1) KYA BLOCK HO RAHA THA
-------------------------
-Back date me leave application sirf FORM ki wajah se nahi ja rahi thi:
-leave-request-form.tsx me dono date fields par min={today} laga tha.
-Server (submitLeaveRequest) kabhi past date reject nahi karta tha — wo sirf
-"To >= From" aur max 90 din check karta hai. Approve karne par
-(decideLeaveRequest) us range ke HAR working din ki Attendance "Leave" mark
-hoti hai — past ke dinon ki bhi (Holiday / Week-Off aur jis din asli Present
-punch hai, unhe chhod kar). Yaani back-dated leave ka poora backend pehle se
-kaam kar raha tha.
+NOTE: ye 4 files me pichhla round (back-dated leave) bhi shamil hai — agar
+aapne leave-backdate-2026-10-20.zip lagaya tha to ye uske upar hi hai, ek
+saath dono cheezein aa jayengi. Kuch bhi revert nahi hota.
 
 
-2) FIX (kya badla)
+1) AB KYA NAYA HAI
 ------------------
-- From Date: ab min nahi hai -> aaj se pehle ki date (back date) chuni ja
-  sakti hai. To Date ka min ab "chuni hui From date" hai (aaj nahi), is liye
-  ek hi din ki purani leave bhi daal sakte hain aur range ulti nahi ho sakti.
-- Form ke neeche ek line: "Back-dated leave bhi apply kar sakte hain ..."
-  (approve hone par us range ki Attendance Leave mark hogi, Present punch wale
-  din waise hi rahenge).
-- submitLeaveRequest ab dates ko validateDateFields() se bhi guzarta hai —
-  wahi FY + real-calendar check jo baaki har date entry me hai. Ye PAST ko
-  rokta nahi (window 10 FY peeche tak hai), sirf typo wala saal (jaise
-  20026-10-01) rokta hai — warna galat saal ki leave save hokar Attendance
-  bhi galat mahine me mark ho jaati.
-- Back-dated request ka pata chalna chahiye:
-  * Audit timeline ka Applied event: "Back-dated (<from> is before today
-    <today>) · Location: ..."
-  * Submit hone par success message: "Back-dated leave request sent for
-    approval — approve hote hi us range ki Attendance 'Leave' mark ho jayegi."
-  * Employee ki apni list me aur MD/Admin ke Leave Approvals row me
-    "⏪ Back-dated" chip dikhta hai (from_date aaj se pehle ho to).
-    Approver ke liye ye zaroori hai kyunki approve karte hi past dinon ki
-    attendance likhi jaati hai.
-- Paid/unpaid allocation me koi badlav nahi: balance total waisa hi rehta hai;
-  sirf near-limit saal me kaunse din unpaid flag hote hain wo thoda alag ho
-  sakta hai (ye late/edited request ka pehle se chalta aaya behaviour hai).
+employee khud absent hai ya phone par bata raha hai — ab MD/Admin uske naam
+par application file kar sakta hai:
+
+  /dashboard/leave/admin  ->  "📝 File a leave application for an employee"
+  (tab kholne par wahi form aata hai jo employee ka hai)
+
+- "Filing for" dropdown: "Myself — <aapka naam>" ya list me se koi bhi
+  active employee. Employee chunne par request USI ke naam par banti hai.
+- Leave Type, From/To date (back-date bhi), Reason — sab same.
+- "Approve immediately" checkbox: tick karte hi application save + approve
+  ek saath — us range ki Attendance "Leave" mark ho jaati hai (Present punch
+  wale din, Holiday/Week Off chhod kar — wahi purana rule).
+  Checkbox nahi tick kiya to request Pending rahegi aur normal approval
+  queue me dikhegi (jahan se bhi approve ho sakti hai).
+
+
+2) KAISE KAAM KARTA HAI (technical)
+-----------------------------------
+- form employee_id post karta hai. Khali (ya khud ka id) = purana self-apply
+  path, kuch nahi badla.
+- kisi doosre ka id aaye to server khud check karta hai:
+  * login ke paas leave_admin capability ho
+  * employee exist karta ho, active ho
+  * uski company aapke companyIds me ho
+  warna error — dropdown ki value par bharosa nahi kiya jaata.
+- request us employee ke id/company par save hoti hai; leave-type validation,
+  approver check, aur half-applied migration ka fallback bhi usi target
+  employee par chalta hai.
+- Admin ke browser ka location us employee ki application me NAHI likha
+  jaata (wo admin ke device ka fix hai) — audit trail me likha aata hai:
+  "Filed by <admin> (MD/Admin) for <employee>".
+- "Approve immediately" me wahi decideLeaveRequest chalti hai — status CAS +
+  audit event + Attendance marking, copy-paste nahi.
 
 
 3) FILES
 --------
-MOD src/app/dashboard/leave/leave-request-form.tsx   <- back date allow
-MOD src/app/dashboard/leave/actions.ts               <- FY date validation + audit + message
-MOD src/app/dashboard/leave/page.tsx                 <- employee list par badge
-MOD src/app/dashboard/leave/admin/leave-approval-row.tsx <- admin row par badge
-MOD BRAIN.md                                         <- round ka record
+MOD src/app/dashboard/leave/leave-request-form.tsx  <- "Filing for" + auto-approve checkbox
+MOD src/app/dashboard/leave/actions.ts              <- target employee resolve + on-behalf save/approve
+MOD src/app/dashboard/leave/admin/page.tsx          <- naya "File a leave application for an employee" card
+MOD src/app/dashboard/leave/page.tsx                <- back-dated chip (pichhla round, isi set me)
+MOD BRAIN.md                                        <- 5q + 5r round records
 
 
-4) KAISE TEST KARNA
--------------------
-1. Leave page -> From Date me pichhli koi date (jaise 5 din pehle) daalo,
-   To Date wahi ya uske baad, reason likhkar submit karo.
-2. List me "⏪ Back-dated" chip dikhega, aur application MD/Admin ke paas
-   approve karne jaayegi.
-3. Approve karte hi us range ke dinon ki Attendance "Leave" ho jayegi —
-   Attendance Admin page me check karo (Present punch wale din nahi badlenge).
-4. Agar galat saal (2026 ki jagah 20026) daaloge to saaf error aayega,
-   save nahi hoga.
+4) TEST KAISE KAREIN
+--------------------
+1. MD/Admin login -> Leave Approvals (/dashboard/leave/admin)
+2. "File a leave application for an employee" kholen
+3. "Filing for" me ek employee chunen -> From/To date (kal/pichhli date bhi)
+   + reason likh kar Submit
+4. "Approve immediately" TICK karke submit karenge to:
+   - Leave Approvals list me us employee ka Approved row
+   - Attendance me us range ke din "Leave" (Present punch wale din nahi)
+5. TICK nahi kiya to Pending row -> approve karne par wahi attendance
+6. Kisi non-admin (normal employee) se ye form nahi dikhta; aur agar koi
+   manually employee_id bhej de to server "Only MD/Admin can file..." dega.

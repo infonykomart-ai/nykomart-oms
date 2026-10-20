@@ -661,6 +661,32 @@ User request: "pichlli leave jo approve ki hai vo nahi dikh rahi or na hi pendin
 - **Verified**: `tsc -p tsconfig.ci.json` (whole project) → 0 errors; `npx eslint` on all 4 touched files → clean.
   Not exercised against the live DB.
 
+## 5r. Leave — MD/Admin can file an application FOR an employee (2026-10-20)
+
+- **Asked:** "kisi employee ki khud admin apsent application dale to vo option bhi hona chahiye" — an employee who
+  is already absent (or on a shop floor with no laptop) cannot fill the form himself.
+- **Where:** the MD/Admin screen (`/dashboard/leave/admin`) gained a collapsible **"📝 File a leave application for an
+  employee"** card. It reuses the SAME `LeaveRequestForm` component as the employee screen — there is no second form
+  to keep in sync — with two extra props: `employees` (that company's active staff, self excluded) and `selfName`.
+  With `employees` empty the form is byte-for-byte the old self-application form.
+- **How it works:** the employee selector posts `employee_id`. `submitLeaveRequest` treats an absent/self value as the
+  ordinary self-application path; any other id must pass BOTH `leave_admin` on the caller AND a server-side lookup
+  (employee exists, is `active`, and belongs to a company in `caller.companyIds`). Everything downstream — leave-type
+  validation, approver resolution, the three-step insert fallback for half-applied migrations — now keys off that
+  resolved target (`targetEmployee.id` / `.companyId`) instead of the logged-in user, so the request is saved in the
+  employee's name and their company. A posted id is never trusted (same rule as every other dropdown in this app).
+- **Location is NOT copied:** the browser fix belongs to the ADMIN's device, so `applied_lat/lng/accuracy` are stored
+  NULL on the on-behalf path (the client also skips the geolocation prompt). The audit event instead records
+  `Filed by <admin> (MD/Admin) for <employee>`.
+- **Optional "Approve immediately" checkbox** (on-behalf path only, never for one's own leave): the action calls
+  `decideLeaveRequest` itself, so the status CAS, the Approval audit event and the Attendance "Leave" writing —
+  including the Holiday/Week-Off and existing-Present-punch guards — are the same code path, never a copy. If that
+  auto-approve fails the application is still saved and the message says to approve it from the list.
+- **No migration, no schema change.** `leave_requests` has no "filed by" column; who filed it lives in the existing
+  `leave_request_events` trail.
+- **Verified:** whole-project `tsc -p tsconfig.ci.json` → 0 errors; `npx eslint` on the 4 touched files → clean.
+  Not exercised against the live DB (no Supabase connection in this workspace).
+
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 
 **Overall: well-guarded, no critical findings.** Specifically verified:

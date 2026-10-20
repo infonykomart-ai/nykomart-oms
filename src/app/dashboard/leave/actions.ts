@@ -119,6 +119,35 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   const employee = await requireCapability("leave_management");
   const supabase = createServiceRoleClient();
 
+  // 2026-10-20 — "kisi employee ki khud admin apsent application dale to vo
+  // option bhi hona chahiye": MD/Admin can file the application FOR any
+  // active employee of a company they have access to. The admin form posts
+  // employee_id; when it is absent (or equals the caller) this is the
+  // ordinary self-application path and nothing about it changes.
+  const targetEmployeeIdRaw = str(formData, "employee_id");
+  let targetEmployee = { id: employee.id, name: employee.name, companyId: employee.currentCompanyId };
+  const filingForSomeoneElse = !!targetEmployeeIdRaw && targetEmployeeIdRaw !== employee.id;
+  if (filingForSomeoneElse) {
+    if (!employee.capabilities.includes("leave_admin")) {
+      return { error: "Only MD/Admin can file a leave application for another employee.", success: false };
+    }
+    // Never trust the posted id (same "client dropdown isn't a security
+    // boundary" rule as every other action): the target must be a real,
+    // active employee of a company this login can actually act in.
+    const { data: target } = await supabase
+      .from("employees")
+      .select("id, name, company_id, active")
+      .eq("id", targetEmployeeIdRaw)
+      .maybeSingle();
+    if (!target || !target.active || !employee.companyIds.includes(target.company_id)) {
+      return { error: "That employee isn't available for this company — refresh and try again.", success: false };
+    }
+    targetEmployee = { id: target.id, name: target.name, companyId: target.company_id };
+  }
+  // "Approve immediately" is offered only when an admin is filing on someone
+  // else's behalf (an employee never approves their own application).
+  const autoApprove = filingForSomeoneElse && str(formData, "auto_approve") === "on";
+
   const fromDate = str(formData, "from_date");
   const toDate = str(formData, "to_date");
   const reason = str(formData, "reason");
@@ -146,6 +175,13 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     appliedLat !== null && appliedLng !== null && Number.isFinite(appliedAccuracyRaw) && appliedAccuracyRaw >= 0
       ? appliedAccuracyRaw
       : null;
+  // 2026-10-20 — when MD/Admin files for an employee, the browser fix belongs
+  // to the ADMIN's device, not the absent employee's, so it must never be
+  // stored as the applicant's location. Self-applications keep it exactly as
+  // before.
+  const appliedLatToStore = filingForSomeoneElse ? null : appliedLat;
+  const appliedLngToStore = filingForSomeoneElse ? null : appliedLng;
+  const appliedAccuracyToStore = filingForSomeoneElse ? null : appliedAccuracyM;
 
   if (!fromDate || !toDate) return { error: "From and To dates are both required.", success: false };
   if (toDate < fromDate) return { error: "To date cannot be before From date.", success: false };
@@ -181,7 +217,7 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
       .select("id, company_id, active")
       .eq("id", leaveTypeId)
       .maybeSingle();
-    if (!leaveType || leaveType.company_id !== employee.currentCompanyId || !leaveType.active) {
+    if (!leaveType || leaveType.company_id !== targetEmployee.companyId || !leaveType.active) {
       return { error: "That leave type isn't available — refresh and try again.", success: false };
     }
   }
@@ -197,7 +233,7 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     const { data: approver } = await supabase
       .from("leave_approver_assignments")
       .select("employee_id")
-      .eq("company_id", employee.currentCompanyId)
+      .eq("company_id", targetEmployee.companyId)
       .eq("employee_id", approverId)
       .maybeSingle();
     if (approver) approverToStamp = approver.employee_id;
@@ -210,8 +246,10 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   // take it. "Leave request nahi dikh rahi" covered the read side; this is the
   // write side of the same missing-migration failure.
   const baseInsert = {
-    employee_id: employee.id,
-    company_id: employee.currentCompanyId,
+    // 2026-10-20 — the request belongs to the employee the leave is FOR, not
+    // necessarily the login filing it (admin-on-behalf path above).
+    employee_id: targetEmployee.id,
+    company_id: targetEmployee.companyId,
     from_date: fromDate,
     to_date: toDate,
     reason,
@@ -220,7 +258,7 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   };
   let { data: created, error } = await supabase
     .from("leave_requests")
-    .insert({ ...baseInsert, applied_lat: appliedLat, applied_lng: appliedLng, applied_accuracy_m: appliedAccuracyM })
+    .insert({ ...baseInsert, applied_lat: appliedLatToStore, applied_lng: appliedLngToStore, applied_accuracy_m: appliedAccuracyToStore })
     .select("id")
     .single();
   // Cascade: each step drops the newest optional column(s) on a
@@ -228,8 +266,8 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   // just because a later migration hasn't run. Step 2 drops the geo columns
   // (2026-10-17), step 3 also drops approver_employee_id (2026-10-19).
   const withoutGeo = {
-    employee_id: employee.id,
-    company_id: employee.currentCompanyId,
+    employee_id: targetEmployee.id,
+    company_id: targetEmployee.companyId,
     from_date: fromDate,
     to_date: toDate,
     reason,
@@ -237,8 +275,8 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     approver_employee_id: approverToStamp,
   };
   const withoutGeoOrApprover = {
-    employee_id: employee.id,
-    company_id: employee.currentCompanyId,
+    employee_id: targetEmployee.id,
+    company_id: targetEmployee.companyId,
     from_date: fromDate,
     to_date: toDate,
     reason,
@@ -265,26 +303,59 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     "Applied",
     employee.id,
     [
+      // 2026-10-20 — admin-on-behalf is a fact the approver timeline needs:
+      // the request is the employee's, but it was not filed by him.
+      filingForSomeoneElse ? `Filed by ${employee.name} (MD/Admin) for ${targetEmployee.name}` : null,
       // 2026-10-20 — the back-dated fact belongs in the trail: "kab apply
       // hui" (requested_at) alone cannot tell an approver that the leave
       // itself is for days already gone.
       isBackDated ? `Back-dated (${fromDate} is before today ${todayIST()})` : null,
-      appliedLat !== null && appliedLng !== null
-        ? `Location: ${appliedLat.toFixed(5)}, ${appliedLng.toFixed(5)}${appliedAccuracyM !== null ? ` (±${Math.round(appliedAccuracyM)}m)` : ""}`
-        : "Location not shared",
+      filingForSomeoneElse
+        ? null
+        : appliedLatToStore !== null && appliedLngToStore !== null
+          ? `Location: ${appliedLatToStore.toFixed(5)}, ${appliedLngToStore.toFixed(5)}${appliedAccuracyToStore !== null ? ` (±${Math.round(appliedAccuracyToStore)}m)` : ""}`
+          : "Location not shared",
     ]
       .filter(Boolean)
       .join(" · ")
   );
+
+  // 2026-10-20 — optional "approve immediately" for the admin-on-behalf path
+  // (an absent employee often reports on the phone, so the admin files AND
+  // approves in one go). Reuses decideLeaveRequest so the Attendance marking,
+  // audit trail and status CAS are exactly the same code, never a copy.
+  if (autoApprove) {
+    const approveFd = new FormData();
+    approveFd.set("leave_request_id", created.id);
+    approveFd.set("decision", "Approved");
+    approveFd.set("decision_remark", `Filed and approved by ${employee.name} (MD/Admin) on behalf of ${targetEmployee.name}`);
+    const decided = await decideLeaveRequest({ error: null, success: false }, approveFd);
+    revalidatePath("/dashboard/leave");
+    revalidatePath("/dashboard/leave/admin");
+    if (decided.error) {
+      return {
+        error: null,
+        success: true,
+        message: `Application saved for ${targetEmployee.name}, but auto-approve failed: ${decided.error} Approve it from the list below.`,
+      };
+    }
+    return {
+      error: null,
+      success: true,
+      message: `Leave application filed for ${targetEmployee.name} and approved — us range ki Attendance 'Leave' mark ho gayi.`,
+    };
+  }
 
   revalidatePath("/dashboard/leave");
   revalidatePath("/dashboard/leave/admin");
   return {
     error: null,
     success: true,
-    message: isBackDated
-      ? "Back-dated leave request sent for approval — approve hote hi us range ki Attendance 'Leave' mark ho jayegi."
-      : "Leave request sent for approval.",
+    message: filingForSomeoneElse
+      ? `Leave application filed for ${targetEmployee.name} — ab approval pending hai.`
+      : isBackDated
+        ? "Back-dated leave request sent for approval — approve hote hi us range ki Attendance 'Leave' mark ho jayegi."
+        : "Leave request sent for approval.",
   };
 }
 
