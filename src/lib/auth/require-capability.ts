@@ -7,6 +7,7 @@
 // Unlike the old ROLE_CAPABILITIES hardcoded object, capabilities are now a
 // real roles/capabilities/role_capabilities join — see db/schema.sql — so
 // granting a role a new capability is a data change, not a redeploy.
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
@@ -82,8 +83,27 @@ export type AuthedEmployee = {
  * Resolves the currently-signed-in employee (via Supabase Auth session),
  * their role's capabilities, and which company they're currently acting as.
  * Throws UnauthorizedError if no session / no matching active employee row.
+ *
+ * 2026-10-20 — PER-REQUEST MEMOIZED (React `cache`, Next's documented way to
+ * dedupe non-`fetch` data access — see "Deduplicating requests" in the App
+ * Router docs). This function costs ~3-4 network round-trips: auth.getUser()
+ * (a call to the Auth server, not a local JWT check), the MFA level, the
+ * employees row, then roles + capabilities + company/store access +
+ * leave-coverage in parallel. It used to run ONCE PER CALLER, and a single
+ * dashboard navigation has two: dashboard/layout.tsx, then the page's own
+ * requireCapability()/requireAnyCapability(). 102 dashboard pages do the
+ * second one, so every page load paid for the same identity lookup twice —
+ * plus a third and fourth time for any helper a page calls that guards
+ * itself too. `cache()` collapses all of them into one execution per
+ * request (the same request-scoped memoization `cookies()` gets), which is
+ * the single biggest latency win available here without touching auth.
+ *
+ * Safe by construction: it reads the request's cookies, and every COMPANY
+ * SWITCH happens in switchCompanyAction (a Server Action = its own request,
+ * its own cache scope) — nothing re-reads this after mutating the cookie
+ * within one render.
  */
-export async function getAuthedEmployee(): Promise<AuthedEmployee> {
+export const getAuthedEmployee = cache(async (): Promise<AuthedEmployee> => {
   const supabase = await createClient();
   const {
     data: { user },
@@ -186,7 +206,7 @@ export async function getAuthedEmployee(): Promise<AuthedEmployee> {
     roleName: role?.name ?? "",
     capabilities: (caps ?? []).map((c) => c.capability_code),
   };
-}
+});
 
 /**
  * The one-line guard every capability-gated Server Function should start

@@ -34,6 +34,23 @@ export async function proxy(request: NextRequest) {
     request.headers.set("x-embed", "1");
   }
 
+  // 2026-10-20 — PUBLIC PAGES DON'T NEED A SESSION RESOLVED ("system thoda
+  // slow chl rha hai"). This ran on EVERY matched path, so even the public
+  // landing page paid two network round-trips — auth.getUser() (a call to
+  // the Auth server, not a local JWT check) plus the employees lookup below —
+  // before it could start rendering, usually for a visitor who has no session
+  // at all. Only /dashboard (the gate), /login (bounces an employee who is
+  // already signed in) and /api/* (whose handlers expect the refreshed auth
+  // cookies) actually need the result; everything else returns untouched.
+  // No behaviour change on those three: the code below is byte-for-byte the
+  // same, it just no longer runs for pages that ignore it.
+  const pathname = request.nextUrl.pathname;
+  const needsSession =
+    pathname.startsWith("/dashboard") || pathname === "/login" || pathname.startsWith("/api");
+  if (!needsSession) {
+    return NextResponse.next();
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 

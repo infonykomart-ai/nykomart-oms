@@ -51,13 +51,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const embed = (await headers()).get("x-embed") === "1";
 
   const supabase = await createClient();
-  const { data: companies } = await supabase
-    .from("companies")
-    .select("id, name, logo_url")
-    .in("id", employee.companyIds)
-    .order("name");
-  const currentCompany = (companies ?? []).find((c) => c.id === employee.currentCompanyId);
-  const celebrations = await getTodaysCelebrations(supabase, employee.companyIds);
+  // 2026-10-20 — the companies list and today's celebrations used to be two
+  // more SERIAL round-trips in front of the batch below ("system thoda slow
+  // chl rha hai"): every dashboard page waited for the company row, then the
+  // birthday/anniversary query, before the other 12 started. Both are
+  // independent of everything else here, so they now ride INSIDE the same
+  // Promise.all — two round-trips removed from every page load.
 
   // 2026-08-14: Help Center content + this employee's unread-message count
   // (for the header badge) — both via the service-role client, same
@@ -97,6 +96,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   // correct behaviour, exactly like the capability-gated branches below
   // already do by returning a plain `{count: 0}` instead of a query.
   const [
+    { data: companies },
+    celebrations,
     helpArticles,
     { count: unreadMessageCount },
     { data: messagingEmployees },
@@ -111,6 +112,14 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     { data: onLeaveTodayRows },
   ] =
     await Promise.all([
+      supabase.from("companies").select("id, name, logo_url").in("id", employee.companyIds).order("name"),
+      // Same .catch shape as everything else in this batch: a transient
+      // failure here must only cost an empty celebration banner, never the
+      // whole app shell (see the long note above).
+      getTodaysCelebrations(supabase, employee.companyIds).catch((err) => {
+        console.error("[dashboard/layout] getTodaysCelebrations failed", err);
+        return [];
+      }),
       getHelpArticles().catch((err) => {
         console.error("[dashboard/layout] getHelpArticles failed", err);
         return [];
@@ -308,6 +317,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             )
         : { data: [] as { employee_id: string }[] },
     ]);
+
+  const currentCompany = (companies ?? []).find((c) => c.id === employee.currentCompanyId);
 
   // 2026-10-19 — names for the "On leave today" bell item, resolved against
   // the employee list this layout already loaded (no extra query). A lookup
