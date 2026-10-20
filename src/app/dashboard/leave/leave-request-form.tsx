@@ -53,19 +53,28 @@ export function LeaveRequestForm({
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // 2026-10-20 — "leave to abhi bhi submit nahi hori": read the form
+    // SYNCHRONOUSLY, before any await. React nulls e.currentTarget as soon
+    // as this handler returns (executeDispatch → event.currentTarget = null),
+    // so building FormData AFTER `await geolocationBestEffort()` was really
+    // `new FormData(null)` → TypeError → the server action was never
+    // dispatched and the click silently did nothing (only an unhandled
+    // rejection in the console). The form values must be snapshotted here.
+    const fd = new FormData(e.currentTarget);
     setLocating(true);
     try {
       const geo = await geolocationBestEffort();
-      const fd = new FormData(e.currentTarget);
       if (geo) {
         fd.set("lat", String(geo.lat));
         fd.set("lng", String(geo.lng));
         fd.set("accuracy_m", String(geo.accuracyM));
       }
-      formAction(fd);
+    } catch {
+      // GPS can never block an application — submit without coordinates.
     } finally {
       setLocating(false);
     }
+    formAction(fd);
   }
 
   return (
