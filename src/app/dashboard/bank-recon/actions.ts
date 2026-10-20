@@ -327,7 +327,15 @@ async function buildMatchIndex(supabase: ServiceClient, companyIds: string[]): P
       .limit(3000),
     supabase
       .from("bill_pass_register")
-      .select("id, company_id, total_amt, employee_id, invoice_type, source, employees(name)")
+      // 2026-10-20 — `employees!employee_id(...)`, NOT a bare `employees(...)`.
+      // bill_pass_register has SEVEN foreign keys into employees (employee_id,
+      // prepared_by, passed_by, payment_by, approved L1/L2, rejected), so an
+      // unqualified embed is ambiguous and PostgREST rejects the whole query
+      // with 300/PGRST201 "Could not embed because more than one relationship
+      // was found" — meaning the salary_payment bills on the Bank
+      // Reconciliation screen silently matched nothing. The FK COLUMN hint says
+      // exactly which relationship is meant.
+      .select("id, company_id, total_amt, employee_id, invoice_type, source, employees!employee_id(name)")
       .eq("source", "salary_payment")
       .order("invoice_date", { ascending: false })
       .limit(1000),

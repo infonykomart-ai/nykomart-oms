@@ -187,39 +187,66 @@ export type LeaveApprover = {
  *
  * Reads only the base columns of leave_approver_assignments (the migration
  * that creates it is brand-new), so this does NOT go through the audit-column
- * fallback the request/event reads use. If that migration hasn't run, the
- * query errors with a missing-table code and we return an empty list (flagged
- * `available: false`) — the Apply form then simply shows no approver dropdown
- * and falls back to MD, exactly the pre-2026-10-19 behavior. Permission or
- * network failures are logged (not silently swallowed) but still yield an
- * empty list so applying is never blocked by a routing lookup.
+ * fallback the request/event reads use. `available: false` means the TABLE is
+ * genuinely absent (the migration hasn't run / PostgREST's schema cache hasn't
+ * reloaded) — the Apply form then shows no approver dropdown and falls back
+ * to MD, exactly the pre-2026-10-19 behavior. A real read failure keeps
+ * `available: true` and reports the message, so the UI never tells an admin to
+ * "run the migration" for a problem the migration can't fix.
+ *
+ * 2026-10-20 — "3 baar chala diya lekin abhi bhi nahi ho ra". The old version
+ * embedded the approver's name with `employees(name)`. This table has TWO
+ * foreign keys into employees (employee_id is the approver, and
+ * assigned_by_employee_id is the admin who assigned them), so PostgREST can't
+ * tell which one that embed means and answers 300/PGRST201 — "Could not embed
+ * because more than one relationship was found for 'leave_approver_assignments'
+ * and 'employees'". That is NOT a missing-schema error, so the screens fell
+ * through to "this database doesn't have the migration yet" on a database
+ * where the migration HAD been applied. Names are now resolved by a separate,
+ * unambiguous query against employees by id, and the error kinds are kept
+ * apart: missing table vs a real failure.
  */
 export async function fetchLeaveApprovers(
   supabase: Client,
   companyId: string
-): Promise<{ approvers: LeaveApprover[]; available: boolean }> {
+): Promise<{ approvers: LeaveApprover[]; available: boolean; error: string | null }> {
   const { data, error } = await supabase
     .from("leave_approver_assignments")
-    .select("employee_id, assigned_at, employees(name)")
+    .select("employee_id, assigned_at")
     .eq("company_id", companyId)
     .order("assigned_at", { ascending: false });
-  if (!error) {
-    const rows = (data ?? []) as unknown as {
-      employee_id: string;
-      assigned_at: string;
-      employees: { name: string } | null;
-    }[];
-    return {
-      approvers: rows.map((r) => ({
-        employee_id: r.employee_id,
-        name: r.employees?.name ?? "(unknown)",
-        assigned_at: r.assigned_at,
-      })),
-      available: true,
-    };
+
+  if (error) {
+    // Genuinely absent (migration not run, or PostgREST hasn't reloaded its
+    // schema cache yet — the migration file now ends with a
+    // NOTIFY pgrst, 'reload schema' for exactly that case).
+    if (isMissingSchemaPiece(error)) return { approvers: [], available: false, error: null };
+    console.error("[leave] fetchLeaveApprovers failed", error.message);
+    return { approvers: [], available: true, error: error.message };
   }
-  if (!isMissingSchemaPiece(error)) console.error("[leave] fetchLeaveApprovers failed", error.message);
-  return { approvers: [], available: false };
+
+  const rows = (data ?? []) as { employee_id: string; assigned_at: string }[];
+  if (rows.length === 0) return { approvers: [], available: true, error: null };
+
+  // Name lookup in its own query — no embed, so no FK ambiguity. A name that
+  // can't be resolved (someone since deactivated) still lists their row as
+  // "(unknown)" rather than dropping it, so counts always match.
+  const { data: people, error: peopleError } = await supabase
+    .from("employees")
+    .select("id, name")
+    .in("id", rows.map((r) => r.employee_id));
+  if (peopleError) console.error("[leave] fetchLeaveApprovers names failed", peopleError.message);
+  const nameById = new Map((people ?? []).map((p) => [p.id, p.name]));
+
+  return {
+    approvers: rows.map((r) => ({
+      employee_id: r.employee_id,
+      name: nameById.get(r.employee_id) ?? "(unknown)",
+      assigned_at: r.assigned_at,
+    })),
+    available: true,
+    error: null,
+  };
 }
 
 /**

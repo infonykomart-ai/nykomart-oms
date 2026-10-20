@@ -19,11 +19,15 @@ export function LeaveApproversPanel({
   employees,
   approvers,
   available,
+  error = null,
 }: {
   companyId: string;
   employees: { id: string; name: string }[];
   approvers: LeaveApprover[];
   available: boolean;
+  /** 2026-10-20 — set when the table exists but the read failed, so this
+   *  panel doesn't blame a missing migration for a real error. */
+  error?: string | null;
 }) {
   const [state, formAction, pending] = useActionState(assignLeaveApprover, initialState);
   const [removeState, removeAction, removePending] = useActionState(removeLeaveApprover, initialState);
@@ -33,15 +37,17 @@ export function LeaveApproversPanel({
       <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
         <p className="text-sm font-semibold text-amber-800">👋 Leave Approvers</p>
         <p className="mt-1 text-xs text-amber-900">
-          This database doesn&apos;t have the 2026-10-19 leave-approver migration yet, so nobody can be designated as
-          an approver — leave goes to MD/Admin as before. Run db/2026-10-19-leave-approvers.sql in the Supabase SQL
-          Editor to enable it.
+          This database doesn&apos;t have the 2026-10-19 leave-approver migration yet (or PostgREST hasn&apos;t reloaded its
+          schema cache), so nobody can be designated as an approver — leave goes to MD/Admin as before. Run
+          db/2026-10-19-leave-approvers.sql in the Supabase SQL Editor; it ends with a schema-cache reload, so running it
+          once more also fixes a table that already exists but isn&apos;t visible through the API yet.
         </p>
       </div>
     );
   }
 
   const assignable = employees.filter((e) => !approvers.some((a) => a.employee_id === e.id));
+  const readError = available && error ? error : null;
 
   return (
     <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4">
@@ -50,6 +56,12 @@ export function LeaveApproversPanel({
         These people can approve/reject leave for this company (and appear on the Apply form) — they don&apos;t need the
         Leave Approvals capability. MD/Admin can always approve too.
       </p>
+      {readError && (
+        <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">
+          The approver list couldn&apos;t be loaded ({readError}). The migration is applied, so this is a read error rather
+          than a missing table — existing approvers just aren&apos;t listed here right now.
+        </p>
+      )}
       {state.error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       {removeState.error && (
         <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{removeState.error}</p>
