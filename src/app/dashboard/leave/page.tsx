@@ -26,7 +26,7 @@ export default async function LeavePage() {
   // without the 2026-10-17 audit columns still lists every request instead of
   // rendering the empty state (see ./leave-queries.ts).
   const [
-    { rows: myRequests, audit: auditColumns, error: requestsError },
+    { rows: myRequests, audit: auditColumns, error: requestsError, approver: approverColumn },
     { data: myCoverage },
     { data: leaveTypesRaw },
     { data: myProfile },
@@ -61,6 +61,12 @@ export default async function LeavePage() {
 
   const leaveTypes = leaveTypesRaw ?? [];
   const isApprover = approverOptions.some((a) => a.employee_id === employee.id);
+  // 2026-10-20 — approver ROUTING needs both halves of the 2026-10-19
+  // migration: the assignments table AND leave_requests.approver_employee_id.
+  // Half-applied migrations are real (the CREATE TABLE and the ALTER TABLE
+  // are separate statements), so gate on both — offering a dropdown whose
+  // value can't be stored would be worse than hiding it.
+  const approverRoutingAvailable = approversAvailable && approverColumn;
 
   // Requests THIS login is designated to approve (not their own) — Pending
   // first. Reuses the same tolerant fetch, filtered to Pending server-side.
@@ -187,14 +193,20 @@ export default async function LeavePage() {
             leaveTypes={leaveTypes.map((t) => ({ id: t.id, name: t.name, code: t.code, paid: t.paid }))}
             // Only offer approvers other than yourself — you can't approve
             // your own leave.
-            approvers={approverOptions.filter((a) => a.employee_id !== employee.id).map((a) => ({ employee_id: a.employee_id, name: a.name }))}
+            approvers={
+              approverRoutingAvailable
+                ? approverOptions
+                    .filter((a) => a.employee_id !== employee.id)
+                    .map((a) => ({ employee_id: a.employee_id, name: a.name }))
+                : []
+            }
           />
           {/* 2026-10-20 — two DIFFERENT problems used to share one message.
               "available: false" means the table really is absent (migration
               not run, or PostgREST hasn't reloaded its schema cache yet); an
               error with the table present is a read failure and must not
               tell anyone to re-run SQL that is already applied. */}
-          {!approversAvailable && (
+          {!approverRoutingAvailable && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Approver selection is off because this database doesn&apos;t have the 2026-10-19 leave-approver migration yet —
               applications go to MD/Admin. Run db/2026-10-19-leave-approvers.sql in the Supabase SQL Editor (it ends with

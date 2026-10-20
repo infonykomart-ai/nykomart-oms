@@ -25,9 +25,18 @@ import type { Database } from "@/types/database";
 
 type Client = SupabaseClient<Database>;
 
-/** Columns every leave_requests row has had since 2026-08-12. */
+/**
+ * Columns every leave_requests row has had since 2026-08-12 — the floor that
+ * a database which has run NONE of the later migrations still has. Nothing
+ * optional may be added here: this is the last fallback, so a column in this
+ * list that the database lacks would break the fallback itself.
+ */
 export const LEAVE_BASE_COLUMNS =
-  "id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id, decided_by_employee_id, decided_at, approver_employee_id";
+  "id, employee_id, from_date, to_date, reason, status, requested_at, decision_remark, leave_type_id, decided_by_employee_id, decided_at";
+
+/** Column added by db/2026-10-19-leave-approvers.sql.
+ *  Deliberately NOT part of LEAVE_BASE_COLUMNS — see the note above. */
+export const LEAVE_APPROVER_COLUMN = "approver_employee_id";
 
 /** Columns added by db/2026-10-17-leave-audit-and-lifecycle.sql. */
 export const LEAVE_AUDIT_COLUMNS =
@@ -128,17 +137,36 @@ async function selectRequests(
 export async function fetchLeaveRequests(
   supabase: Client,
   filter: LeaveRequestFilter
-): Promise<{ rows: LeaveRequestRow[]; audit: boolean; error: string | null }> {
-  const full = await selectRequests(supabase, `${LEAVE_BASE_COLUMNS}, ${LEAVE_AUDIT_COLUMNS}`, filter);
-  if (!full.error) {
-    return { rows: (full.data ?? []).map((r) => normalize(r as Record<string, unknown>)), audit: true, error: null };
-  }
+): Promise<{ rows: LeaveRequestRow[]; audit: boolean; approver: boolean; error: string | null }> {
+  const map = (data: unknown[] | null) => (data ?? []).map((r) => normalize(r as Record<string, unknown>));
+
+  // Three tiers, newest migration first, so ANY combination of applied
+  // migrations still lists every request:
+  //   1. base + approver (2026-10-19) + audit (2026-10-17)
+  //   2. base + approver                  — audit columns missing
+  //   3. base                             — neither optional set
+  // 2026-10-20 — tier 2 exists because approver_employee_id used to sit in
+  // LEAVE_BASE_COLUMNS, which quietly made the last fallback fail with the
+  // very same "column does not exist" it was supposed to survive.
+  const full = await selectRequests(
+    supabase,
+    `${LEAVE_BASE_COLUMNS}, ${LEAVE_APPROVER_COLUMN}, ${LEAVE_AUDIT_COLUMNS}`,
+    filter
+  );
+  if (!full.error) return { rows: map(full.data), audit: true, approver: true, error: null };
   if (!isMissingSchemaPiece(full.error)) {
-    return { rows: [], audit: true, error: full.error.message ?? "Could not load leave requests." };
+    return { rows: [], audit: true, approver: true, error: full.error.message ?? "Could not load leave requests." };
   }
+
+  const withApprover = await selectRequests(supabase, `${LEAVE_BASE_COLUMNS}, ${LEAVE_APPROVER_COLUMN}`, filter);
+  if (!withApprover.error) return { rows: map(withApprover.data), audit: false, approver: true, error: null };
+  if (!isMissingSchemaPiece(withApprover.error)) {
+    return { rows: [], audit: false, approver: true, error: withApprover.error.message ?? "Could not load leave requests." };
+  }
+
   const base = await selectRequests(supabase, LEAVE_BASE_COLUMNS, filter);
-  if (base.error) return { rows: [], audit: false, error: base.error.message ?? "Could not load leave requests." };
-  return { rows: (base.data ?? []).map((r) => normalize(r as Record<string, unknown>)), audit: false, error: null };
+  if (base.error) return { rows: [], audit: false, approver: false, error: base.error.message ?? "Could not load leave requests." };
+  return { rows: map(base.data), audit: false, approver: false, error: null };
 }
 
 export type LeaveEventRow = {

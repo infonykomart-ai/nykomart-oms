@@ -40,7 +40,7 @@ export default async function LeaveAdminPage({
   // PostgREST failed the whole query and the page rendered "No leave requests
   // for this company yet." over real data. Read through the tolerant helper
   // instead — every request shows either way (see ../leave-queries.ts).
-  const [{ rows: requests, audit: auditColumns, error: requestsError }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }, { approvers: currentApprovers, available: approversAvailable, error: approversError }] = await Promise.all([
+  const [{ rows: requests, audit: auditColumns, error: requestsError, approver: approverColumn }, { data: teamEmployees }, { data: stores }, { data: leaveTypesRaw }, { approvers: currentApprovers, available: approversAvailable, error: approversError }] = await Promise.all([
     fetchLeaveRequests(finSupabase, { companyId: selectedCompanyId, limit: 100 }),
     supabase.from("employees").select("id, name, date_of_joining").eq("company_id", selectedCompanyId).eq("active", true).order("name"),
     supabase.from("stores").select("id, name").eq("company_id", selectedCompanyId).order("name"),
@@ -464,7 +464,9 @@ export default async function LeaveAdminPage({
           companyId={selectedCompanyId}
           employees={(teamEmployees ?? []).map((e) => ({ id: e.id, name: e.name }))}
           approvers={currentApprovers}
-          available={approversAvailable}
+          // 2026-10-20 — both halves of the 2026-10-19 migration are needed:
+          // the assignments table AND leave_requests.approver_employee_id.
+          available={approversAvailable && approverColumn}
           error={approversError}
         />
       </div>
