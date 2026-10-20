@@ -539,42 +539,127 @@ kitne din pahle aaya hai".
 - **Verified**: `npx tsc --noEmit` → 0 errors; `npx eslint` on all 7 touched TS files → clean.
   Not yet run against the live DB (migration pending, see above) and not yet committed.
 
-## 5o. Purchase Bill — "No GST" no longer adds a phantom 5% + one entry per invoice (2026-10-20)
+## 5o. Build fix + dialogs hold the page only, salary structure split out, advance corrections, TeamOffice matrix import (2026-10-19)
 
-**Reported:** invoice 170 / SHARDA INTERNATIONAL RUGS, six items. The entry screen's total was
-₹10,620 but Bill Payment and Party Ledger showed ₹10,804.50. Same complaint for the ledger row.
+User request: "ye error thik karna hai", "dusra order page ho ya koi or page agar dilog box me open ho to sirf
+page hi open ho puri ki puri window open nahi ho. order page me view me puri window open ho rahi hai", "sallery set
+karne ka stracture sahi nahi hai isko alag se bano sahi se", "kisi ko payment ho gaya ya sellery advance me gyi hai
+or vo galat gyi hai to usko delet edit modify karne ka opetion nahi hai", "attendance sheet sahi se campair ho rahi
+ahi kya".
 
-- **Root cause:** `purchase_bills.g_total_plus_gst` (generated) adds a flat 5% whenever
-  `gst_rate_pct IS NULL` — a default written before the GST picker existed (2026-08-17). But the
-  picker's first option is literally **"No GST"** and it submits NULL, so a bill saved as "No GST"
-  still got +5% on its way into `bill_pass_register.total_amt`. The Documents list / A4 sheet showed
-  `total_amount` for those rows (no rate → no GST line), so the two screens disagreed by exactly
-  that 5%: 2970 + 720 → +184.50 = 10,804.50 vs 10,620.
-- **Fix (DB, `db/2026-10-20-purchase-bill-no-gst-and-audit.sql`):** an explicit "No GST" is now
-  stored as `gst_rate_pct = 0` (added to the CHECK alongside 2.5/3/4/9), which makes the existing
-  CASE expression multiply by zero — no column drop, so the P&L/report views that sum
-  `g_total_plus_gst` are untouched and become correct automatically. The migration also
-  (a) repairs already-saved bills (`gst_rate_pct IS NULL AND created_at >= '2026-08-17'` → 0) and
-  (b) re-syncs every mirrored `bill_pass_register.total_amt` from `purchase_bills.g_total_plus_gst`,
-  so Bill Payment / Party Ledger / P&L immediately show the true payable. NULL keeps its documented
-  legacy meaning (pre-picker bill → historical flat 5%).
-- **App side:** `savePurchaseBillCore` / `updatePurchaseBill` write 0 (never NULL) for "No GST";
-  new `src/lib/purchase-bill-money.ts` is now the single source for GST rate/amount/grand-total /
-  amount-label, used by the Document Entry list, the A4 sheet and the bill statement (whose per-line
-  GST previously hardcoded a 5% fallback) so no screen can disagree with Finance again.
-- **Document Entry → Purchase Bill is now ONE card per vendor invoice** ("ek invoice me agar 10 entry
-  hai to vaha par single entry aaye or usi se link me dikh jaye ki kon kon si entry hai"): grouping
-  via new `groupPurchaseBillInvoices()` in `src/lib/bill-grouping.ts`, rendered by
-  `PurchaseBillInvoiceList` in `document-entry-tabs.tsx`. Storage is unchanged (one `purchase_bills`
-  row per item, its own qty/rate/GST); "▸ Items" expands the card to those rows, each with its own
-  Edit / Delete, plus invoice-level 👁 View (new `purchaseBillInvoiceDoc()` — the whole invoice on one
-  A4 sheet), 🧾 Statement (when it has a `bill_pass_register` row) and Delete invoice (per-row server
-  action, so the "payments already recorded" guard still protects a paid row).
-- **Audit stamps:** `purchase_bills.updated_at` added + `trg_purchase_bills_updated_at` trigger (and a
-  one-time `updated_at = created_at` backfill). The invoice card and each item row show
-  "🗓 Entered … | ✏️ Last updated …" in IST, Admin only (`permissions_admin`).
-- **Verified:** `tsc -p tsconfig.ci.json` → 0 errors (full project), `npx eslint` on every touched
-  file → clean. Not run against the live DB — the migration must be applied in Supabase first.
+- **The Vercel/typecheck failure (root cause)**: a later commit (`94346ec`, "Add files via upload") replaced
+  `db/schema.sql` + `src/types/database.ts` with copies made BEFORE the 2026-10-17b B2B area-pricing round, so
+  every column that round added vanished from the types while the code still wrote them — `b2b_inquiry_items`
+  lost `size/size_length/size_width/size_thickness/size_unit`, `b2b_sales_order_items` lost the same plus the
+  app-maintained `line_total`, and `customs_exchange_rates` disappeared entirely (breaking `src/lib/fx/customs.ts`,
+  the B2B control-centre/reports screens and `orders-client.tsx`). Both files were re-merged: the upload's leave
+  work kept, the 2026-10-17b columns/table restored verbatim (see `git diff e79389d -- db/schema.sql` — it now
+  shows ONLY the leave additions).
+- **Dialogs now show the page, not the whole window** (`?embed=1`): the Orders hub's View button framed
+  `/dashboard/orders/[id]`, which renders inside the dashboard layout — so the dialog contained the entire app
+  (sidebar, header, module tabs) around one order. `src/proxy.ts` now turns `?embed=1` into an `x-embed` request
+  header and `dashboard/layout.tsx` skips ONLY the chrome for it (every provider still mounts, so the page behaves
+  identically; auth and the cookie-refresh flow are untouched). `A4Dialog`'s iframe and every `PrintDialog` preview
+  (`src/components/print-dialog.tsx`, used by all Document Entry print buttons) append the param themselves, and
+  `OrderView` gained `embedded` (hides "← Back to Orders", opens other links in a new tab) so a framed page can
+  never navigate itself to the full shell. The detail page's data loading moved to
+  `orders/[id]/order-detail-loader.ts` — one loader, so page and dialog can't disagree.
+- **Salary Structure is now its own screen** (`/dashboard/salary/structure` + `salary-structure-editor.tsx`): the
+  old "Decide & Feed" strip squeezed Monthly Salary / Allowed Leave / Effective Date into one unlabelled 5-column
+  row with the CTC block revealed underneath ("stracture sahi nahi hai"). It is now an A4-dialog editor in labelled
+  sections — 1 Employee & Effective Date, 2 Pay Mode (Flat vs CTC), 3 Earnings split (Basic %/HRA %), 4 Statutory
+  (PF %/ceiling, ESI %, Professional Tax + state), 5 What This Pays (payable monthly, per-day, extra-duty, no-leave
+  bonus, full CTC breakdown). Same server action (`setEmployeeSalary`): a new effective date inserts a version, an
+  existing date corrects it. `salary-form.tsx` was deleted; the Salary page keeps the month's payroll and links here.
+- **Wrong payments / wrong advances can now be corrected**: `deleteSalaryPayment` + `updateSalaryPayment` already
+  existed but were 10px underlined text — now real buttons. For advances there was NO correction path at all, so
+  two new ops were added to `salary/actions.ts`: `updateAdvance` (amount/date/reason/recovery schedule, refuses to
+  go below what salary payments already recovered, keeps the `bill_pass_register` mirror in step) and
+  `deleteAdvance` (removes the advance + its Finance ledger mirror; refuses while any of it is recovered, so an
+  employee's outstanding balance can never be silently rewritten), both wired into the Advances list behind an A4
+  dialog.
+- **Attendance import now reads TeamOffice's real export**: the block/matrix shape (a wide day-column header, then
+  a 10-row block per employee — Dept. Name / Empcode / IN / OUT / WORK / Break / OT / Status) was previously fed to
+  the row parser, which produced exactly the "no IN/OUT time — skipped" + "no active employee matches code 'WORK'"
+  wall the import page was showing. `parseBlockLayout()` in `src/lib/attendance/punch-import.ts` detects that shape
+  (day columns → dates; `Month: 07/2026`-style titles or the fallback date supply the month for columns printed as
+  plain day numbers), and the ordinary row/headerless/CSV layouts still parse byte-identically (verified with a
+  compiled-module harness). Employee matching also tolerates `2` vs `0002` (leading-zero-insensitive code index).
+- **The comparison itself is now visible** ("attendance sheet sahi se campair ho rahi hai kya"): the device-vs-web
+  result was stored in `attendance.match_flag` but shown nowhere. `importPunchReport` now returns a per-row
+  comparison table (employee, date, web IN/OUT, sheet IN/OUT, verdict) plus matched/mismatched counts, rendered on
+  the import page — mismatches highlighted, and Leave/Holiday/Week-Off rows explicitly say the recorded status was
+  kept on purpose.
+- **Verified**: scoped `npx tsc --noEmit` (every touched file, in one project) → 0 errors; `npm run lint` → 0 errors
+  (7 pre-existing warnings elsewhere); block/row parser behaviour exercised through the compiled module (matrix
+  paste → one row per employee per dated column; plain and headerless pastes unchanged; month-year title wins over
+  the fallback date). Full `npx tsc --noEmit` still OOMs in the 2 GB sandbox — CI's build job carries it.
+
+## 5p. Leave lists went blank, and WHO is on leave today (2026-10-19)
+
+User request: "pichlli leave jo approve ki hai vo nahi dikh rahi or na hi pending me padi — leave request nahi
+ dikh rahi", "kis employee ne kitne baje or kab request dali hai or uski application request ko kisne approve kiya or
+ kitne baje kiya", "admin ko md ko ye dikh jaye ki aaj ye employee leave par hai, bell notification chala jaye".
+
+- **Root cause of the invisible lists** — the 2026-10-17 audit round (see §5n) added
+  `applied_lat/applied_lng/applied_accuracy_m/cancelled_*` to `leave_requests` and the
+  `leave_request_events` table, and both leave SCREENS then selected those columns unconditionally. On a database
+  where that one-time migration has not been run, PostgREST answers "column does not exist", Supabase returns
+  `data: null`, and the page rendered its EMPTY state — "No leave requests yet." / "No leave requests for this
+  company yet." — over data that was never missing. Applying for leave failed the same way (the insert wrote the
+  geo columns). Verified against history: `git show e79389d:src/app/dashboard/leave/page.tsx` selected only base
+  columns.
+- **Fix (`src/app/dashboard/leave/leave-queries.ts`)** — one migration-tolerant reader: try the full row, and on a
+  missing-column/missing-table error (42703 / 42P01 / PGRST204 / PGRST205, or "does not exist"/"schema cache" in the
+  message) retry with the base columns the workflow has always had, reporting which one it used. Anything else
+  (permissions, network) still surfaces as a real error instead of being swallowed. `fetchLeaveEvents` returns
+  `available: false` for the absent events table; `isMissingSchemaPiece()` is the single classifier. Both screens use
+  it, so every pending and approved request shows either way and only the audit extras (location, approver, timeline)
+  go missing. `submitLeaveRequest` now writes the request itself first and adds the location only when the database
+  can take it; `cancelLeaveRequest` explains the missing migration instead of echoing a raw Postgres error. Both
+  screens show a one-line amber banner naming `db/2026-10-17-leave-audit-and-lifecycle.sql` while it's outstanding,
+  and a red banner if the read genuinely failed.
+- **Who requested when / who approved when** — already rendered per row (`applied 17 Oct 2026, 09:42`, `✓ Approved by
+  <name> on <date, time>`, plus the per-request History timeline); it was invisible purely because the rows never
+  loaded.
+- **Bell now names today's leave, not just counts it** — `notification-bell.tsx`'s item type gained an optional
+  `details` line, and `dashboard/layout.tsx` resolves the employee_ids from its existing "approved leave covering
+  today" query against the employee list it already fetches for the messenger (no extra query, base columns only, so
+  it works before the audit migration too). The item reads "On leave today — Ajay Mahawar, Sahil +1 more" with the
+  count badge, linking to Leave Approvals, where the On Leave board already highlights TODAY.
+- **Verified**: scoped `npx tsc --noEmit` over every touched file → 0 errors; the fallback itself exercised through
+  the compiled module with a stub client — audit present → rows + `audit: true`; audit missing → **rows still
+  returned**, `audit: false`; permission error → surfaced, not swallowed; missing events table → `available: false`;
+  classifier true for PGRST204/42P01/"does not exist" and false for permission errors.
+
+## 5q. Back-dated leave application (2026-10-20)
+
+- **Asked:** "ek leave application agar back date me dalni pade to uska bhi karna".
+- **What was blocking it:** only the client. `leave-request-form.tsx` pinned BOTH date inputs with `min={today}`;
+  `submitLeaveRequest` never rejected past dates (it only enforces `to_date >= from_date` and the 90-day sanity
+  cap), and `decideLeaveRequest` already writes Attendance as "Leave" for every qualifying day in the range — past
+  days included, skipping days that are Holiday/Week Off or already have a real Present punch.
+- **Fix:**
+  - `leave-request-form.tsx` — From date has no `min` any more (a back-dated range is the point), and is tracked in
+    state so the To date's `min` is the chosen From date instead of today (a one-day past leave works; the range
+    can never be entered backwards). A short line under the two inputs says back-dated applications are allowed and
+    that approval marks those days' Attendance (days with a real Present punch are left alone). The controlled From
+    value is cleared on success via the codebase's render-phase `prevState` pattern (an effect-based `setFromDate`
+    trips `react-hooks/set-state-in-effect`).
+  - `submitLeaveRequest` — dates now also pass `validateDateFields()` (`src/lib/fy-date.ts`), the same FY/real
+    calendar gate every other human date entry uses. This deliberately does NOT forbid the past (the window reaches
+    10 FYs back); it stops a typo'd year (e.g. 20026-10-01) from being saved and then auto-marking Attendance in a
+    month that does not exist. A request whose From date is already behind today is tagged `backDated`: the audit
+    event detail starts with `Back-dated (<from> is before today <today>)` and the success message says so too.
+  - Both lists now show a `⏪ Back-dated` chip when `from_date < today` — the employee's own list and the
+    MD/Admin approval row (where it matters most: approving writes Attendance for past days).
+- **Deliberately unchanged:** allocation of paid vs unpaid days for a back-dated range still walks the leave year
+  chronologically with `usedDaysBeforeThisRequest` = paid Leave days already used that year — the total balance is
+  unaffected by entering a request late; only which specific days end up flagged unpaid can differ in a
+  near-the-limit year (same behaviour every existing late/edited request already had).
+- **No migration needed** — no new columns; the audit detail rides the existing `leave_request_events` row.
+- **Verified**: `tsc -p tsconfig.ci.json` (whole project) → 0 errors; `npx eslint` on all 4 touched files → clean.
+  Not exercised against the live DB.
 
 ## 6. Security posture (audited 2026-08-17 — see project doc `app-code-security-audit-2026-08-17.md` for full detail)
 

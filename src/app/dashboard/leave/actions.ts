@@ -30,8 +30,9 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { addDaysToDateStr, istDayOfWeek, nowISOInstant } from "@/lib/attendance/ist-date";
+import { addDaysToDateStr, istDayOfWeek, nowISOInstant, todayIST } from "@/lib/attendance/ist-date";
 import { allocateLeaveDays } from "@/lib/attendance/leave-balance";
+import { validateDateFields } from "@/lib/fy-date";
 import { isMissingSchemaPiece } from "./leave-queries";
 
 export type LeaveActionState = { error: string | null; success: boolean; message?: string };
@@ -152,6 +153,23 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
   if (dateRange(fromDate, toDate).length > MAX_LEAVE_DAYS) {
     return { error: `That's more than ${MAX_LEAVE_DAYS} days in one request — please double-check the dates.`, success: false };
   }
+  // 2026-10-20 — back-dated applications are allowed on purpose ("agar back
+  // date me daalni pade to uska bhi karna"), so this is NOT a "must not be in
+  // the past" check — it is the same FY/real-calendar gate every other human
+  // date entry in this app passes through (src/lib/fy-date.ts). Without it, a
+  // typo'd year like 20026-10-01 would be saved and then auto-mark Attendance
+  // in a month that does not exist. The window reaches 10 FYs back, i.e. it
+  // never gets in the way of a genuine back-dated leave.
+  const leaveDateError = validateDateFields([
+    { value: fromDate, label: "From date" },
+    { value: toDate, label: "To date" },
+  ]);
+  if (leaveDateError) return { error: leaveDateError, success: false };
+
+  // A request whose From date is already behind us is a back-dated entry —
+  // recorded in the audit trail (and echoed in the success message) so the
+  // approver can see it was not applied for in advance.
+  const isBackDated = fromDate < todayIST();
 
   if (leaveTypeId) {
     // Never trust a leave_type_id posted from the client at face value — it
@@ -246,14 +264,28 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     created.id,
     "Applied",
     employee.id,
-    appliedLat !== null && appliedLng !== null
-      ? `Location: ${appliedLat.toFixed(5)}, ${appliedLng.toFixed(5)}${appliedAccuracyM !== null ? ` (±${Math.round(appliedAccuracyM)}m)` : ""}`
-      : "Location not shared"
+    [
+      // 2026-10-20 — the back-dated fact belongs in the trail: "kab apply
+      // hui" (requested_at) alone cannot tell an approver that the leave
+      // itself is for days already gone.
+      isBackDated ? `Back-dated (${fromDate} is before today ${todayIST()})` : null,
+      appliedLat !== null && appliedLng !== null
+        ? `Location: ${appliedLat.toFixed(5)}, ${appliedLng.toFixed(5)}${appliedAccuracyM !== null ? ` (±${Math.round(appliedAccuracyM)}m)` : ""}`
+        : "Location not shared",
+    ]
+      .filter(Boolean)
+      .join(" · ")
   );
 
   revalidatePath("/dashboard/leave");
   revalidatePath("/dashboard/leave/admin");
-  return { error: null, success: true, message: "Leave request sent for approval." };
+  return {
+    error: null,
+    success: true,
+    message: isBackDated
+      ? "Back-dated leave request sent for approval — approve hote hi us range ki Attendance 'Leave' mark ho jayegi."
+      : "Leave request sent for approval.",
+  };
 }
 
 export async function decideLeaveRequest(_prev: LeaveActionState, formData: FormData): Promise<LeaveActionState> {

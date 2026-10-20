@@ -103,7 +103,19 @@ export function LeaveApprovalRow({
           {/* 2026-10-17 — "usme date & time nahi aata with location" /
               "approve kisne ki hai kis time par ki hai". */}
           <p className="text-xs text-slate-500">
-            {fromDate} → {toDate} · applied {formatIST(requestedAt)}
+            {fromDate} → {toDate}
+            {/* 2026-10-20 — back-dated leave: the leave is for days already
+                gone, which an approver must notice BEFORE approving (the
+                approval writes Attendance for those past days). */}
+            {fromDate < today && (
+              <span
+                className="ml-1.5 rounded bg-fuchsia-50 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-700"
+                title="Back-dated application — leave is for days that have already passed"
+              >
+                ⏪ Back-dated
+              </span>
+            )}{" "}
+            · applied {formatIST(requestedAt)}
             {appliedLat != null && appliedLng != null && (
               <>
                 {" "}

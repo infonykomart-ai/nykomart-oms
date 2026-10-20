@@ -46,6 +46,26 @@ export function LeaveRequestForm({
   // "Waiting for location fix" — shown between the click and the action
   // dispatch so the button never looks dead while geolocation resolves.
   const [locating, setLocating] = useState(false);
+  // 2026-10-20 — "ek leave application agar back date me daalni pade to uska
+  // bhi karna": the From date is no longer pinned to today (min={today} was
+  // the only thing blocking a back-dated application — the server has always
+  // accepted past dates and the approval step writes Attendance for every
+  // day in the range). Tracked in state only so the To date can be bounded
+  // by it instead of by today.
+  const [fromDate, setFromDate] = useState("");
+  // React's documented "adjust state when a prop/state value changes"
+  // pattern (same one stock-in-form.tsx uses) instead of setState inside an
+  // effect — lint's react-hooks/set-state-in-effect forbids the latter, and
+  // a render-phase update here can't cascade an extra render. `prevState`
+  // only changes identity on a fresh useActionState result.
+  const [prevState, setPrevState] = useState(state);
+  if (state !== prevState) {
+    setPrevState(state);
+    // The DOM reset below clears the uncontrolled fields; the controlled
+    // From date has to be cleared here or it would survive into the next
+    // application (and keep bounding the To date).
+    if (state.success) setFromDate("");
+  }
 
   useEffect(() => {
     if (state.success) formRef.current?.reset();
@@ -116,13 +136,31 @@ export function LeaveRequestForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass}>From Date *</label>
-          <input type="date" name="from_date" min={today} required className={inputClass} />
+          {/* No min: a back-dated (already-passed) leave has to be enterable
+              — that is the whole point of this round. From-after-To is still
+              rejected server-side (and the To field below is bounded by this
+              date), so removing min cannot create an invalid range. */}
+          <input
+            type="date"
+            name="from_date"
+            required
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass}>To Date *</label>
-          <input type="date" name="to_date" min={today} required className={inputClass} />
+          {/* min = the chosen From date (not today), so a single past day
+              works and the range can never be backwards. */}
+          <input type="date" name="to_date" min={fromDate || undefined} required className={inputClass} />
         </div>
       </div>
+      <p className="text-[11px] text-slate-400">
+        Back-dated leave bhi apply kar sakte hain — From date aaj ({today}) se pehle ki bhi ho sakti hai.
+        Approve hone par us range ke dinon ki Attendance &quot;Leave&quot; mark hogi (jin dinon par koi
+        Present punch nahi hai — wo din waise hi Present rahenge).
+      </p>
 
       <div>
         <label className={labelClass}>Application / Reason *</label>

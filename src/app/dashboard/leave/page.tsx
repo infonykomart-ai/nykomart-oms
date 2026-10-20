@@ -287,6 +287,18 @@ export default async function LeavePage() {
                       <div>
                         <p className="text-sm font-medium text-slate-800">
                           {r.from_date} → {r.to_date}
+                          {/* 2026-10-20 — back-dated application: this leave is
+                              for days that have already passed, so the
+                              employee (and anyone reading the list) can see it
+                              was entered after the fact. */}
+                          {r.from_date < today && (
+                            <span
+                              className="ml-1.5 rounded bg-fuchsia-50 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-700"
+                              title="Back-dated application"
+                            >
+                              ⏪ Back-dated
+                            </span>
+                          )}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500">{r.reason}</p>
                         {/* 2026-10-17 — "usme date & time nahi aata with
