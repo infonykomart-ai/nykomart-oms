@@ -795,11 +795,6 @@ export type Database = {
           remark: string | null;
           display_order: number;
           product_id: string | null;
-          size: string | null;
-          size_length: number | null;
-          size_width: number | null;
-          size_thickness: number | null;
-          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -811,11 +806,6 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -827,11 +817,6 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -1563,14 +1548,9 @@ export type Database = {
           unit: string;
           unit_price: number;
           unit_cost: number;
-          line_total: number;
+          line_total: number | null;
           line_cost: number | null;
           display_order: number;
-          size: string | null;
-          size_length: number | null;
-          size_width: number | null;
-          size_thickness: number | null;
-          size_unit: string | null;
         };
         Insert: {
           id?: string;
@@ -1581,14 +1561,9 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number;
+          line_total?: number | null;
           line_cost?: number | null;
           display_order?: number;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Update: {
           id?: string;
@@ -1599,14 +1574,9 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number;
+          line_total?: number | null;
           line_cost?: number | null;
           display_order?: number;
-          size?: string | null;
-          size_length?: number | null;
-          size_width?: number | null;
-          size_thickness?: number | null;
-          size_unit?: string | null;
         };
         Relationships: [
           {
@@ -5707,46 +5677,6 @@ export type Database = {
         };
         Relationships: [];
       };
-      // 2026-10-17 — automatic customs/export exchange rates (DGFT → ICEGATE
-      // → eximin.net chain). See db/2026-10-17-customs-exchange-rates.sql and
-      // src/lib/fx/customs.ts. Kept apart from exchange_rates so an API feed
-      // can never rewrite a manually entered CBIC notification.
-      customs_exchange_rates: {
-        Row: {
-          currency_code: string;
-          currency_name: string | null;
-          import_rate: number | null;
-          export_rate: number;
-          effective_date: string | null;
-          notification_no: string | null;
-          source: string;
-          source_url: string | null;
-          fetched_at: string;
-        };
-        Insert: {
-          currency_code: string;
-          currency_name?: string | null;
-          import_rate?: number | null;
-          export_rate: number;
-          effective_date?: string | null;
-          notification_no?: string | null;
-          source?: string;
-          source_url?: string | null;
-          fetched_at?: string;
-        };
-        Update: {
-          currency_code?: string;
-          currency_name?: string | null;
-          import_rate?: number | null;
-          export_rate?: number;
-          effective_date?: string | null;
-          notification_no?: string | null;
-          source?: string;
-          source_url?: string | null;
-          fetched_at?: string;
-        };
-        Relationships: [];
-      };
       exchange_rates: {
         Row: {
           id: string;
@@ -6610,52 +6540,6 @@ export type Database = {
           },
         ];
       };
-      leave_approver_assignments: {
-        Row: {
-          id: string;
-          company_id: string;
-          employee_id: string;
-          assigned_by_employee_id: string | null;
-          assigned_at: string;
-        };
-        Insert: {
-          id?: string;
-          company_id: string;
-          employee_id: string;
-          assigned_by_employee_id?: string | null;
-          assigned_at?: string;
-        };
-        Update: {
-          id?: string;
-          company_id?: string;
-          employee_id?: string;
-          assigned_by_employee_id?: string | null;
-          assigned_at?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "leave_approver_assignments_assigned_by_employee_id_fkey";
-            columns: ["assigned_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_approver_assignments_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_approver_assignments_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       leave_coverage_assignments: {
         Row: {
           id: string;
@@ -6745,7 +6629,6 @@ export type Database = {
           cancelled_by_employee_id: string | null;
           cancelled_at: string | null;
           cancelled_remark: string | null;
-          approver_employee_id: string | null;
         };
         Insert: {
           id?: string;
@@ -6767,7 +6650,6 @@ export type Database = {
           cancelled_by_employee_id?: string | null;
           cancelled_at?: string | null;
           cancelled_remark?: string | null;
-          approver_employee_id?: string | null;
         };
         Update: {
           id?: string;
@@ -6789,7 +6671,6 @@ export type Database = {
           cancelled_by_employee_id?: string | null;
           cancelled_at?: string | null;
           cancelled_remark?: string | null;
-          approver_employee_id?: string | null;
         };
         Relationships: [
           {
@@ -7888,6 +7769,7 @@ export type Database = {
           total_amount: number | null;
           g_total_plus_gst: number | null;
           created_at: string;
+          updated_at: string;
         };
         Insert: {
           id?: string;
@@ -7908,6 +7790,7 @@ export type Database = {
           total_amount?: number | null;
           g_total_plus_gst?: number | null;
           created_at?: string;
+          updated_at?: string;
         };
         Update: {
           id?: string;
@@ -7928,6 +7811,7 @@ export type Database = {
           total_amount?: number | null;
           g_total_plus_gst?: number | null;
           created_at?: string;
+          updated_at?: string;
         };
         Relationships: [
           {

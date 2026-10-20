@@ -62,6 +62,15 @@ export type PayableBillRow = {
   party_name: string | null;
   party_type: string | null;
   source: string | null;
+  /** purchase_bills.id (or the other source table's id) — see item_label. */
+  source_id: string | null;
+  /**
+   * 2026-10-20 — what this underlying row actually IS, e.g.
+   * "Plain rug 3×90 FT · 1 × 90 FT @ ₹21.03" for a Purchase Bill item.
+   * Null when the source row has no item concept (freight/duty/salary) or
+   * couldn't be resolved — the UI then falls back to the old short id.
+   */
+  item_label: string | null;
   due_date: string | null;
   total_amt: number;
   credit_note_amt: number;
@@ -483,7 +492,10 @@ function GroupRow({
                     invoice/group level, not repeated once per item. */}
                 {group.bills.map((b) => (
                   <tr key={b.id} className="border-b border-slate-100 last:border-0">
-                    <td className="px-2 py-1 text-slate-600">{b.id.slice(0, 8)}</td>
+                    {/* 2026-10-20 — the item's own description instead of an
+                        opaque id prefix ("d4bb0ea4"), so the breakdown says
+                        WHICH entry this amount belongs to. */}
+                    <td className="px-2 py-1 text-slate-600">{b.item_label ?? b.id.slice(0, 8)}</td>
                     <td className="px-2 py-1 text-right text-slate-600">{b.to_be_pay.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right text-slate-600">{b.total_paid.toFixed(2)}</td>
                     <td className="px-2 py-1 text-right font-medium text-slate-800">{b.balance_due.toFixed(2)}</td>
@@ -662,7 +674,11 @@ function PerBillAmountForm({
           {bills.map((b) => (
             <div key={b.id} className="flex items-center justify-between gap-2 text-xs">
               <span className="text-slate-600">
-                {b.invoice_no || b.vendor_invoice_no || "—"} <span className="text-slate-400">· {b.party_name ?? "—"} (balance {b.balance_due.toFixed(2)})</span>
+                {b.invoice_no || b.vendor_invoice_no || "—"}{" "}
+                <span className="text-slate-400">
+                  · {b.item_label ? `${b.item_label} · ` : ""}
+                  {b.party_name ?? "—"} (balance {b.balance_due.toFixed(2)})
+                </span>
               </span>
               <input
                 name={`amount_${b.id}`}

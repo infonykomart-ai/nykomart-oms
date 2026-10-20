@@ -66,7 +66,9 @@ export default async function BillPaymentPage({
   let query = supabase
     .from("bill_pass_register")
     .select(
-      "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
+      // 2026-10-20 — source_id added so a grouped Purchase Bill's per-item
+      // rows can name the actual item (see itemLabelBySourceId below).
+      "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, source_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
     )
     .in("company_id", effectiveCompanyIds)
     .order("due_date", { ascending: true, nullsFirst: false });
@@ -141,6 +143,31 @@ export default async function BillPaymentPage({
   }
   const cnNoById = new Map((pageCreditNotes ?? []).map((n) => [n.id, n.cn_no]));
 
+  // 2026-10-20 — "ek invoice me agar 10 entry hai to ... usi se link me dikh
+  // jaye ki kon kon si entry hai": a grouped Purchase Bill's per-item rows
+  // only ever showed `id.slice(0, 8)` ("d4bb0ea4"), so the expanded breakdown
+  // and the per-item payment form named nothing. Each bill_pass_register row
+  // already carries source_id -> purchase_bills.id; one batched lookup (never
+  // per row) gives every item its description + size + rate.
+  const purchaseSourceIds = (bills ?? [])
+    .filter((b) => b.source === "purchase_bill" && !!b.source_id)
+    .map((b) => b.source_id as string);
+  const { data: purchaseItems } = purchaseSourceIds.length
+    ? await supabase
+        .from("purchase_bills")
+        .select("id, work_description, qty, sq_feet, qty_unit, unit_rate")
+        .in("id", purchaseSourceIds)
+    : {
+        data: [] as { id: string; work_description: string | null; qty: number; sq_feet: number; qty_unit: string | null; unit_rate: number }[],
+      };
+  const itemLabelBySourceId = new Map(
+    (purchaseItems ?? []).map((p) => {
+      const unit = p.qty_unit ?? "FT";
+      const size = unit === "PCS" ? `${p.qty} pcs` : `${p.qty} × ${Number(p.sq_feet)} ${unit}`;
+      return [p.id, `${p.work_description?.trim() || "Item"} · ${size} @ ₹${Number(p.unit_rate).toFixed(2)}`] as const;
+    })
+  );
+
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
     company_id: b.company_id,
@@ -159,6 +186,8 @@ export default async function BillPaymentPage({
     // row, so editing belongs at that source instead (see actions.ts's
     // comment on updateBillPassRegisterEntry).
     source: b.source,
+    source_id: b.source_id,
+    item_label: b.source === "purchase_bill" && b.source_id ? itemLabelBySourceId.get(b.source_id) ?? null : null,
     due_date: b.due_date,
     total_amt: Number(b.total_amt),
     credit_note_amt: Number(b.credit_note_amt),

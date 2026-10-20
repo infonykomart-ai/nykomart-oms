@@ -3,6 +3,8 @@ import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth
 import { createClient } from "@/lib/supabase/server";
 import { DocumentEntryTabs } from "./document-entry-tabs";
 import { listRelatedNotesForBills } from "./actions";
+import { groupPurchaseBillInvoices } from "@/lib/bill-grouping";
+import { purchaseBillGrandTotal } from "@/lib/purchase-bill-money";
 
 // Document Entry module (2026-08-07) — the dashboard's "Document Entry"
 // tile has pointed at /dashboard/documents since the Invoice round, but
@@ -151,11 +153,20 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       let query = supabase
         .from("purchase_bills")
         .select(
-          "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, total_amount, gst_rate_pct, gst_type, round_off_amt, g_total_plus_gst"
+          // 2026-10-20 — created_at/updated_at added for the per-invoice
+          // audit line ("kab entry ki gyi ... agar update hui ho baad me to
+          // vo bhi show hona chahiye admin ko"); see
+          // db/2026-10-20-purchase-bill-no-gst-and-audit.sql.
+          "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, total_amount, gst_rate_pct, gst_type, round_off_amt, g_total_plus_gst, created_at, updated_at"
         )
         .eq("company_id", employee.currentCompanyId)
         .order("created_at", { ascending: false })
-        .limit(pbFiltered ? FILTERED_LIMIT : 8);
+        // 2026-10-20 — was limit(8) ROWS: fine while every row was its own
+        // card, but a single 6-item invoice could eat 6 of those 8 slots and
+        // the list is now grouped into ONE card per invoice (see
+        // groupPurchaseBillInvoices). Fetch enough rows to fill the same
+        // "recent 8 invoices" the user used to see, then cap by GROUP below.
+        .limit(pbFiltered ? FILTERED_LIMIT * 5 : 400);
       if (pbVendor) query = query.eq("vendor_party_id", pbVendor);
       if (pbFrom) query = query.gte("vendor_invoice_date", pbFrom);
       if (pbTo) query = query.lte("vendor_invoice_date", pbTo);
@@ -394,6 +405,44 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       : Promise.resolve({ data: [] as { id: string; ref_no: string }[] }),
   ]);
   const receivedChalanOrderRefNo = new Map((receivedChalanOrders ?? []).map((o) => [o.id, o.ref_no]));
+  // 2026-10-20 — Document Entry → Purchase Bill is now ONE entry per vendor
+  // invoice, expandable to its item rows (see src/lib/bill-grouping.ts's
+  // groupPurchaseBillInvoices and document-entry-tabs.tsx's
+  // PurchaseBillInvoiceList). Money comes from src/lib/purchase-bill-money.ts
+  // so the card, the A4 sheet and Bill Payment can never disagree again.
+  const purchaseBillInvoices = groupPurchaseBillInvoices(
+    (recentPurchaseBills ?? []).map((r) => ({
+      ...r,
+      qty: Number(r.qty),
+      sq_feet: Number(r.sq_feet),
+      unit_rate: Number(r.unit_rate),
+      total_amount: Number(r.total_amount ?? 0),
+      // 0 = explicitly "No GST" (db/2026-10-20-...sql); the historical 5%
+      // fallback only applies to a NULL from before the GST picker existed.
+      // Collapsed back to null for the UI: the picker's "No GST" option IS
+      // the empty value, and the money helpers treat both the same. The
+      // stored total (g_total_plus_gst) is what every amount reads, so this
+      // mapping can never change a rupee.
+      gst_rate_pct: r.gst_rate_pct != null && Number(r.gst_rate_pct) > 0 ? Number(r.gst_rate_pct) : null,
+      round_off_amt: Number(r.round_off_amt ?? 0),
+      g_total_plus_gst: r.g_total_plus_gst != null ? Number(r.g_total_plus_gst) : null,
+      vendorName: partyName.get(r.vendor_party_id) ?? "",
+      related_notes: notesFor(bprIdByPurchaseBillId.get(r.id)),
+      finance_bpr_id: bprIdByPurchaseBillId.get(r.id) ?? null,
+    }))
+  )
+    .map((g) => ({
+      ...g,
+      vendorName: partyName.get(g.vendor_party_id) ?? "",
+      taxableTotal: g.items.reduce((s, i) => s + Number(i.total_amount ?? 0), 0),
+      grandTotal: g.items.reduce((s, i) => s + purchaseBillGrandTotal(i), 0),
+      // First sent-to-Finance row drives the statement sheet; an invoice is
+      // one bill_pass_register group there (see lib/bill-grouping.ts).
+      finance_bpr_id: g.items.find((i) => i.finance_bpr_id)?.finance_bpr_id ?? null,
+      notes: g.items.flatMap((i) => i.related_notes),
+    }))
+    .slice(0, pbFiltered ? FILTERED_LIMIT : 8);
+
   const receivedChalanRows = (recentReceivedChalans ?? []).map((c) => ({
     id: c.id,
     chalan_no: c.chalan_no,
@@ -480,21 +529,11 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             fromCompanyName: companyName.get(r.from_company_id) ?? "",
             toCompanyName: companyName.get(r.to_company_id) ?? "",
           })),
-          purchaseBills: (recentPurchaseBills ?? []).map((r) => ({
-            ...r,
-            qty: Number(r.qty),
-            sq_feet: Number(r.sq_feet),
-            unit_rate: Number(r.unit_rate),
-            total_amount: Number(r.total_amount ?? 0),
-            gst_rate_pct: r.gst_rate_pct != null ? Number(r.gst_rate_pct) : null,
-            round_off_amt: Number(r.round_off_amt ?? 0),
-            g_total_plus_gst: r.g_total_plus_gst != null ? Number(r.g_total_plus_gst) : null,
-            vendorName: partyName.get(r.vendor_party_id) ?? "",
-            related_notes: notesFor(bprIdByPurchaseBillId.get(r.id)),
-            // 2026-09-15 — the bill's bill_pass_register id (when the bill
-            // has been sent to Finance) drives the 📄 statement sheet link.
-            finance_bpr_id: bprIdByPurchaseBillId.get(r.id) ?? null,
-          })),
+          purchaseBillInvoices,
+          // 2026-10-20 — "kab entry ki gyi date & time ... admin ko": the
+          // entry/updated stamps are admin-only, same capability the rest of
+          // the app treats as "Admin" (see bill-payment's isPaidLockedViewer).
+          canSeeAudit: employee.capabilities.includes("permissions_admin"),
           csbFilings: (recentCsbFilings ?? []).map((r) => ({
             ...r,
             exchange_rate: r.exchange_rate != null ? Number(r.exchange_rate) : null,

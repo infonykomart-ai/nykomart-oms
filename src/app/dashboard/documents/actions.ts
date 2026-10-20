@@ -1204,8 +1204,15 @@ async function savePurchaseBillCore(
       unit_rate: p.unitRate,
       order_id: p.orderId,
       company_id: companyId,
-      gst_rate_pct: p.gstRatePct,
-      gst_type: p.gstType,
+      // 2026-10-20 — "No GST" is stored as 0, never NULL. See
+      // db/2026-10-20-purchase-bill-no-gst-and-audit.sql: the
+      // g_total_plus_gst generated column treats NULL as the historical
+      // flat-5% default, so a bill the user explicitly saved WITHOUT GST
+      // used to land in Bill Payment / Party Ledger 5% higher than the
+      // amount the entry screens showed (invoice 170 / SHARDA: 10620
+      // entered vs 10804.50 posted). 0 makes the GST term zero.
+      gst_rate_pct: p.gstRatePct && p.gstRatePct > 0 ? p.gstRatePct : 0,
+      gst_type: p.gstRatePct && p.gstRatePct > 0 ? p.gstType : null,
       round_off_amt: p.roundOffAmt || 0,
     })
     .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
@@ -1603,6 +1610,12 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   if (!vendorPartyId) return { error: "Select a vendor party.", success: false };
   if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", success: false };
 
+  // 2026-10-20 — same "No GST = 0, never NULL" rule as savePurchaseBillCore
+  // (see its comment / db/2026-10-20-purchase-bill-no-gst-and-audit.sql), so
+  // re-saving an edited item can never reintroduce the phantom 5%.
+  const rawGstRate = strOrNull(formData, "gst_rate_pct");
+  const gstRatePct = rawGstRate && Number(rawGstRate) > 0 ? Number(rawGstRate) : 0;
+
   const { data: updated, error } = await supabase
     .from("purchase_bills")
     .update({
@@ -1614,8 +1627,8 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
       qty_unit: qtyUnitUnion(str(formData, "qty_unit") || "FT"),
       work_description: strOrNull(formData, "work_description"),
       unit_rate: numOrZero(formData, "unit_rate"),
-      gst_rate_pct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
-      gst_type: gstTypeUnion(strOrNull(formData, "gst_type")),
+      gst_rate_pct: gstRatePct,
+      gst_type: gstRatePct > 0 ? gstTypeUnion(strOrNull(formData, "gst_type")) : null,
       round_off_amt: numOrZero(formData, "round_off_amt"),
     })
     .eq("id", id)

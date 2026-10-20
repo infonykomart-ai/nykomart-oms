@@ -233,7 +233,13 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
       // rate as-is. No rate picked -> the historical flat-5% fallback the
       // g_total_plus_gst generated column uses, so the shown GST always
       // ties out to the invoice total.
-      const totalRatePct = pb.gst_rate_pct != null ? (pb.gst_type === "IGST" ? Number(pb.gst_rate_pct) : Number(pb.gst_rate_pct) * 2) : 5;
+      // 2026-10-20 — 0 now means "explicitly No GST"
+      // (db/2026-10-20-purchase-bill-no-gst-and-audit.sql), so a NO-GST line
+      // shows no GST at all instead of "0%". NULL keeps the legacy flat-5%
+      // fallback so an old bill's per-line GST still ties out to its stored
+      // invoice total.
+      const storedRatePct = pb.gst_rate_pct != null ? Number(pb.gst_rate_pct) : null;
+      const totalRatePct = storedRatePct != null ? (pb.gst_type === "IGST" ? storedRatePct : storedRatePct * 2) : 5;
       const gstAmount = Math.round(amount * totalRatePct) / 100;
       return {
         purchaseBillId: pb.id,
@@ -244,8 +250,8 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
         size: Number(pb.sq_feet ?? 0),
         rate: Number(pb.unit_rate),
         amount,
-        gstRatePct: pb.gst_rate_pct != null ? Number(pb.gst_rate_pct) : null,
-        gstType: pb.gst_type,
+        gstRatePct: storedRatePct && storedRatePct > 0 ? storedRatePct : null,
+        gstType: storedRatePct && storedRatePct > 0 ? pb.gst_type : null,
         gstAmount,
         amountWithGst: amount + gstAmount,
       };

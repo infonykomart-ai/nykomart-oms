@@ -1,82 +1,119 @@
-LEAVE UPDATE — 2026-10-17
-=========================
+PURCHASE BILL TOTAL FIX + "EK INVOICE = EK ENTRY" (2026-10-20)
+================================================================
 
-AAPKI REQUEST (jo is zip me pura hua hai)
+SABSE PEHLE: Supabase SQL Editor me ye file chalao (ek hi file, idempotent):
+    db/2026-10-20-purchase-bill-no-gst-and-audit.sql
+
+Iske bina app ka naya code bhi purana galat total hi dikhayega.
+
+
+1) PROBLEM KYA THI (invoice 170 / SHARDA INTERNATIONAL RUGS)
+------------------------------------------------------------
+Aapne 6 items ki entry ki: 2970 (No GST) + 720 (No GST) + 3000 + 1200 + 1200 + 1200
+  Entry screen ka total            = 10620.00
+  Bill Payment / Party Ledger      = 10804.50
+  Farak                            = 184.50 = bilkul 5% of (2970 + 720)
+
+Wajah: purchase_bills.g_total_plus_gst (generated column) me "gst_rate_pct NULL
+ho to flat 5% jod do" wala purana default hai. Lekin GST dropdown ka pehla option
+hi "No GST" hai, aur wo NULL bhejta hai — is liye "No GST" wale bill bhi chupchap
+5% ke sath Finance (bill_pass_register.total_amt) me chale jaate the. Document
+Entry list / A4 sheet total_amount dikhati thi (is liye wahan sahi lagta tha),
+jabki Bill Payment / Ledger / P&L stored total padhte hain (is liye wahan galat).
+
+
+2) FIX KYA KIYA
+---------------
+- DB: "No GST" ab gst_rate_pct = 0 save hota hai (NULL nahi). 0 ka matlab 0% GST,
+  is liye g_total_plus_gst = total_amount + round off — bilkul jo aapne entry me
+  dekha tha. Generated column ko drop nahi kiya (warna P&L/report views ud jaate),
+  sirf CHECK me 0 add kiya: 0, 2.5, 3, 4, 9.
+- Purane galat bills bhi repair: created_at >= 2026-08-17 (GST picker wali date)
+  aur gst_rate_pct NULL — unhe 0 kiya. Isse 170 jaisa har bill theek ho jayega.
+  2026-08-17 se purane NULL bills ko chheda nahi (unka 5% historical default hai).
+- bill_pass_register.total_amt sabhi purchase_bill rows ke liye
+  purchase_bills.g_total_plus_gst se RE-SYNC kiya — Bill Payment / Party Ledger /
+  P&L turant sahi ho jayenge. Payments / Credit-Debit note adjustments ko haath
+  nahi lagaya. (Agar kisi bill ka inflated amount pe payment ho chuka hai to uska
+  balance due thoda negative = overpayment dikhega, jo sach hai.)
+- App: No GST par 0 hi save hota hai (save + edit dono). Naya shared file
+  src/lib/purchase-bill-money.ts hi GST/total/label ka single source hai —
+  Document Entry list, A4 view, bill statement, sab wahi use karte hain, is liye
+  ab kisi bhi screen par total alag nahi ho sakta. (Bill statement me pehle per
+  line 5% ka hardcoded fallback tha, wo bhi theek kiya.)
+
+
+3) DOCUMENT ENTRY ME AB EK INVOICE = EK ENTRY
+---------------------------------------------
+- "Recent Purchase Bills" me ab HAR VENDOR INVOICE ka EK card aayega, item ke
+  hisaab se 6 alag cards nahi. Card par: invoice no, "6 items · 1 invoice" badge,
+  vendor, poora invoice total, invoice date.
+- "▸ Items" dabane par usi card ke andar saari entries khulti hain — har entry ka
+  description, size × qty @ rate, taxable + GST = amount, aur uske saamne apna
+  Edit aur Delete button. (Storage waisa hi hai: har item ki apni row, apni
+  qty/rate/GST — sirf dikhne me ek invoice.)
+- 👁 View = poore invoice ka ek A4 sheet (saare items + grand total), dialog me hi
+  print/PDF.
+- 🧾 Statement = Finance wala bill statement (jo bill_pass_register me gaya hai).
+- Delete invoice = us invoice ke saare items delete (har row par wahi server
+  guard lagta hai: jis item par payment ho chuka hai wo delete nahi hoga, baaki
+  ho jayenge — error message card par dikhega).
+- Edit entries = items khol deta hai, jahan se har entry alag edit/modify ho sakti
+  hai (vendor, invoice no, date, qty, size, rate, GST, description, round off).
+
+
+4) ADMIN KO DATE & TIME (ENTRY + UPDATE)
 ----------------------------------------
-1. Leave apply karte waqt DATE & TIME + LOCATION record hona chahiye.
-2. Approve hone ke baad dikhna chahiye ki kisne approve kiya aur kis time.
-3. Daily basis par record: kitno ki leave application aayi, kitni approve hui.
-4. Admin ko hamesha dikhta rahe ki kaun kis date ko leave par hai.
-5. Leave lekr office aa jaye to leave CANCEL ya MODIFY ho sake
-   (full day -> half day, ya kam din ki leave).
+- purchase_bills me naya column updated_at (trigger ke sath, migration me hai).
+- Har invoice card aur har item row par ADMIN ko dikhega:
+      🗓 Entered 17 Oct 2026, 3:42 pm   |   ✏️ Last updated 20 Oct 2026, 11:05 am
+  Kabhi edit nahi hua to "not edited since entry" likha aayega.
+- Sirf permissions_admin wale user ko ye line dikhti hai (aapke Admin role me hai).
 
 
-FILES — KAISE LAGANI HAIN
--------------------------
-Repo root = nykomart-oms (jahan src/ aur db/ folders hain).
-
-NAYE FILES (CREATE karo, pehle se nahi hain):
-  [NEW] db/2026-10-17-leave-audit-and-lifecycle.sql
-  [NEW] src/app/dashboard/leave/leave-lifecycle-actions.tsx
-
-PURANI FILES KO REPLACE karo:
-  [REPLACE] db/schema.sql
-  [REPLACE] src/types/database.ts
-  [REPLACE] src/app/dashboard/leave/actions.ts
-  [REPLACE] src/app/dashboard/leave/leave-request-form.tsx
-  [REPLACE] src/app/dashboard/leave/page.tsx
-  [REPLACE] src/app/dashboard/leave/admin/page.tsx
-  [REPLACE] src/app/dashboard/leave/admin/leave-approval-row.tsx
-  [REPLACE] src/app/dashboard/layout.tsx
-  [REPLACE] BRAIN.md   (sirf documentation/notes — optional)
+5) BILL PAYMENT ME BHI SAAF KIYA
+--------------------------------
+- Grouped invoice kholne par per-item rows me pehle "d4bb0ea4" jaisa id aa raha
+  tha; ab wahan actual item likha aayega, e.g.
+      Plain rug 3x90 FT · 1 × 90 FT @ ₹21.03
+- "Record payment for this invoice (per item)" form me bhi item ka naam + balance
+  dikhega, is liye kis item ka payment kar rahe ho wo saaf pata chalega.
+- Amounts ab entry wale total se milte hain (upar wale fix ke baad).
 
 
-SUPABASE ME SQL CHALANA ZAROORI HAI (NAHI KIYA TO APP ERROR DEGA)
------------------------------------------------------------------
-Supabase SQL Editor me is file ka pura content chalao:
-
-    db/2026-10-17-leave-audit-and-lifecycle.sql
-
-Uske baad ye file DOBARA chalao (idempotent / safe hai, kuch delete nahi
-karta) taaki naye table par bhi login-only policy lag jaye:
-
-    db/2026-08-08-enable-rls.sql
-
-Bas — iske baad naye columns aur leave_request_events table live ho
-jayenge. Migration ke bina leave page/actions "column does not exist"
-error denge, kyunki code naye columns par kaam karta hai.
-
-
-KYA-KYA NAYA HAI (short)
-------------------------
-- Apply form ab browser se location (lat/lng/accuracy) leta hai —
-  best-effort, permission na ho to bhi application submit hoti hai —
-  aur har request par "Applied <date, time> ... location (Maps link)"
-  dikhta hai (employee page + admin).
-- "Approved by <naam> on <date, time>" dikhta hai; har request ke neeche
-  History timeline (Applied / Approved / Rejected / Cancelled /
-  Half Day / Shortened — kisne, kab, remark ke saath).
-- Admin Leave Approvals par:
-    * "On Leave — today & upcoming (7 days)" board (TODAY highlighted)
-    * "Daily Leave Record (last 14 days)" table — Applied/Approved/
-      Rejected/Cancelled per din
-    * Header bell me 2 naye items — "Leave requests pending approval"
-      aur "Employees on leave today"
-- Cancel / Modify (employee ya admin dono kar sakte hain):
-    * Cancel — pending ya approved leave cancel; us leave ki auto-marked
-      attendance (Leave/Half Day) hat jaati hai aur coverage access band.
-    * Half Day — ek din full leave ki jagah half day (payroll me 0.5
-      count hota hai, alag se kuch nahi karna).
-    * Shorten — pehle wapas aa gaya to end date peeche kar do; baaki din
-      ka attendance aur extra coverage clean ho jaata hai.
-- leave_requests me naye columns: applied_lat, applied_lng,
-  applied_accuracy_m, cancelled_by_employee_id, cancelled_at,
-  cancelled_remark. Status me naya value: 'Cancelled'.
-- Naya table: leave_request_events (append-only audit trail).
+6) FILES (isi zip me)
+--------------------
+NEW  db/2026-10-20-purchase-bill-no-gst-and-audit.sql   <- Supabase me chalao
+NEW  src/lib/purchase-bill-money.ts
+MOD  db/schema.sql
+MOD  src/types/database.ts
+MOD  src/lib/bill-grouping.ts
+MOD  src/lib/bill-statement.ts
+MOD  src/app/dashboard/documents/actions.ts
+MOD  src/app/dashboard/documents/page.tsx
+MOD  src/app/dashboard/documents/document-entry-tabs.tsx
+MOD* src/app/dashboard/documents/doc-entry-a4.tsx   (*agar 16-Oct round pehle nahi laga to ye file
+     aapke repo me nahi hogi — tab ise NAYI file maankar add karna hai)
+MOD  src/app/dashboard/bill-payment/page.tsx
+MOD  src/app/dashboard/bill-payment/bill-payment-list.tsx
+MOD  BRAIN.md
 
 
-VERIFICATION (is zip banane wale session me)
---------------------------------------------
-- npx tsc --noEmit  -> 0 errors
-- npx eslint (saare changed files) -> clean
-- Zip ke andar ke saare files disk se byte-identical (cmp pass)
+7) MIGRATION KE BAAD CHECK KARNE KE LIYE (read-only, Supabase SQL Editor)
+------------------------------------------------------------------------
+-- invoice 170 ke items ka asli total (dono column barabar hone chahiye):
+SELECT vendor_invoice_no, gst_rate_pct, total_amount, g_total_plus_gst
+  FROM purchase_bills WHERE vendor_invoice_no = '170'
+ ORDER BY created_at;
+
+-- Finance mirror wahi total dikha raha hai?
+SELECT total_amt, to_be_pay, balance_due
+  FROM bill_pass_register
+ WHERE source = 'purchase_bill' AND vendor_invoice_no = '170';
+
+Dono ka total ab 10620.00 hona chahiye (aapke 6 items ke hisaab se).
+
+NOTE: 2026-08-17 se purane jo bills "No GST" jaise lag rahe hain, unka +5%
+jaan-boojh kar nahi hataya (wo purana default tha aur usi par payment/P&L bana
+hai). Agar koi aisa purana bill bhi theek karwana ho to bata dena, ek chhoti
+repair query de dunga.

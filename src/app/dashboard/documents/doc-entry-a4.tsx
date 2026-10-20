@@ -27,6 +27,13 @@ import type { EditableWashingEntry } from "./washing-entry-edit-form";
 import type { EditableInternalInvoice } from "./internal-invoice-edit-form";
 import type { EditablePurchaseBill } from "./purchase-bill-edit-form";
 import type { EditableCsbFiling } from "./csb-filing-edit-form";
+import {
+  purchaseBillGrandTotal,
+  purchaseGstAmount,
+  purchaseGstTotalPct,
+  purchaseHasGst,
+  type PurchaseBillMoneyFields,
+} from "@/lib/purchase-bill-money";
 
 export type DocEntryField = { label: string; value: string; /** spans both columns — for long text */ full?: boolean };
 
@@ -217,15 +224,14 @@ export function purchaseBillDoc(
   },
   companyName: string
 ): DocEntrySpec {
-  // Grand total mirrors the Recent list's own amount logic (see
-  // document-entry-tabs.tsx's purchase-bill amount comment): the GST-aware
-  // g_total_plus_gst when a rate is set, otherwise taxable + round off.
-  const grand =
-    r.gst_rate_pct != null && r.g_total_plus_gst != null
-      ? Number(r.g_total_plus_gst)
-      : Number(r.total_amount) + Number(r.round_off_amt ?? 0);
-  const gstLabel =
-    r.gst_rate_pct != null ? `GST (${r.gst_type === "IGST" ? "IGST" : "CGST+SGST"} ${r.gst_rate_pct * 2}%)` : "GST";
+  // 2026-10-20 — grand total + GST label come from the shared helper
+  // (src/lib/purchase-bill-money.ts) instead of this file's own copy of the
+  // rule, so the A4 sheet, the Recent list and Bill Payment can never show
+  // three different totals for the same bill again (the "No GST" case used
+  // to: list showed the base, Finance had +5%).
+  const grand = purchaseBillGrandTotal(r);
+  const hasGst = purchaseHasGst(r.gst_rate_pct);
+  const gstLabel = `GST (${r.gst_type === "IGST" ? "IGST" : "CGST+SGST"} ${purchaseGstTotalPct(r.gst_rate_pct, r.gst_type)}%)`;
   return {
     id: r.id,
     title: "PURCHASE BILL",
@@ -239,12 +245,81 @@ export function purchaseBillDoc(
       { label: `Size (${r.qty_unit ?? "FT"})`, value: num(r.sq_feet) },
       { label: "Unit Rate", value: inr(r.unit_rate) },
       { label: "Taxable Amount", value: inr(Number(r.total_amount)) },
-      ...(r.gst_rate_pct != null ? [{ label: gstLabel, value: "Included in grand total", full: true } as DocEntryField] : []),
+      ...(hasGst ? [{ label: gstLabel, value: "Included in grand total", full: true } as DocEntryField] : []),
       ...(r.round_off_amt
         ? [{ label: "Round Off", value: `${Number(r.round_off_amt) > 0 ? "+" : "−"} ${inr(Math.abs(Number(r.round_off_amt)))}` }]
         : []),
     ],
     total: { label: "Grand Total", value: inr(grand) },
+  };
+}
+
+/**
+ * 2026-10-20 — ONE invoice, ALL its items on ONE A4 sheet.
+ *
+ * "ek invoice me agar 10 entry hai to vaha par single entry aaye or usi se
+ * link me dikh jaye ki kon kon si entry hai" — a multi-item Purchase Bill is
+ * still stored as one purchase_bills row per item (each needs its own
+ * qty/rate/GST), so the group's 👁 View used to have nothing sensible to
+ * open: purchaseBillDoc() renders exactly one row. This renders the whole
+ * invoice the way the vendor billed it — every line with its own size, rate,
+ * taxable amount and GST — and one grand total, which is also the figure
+ * Bill Payment / Party Ledger now post.
+ */
+export function purchaseBillInvoiceDoc<
+  T extends {
+    id: string;
+    work_description: string | null;
+    qty: number;
+    sq_feet: number;
+    qty_unit: string | null;
+    unit_rate: number;
+  } & PurchaseBillMoneyFields,
+>(
+  invoice: {
+    key: string;
+    vendor_invoice_no: string;
+    vendor_invoice_date: string | null;
+    vendorName: string;
+    items: T[];
+    grandTotal: number;
+  },
+  companyName: string
+): DocEntrySpec {
+  const first = invoice.items[0];
+  const multi = invoice.items.length > 1;
+
+  const itemFields: DocEntryField[] = invoice.items.map((it, i) => {
+    const taxable = Number(it.total_amount ?? 0);
+    const gst = purchaseGstAmount(it, taxable);
+    const unit = it.qty_unit ?? "FT";
+    const size = unit === "PCS" ? `${it.qty} Pcs` : `${it.qty} × ${fmt(Number(it.sq_feet))} ${unit}`;
+    const desc = it.work_description?.trim() || `Item ${i + 1}`;
+    return {
+      label: multi ? `Item ${i + 1} — ${desc}` : `${desc}`,
+      value:
+        `${size} @ ${inr(Number(it.unit_rate))} = ${inr(taxable)}` +
+        (purchaseHasGst(it.gst_rate_pct)
+          ? ` + GST ${purchaseGstTotalPct(it.gst_rate_pct, it.gst_type)}% (${inr(gst)}) = ${inr(taxable + gst)}`
+          : " (No GST)"),
+      full: true,
+    };
+  });
+
+  return {
+    id: multi ? `invoice-${invoice.key}` : first.id,
+    title: multi ? "PURCHASE BILL — INVOICE" : "PURCHASE BILL",
+    docNo: invoice.vendor_invoice_no || "—",
+    date: invoice.vendor_invoice_date ?? "—",
+    company: companyName || undefined,
+    fields: [
+      { label: "Vendor", value: invoice.vendorName || "—", full: true },
+      { label: "Items on this invoice", value: String(invoice.items.length) },
+      { label: "Invoice Total", value: inr(invoice.grandTotal) },
+      ...itemFields,
+    ],
+    total: { label: "Grand Total", value: inr(invoice.grandTotal) },
+    remark: multi ? `${invoice.items.length} items entered under one vendor invoice — each item is edited/deleted individually in Document Entry → Purchase Bill.` : null,
   };
 }
 

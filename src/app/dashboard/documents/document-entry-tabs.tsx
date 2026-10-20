@@ -38,14 +38,13 @@ import {
 } from "./actions";
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
-import { PrintDialog } from "@/components/print-dialog";
 import {
   DocEntryA4,
   creditNoteDoc,
   debitNoteDoc,
   washingEntryDoc,
   internalInvoiceDoc,
-  purchaseBillDoc,
+  purchaseBillInvoiceDoc,
   csbFilingDoc,
 } from "./doc-entry-a4";
 import { RelatedNotesBadge } from "./related-notes-badge";
@@ -53,6 +52,8 @@ import { BillStatementDialog } from "@/components/bill-statement-dialog";
 import { A4Dialog } from "@/components/a4-dialog";
 import { DocStatementDialog } from "@/components/doc-statement-dialog";
 import type { DocType } from "@/lib/doc-statement";
+import type { PurchaseBillInvoiceGroup } from "@/lib/bill-grouping";
+import { formatAuditStamp, purchaseBillAmountLabel, purchaseHasGst } from "@/lib/purchase-bill-money";
 
 type Company = { id: string; name: string };
 type Party = PartyOption;
@@ -67,6 +68,32 @@ type ShipmentChalanRow = {
   lines: string[];
 };
 
+// 2026-10-20 — one Purchase Bill ITEM row, as the grouped invoice list
+// receives it: the editable fields plus its own computed money, its audit
+// timestamps and its Finance link.
+type PurchaseBillItem = EditablePurchaseBill & {
+  company_id: string | null;
+  vendorName: string;
+  created_at: string;
+  updated_at: string;
+  total_amount: number;
+  g_total_plus_gst: number | null;
+  related_notes: RelatedNote[];
+  finance_bpr_id: string | null;
+};
+
+// 2026-10-20 — "ek invoice me agar 10 entry hai to vaha par single entry
+// aaye": ONE card per vendor invoice, expandable to the item rows that make
+// it up (grouping built in page.tsx via lib/bill-grouping.ts's
+// groupPurchaseBillInvoices — storage stays one row per item).
+type PurchaseBillInvoiceRow = PurchaseBillInvoiceGroup<PurchaseBillItem> & {
+  vendorName: string;
+  taxableTotal: number;
+  grandTotal: number;
+  finance_bpr_id: string | null;
+  notes: RelatedNote[];
+};
+
 type Recent = {
   creditNotes: (EditableCreditNote & { companyName: string })[];
   debitNotes: (EditableDebitNote & { companyName: string })[];
@@ -78,7 +105,11 @@ type Recent = {
   // null` because that's how database.ts types the column — the sheet
   // falls back to a plain "PURCHASE BILL" header with no company line
   // rather than assuming the column can't be null.
-  purchaseBills: (EditablePurchaseBill & { company_id: string | null; vendorName: string; total_amount: number; g_total_plus_gst: number | null; related_notes: RelatedNote[]; finance_bpr_id: string | null })[];
+  purchaseBillInvoices: PurchaseBillInvoiceRow[];
+  // 2026-10-20 — "kab entry ki gyi date & time ke sath agar update hui ho
+  // baad me to vo bhi show hona chahiye admin ko": entry/updated stamps are
+  // rendered only when page.tsx says the viewer holds permissions_admin.
+  canSeeAudit: boolean;
   freightBills: FreightBillRow[];
   dutyBills: DutyBillRow[];
   csbFilings: EditableCsbFiling[];
@@ -420,40 +451,13 @@ export function DocumentEntryTabs({
         </div>
         <div className={tab === "purchase-bill" ? undefined : "print:hidden"}>
         <PurchaseBillFilterForm parties={parties} filter={billFilters.purchaseBill} />
-        <DocList
-          title="Recent Purchase Bills"
-          rows={recent.purchaseBills.map((r) => ({
-            id: r.id,
-            no: r.vendor_invoice_no ?? "—",
-            date: r.vendor_invoice_date ?? "—",
-            sub: r.vendorName,
-            // g_total_plus_gst always includes SOME gst figure — a flat 5%
-            // fallback when no per-bill rate was picked (see
-            // db/2026-08-17-purchase-bills-gst.sql) — so it's only shown
-            // here when gst_rate_pct is actually set; otherwise the round
-            // off is added onto total_amount directly instead, so a bill
-            // with no GST rate chosen doesn't silently display a 5% figure
-            // nobody selected.
-            amount:
-              r.gst_rate_pct != null && r.g_total_plus_gst != null
-                ? `₹${r.total_amount} + GST (${r.gst_type === "IGST" ? "IGST" : "CGST+SGST"} ${r.gst_rate_pct * 2}%)${
-                    r.round_off_amt ? ` ${r.round_off_amt > 0 ? "+" : "−"} Round Off ₹${Math.abs(r.round_off_amt)}` : ""
-                  } = ₹${r.g_total_plus_gst}`
-                : r.round_off_amt
-                  ? `₹${r.total_amount} ${r.round_off_amt > 0 ? "+" : "−"} Round Off ₹${Math.abs(r.round_off_amt)} = ₹${(
-                      r.total_amount + r.round_off_amt
-                    ).toFixed(2)}`
-                  : `₹${r.total_amount}`,
-            record: r,
-            notes: r.related_notes,
-            statementBillId: r.finance_bpr_id ?? undefined,
-            statementLabel: "🧾 Statement",
-          }))}
-          onDelete={deletePurchaseBill}
-          renderView={(r) => (
-            <DocEntryA4 spec={purchaseBillDoc(r, companies.find((c) => c.id === r.company_id)?.name ?? "")} />
-          )}
-          renderEdit={(r, onDone) => <PurchaseBillEditForm bill={r} parties={parties} onDone={onDone} />}
+        {/* 2026-10-20 — replaces the old one-card-per-ROW DocList (see
+            PurchaseBillInvoiceList's own comment). */}
+        <PurchaseBillInvoiceList
+          invoices={recent.purchaseBillInvoices}
+          parties={parties}
+          companies={companies}
+          canSeeAudit={recent.canSeeAudit}
         />
         </div>
         <div className={tab === "csb-filing" ? undefined : "print:hidden"}>
@@ -575,25 +579,291 @@ function ShipmentChalanList({ rows }: { rows: ShipmentChalanRow[] }) {
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
               <p className="text-red-600">{deleteError[r.id]}</p>
-              <div className="flex shrink-0 gap-1.5">
-                <PrintDialog
-                  href={`/dashboard/documents/shipment-chalans/${r.id}/report`}
-                  title={`Shipment Chalan — ${r.chalan_no ?? r.id}`}
-                />
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
-                  className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+              >
+                Delete
+              </button>
             </div>
           </div>
         ))}
         {rows.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
       </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// 2026-10-20 — "agar document entry section me kisi bhi parkar ke invoice ki
+// entry karte hai to alag alag entry kyu hoti hai, ek invoice me agar 10 entry
+// hai to vaha par single entry aaye or usi se link me dikh jaye ki kon kon si
+// entry hai or sabhi entry edit ki ja sake delet ki ja sake or modify ki ja
+// sake. kab entry ki gyi date & time ke sath agar update hui ho baad me to vo
+// bhi show hona chahiye admin ko."
+//
+// One card per VENDOR INVOICE instead of one per purchase_bills row (a
+// multi-item invoice is stored as one row per item — its own qty/rate/GST — so
+// a 6-item bill used to read as six unrelated entries). "▸ Items" expands the
+// card into those rows, each with its own Edit / Delete, so every entry stays
+// individually editable/modifiable/deletable while the invoice itself stays
+// one line. Entry and last-updated timestamps are shown per invoice AND per
+// item for Admins only (canSeeAudit).
+// =============================================================================
+function PurchaseBillInvoiceList({
+  invoices,
+  parties,
+  companies,
+  canSeeAudit,
+}: {
+  invoices: PurchaseBillInvoiceRow[];
+  parties: Party[];
+  companies: Company[];
+  canSeeAudit: boolean;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [viewingKey, setViewingKey] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<Record<string, string>>({});
+  const [isPending, startTransition] = useTransition();
+
+  const viewing = invoices.find((i) => i.key === viewingKey) ?? null;
+  const editingItem = invoices.flatMap((i) => i.items).find((it) => it.id === editingItemId) ?? null;
+
+  function toggle(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function setError(key: string, message: string) {
+    setDeleteError((prev) => ({ ...prev, [key]: message }));
+  }
+
+  function handleDeleteItem(invoiceKey: string, item: PurchaseBillItem) {
+    const label = item.work_description?.trim() || "this entry";
+    if (!window.confirm(`Delete "${label}"? It is removed from this invoice and from Bill Payment / Party Ledger too.`)) return;
+    setError(invoiceKey, "");
+    startTransition(async () => {
+      const result = await deletePurchaseBill(item.id);
+      if (result.error) setError(invoiceKey, result.error);
+    });
+  }
+
+  // Deleting the whole invoice = deleting each of its rows in turn (the same
+  // server action the per-item Delete uses, so the "payments already recorded"
+  // guard still protects a paid row and the rest are left untouched).
+  function handleDeleteInvoice(invoice: PurchaseBillInvoiceRow) {
+    if (
+      !window.confirm(
+        `Delete invoice "${invoice.vendor_invoice_no}"${invoice.isGroup ? ` with all ${invoice.items.length} items` : ""}? This cannot be undone.`
+      )
+    )
+      return;
+    setError(invoice.key, "");
+    startTransition(async () => {
+      for (const item of invoice.items) {
+        const result = await deletePurchaseBill(item.id);
+        if (result.error) {
+          setError(invoice.key, `${item.work_description?.trim() || "Item"}: ${result.error}`);
+          return;
+        }
+      }
+    });
+  }
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-700">Recent Purchase Bills</h2>
+        <p className="text-[11px] text-slate-400">
+          One entry per vendor invoice — open &quot;▸ Items&quot; to view, edit, modify or delete each entry on it.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        {invoices.map((inv) => {
+          const isOpen = expanded.has(inv.key);
+          return (
+            <div key={inv.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5 font-medium text-slate-900">
+                    <span className="truncate">{inv.vendor_invoice_no}</span>
+                    {inv.isGroup && (
+                      <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                        {inv.items.length} items · 1 invoice
+                      </span>
+                    )}
+                    {inv.notes.length > 0 && <RelatedNotesBadge notes={inv.notes} />}
+                  </div>
+                  <div className="text-slate-400">
+                    {inv.vendorName}
+                    {inv.isGroup
+                      ? ` · ${inv.items.length} entries on one invoice`
+                      : inv.items[0]?.work_description?.trim()
+                        ? ` · ${inv.items[0].work_description.trim()}`
+                        : ""}
+                  </div>
+                  {canSeeAudit && (
+                    <div className="mt-0.5 text-[10px] text-slate-500">
+                      🗓 Entered {formatAuditStamp(inv.createdAt)}
+                      <span className="mx-1 text-slate-300">|</span>
+                      {inv.updatedAt ? `✏️ Last updated ${formatAuditStamp(inv.updatedAt)}` : "not edited since entry"}
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-medium text-slate-800">₹{inv.grandTotal.toFixed(2)}</div>
+                  <div className="text-slate-400">{inv.vendor_invoice_date ?? "—"}</div>
+                </div>
+              </div>
+
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
+                <p className="text-red-600">{deleteError[inv.key]}</p>
+                <div className="flex shrink-0 flex-wrap gap-1.5">
+                  {inv.isGroup && (
+                    <button
+                      type="button"
+                      onClick={() => toggle(inv.key)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      {isOpen ? "▾ Hide items" : "▸ Items"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setViewingKey(inv.key)}
+                    className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    👁 View
+                  </button>
+                  {inv.finance_bpr_id && <BillStatementDialog billId={inv.finance_bpr_id} label="🧾 Statement" />}
+                  {inv.isGroup ? (
+                    <button
+                      type="button"
+                      onClick={() => toggle(inv.key)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      ✏️ Edit entries
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setEditingItemId(inv.items[0].id)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => handleDeleteInvoice(inv)}
+                    className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    Delete{inv.isGroup ? " invoice" : ""}
+                  </button>
+                </div>
+              </div>
+
+              {isOpen && inv.isGroup && (
+                <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-100 bg-slate-50/60">
+                  {inv.items.map((it, idx) => {
+                    const edited =
+                      new Date(it.updated_at).getTime() - new Date(it.created_at).getTime() >= 1000;
+                    const size =
+                      (it.qty_unit ?? "FT") === "PCS"
+                        ? `${it.qty} pcs`
+                        : `${it.qty} × ${Number(it.sq_feet)} ${it.qty_unit ?? "FT"}`;
+                    return (
+                      <li key={it.id} className="flex items-start justify-between gap-2 px-2 py-1.5">
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-800">
+                            {idx + 1}. {it.work_description?.trim() || "(no description)"}
+                          </div>
+                          <div className="text-slate-500">
+                            {size} @ ₹{Number(it.unit_rate).toFixed(2)} = {purchaseBillAmountLabel(it)}
+                            {!purchaseHasGst(it.gst_rate_pct) && (
+                              <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600">No GST</span>
+                            )}
+                          </div>
+                          {canSeeAudit && (
+                            <div className="text-[10px] text-slate-400">
+                              Entered {formatAuditStamp(it.created_at)}
+                              <span className="mx-1">|</span>
+                              {edited ? `Updated ${formatAuditStamp(it.updated_at)}` : "never edited"}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingItemId(it.id)}
+                            className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isPending}
+                            onClick={() => handleDeleteItem(inv.key, it)}
+                            className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+        {invoices.length === 0 && <p className="text-xs text-slate-400">None created yet.</p>}
+      </div>
+
+      {viewing && (
+        <A4Dialog
+          open
+          onClose={() => setViewingKey(null)}
+          title={`View — ${viewing.vendor_invoice_no}`}
+          subtitle="A4 preview of the whole invoice — Print / Save PDF prints this document only."
+          footer={
+            <div className="flex items-center justify-end gap-2">
+              <PrintButton label="🖨 Print / Save PDF" />
+              <button
+                type="button"
+                onClick={() => setViewingKey(null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          }
+        >
+          <DocEntryA4
+            spec={purchaseBillInvoiceDoc(viewing, companies.find((c) => c.id === viewing.company_id)?.name ?? "")}
+          />
+        </A4Dialog>
+      )}
+
+      {editingItem && (
+        <A4Dialog
+          open
+          onClose={() => setEditingItemId(null)}
+          title={`Edit — ${editingItem.vendor_invoice_no}`}
+          subtitle="A4-size dialog — edit this entry and press Save."
+        >
+          <PurchaseBillEditForm bill={editingItem} parties={parties} onDone={() => setEditingItemId(null)} />
+        </A4Dialog>
+      )}
     </div>
   );
 }
@@ -765,11 +1035,12 @@ function DocList<T extends { id: string }>({
                     </button>
                   )}
                   {r.printHref && (
-                    <PrintDialog
+                    <Link
                       href={r.printHref}
-                      title={`Print — ${r.no}`}
-                      subtitle="A4 preview — prints exactly this document."
-                    />
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      🖨 Print
+                    </Link>
                   )}
                   {r.statementBillId && <BillStatementDialog billId={r.statementBillId} label={r.statementLabel} />}
                   {r.docStatement && (
