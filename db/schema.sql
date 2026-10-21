@@ -661,6 +661,21 @@ CREATE TABLE fx_rate_cache (
   PRIMARY KEY (base_currency, quote_currency)
 );
 
+-- 2026-10-17 — automatic customs/export rates (DGFT → ICEGATE → eximin.net)
+-- snapshot, refreshed by src/lib/fx/customs.ts when older than 12 hours. See
+-- db/2026-10-17-customs-exchange-rates.sql for the full rationale.
+CREATE TABLE customs_exchange_rates (
+  currency_code    varchar(3) PRIMARY KEY,
+  currency_name    text,
+  import_rate      numeric(14,6) CHECK (import_rate IS NULL OR import_rate > 0),
+  export_rate      numeric(14,6) NOT NULL CHECK (export_rate > 0),
+  effective_date   date,
+  notification_no  text,
+  source           text NOT NULL DEFAULT 'eximin.net',
+  source_url       text,
+  fetched_at       timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE OR REPLACE FUNCTION get_official_rate_as_of(p_currency_code varchar(3), p_as_of date)
 RETURNS TABLE (rate_to_inr numeric, effective_from date)
 LANGUAGE sql STABLE AS $$
@@ -1055,15 +1070,13 @@ CREATE TABLE shipping_bills (
 -- was for (e.g. printing, washing, dyeing) — kept as free text since the
 -- exact structured vocabulary wasn't pinned down, but its general purpose
 -- is now confirmed rather than a total unknown (SCHEMA_NOTES.md #6).
--- "G. TOTAL + GST" uses the real selected rate, doubled (CGST+SGST or IGST
--- both total the same tax — see db/2026-08-17-purchase-bills-gst.sql), plus
--- round_off_amt (see db/2026-08-17-purchase-bills-round-off.sql).
--- 2026-10-20 — an explicit "No GST" pick now saves gst_rate_pct = 0 and adds
--- nothing; the flat 5% fallback below survives ONLY for gst_rate_pct IS NULL,
--- i.e. legacy bills entered before the GST picker existed. Before this fix
--- "No GST" also sent NULL, so those bills were posted to Finance 5% higher
--- than the entry screens showed — see
--- db/2026-10-20-purchase-bill-no-gst-and-audit.sql.
+-- "G. TOTAL + GST" defaults to a flat 5% GST (2.5% CGST + 2.5% SGST) when
+-- no per-bill GST rate is picked (gst_rate_pct IS NULL — every bill
+-- entered before the GST feature existed, see
+-- db/2026-08-17-purchase-bills-gst.sql), otherwise uses the real selected
+-- rate, doubled (CGST+SGST or IGST both total the same tax — see that
+-- migration's comment), plus round_off_amt (see
+-- db/2026-08-17-purchase-bills-round-off.sql).
 CREATE TABLE purchase_bills (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   vendor_party_id         uuid NOT NULL REFERENCES parties(id),
@@ -1100,10 +1113,13 @@ CREATE TABLE purchase_bills (
   -- most vendor parties have no GST number on file, so auto-deciding
   -- isn't reliable). gst_rate_pct is the CGST/SGST INDIVIDUAL rate — total
   -- GST is always double this, however it's itemized (see
-  -- db/2026-08-17-purchase-bills-gst.sql).
-  -- 2026-10-20: 0 = "No GST" chosen explicitly in the picker (adds nothing);
-  -- NULL = legacy bill from before the picker existed, which keeps the
-  -- historical flat-5% g_total_plus_gst fallback below.
+  -- db/2026-08-17-purchase-bills-gst.sql). Both nullable — no rate picked
+  -- keeps the historical flat-5% g_total_plus_gst fallback below.
+  -- 2026-10-20 (folded from db/2026-10-20-purchase-bill-no-gst-and-audit.sql):
+  -- 0 = "No GST" chosen explicitly in the picker (adds nothing); NULL = a
+  -- legacy bill from before the picker existed, which keeps the historical
+  -- flat-5% fallback. Before this, "No GST" also saved NULL, so those bills
+  -- were posted to Finance 5% higher than the entry screens showed.
   gst_rate_pct                   numeric(4,2) CHECK (gst_rate_pct IN (0, 2.5, 3, 4, 9)),
   gst_type                       text CHECK (gst_type IN ('CGST_SGST', 'IGST')),
   -- 2026-08-17: manual signed adjustment so the system total can match a
@@ -1124,11 +1140,11 @@ CREATE TABLE purchase_bills (
                                        + round_off_amt
                                      ) STORED,
   created_at                          timestamptz NOT NULL DEFAULT now(),
-  -- 2026-10-20 — "kab entry ki gyi date & time ke sath agar update hui ho
-  -- baad me to vo bhi show hona chahiye admin ko": created_at IS the entry
-  -- timestamp; updated_at is kept fresh by the trg_purchase_bills_updated_at
-  -- trigger (same migration) so an edited item never loses the fact that it
-  -- was changed after the fact.
+  -- 2026-10-20 (folded from db/2026-10-20-purchase-bill-no-gst-and-audit.sql) —
+  -- "kab entry ki gyi date & time ke sath agar update hui ho baad me to vo bhi
+  -- show hona chahiye admin ko": created_at IS the entry timestamp; updated_at
+  -- is kept fresh by trg_purchase_bills_updated_at below so an edited item
+  -- never loses the fact that it changed after the fact.
   updated_at                          timestamptz NOT NULL DEFAULT now(),
   -- 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
   -- JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — one vendor invoice
@@ -1142,7 +1158,9 @@ CREATE TABLE purchase_bills (
 CREATE INDEX idx_purchase_bills_order ON purchase_bills(order_id);
 CREATE INDEX idx_purchase_bills_company ON purchase_bills(company_id);
 
--- 2026-10-20 — audit column trigger (see db/2026-10-20-purchase-bill-no-gst-and-audit.sql).
+-- 2026-10-20 (folded from db/2026-10-20-purchase-bill-no-gst-and-audit.sql) —
+-- audit stamp: a trigger rather than every call site remembering to set it,
+-- so edits made from the app AND hand-run SQL fixes both move updated_at.
 CREATE OR REPLACE FUNCTION set_purchase_bills_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1152,7 +1170,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
 DROP TRIGGER IF EXISTS trg_purchase_bills_updated_at ON purchase_bills;
 CREATE TRIGGER trg_purchase_bills_updated_at
   BEFORE UPDATE ON purchase_bills
@@ -3345,6 +3362,34 @@ COMMENT ON TABLE leave_types IS
   'Real leave categories, admin-configurable per company from /dashboard/leave/admin. A company with zero rows '
   'here keeps the original single-pool leave behavior (employee_salary.allowed_leaves_per_month) unchanged.';
 
+-- 2026-10-19 — WHO may approve leave. "jaruri nahi hai ki leave MD
+-- approve kare ... jisko leave approval ke liye assign kiya jaye uska naam
+-- aaye selection option aaye": instead of the workflow being hard-wired to
+-- MD/Admin (users 40 & 41, who hold leave_admin), an admin can designate
+-- any active employee as a leave approver. That person then appears by name
+-- in the employee's own Apply-for-Leave dropdown, the application is
+-- stamped with who it went to, and they can approve/reject it without
+-- holding leave_admin at all. Deliberately its OWN table rather than an
+-- employees.is_leave_approver flag: one row per approver keeps an audit
+-- trail (who assigned them, when) and lets an approver be added/removed
+-- without touching the employee master.
+CREATE TABLE leave_approver_assignments (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  employee_id       uuid NOT NULL REFERENCES employees(id),
+  assigned_by_employee_id uuid REFERENCES employees(id),
+  assigned_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, employee_id)
+);
+CREATE INDEX idx_leave_approver_assignments_company ON leave_approver_assignments(company_id);
+ALTER TABLE leave_approver_assignments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_authenticated_all ON leave_approver_assignments;
+CREATE POLICY allow_authenticated_all ON leave_approver_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
+COMMENT ON TABLE leave_approver_assignments IS
+  'Designated leave approvers, one row per approver per company. An employee named here can approve/reject any '
+  'Pending leave request of this company without holding the leave_admin capability, and is offered by name on the '
+  'Apply-for-Leve form. MD/Admin (leave_admin) can always approve as before — being listed here is additive, not a replacement.';
+
 CREATE TABLE leave_balance_adjustments (
   id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id             uuid NOT NULL REFERENCES employees(id),
@@ -3963,6 +4008,13 @@ CREATE TABLE leave_requests (
   cancelled_by_employee_id uuid REFERENCES employees(id),
   cancelled_at            timestamptz,
   cancelled_remark        text,
+  -- 2026-10-19 — "jaruri nahi hai ki leave MD approve kare ... jisko leave
+  -- approval ke liye assign kiya jaye uska naam aaye selection option aaye".
+  -- Which designated approver the employee chose on the Apply form (stamped
+  -- at submit time, NULL = unassigned / MD). Does NOT replace the leave_admin
+  -- capability — MD/Admin can still always approve — it routes the request to
+  -- a named approver who can then decide it without holding leave_admin.
+  approver_employee_id   uuid REFERENCES employees(id),
   CHECK (to_date >= from_date)
 );
 CREATE INDEX idx_leave_requests_employee ON leave_requests(employee_id, from_date DESC);
@@ -6192,7 +6244,17 @@ CREATE TABLE b2b_inquiry_items (
   -- 2026-10-02d — optional link to the product master so the quotation
   -- engine can pull cost/MOQ/lead-time for estimates (nullable: enquiries
   -- arrive as free text too).
-  product_id    uuid REFERENCES b2b_products(id) ON DELETE SET NULL
+  product_id    uuid REFERENCES b2b_products(id) ON DELETE SET NULL,
+  -- ── 2026-10-17b (db/2026-10-17b-b2b-area-pricing.sql) — SIZE × QTY for
+  -- asked-for lines: the free-typed spec plus its parsed dims, mirroring
+  -- b2b_quotation_items, so a "5000 pcs of 2.6 × 10 ft @ 5/sq ft" enquiry
+  -- can show its sq ft live and price by area. App formula:
+  -- computeItemDims() / lineAmount() in src/lib/b2b/erp.ts.
+  size            text,
+  size_length     numeric(10,2),
+  size_width      numeric(10,2),
+  size_thickness  numeric(10,3),
+  size_unit       text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
 );
 CREATE INDEX idx_b2b_inquiry_items_inquiry ON b2b_inquiry_items(inquiry_id, display_order);
 
@@ -6320,7 +6382,13 @@ CREATE TABLE b2b_quotation_items (
   qty           numeric(12,3) NOT NULL CHECK (qty > 0),
   unit          text DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL CHECK (unit_price >= 0),
-  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
+  -- 2026-10-17b — WAS `GENERATED ALWAYS AS (round(qty * unit_price, 2))`.
+  -- Area-priced lines ("per sq ft" + a size) must bill qty × L × W × rate,
+  -- which a generated qty × rate column can never express, so the column is
+  -- now APP-MAINTAINED: every writer sets it through lineAmount()
+  -- (src/lib/b2b/erp.ts) — createQuotation / updateQuotation /
+  -- saveEngineQuotation. Existing rows keep their qty × rate value.
+  line_total    numeric(14,2) NOT NULL DEFAULT 0,
   display_order integer NOT NULL DEFAULT 0,
   -- 2026-10-13 — per-item product specifications the PI must carry
   -- (Size / Material / Manufacturing / Colour-design / Packaging), printed
@@ -6447,9 +6515,20 @@ CREATE TABLE b2b_sales_order_items (
   unit          text NOT NULL DEFAULT 'pcs',
   unit_price    numeric(14,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
   unit_cost     numeric(14,2) NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
-  line_total    numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_price, 2)) STORED,
+  -- 2026-10-17b — line_total was GENERATED (qty × unit_price); area-priced
+  -- lines need qty × L × W × rate, so it is APP-MAINTAINED through
+  -- lineAmount() like b2b_quotation_items.line_total. line_cost stays
+  -- generated: cost stays per-piece (the engine's unitCost is per-unit).
+  line_total    numeric(14,2) NOT NULL DEFAULT 0,
   line_cost     numeric(14,2) GENERATED ALWAYS AS (round(qty * unit_cost, 2)) STORED,
-  display_order integer NOT NULL DEFAULT 0
+  display_order integer NOT NULL DEFAULT 0,
+  -- 2026-10-17b — same size spec + parsed dims as the quotation lines
+  -- ("kitna sq ft maal hua" must be answerable on the order too).
+  size          text,
+  size_length   numeric(10,2),
+  size_width    numeric(10,2),
+  size_thickness numeric(10,3),
+  size_unit     text DEFAULT 'ft' CHECK (size_unit IN ('ft', 'm', 'cm', 'inch') OR size_unit IS NULL)
 );
 CREATE INDEX idx_b2b_sales_order_items_order ON b2b_sales_order_items(order_id, display_order);
 

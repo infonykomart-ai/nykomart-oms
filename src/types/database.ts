@@ -617,7 +617,7 @@ export type Database = {
           {
             foreignKeyName: "b2b_export_profiles_company_id_fkey";
             columns: ["company_id"];
-            isOneToOne: true;
+            isOneToOne: false;
             referencedRelation: "companies";
             referencedColumns: ["id"];
           },
@@ -795,6 +795,11 @@ export type Database = {
           remark: string | null;
           display_order: number;
           product_id: string | null;
+          size: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: "ft" | "m" | "cm" | "inch" | null;
         };
         Insert: {
           id?: string;
@@ -806,6 +811,11 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Update: {
           id?: string;
@@ -817,6 +827,11 @@ export type Database = {
           remark?: string | null;
           display_order?: number;
           product_id?: string | null;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Relationships: [
           {
@@ -1269,7 +1284,7 @@ export type Database = {
           qty: number;
           unit: string | null;
           unit_price: number;
-          line_total: number | null;
+          line_total: number;
           display_order: number;
           size: string | null;
           material: string | null;
@@ -1279,7 +1294,7 @@ export type Database = {
           size_length: number | null;
           size_width: number | null;
           size_thickness: number | null;
-          size_unit: string | null;
+          size_unit: "ft" | "m" | "cm" | "inch" | null;
         };
         Insert: {
           id?: string;
@@ -1289,7 +1304,7 @@ export type Database = {
           qty: number;
           unit?: string | null;
           unit_price: number;
-          line_total?: number | null;
+          line_total?: number;
           display_order?: number;
           size?: string | null;
           material?: string | null;
@@ -1299,7 +1314,7 @@ export type Database = {
           size_length?: number | null;
           size_width?: number | null;
           size_thickness?: number | null;
-          size_unit?: string | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Update: {
           id?: string;
@@ -1309,7 +1324,7 @@ export type Database = {
           qty?: number;
           unit?: string | null;
           unit_price?: number;
-          line_total?: number | null;
+          line_total?: number;
           display_order?: number;
           size?: string | null;
           material?: string | null;
@@ -1319,7 +1334,7 @@ export type Database = {
           size_length?: number | null;
           size_width?: number | null;
           size_thickness?: number | null;
-          size_unit?: string | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Relationships: [
           {
@@ -1548,9 +1563,14 @@ export type Database = {
           unit: string;
           unit_price: number;
           unit_cost: number;
-          line_total: number | null;
+          line_total: number;
           line_cost: number | null;
           display_order: number;
+          size: string | null;
+          size_length: number | null;
+          size_width: number | null;
+          size_thickness: number | null;
+          size_unit: "ft" | "m" | "cm" | "inch" | null;
         };
         Insert: {
           id?: string;
@@ -1561,9 +1581,14 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number | null;
+          line_total?: number;
           line_cost?: number | null;
           display_order?: number;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Update: {
           id?: string;
@@ -1574,9 +1599,14 @@ export type Database = {
           unit?: string;
           unit_price?: number;
           unit_cost?: number;
-          line_total?: number | null;
+          line_total?: number;
           line_cost?: number | null;
           display_order?: number;
+          size?: string | null;
+          size_length?: number | null;
+          size_width?: number | null;
+          size_thickness?: number | null;
+          size_unit?: "ft" | "m" | "cm" | "inch" | null;
         };
         Relationships: [
           {
@@ -3447,6 +3477,43 @@ export type Database = {
         Update: {
           code?: string;
           name?: string;
+        };
+        Relationships: [
+        ];
+      };
+      customs_exchange_rates: {
+        Row: {
+          currency_code: string;
+          currency_name: string | null;
+          import_rate: number | null;
+          export_rate: number;
+          effective_date: string | null;
+          notification_no: string | null;
+          source: string;
+          source_url: string | null;
+          fetched_at: string;
+        };
+        Insert: {
+          currency_code: string;
+          currency_name?: string | null;
+          import_rate?: number | null;
+          export_rate: number;
+          effective_date?: string | null;
+          notification_no?: string | null;
+          source?: string;
+          source_url?: string | null;
+          fetched_at?: string;
+        };
+        Update: {
+          currency_code?: string;
+          currency_name?: string | null;
+          import_rate?: number | null;
+          export_rate?: number;
+          effective_date?: string | null;
+          notification_no?: string | null;
+          source?: string;
+          source_url?: string | null;
+          fetched_at?: string;
         };
         Relationships: [
         ];
@@ -5647,36 +5714,6 @@ export type Database = {
           },
         ];
       };
-      // 2026-10-15b — disposable live FX cache (base USD) for on-screen
-      // conversion only; the legal/customs master is exchange_rates below.
-      // See db/2026-10-15b-fx-rate-cache.sql and src/lib/fx/rates.ts.
-      fx_rate_cache: {
-        Row: {
-          base_currency: string;
-          quote_currency: string;
-          rate: number;
-          source: string;
-          market_updated_at: string | null;
-          fetched_at: string;
-        };
-        Insert: {
-          base_currency: string;
-          quote_currency: string;
-          rate: number;
-          source?: string;
-          market_updated_at?: string | null;
-          fetched_at?: string;
-        };
-        Update: {
-          base_currency?: string;
-          quote_currency?: string;
-          rate?: number;
-          source?: string;
-          market_updated_at?: string | null;
-          fetched_at?: string;
-        };
-        Relationships: [];
-      };
       exchange_rates: {
         Row: {
           id: string;
@@ -6055,6 +6092,37 @@ export type Database = {
             referencedRelation: "courier_rate_cards";
             referencedColumns: ["id"];
           },
+        ];
+      };
+      // 2026-10-15b — disposable live FX cache (base USD) for on-screen
+      // conversion only; the legal/customs master is exchange_rates below.
+      // See db/2026-10-15b-fx-rate-cache.sql and src/lib/fx/rates.ts.
+      fx_rate_cache: {
+        Row: {
+          base_currency: string;
+          quote_currency: string;
+          rate: number;
+          source: string;
+          market_updated_at: string | null;
+          fetched_at: string;
+        };
+        Insert: {
+          base_currency: string;
+          quote_currency: string;
+          rate: number;
+          source?: string;
+          market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Update: {
+          base_currency?: string;
+          quote_currency?: string;
+          rate?: number;
+          source?: string;
+          market_updated_at?: string | null;
+          fetched_at?: string;
+        };
+        Relationships: [
         ];
       };
       help_articles: {
@@ -6485,6 +6553,52 @@ export type Database = {
           },
         ];
       };
+      leave_approver_assignments: {
+        Row: {
+          id: string;
+          company_id: string;
+          employee_id: string;
+          assigned_by_employee_id: string | null;
+          assigned_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          employee_id: string;
+          assigned_by_employee_id?: string | null;
+          assigned_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          employee_id?: string;
+          assigned_by_employee_id?: string | null;
+          assigned_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "leave_approver_assignments_assigned_by_employee_id_fkey";
+            columns: ["assigned_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_approver_assignments_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_approver_assignments_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       leave_balance_adjustments: {
         Row: {
           id: string;
@@ -6608,101 +6722,6 @@ export type Database = {
           },
         ];
       };
-      leave_requests: {
-        Row: {
-          id: string;
-          employee_id: string;
-          company_id: string;
-          from_date: string;
-          to_date: string;
-          reason: string;
-          status: "Pending" | "Approved" | "Rejected" | "Cancelled";
-          requested_at: string;
-          decided_by_employee_id: string | null;
-          decided_at: string | null;
-          decision_remark: string | null;
-          created_at: string;
-          leave_type_id: string | null;
-          applied_lat: number | null;
-          applied_lng: number | null;
-          applied_accuracy_m: number | null;
-          cancelled_by_employee_id: string | null;
-          cancelled_at: string | null;
-          cancelled_remark: string | null;
-        };
-        Insert: {
-          id?: string;
-          employee_id: string;
-          company_id: string;
-          from_date: string;
-          to_date: string;
-          reason: string;
-          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
-          requested_at?: string;
-          decided_by_employee_id?: string | null;
-          decided_at?: string | null;
-          decision_remark?: string | null;
-          created_at?: string;
-          leave_type_id?: string | null;
-          applied_lat?: number | null;
-          applied_lng?: number | null;
-          applied_accuracy_m?: number | null;
-          cancelled_by_employee_id?: string | null;
-          cancelled_at?: string | null;
-          cancelled_remark?: string | null;
-        };
-        Update: {
-          id?: string;
-          employee_id?: string;
-          company_id?: string;
-          from_date?: string;
-          to_date?: string;
-          reason?: string;
-          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
-          requested_at?: string;
-          decided_by_employee_id?: string | null;
-          decided_at?: string | null;
-          decision_remark?: string | null;
-          created_at?: string;
-          leave_type_id?: string | null;
-          applied_lat?: number | null;
-          applied_lng?: number | null;
-          applied_accuracy_m?: number | null;
-          cancelled_by_employee_id?: string | null;
-          cancelled_at?: string | null;
-          cancelled_remark?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "leave_requests_company_id_fkey";
-            columns: ["company_id"];
-            isOneToOne: false;
-            referencedRelation: "companies";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_requests_decided_by_employee_id_fkey";
-            columns: ["decided_by_employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_requests_employee_id_fkey";
-            columns: ["employee_id"];
-            isOneToOne: false;
-            referencedRelation: "employees";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "leave_requests_leave_type_id_fkey";
-            columns: ["leave_type_id"];
-            isOneToOne: false;
-            referencedRelation: "leave_types";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       leave_request_events: {
         Row: {
           id: string;
@@ -6733,17 +6752,129 @@ export type Database = {
         };
         Relationships: [
           {
+            foreignKeyName: "leave_request_events_actor_employee_id_fkey";
+            columns: ["actor_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
             foreignKeyName: "leave_request_events_leave_request_id_fkey";
             columns: ["leave_request_id"];
             isOneToOne: false;
             referencedRelation: "leave_requests";
             referencedColumns: ["id"];
           },
+        ];
+      };
+      leave_requests: {
+        Row: {
+          id: string;
+          employee_id: string;
+          company_id: string;
+          from_date: string;
+          to_date: string;
+          reason: string;
+          status: "Pending" | "Approved" | "Rejected" | "Cancelled";
+          requested_at: string;
+          decided_by_employee_id: string | null;
+          decided_at: string | null;
+          decision_remark: string | null;
+          created_at: string;
+          leave_type_id: string | null;
+          applied_lat: number | null;
+          applied_lng: number | null;
+          applied_accuracy_m: number | null;
+          cancelled_by_employee_id: string | null;
+          cancelled_at: string | null;
+          cancelled_remark: string | null;
+          approver_employee_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          employee_id: string;
+          company_id: string;
+          from_date: string;
+          to_date: string;
+          reason: string;
+          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
+          requested_at?: string;
+          decided_by_employee_id?: string | null;
+          decided_at?: string | null;
+          decision_remark?: string | null;
+          created_at?: string;
+          leave_type_id?: string | null;
+          applied_lat?: number | null;
+          applied_lng?: number | null;
+          applied_accuracy_m?: number | null;
+          cancelled_by_employee_id?: string | null;
+          cancelled_at?: string | null;
+          cancelled_remark?: string | null;
+          approver_employee_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          employee_id?: string;
+          company_id?: string;
+          from_date?: string;
+          to_date?: string;
+          reason?: string;
+          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
+          requested_at?: string;
+          decided_by_employee_id?: string | null;
+          decided_at?: string | null;
+          decision_remark?: string | null;
+          created_at?: string;
+          leave_type_id?: string | null;
+          applied_lat?: number | null;
+          applied_lng?: number | null;
+          applied_accuracy_m?: number | null;
+          cancelled_by_employee_id?: string | null;
+          cancelled_at?: string | null;
+          cancelled_remark?: string | null;
+          approver_employee_id?: string | null;
+        };
+        Relationships: [
           {
-            foreignKeyName: "leave_request_events_actor_employee_id_fkey";
-            columns: ["actor_employee_id"];
+            foreignKeyName: "leave_requests_approver_employee_id_fkey";
+            columns: ["approver_employee_id"];
             isOneToOne: false;
             referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_cancelled_by_employee_id_fkey";
+            columns: ["cancelled_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_decided_by_employee_id_fkey";
+            columns: ["decided_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_employee_id_fkey";
+            columns: ["employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "leave_requests_leave_type_id_fkey";
+            columns: ["leave_type_id"];
+            isOneToOne: false;
+            referencedRelation: "leave_types";
             referencedColumns: ["id"];
           },
         ];
@@ -9124,6 +9255,9 @@ export type Database = {
           // 2026-10-15 — Amazon marketplace country code ('US', 'GB', …);
           // '' for every non-Amazon store. See
           // db/2026-10-15-ad-spend-amazon-country.sql.
+          // Deliberately `string`, not the CHECK constraint's literal union:
+          // the server widens the submitted value before it writes it
+          // (src/app/dashboard/ad-spend/actions.ts's `countryCode`).
           country_code: string;
           budget_usd: number;
           spend_usd: number;
@@ -9144,6 +9278,7 @@ export type Database = {
           id?: string;
           store_id?: string;
           spend_date?: string;
+          country_code?: string;
           budget_usd?: number;
           spend_usd?: number;
           entry_by_employee_id?: string;
@@ -9915,7 +10050,7 @@ export type Database = {
       employee_gender: "Male" | "Female";
       employee_marital_status: "Married" | "Unmarried";
       invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
-      leave_request_status: "Pending" | "Approved" | "Rejected";
+      leave_request_status: "Pending" | "Approved" | "Rejected" | "Cancelled";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";
       order_photo_type: "Dispatch" | "Website";
