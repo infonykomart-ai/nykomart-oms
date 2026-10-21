@@ -152,13 +152,16 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     (() => {
       let query = supabase
         .from("purchase_bills")
-        .select(
-          // 2026-10-20 — created_at/updated_at added for the per-invoice
-          // audit line ("kab entry ki gyi ... agar update hui ho baad me to
-          // vo bhi show hona chahiye admin ko"); see
-          // db/2026-10-20-purchase-bill-no-gst-and-audit.sql.
-          "id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, total_amount, gst_rate_pct, gst_type, round_off_amt, g_total_plus_gst, created_at, updated_at"
-        )
+        // 2026-10-21 — deliberately "*" instead of a column list. This list
+        // now reads audit columns added by newer migrations
+        // (created_at/updated_at from 2026-10-20, entered_by_* from
+        // 2026-10-21); naming them explicitly would make the ENTIRE Purchase
+        // Bill list error out — showing nothing at all — on a database where
+        // one of those SQL files has not been run yet. "*" returns whatever
+        // columns exist, and every field below already has a null fallback,
+        // so an un-run migration degrades one line of text instead of the
+        // whole register. The Admin's Schema Status card says which file.
+        .select("*")
         .eq("company_id", employee.currentCompanyId)
         .order("created_at", { ascending: false })
         // 2026-10-20 — was limit(8) ROWS: fine while every row was its own
@@ -427,6 +430,9 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       round_off_amt: Number(r.round_off_amt ?? 0),
       g_total_plus_gst: r.g_total_plus_gst != null ? Number(r.g_total_plus_gst) : null,
       vendorName: partyName.get(r.vendor_party_id) ?? "",
+      // 2026-10-21 — "kisne entry ki": undefined (rather than null) when the
+      // column does not exist yet, so `?? null` covers the un-migrated case.
+      entered_by_name: r.entered_by_name ?? null,
       related_notes: notesFor(bprIdByPurchaseBillId.get(r.id)),
       finance_bpr_id: bprIdByPurchaseBillId.get(r.id) ?? null,
     }))
@@ -434,6 +440,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     .map((g) => ({
       ...g,
       vendorName: partyName.get(g.vendor_party_id) ?? "",
+      // One invoice can be entered by one person (the normal case, all items
+      // share the stamp). If a later item was added by someone else, the
+      // per-item line inside "▸ Items" still names them individually.
+      enteredByName: g.items.find((i) => i.entered_by_name)?.entered_by_name ?? null,
       taxableTotal: g.items.reduce((s, i) => s + Number(i.total_amount ?? 0), 0),
       grandTotal: g.items.reduce((s, i) => s + purchaseBillGrandTotal(i), 0),
       // First sent-to-Finance row drives the statement sheet; an invoice is

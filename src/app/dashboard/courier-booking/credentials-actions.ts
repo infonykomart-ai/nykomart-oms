@@ -91,6 +91,95 @@ export async function testFedexConnectionAction(_prev: TestFedexConnectionState,
   }
 }
 
+// =============================================================================
+// "Test ALL companies" — Setup Matrix, 2026-10-21.
+//
+// "ek button jo teeno companies ke liye 'Test connection' chala kar ek grid me
+// bata de ki kaunsi company ready hai (abhi har company ke liye alag se click
+// karna padta hai)"
+//
+// Same test as the per-company button above (testFedexConnection — a real
+// Rate-API quote, which is the only honest way to prove key + account number
+// belong together), just fanned out over every company the admin can access.
+// Per company it resolves THAT company's own saved credentials first, with the
+// shared env key as the documented fallback (resolveCourierCredentials), i.e.
+// exactly what a real booking for that company would use.
+//
+// Three Rate-API calls instead of one, on an explicit button press only —
+// never on page load — and FedEx's published limits are generous for that
+// (same reasoning as the single-company action above).
+// =============================================================================
+export type FedexMatrixTestResult = {
+  companyId: string;
+  status: "ok" | "fail";
+  message: string;
+  keySource: "company" | "shared-env" | null;
+  accountMasked: string | null;
+};
+
+export type FedexMatrixTestState = {
+  error: string | null;
+  testedAt: string | null;
+  results: FedexMatrixTestResult[];
+};
+
+export async function testFedexAllCompaniesAction(
+  _prev: FedexMatrixTestState,
+  formData: FormData
+): Promise<FedexMatrixTestState> {
+  const employee = await requireCapability("courier_credentials_admin");
+  const supabase = createServiceRoleClient();
+
+  // Never trust a posted id list: intersect with the companies this admin is
+  // actually allowed to act as (same employee.companyIds boundary every other
+  // courier action uses).
+  const requested = String(formData.get("company_ids") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const companyIds = Array.from(new Set(requested.filter((id) => employee.companyIds.includes(id))));
+  if (companyIds.length === 0) {
+    return { error: "Koi company test karne ke liye nahi mili (ya access nahi hai).", testedAt: null, results: [] };
+  }
+
+  const results = await Promise.all(
+    companyIds.map(async (companyId): Promise<FedexMatrixTestResult> => {
+      try {
+        const credentials = await resolveCourierCredentials(supabase, companyId, "fedex");
+        const result = await testFedexConnection(credentials);
+        if (result.ok) {
+          return {
+            companyId,
+            status: "ok",
+            message: `FedEx accepted account ${result.accountMasked} using ${
+              result.keySource === "company" ? "this company's own API key" : "the shared deployment API key (env var)"
+            }.`,
+            keySource: result.keySource,
+            accountMasked: result.accountMasked,
+          };
+        }
+        return {
+          companyId,
+          status: "fail",
+          message: result.error,
+          keySource: null,
+          accountMasked: result.accountMasked,
+        };
+      } catch (err) {
+        return {
+          companyId,
+          status: "fail",
+          message: err instanceof Error ? err.message : "Test failed unexpectedly.",
+          keySource: null,
+          accountMasked: null,
+        };
+      }
+    })
+  );
+
+  return { error: null, testedAt: new Date().toISOString(), results };
+}
+
 export type ClearCourierCredentialFieldState = { error: string | null; success: boolean };
 
 // A single field can be explicitly cleared (e.g. a rotated/revoked secret)

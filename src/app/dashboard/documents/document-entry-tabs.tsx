@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { CreditNoteForm } from "./credit-note-form";
 import { DebitNoteForm } from "./debit-note-form";
 import { WashingEntryForm } from "./washing-entry-form";
@@ -33,11 +33,17 @@ import {
   deleteShipmentHandoverChalan,
   deleteJournalVoucher,
   deleteReceivedChalan,
+  getPurchaseBillHistory,
+  type PurchaseBillHistoryEntry,
   type SimpleResult,
   type RelatedNote,
 } from "./actions";
 import type { PartyOption } from "./party-options";
 import { PrintArea, PrintButton } from "@/components/print-view";
+// 2026-10-20 repair — restored: the 2026-10-20 upload of this file was built
+// from a checkout that predated PrintDialog (src/components/print-dialog.tsx),
+// so importing/using it silently disappeared from the repo. See CHANGES.txt.
+import { PrintDialog } from "@/components/print-dialog";
 import {
   DocEntryA4,
   creditNoteDoc,
@@ -76,6 +82,10 @@ type PurchaseBillItem = EditablePurchaseBill & {
   vendorName: string;
   created_at: string;
   updated_at: string;
+  // 2026-10-21 — "kisne entry ki": denormalised name of the entering
+  // employee (db/2026-10-21-purchase-bill-entered-by.sql). null on bills
+  // entered before that round — shown as "not tracked", never guessed.
+  entered_by_name: string | null;
   total_amount: number;
   g_total_plus_gst: number | null;
   related_notes: RelatedNote[];
@@ -88,6 +98,8 @@ type PurchaseBillItem = EditablePurchaseBill & {
 // groupPurchaseBillInvoices — storage stays one row per item).
 type PurchaseBillInvoiceRow = PurchaseBillInvoiceGroup<PurchaseBillItem> & {
   vendorName: string;
+  /** Who entered the invoice (first stamped item) — null on legacy bills. */
+  enteredByName: string | null;
   taxableTotal: number;
   grandTotal: number;
   finance_bpr_id: string | null;
@@ -579,14 +591,21 @@ function ShipmentChalanList({ rows }: { rows: ShipmentChalanRow[] }) {
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
               <p className="text-red-600">{deleteError[r.id]}</p>
-              <button
-                type="button"
-                disabled={isPending}
-                onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
-                className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <div className="flex shrink-0 gap-1.5">
+                {/* 2026-10-20 repair — restored (see the PrintDialog import note). */}
+                <PrintDialog
+                  href={`/dashboard/documents/shipment-chalans/${r.id}/report`}
+                  title={`Shipment Chalan — ${r.chalan_no ?? r.id}`}
+                />
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => handleDelete(r.id, r.chalan_no ?? r.id)}
+                  className="rounded border border-red-200 bg-red-50 px-2 py-0.5 font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -626,11 +645,14 @@ function PurchaseBillInvoiceList({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [viewingKey, setViewingKey] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  // 2026-10-21 — which invoice's edit-history chain is open (Admin only).
+  const [historyKey, setHistoryKey] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   const viewing = invoices.find((i) => i.key === viewingKey) ?? null;
   const editingItem = invoices.flatMap((i) => i.items).find((it) => it.id === editingItemId) ?? null;
+  const history = invoices.find((i) => i.key === historyKey) ?? null;
 
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -712,6 +734,11 @@ function PurchaseBillInvoiceList({
                   </div>
                   {canSeeAudit && (
                     <div className="mt-0.5 text-[10px] text-slate-500">
+                      {/* 2026-10-21 — "kisne entry ki": the name next to the
+                          stamp it belongs to. Legacy bills say so instead of
+                          leaving a bare gap the Admin would read as a bug. */}
+                      👤 {inv.enteredByName ?? "entered by not tracked (older entry)"}
+                      <span className="mx-1 text-slate-300">|</span>
                       🗓 Entered {formatAuditStamp(inv.createdAt)}
                       <span className="mx-1 text-slate-300">|</span>
                       {inv.updatedAt ? `✏️ Last updated ${formatAuditStamp(inv.updatedAt)}` : "not edited since entry"}
@@ -734,6 +761,16 @@ function PurchaseBillInvoiceList({
                       className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
                     >
                       {isOpen ? "▾ Hide items" : "▸ Items"}
+                    </button>
+                  )}
+                  {canSeeAudit && (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryKey(inv.key)}
+                      title="Poori chain — kab kisne kya badla"
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      🕘 History
                     </button>
                   )}
                   <button
@@ -796,6 +833,7 @@ function PurchaseBillInvoiceList({
                           {canSeeAudit && (
                             <div className="text-[10px] text-slate-400">
                               Entered {formatAuditStamp(it.created_at)}
+                              {it.entered_by_name ? ` by ${it.entered_by_name}` : " (by not tracked)"}
                               <span className="mx-1">|</span>
                               {edited ? `Updated ${formatAuditStamp(it.updated_at)}` : "never edited"}
                             </div>
@@ -864,8 +902,124 @@ function PurchaseBillInvoiceList({
           <PurchaseBillEditForm bill={editingItem} parties={parties} onDone={() => setEditingItemId(null)} />
         </A4Dialog>
       )}
+
+      {history && (
+        <A4Dialog
+          open
+          onClose={() => setHistoryKey(null)}
+          title={`History — ${history.vendor_invoice_no}`}
+          subtitle="Kisne entry ki, kab edit hua, aur kya badla — newest first."
+          footer={
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setHistoryKey(null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          }
+        >
+          <PurchaseBillHistoryPanel billIds={history.items.map((i) => i.id)} />
+        </A4Dialog>
+      )}
     </div>
   );
+}
+
+// =============================================================================
+// 2026-10-21 — edit-history chain for one vendor invoice.
+//
+// Reads audit_log (getPurchaseBillHistory — Admin-only, same capability that
+// already gates these stamps) for EVERY row of the invoice, so an item added
+// later and an item edited twice all land in one timeline. A migration-less
+// database (no audit_log) shows the action's own "run this SQL" message
+// rather than an empty list, which would look like "nobody ever changed this".
+// =============================================================================
+function PurchaseBillHistoryPanel({ billIds }: { billIds: string[] }) {
+  // Keyed on the joined ids so the effect re-runs only when the invoice
+  // actually changes (a fresh array identity every render would re-fetch in a
+  // loop).
+  const idsKey = billIds.join(",");
+  // One state object tagged with the key it belongs to, instead of separate
+  // loading/error/entries states: "loaded for the CURRENT invoice" is then a
+  // plain derived value (loaded?.key === idsKey), which avoids a synchronous
+  // setState inside the effect just to flip a loading flag back on.
+  const [loaded, setLoaded] = useState<{ key: string; error: string | null; entries: PurchaseBillHistoryEntry[] } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPurchaseBillHistory(idsKey.split(",").filter(Boolean))
+      .then((res) => {
+        if (!cancelled) setLoaded({ key: idsKey, error: res.error, entries: res.entries });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setLoaded({
+            key: idsKey,
+            error: err instanceof Error ? err.message : "History load nahi ho saki.",
+            entries: [],
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [idsKey]);
+
+  const forThisInvoice = loaded?.key === idsKey ? loaded : null;
+  if (!forThisInvoice) return <p className="text-sm text-slate-500">Loading history…</p>;
+  const { error, entries } = forThisInvoice;
+  if (error) return <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>;
+  if (entries.length === 0) {
+    return (
+      <p className="text-sm text-slate-500">
+        Koi history entry nahi hai. Iska matlab: ye bill us code ke live hone se pehle enter hua, ya audit_log abhi tak
+        likha hi nahi ja raha (Schema Status card dekhein).
+      </p>
+    );
+  }
+
+  return (
+    <ol className="space-y-3">
+      {entries.map((e) => {
+        const isCreate = e.action.endsWith(".created");
+        const isDelete = e.action.endsWith(".deleted");
+        const changes = e.changes ?? {};
+        return (
+          <li key={e.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-1">
+              <p className="text-xs font-semibold text-slate-800">
+                {isCreate ? "➕ Entry ki" : isDelete ? "🗑 Delete ki" : "✏️ Edit ki"} — {e.employee_name}
+              </p>
+              <p className="text-[11px] text-slate-400">{formatAuditStamp(e.created_at)}</p>
+            </div>
+            {Object.keys(changes).length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                {Object.entries(changes).map(([key, raw]) => {
+                  const v = (raw ?? {}) as { label?: string; from?: unknown; to?: unknown };
+                  return (
+                    <li key={key}>
+                      <span className="font-medium text-slate-700">{v.label ?? key}</span>:{" "}
+                      <span className="text-slate-400">{formatHistoryValue(v.from)}</span> →{" "}
+                      <span className="text-slate-800">{formatHistoryValue(v.to)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** History values arrive as whatever was logged — null, number or string. */
+function formatHistoryValue(v: unknown): string {
+  if (v == null || v === "") return "—";
+  return String(v);
 }
 
 function DocList<T extends { id: string }>({
@@ -1035,12 +1189,11 @@ function DocList<T extends { id: string }>({
                     </button>
                   )}
                   {r.printHref && (
-                    <Link
+                    <PrintDialog
                       href={r.printHref}
-                      className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      🖨 Print
-                    </Link>
+                      title={`Print — ${r.no}`}
+                      subtitle="A4 preview — prints exactly this document."
+                    />
                   )}
                   {r.statementBillId && <BillStatementDialog billId={r.statementBillId} label={r.statementLabel} />}
                   {r.docStatement && (

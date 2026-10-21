@@ -1070,13 +1070,15 @@ CREATE TABLE shipping_bills (
 -- was for (e.g. printing, washing, dyeing) — kept as free text since the
 -- exact structured vocabulary wasn't pinned down, but its general purpose
 -- is now confirmed rather than a total unknown (SCHEMA_NOTES.md #6).
--- "G. TOTAL + GST" defaults to a flat 5% GST (2.5% CGST + 2.5% SGST) when
--- no per-bill GST rate is picked (gst_rate_pct IS NULL — every bill
--- entered before the GST feature existed, see
--- db/2026-08-17-purchase-bills-gst.sql), otherwise uses the real selected
--- rate, doubled (CGST+SGST or IGST both total the same tax — see that
--- migration's comment), plus round_off_amt (see
--- db/2026-08-17-purchase-bills-round-off.sql).
+-- "G. TOTAL + GST" uses the real selected rate, doubled (CGST+SGST or IGST
+-- both total the same tax — see db/2026-08-17-purchase-bills-gst.sql), plus
+-- round_off_amt (see db/2026-08-17-purchase-bills-round-off.sql).
+-- 2026-10-20 — an explicit "No GST" pick now saves gst_rate_pct = 0 and adds
+-- nothing; the flat 5% fallback below survives ONLY for gst_rate_pct IS NULL,
+-- i.e. legacy bills entered before the GST picker existed. Before this fix
+-- "No GST" also sent NULL, so those bills were posted to Finance 5% higher
+-- than the entry screens showed — see
+-- db/2026-10-20-purchase-bill-no-gst-and-audit.sql.
 CREATE TABLE purchase_bills (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   vendor_party_id         uuid NOT NULL REFERENCES parties(id),
@@ -1113,13 +1115,10 @@ CREATE TABLE purchase_bills (
   -- most vendor parties have no GST number on file, so auto-deciding
   -- isn't reliable). gst_rate_pct is the CGST/SGST INDIVIDUAL rate — total
   -- GST is always double this, however it's itemized (see
-  -- db/2026-08-17-purchase-bills-gst.sql). Both nullable — no rate picked
-  -- keeps the historical flat-5% g_total_plus_gst fallback below.
-  -- 2026-10-20 (folded from db/2026-10-20-purchase-bill-no-gst-and-audit.sql):
-  -- 0 = "No GST" chosen explicitly in the picker (adds nothing); NULL = a
-  -- legacy bill from before the picker existed, which keeps the historical
-  -- flat-5% fallback. Before this, "No GST" also saved NULL, so those bills
-  -- were posted to Finance 5% higher than the entry screens showed.
+  -- db/2026-08-17-purchase-bills-gst.sql).
+  -- 2026-10-20: 0 = "No GST" chosen explicitly in the picker (adds nothing);
+  -- NULL = legacy bill from before the picker existed, which keeps the
+  -- historical flat-5% g_total_plus_gst fallback below.
   gst_rate_pct                   numeric(4,2) CHECK (gst_rate_pct IN (0, 2.5, 3, 4, 9)),
   gst_type                       text CHECK (gst_type IN ('CGST_SGST', 'IGST')),
   -- 2026-08-17: manual signed adjustment so the system total can match a
@@ -1140,12 +1139,19 @@ CREATE TABLE purchase_bills (
                                        + round_off_amt
                                      ) STORED,
   created_at                          timestamptz NOT NULL DEFAULT now(),
-  -- 2026-10-20 (folded from db/2026-10-20-purchase-bill-no-gst-and-audit.sql) —
-  -- "kab entry ki gyi date & time ke sath agar update hui ho baad me to vo bhi
-  -- show hona chahiye admin ko": created_at IS the entry timestamp; updated_at
-  -- is kept fresh by trg_purchase_bills_updated_at below so an edited item
-  -- never loses the fact that it changed after the fact.
+  -- 2026-10-20 — "kab entry ki gyi date & time ke sath agar update hui ho
+  -- baad me to vo bhi show hona chahiye admin ko": created_at IS the entry
+  -- timestamp; updated_at is kept fresh by the trg_purchase_bills_updated_at
+  -- trigger (same migration) so an edited item never loses the fact that it
+  -- was changed after the fact.
   updated_at                          timestamptz NOT NULL DEFAULT now(),
+  -- 2026-10-21 — "kisne entry ki": who typed this row in. The name is
+  -- denormalised (like audit_log.employee_name) so the Document Entry list can
+  -- name the person without a join and a later rename/deactivation never
+  -- rewrites history. NULL = entered before this round (unknown, never
+  -- guessed). See db/2026-10-21-purchase-bill-entered-by.sql.
+  entered_by_employee_id          uuid REFERENCES employees(id) ON DELETE SET NULL,
+  entered_by_name                    text,
   -- 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
   -- JO PARTY INVOICE DALE VO SABHI ME UPDATE HO JAYE" — one vendor invoice
   -- legitimately covers many orders now (Purchase Bill multi-PO select),
@@ -1157,10 +1163,11 @@ CREATE TABLE purchase_bills (
 );
 CREATE INDEX idx_purchase_bills_order ON purchase_bills(order_id);
 CREATE INDEX idx_purchase_bills_company ON purchase_bills(company_id);
+-- 2026-10-21 — "which bills did X enter" (mostly non-NULL going forward only).
+CREATE INDEX idx_purchase_bills_entered_by ON purchase_bills(entered_by_employee_id)
+  WHERE entered_by_employee_id IS NOT NULL;
 
--- 2026-10-20 (folded from db/2026-10-20-purchase-bill-no-gst-and-audit.sql) —
--- audit stamp: a trigger rather than every call site remembering to set it,
--- so edits made from the app AND hand-run SQL fixes both move updated_at.
+-- 2026-10-20 — audit column trigger (see db/2026-10-20-purchase-bill-no-gst-and-audit.sql).
 CREATE OR REPLACE FUNCTION set_purchase_bills_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1170,6 +1177,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
 DROP TRIGGER IF EXISTS trg_purchase_bills_updated_at ON purchase_bills;
 CREATE TRIGGER trg_purchase_bills_updated_at
   BEFORE UPDATE ON purchase_bills

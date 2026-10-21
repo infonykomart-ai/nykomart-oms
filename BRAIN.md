@@ -840,3 +840,54 @@ logic), `party-ledger-build-2026-08-17.md`, `historical-master-bill-pass-file-im
 `app-code-security-audit-2026-08-17.md`, `perf-audit-2026-08-17.md`,
 `purchase-bill-round-off-and-gst-desync-2026-08-17.md`, and others — use `project_search` for a
 specific question rather than reading every doc.
+
+## 11. Round 2026-10-21 — schema status, leave digest, purchase-bill attribution, FedEx test-all
+
+**Schema / Migration Status card** (`src/lib/db/schema-status.ts` +
+`src/components/schema-health-card.tsx`, rendered on `/dashboard` for
+`permissions_admin`). This app has no migration ledger — every `db/*.sql` file is
+run by hand in the Supabase SQL editor — and optional columns are read with
+tolerant fallbacks everywhere, so an un-run file degrades a feature *silently*
+(stale figure, missing stamp, empty picker). The card closes that gap by asking
+PostgREST for the one column/table each tracked migration creates ("does it
+exist"), never reading data, and listing what each pending file degrades. Design
+choices worth keeping: (a) probes instead of a bookkeeping table — a ledger table
+would itself need a migration; (b) two distinct states, `missing` (action needed)
+vs `unverified` (network/permission — shown muted, so a Supabase hiccup never
+fakes a pending migration); (c) a deliberately SMALL list (~10 newest
+high-impact rounds, one entry each in `SCHEMA_CHECKS`) because each probe is a
+round-trip; (d) the Document Entry purchase-bill query now selects `*` rather
+than naming audit columns, so one un-run migration degrades a line of text
+instead of blanking the whole register — the card is what explains why.
+
+**Leave daily digest** (`src/app/api/cron/leave-digest/route.ts` +
+`src/lib/leave/digest.ts`). Sends "Aaj N log leave par — names" every morning from
+the same `leave_requests` rows the "On Leave" board reads (Approved + today in
+range, IST). Recipients: `LEAVE_DIGEST_CHAT_ID` when set (comma-separated,
+management group), else a DM to every active employee whose role holds
+`leave_admin` and who has `telegram_chat_id`. Never broadcast to all staff. The
+message text is a pure module so `?dry=1` can show it verbatim without sending.
+**Deliberately NOT added to `vercel.json`**: this project already spends Hobby's
+hard 2-cron cap (see poll-fedex-tracking's header — a third entry silently blocks
+deployments), so it is scheduled by an external scheduler hitting the route with
+`Authorization: Bearer $CRON_SECRET`. `?skipEmpty=1` suppresses the zero-leave
+message.
+
+**Purchase bill "kisne entry ki" + edit history** (`db/2026-10-21-purchase-bill-entered-by.sql`,
+`src/lib/purchase-bill-audit.ts`). `entered_by_employee_id` + denormalised
+`entered_by_name` on the row (survives rename/deactivation, like
+`audit_log.employee_name`); legacy rows stay NULL and render as "not tracked" —
+attributing an old bill by guesswork would be a lie. The chain (entry + every
+edit + delete) lives in `audit_log`; `updatePurchaseBill` snapshots the row
+before writing and logs only the fields that moved (`{field: {label, from, to}}`),
+rendered by an admin-only "🕘 History" dialog. History starts empty for bills
+entered before this round — there is simply no record.
+
+**FedEx setup matrix test-all** (`testFedexAllCompaniesAction` +
+`courier-booking/setup-matrix.tsx`). The saved-vs-env chip only says
+"configured"; the 2026-09-17 production bug was a saved-looking key + account
+pair that FedEx rejected on the first real booking. One button now runs the same
+real Rate-API test per company (intersected with `employee.companyIds`, never a
+posted id list), shows ✓ Ready / ✗ Not ready per company in the grid, a ready
+count, and each company's exact FedEx message. Three calls on an explicit click
+only — never on page load.

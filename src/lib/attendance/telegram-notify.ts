@@ -359,6 +359,26 @@ export async function sendTestTelegram(params: {
   }
 }
 
+/**
+ * 2026-10-21 — generic "send this text to this chat" for callers that are not
+ * the punch notifier, i.e. the leave daily digest cron
+ * (src/app/api/cron/leave-digest/route.ts).
+ *
+ * Deliberately wraps the SAME sendTelegramText used for punch messages (5s
+ * timeout, Telegram's own error text passed through) rather than adding a
+ * second HTTP path, so the digest can never hang a cron run and behaves
+ * exactly like every other message the bot sends. Returns the outcome instead
+ * of silently logging, because the cron response reports per-recipient
+ * failures back to whoever triggered it.
+ */
+export async function sendTelegramToChat(chatId: string, text: string): Promise<SendResult> {
+  const token = (process.env.TELEGRAM_BOT_TOKEN ?? "").trim();
+  if (!token) return { ok: false, error: "TELEGRAM_BOT_TOKEN is not configured on the server." };
+  const chat = (chatId ?? "").trim();
+  if (!chat) return { ok: false, error: "No Telegram chat id to send to." };
+  return sendTelegramText(token, chat, text);
+}
+
 type ConnectResult = { ok: boolean; error?: string; chatId?: string };
 
 /**

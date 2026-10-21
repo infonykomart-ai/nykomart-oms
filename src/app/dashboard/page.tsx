@@ -1,6 +1,9 @@
 import { getAuthedEmployee } from "@/lib/auth/require-capability";
 import { CAPABILITY_INFO } from "@/lib/capability-info";
 import { NavTile, NavTileGrid } from "@/components/nav-tile";
+import { createServiceRoleClient } from "@/lib/supabase/server";
+import { checkSchemaStatus } from "@/lib/db/schema-status";
+import { SchemaHealthCard } from "@/components/schema-health-card";
 
 /**
  * Post-login landing view — a work-summary tile grid of everything the
@@ -14,6 +17,16 @@ export default async function DashboardHome() {
   const employee = await getAuthedEmployee();
   const tiles = CAPABILITY_INFO.filter((c) => employee.capabilities.includes(c.code));
 
+  // 2026-10-21 — "admin ko dikhta nahi ki kaunsi migration abhi bhi pending
+  // hai": a pending SQL file degrades features through tolerant column
+  // fallbacks instead of erroring, so an Admin-only card on the landing page
+  // is the one place that surfaces it proactively. Admin/MD only (same
+  // permissions_admin gate the audit stamps on Document Entry use), and it
+  // probes existence only — see src/lib/db/schema-status.ts.
+  const schemaStatus = employee.capabilities.includes("permissions_admin")
+    ? await checkSchemaStatus(createServiceRoleClient())
+    : null;
+
   return (
     <div>
       <div className="mb-6">
@@ -21,6 +34,8 @@ export default async function DashboardHome() {
           Welcome, {employee.name.split(" ")[0]}
         </h1>
       </div>
+
+      {schemaStatus && <SchemaHealthCard status={schemaStatus} />}
 
       <NavTileGrid>
         {tiles.map((tile, i) => (

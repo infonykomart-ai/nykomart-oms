@@ -38,6 +38,9 @@ import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
+// 2026-10-21 — the field-by-field diff written to the audit chain (pure, so it
+// is testable outside this server-action module).
+import { purchaseBillChanges } from "@/lib/purchase-bill-audit";
 import { validateDateFields } from "@/lib/fy-date";
 import { saveOrderRefundCore } from "../orders/actions";
 import { autoSettleWalletBills } from "@/lib/wallet/auto-settle";
@@ -1191,32 +1194,56 @@ async function savePurchaseBillCore(
     companyId = employee.currentCompanyId;
   }
 
-  const { data, error } = await supabase
-    .from("purchase_bills")
-    .insert({
-      vendor_party_id: p.vendorPartyId,
-      vendor_invoice_no: p.vendorInvoiceNo,
-      vendor_invoice_date: p.vendorInvoiceDate,
-      qty: p.qty || 1,
-      sq_feet: p.sqFeet,
-      qty_unit: p.qtyUnit || "FT",
-      work_description: p.workDescription,
-      unit_rate: p.unitRate,
-      order_id: p.orderId,
-      company_id: companyId,
-      // 2026-10-20 — "No GST" is stored as 0, never NULL. See
-      // db/2026-10-20-purchase-bill-no-gst-and-audit.sql: the
-      // g_total_plus_gst generated column treats NULL as the historical
-      // flat-5% default, so a bill the user explicitly saved WITHOUT GST
-      // used to land in Bill Payment / Party Ledger 5% higher than the
-      // amount the entry screens showed (invoice 170 / SHARDA: 10620
-      // entered vs 10804.50 posted). 0 makes the GST term zero.
-      gst_rate_pct: p.gstRatePct && p.gstRatePct > 0 ? p.gstRatePct : 0,
-      gst_type: p.gstRatePct && p.gstRatePct > 0 ? p.gstType : null,
-      round_off_amt: p.roundOffAmt || 0,
-    })
-    .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
-    .single();
+  const billFields = {
+    vendor_party_id: p.vendorPartyId,
+    vendor_invoice_no: p.vendorInvoiceNo,
+    vendor_invoice_date: p.vendorInvoiceDate,
+    qty: p.qty || 1,
+    sq_feet: p.sqFeet,
+    qty_unit: p.qtyUnit || "FT",
+    work_description: p.workDescription,
+    unit_rate: p.unitRate,
+    order_id: p.orderId,
+    company_id: companyId,
+    // 2026-10-20 — "No GST" is stored as 0, never NULL. See
+    // db/2026-10-20-purchase-bill-no-gst-and-audit.sql: the
+    // g_total_plus_gst generated column treats NULL as the historical
+    // flat-5% default, so a bill the user explicitly saved WITHOUT GST
+    // used to land in Bill Payment / Party Ledger 5% higher than the
+    // amount the entry screens showed (invoice 170 / SHARDA: 10620
+    // entered vs 10804.50 posted). 0 makes the GST term zero.
+    gst_rate_pct: p.gstRatePct && p.gstRatePct > 0 ? p.gstRatePct : 0,
+    gst_type: p.gstRatePct && p.gstRatePct > 0 ? p.gstType : null,
+    round_off_amt: p.roundOffAmt || 0,
+  };
+
+  // 2026-10-21 — "kisne entry ki": stamped on the row itself (name
+  // denormalised so a later rename/deactivation never rewrites history), see
+  // db/2026-10-21-purchase-bill-entered-by.sql.
+  //
+  // TOLERANT FALLBACK, like every other optional column in this app: if that
+  // SQL file has not been run yet, PostgREST rejects the two unknown columns
+  // and the WHOLE bill would fail to save — a pending migration must never
+  // block real entry work. So the insert is retried without the attribution
+  // columns; the bill saves exactly as before, "Entered by" just stays blank,
+  // and the Admin's Schema Status card names the pending file.
+  const insertWithAttribution = () =>
+    supabase
+      .from("purchase_bills")
+      .insert({ ...billFields, entered_by_employee_id: employee.id, entered_by_name: employee.name })
+      .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
+      .single();
+  const insertWithoutAttribution = () =>
+    supabase
+      .from("purchase_bills")
+      .insert(billFields)
+      .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
+      .single();
+
+  let { data, error } = await insertWithAttribution();
+  if (error && /entered_by_(employee_id|name)/i.test(error.message)) {
+    ({ data, error } = await insertWithoutAttribution());
+  }
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key")
@@ -1270,6 +1297,37 @@ async function savePurchaseBillCore(
   // must never roll back or block the Purchase Bill itself, which is
   // already fully saved at this point (same "don't lose what already
   // succeeded" approach as the bprError handling just above).
+  // 2026-10-21 — the History chain on Document Entry starts here, not at the
+  // first edit: without a "created" entry the Admin's list would begin at
+  // whichever field someone happened to change, with no record of who typed
+  // the original bill in. Best-effort like every other logAudit call.
+  await logAudit(supabase, {
+    companyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "purchase_bill.created",
+    entityType: "purchase_bill",
+    entityId: data.id,
+    entityLabel: data.vendor_invoice_no,
+    // Diffed against an empty row so the entry carries the same labels a
+    // later edit uses ("Qty", "Rate / Unit", ...) plus the grand total it
+    // posted at — the History panel then needs no special case for "created".
+    changes: purchaseBillChanges(
+      {},
+      {
+        qty: p.qty || 1,
+        sq_feet: p.sqFeet,
+        qty_unit: p.qtyUnit,
+        unit_rate: p.unitRate,
+        gst_rate_pct: p.gstRatePct ?? 0,
+        gst_type: p.gstRatePct && p.gstRatePct > 0 ? p.gstType : null,
+        work_description: p.workDescription,
+        round_off_amt: p.roundOffAmt || 0,
+        grand_total: Number(data.g_total_plus_gst ?? data.total_amount ?? 0),
+      }
+    ),
+  });
+
   if (bprData) {
     await createJournalVoucherForBill(supabase, bprData.id, {
       itemDetails: p.workDescription,
@@ -1595,7 +1653,16 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   // order's own company is still the source of truth (unchanged, in case
   // the two ever drift); for an orderless general-stock bill, company_id
   // itself is the only source, so it's checked directly.
-  const { data: existingBill } = await supabase.from("purchase_bills").select("id, order_id, company_id").eq("id", id).single();
+  // 2026-10-21 — full BEFORE snapshot: the edit history needs every audited
+  // field's old value, not just the company/order columns this check used to
+  // read. Same row, same round-trip.
+  const { data: existingBill } = await supabase
+    .from("purchase_bills")
+    .select(
+      "id, order_id, company_id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, work_description, unit_rate, gst_rate_pct, gst_type, round_off_amt"
+    )
+    .eq("id", id)
+    .single();
   if (!existingBill) return { error: "Purchase Bill not found.", success: false };
   if (existingBill.order_id) {
     const { data: order } = await supabase.from("orders").select("company_id").eq("id", existingBill.order_id).single();
@@ -1616,21 +1683,23 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   const rawGstRate = strOrNull(formData, "gst_rate_pct");
   const gstRatePct = rawGstRate && Number(rawGstRate) > 0 ? Number(rawGstRate) : 0;
 
+  const nextValues = {
+    vendor_party_id: vendorPartyId,
+    vendor_invoice_no: vendorInvoiceNo,
+    vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
+    qty: numOrZero(formData, "qty") || 1,
+    sq_feet: numOrZero(formData, "sq_feet"),
+    qty_unit: qtyUnitUnion(str(formData, "qty_unit") || "FT"),
+    work_description: strOrNull(formData, "work_description"),
+    unit_rate: numOrZero(formData, "unit_rate"),
+    gst_rate_pct: gstRatePct,
+    gst_type: gstRatePct > 0 ? gstTypeUnion(strOrNull(formData, "gst_type")) : null,
+    round_off_amt: numOrZero(formData, "round_off_amt"),
+  };
+
   const { data: updated, error } = await supabase
     .from("purchase_bills")
-    .update({
-      vendor_party_id: vendorPartyId,
-      vendor_invoice_no: vendorInvoiceNo,
-      vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
-      qty: numOrZero(formData, "qty") || 1,
-      sq_feet: numOrZero(formData, "sq_feet"),
-      qty_unit: qtyUnitUnion(str(formData, "qty_unit") || "FT"),
-      work_description: strOrNull(formData, "work_description"),
-      unit_rate: numOrZero(formData, "unit_rate"),
-      gst_rate_pct: gstRatePct,
-      gst_type: gstRatePct > 0 ? gstTypeUnion(strOrNull(formData, "gst_type")) : null,
-      round_off_amt: numOrZero(formData, "round_off_amt"),
-    })
+    .update(nextValues)
     .eq("id", id)
     .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
     .single();
@@ -1667,9 +1736,89 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
       .eq("source_id", id);
   }
 
+  // 2026-10-21 — "edit history list admin ko poori chain dikhegi (kab kisne
+  // kya badla)". Only the fields that actually MOVED are written, so the
+  // History panel reads as a real diff instead of repeating the whole row on
+  // every save. Logged AFTER the write (logAudit's contract).
+  const changes = purchaseBillChanges(existingBill as unknown as Record<string, unknown>, nextValues);
+  if (Object.keys(changes).length > 0) {
+    await logAudit(supabase, {
+      companyId: existingBill.company_id,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      action: "purchase_bill.updated",
+      entityType: "purchase_bill",
+      entityId: id,
+      entityLabel: updated?.vendor_invoice_no ?? existingBill.vendor_invoice_no,
+      changes,
+    });
+  }
+
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/bill-payment");
   return { error: null, success: true };
+}
+
+// =============================================================================
+// PURCHASE BILL — edit history (2026-10-21).
+//
+// "abhi timestamps hain (...) par kaun unka nahi": created_at/updated_at only
+// say WHEN. The chain of WHO changed WHAT lives in audit_log (written by
+// savePurchaseBillCore / updatePurchaseBill / deletePurchaseBill); this is the
+// Admin-only read side, scoped to the rows of ONE vendor invoice so the
+// Document Entry list can show a single History panel per invoice.
+//
+// Gated on permissions_admin, the same capability that already reveals the
+// entry/updated stamps in that list (page.tsx's canSeeAudit) — an employee who
+// can enter bills does not automatically get to read other people's changes.
+// =============================================================================
+export type PurchaseBillHistoryEntry = {
+  id: string;
+  action: string;
+  employee_name: string;
+  created_at: string;
+  changes: Record<string, unknown> | null;
+};
+
+export async function getPurchaseBillHistory(
+  billIds: string[]
+): Promise<{ error: string | null; entries: PurchaseBillHistoryEntry[] }> {
+  await requireCapability("permissions_admin");
+  const supabase = createServiceRoleClient();
+
+  // Bounded on purpose: one invoice is a handful of rows, and an unbounded
+  // client-supplied id list would let this read the whole table.
+  const ids = billIds.filter((v): v is string => typeof v === "string" && v.length > 0).slice(0, 60);
+  if (ids.length === 0) return { error: null, entries: [] };
+
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select("id, action, employee_name, created_at, changes")
+    .eq("entity_type", "purchase_bill")
+    .in("entity_id", ids)
+    .order("created_at", { ascending: false })
+    .limit(120);
+
+  if (error) {
+    // Missing audit_log table = db/2026-08-24-audit-log.sql not run. Say which
+    // file instead of a raw PostgREST message — this panel is exactly where an
+    // Admin is trying to find that out.
+    const message = /audit_log/i.test(error.message)
+      ? "audit_log table nahi hai — pehle db/2026-08-24-audit-log.sql run karein (Schema Status card dekhein)."
+      : error.message;
+    return { error: message, entries: [] };
+  }
+
+  return {
+    error: null,
+    entries: (data ?? []).map((r) => ({
+      id: r.id,
+      action: r.action,
+      employee_name: r.employee_name,
+      created_at: r.created_at,
+      changes: (r.changes ?? null) as Record<string, unknown> | null,
+    })),
+  };
 }
 
 export async function deletePurchaseBill(id: string): Promise<SimpleResult> {
