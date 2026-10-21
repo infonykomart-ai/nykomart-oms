@@ -61,6 +61,22 @@ function CourierCredentialCard({ courierKey, label, status }: { courierKey: Cour
       </form>
       {courierKey === "fedex" && (
         <div className="border-t border-slate-100 px-4 py-4">
+          {/* 2026-10-21 — "fedex ke teeno companies me account setup kiya hu
+              ... vercel me ek ke credentials dalu or baki ke bhi work kare
+              properly": the resolver already supports exactly that (see
+              resolveCourierCredentials in src/lib/couriers/credentials.ts —
+              DB value first, then that field's env var). One developer key
+              can serve every company; the ACCOUNT NUMBER cannot, because
+              charges post to a per-company FedEx account. Saying it on the
+              card stops a second/third company being left on a blank account
+              number and failing only at booking time. */}
+          <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-[11px] text-sky-900">
+            One FedEx developer key (Client ID + Secret) works for ALL companies: put it once in the deployment env
+            (<code className="rounded bg-sky-100 px-1">FEDEX_API_CLIENT_ID</code> /{" "}
+            <code className="rounded bg-sky-100 px-1">FEDEX_API_CLIENT_SECRET</code>) and leave Client ID/Secret blank here.
+            Only the <strong>Account Number</strong> is per company — save each company&apos;s own number once (switch company at
+            the top, then return to this tab). Test connection checks the exact key + account pair this company books with.
+          </p>
           {/* Separate <form> from the save form above (nested forms are
               invalid HTML) — same data, different action. */}
           <form action={testFormAction} className="flex items-center gap-3">
