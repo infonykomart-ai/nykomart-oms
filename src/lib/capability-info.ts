@@ -90,6 +90,14 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Generate Joining / Promotion / Experience / Salary Slip and other letters." },
   { code: "employee_admin", label: "Employees", icon: "👥", href: "/dashboard/admin/employees",
     description: "Manage the employee roster." },
+  // 2026-10-21 — same capability, a second destination (same pattern as
+  // doc_entry's multiple entries below): which one-time db/2026-*.sql files
+  // this database has actually had run. See src/lib/migrations/probes.ts for
+  // why a pending file needs its own visible answer — the app keeps working
+  // without it, which is exactly how "the fix is live" became impossible to
+  // tell from "the fix was never applied".
+  { code: "employee_admin", label: "Database / Migrations", icon: "🧩", href: "/dashboard/admin/migrations",
+    description: "See which one-time SQL files are applied, and which are still pending." },
   { code: "permissions_admin", label: "Roles & Permissions", icon: "🔐", href: "/dashboard/admin/permissions",
     description: "Set which role gets which capability — self-service, no code change needed." },
   { code: "reports", label: "Reports", icon: "📈", href: "/dashboard/reports",
