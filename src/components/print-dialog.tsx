@@ -18,6 +18,19 @@
 // so only the document is sent to the printer (the report page's own
 // PrintArea @media print rules apply inside it), and the surrounding
 // dashboard/dialog is never included.
+//
+// 2026-10-22 — "jo ye alag se dikh rahi hai vo auto adjust honi chahiye na
+// page bhi iske hisab se khud adjust ho jaye": the dialog used to hand the
+// frame a fixed A4-ratio height, so a short document (a bill with 3 AWBs, a
+// one-line note) floated at the top of a tall blank sheet. Two changes:
+//   1. A4Dialog now runs in fitContent mode — panel height follows content.
+//   2. After the frame loads, the embedded page's own scrollHeight is
+//      measured (same-origin, so readable) and the frame is given exactly
+//      that height. Re-measured once shortly after load so late layout
+//      (fonts, logo, table reflow) is included.
+// The embedded report pages hide their own "← Back / Download PDF" toolbar
+// when ?embed=1 (see their `x-embed` check), so the sheet shows the document
+// and nothing else.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { A4Dialog } from "./a4-dialog";
 
@@ -37,6 +50,7 @@ export function PrintDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [docHeight, setDocHeight] = useState<number | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // 2026-10-19 — "dialog box me open ho to sirf page hi open ho": the page
   // this previews is a normal dashboard route, so without ?embed=1 the
@@ -49,8 +63,51 @@ export function PrintDialog({
   // an edit) — keep the "loaded" flag honest for the Print button state.
   const openDialog = useCallback(() => {
     setLoaded(false);
+    setDocHeight(null);
     setOpen(true);
   }, []);
+
+  // Height of the embedded document itself (not the iframe's own viewport),
+  // so the dialog can shrink to fit it. Same-origin iframe → readable; if a
+  // browser ever refuses, the fixed minHeight below keeps it usable.
+  //
+  // Measured on the page's OWN content (the dashboard shell's <main> scrolls
+  // inside a fixed h-dvh shell, so documentElement.scrollHeight would just
+  // echo the iframe's current height and never shrink): content block height
+  // + main's top padding + a normal bottom padding — main's pb-24 exists for
+  // the floating messenger/companion widgets, which embed mode doesn't
+  // render, so it is capped rather than counted in full.
+  const measure = useCallback(() => {
+    const frame = iframeRef.current;
+    const doc = frame?.contentDocument;
+    const win = frame?.contentWindow;
+    if (!doc || !win) return;
+    try {
+      const main = doc.querySelector("main");
+      const content = main?.firstElementChild as HTMLElement | null;
+      if (main && content) {
+        const cs = win.getComputedStyle(main);
+        const padT = parseFloat(cs.paddingTop) || 0;
+        const padB = Math.min(parseFloat(cs.paddingBottom) || 0, 32);
+        const h = Math.ceil(content.getBoundingClientRect().height + padT + padB);
+        if (h > 0) {
+          setDocHeight(h);
+          return;
+        }
+      }
+      const h = Math.max(doc.documentElement?.scrollHeight ?? 0, doc.body?.scrollHeight ?? 0);
+      if (h > 0) setDocHeight(h);
+    } catch {
+      // Cross-origin or a document mid-navigation — keep the default height.
+    }
+  }, []);
+
+  const handleLoad = useCallback(() => {
+    setLoaded(true);
+    measure();
+    // Second pass: tables/logos/fonts can settle a frame later.
+    window.setTimeout(measure, 300);
+  }, [measure]);
 
   useEffect(() => {
     if (!open) return;
@@ -96,6 +153,7 @@ export function PrintDialog({
         title={title ?? "Print Preview"}
         subtitle={subtitle ?? "A4 preview — prints exactly this document."}
         flushBody
+        fitContent
         footer={
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-500">
@@ -126,9 +184,9 @@ export function PrintDialog({
             ref={iframeRef}
             src={src}
             title={title ?? "Print preview"}
-            onLoad={() => setLoaded(true)}
-            className="h-full w-full border-0 bg-white"
-            style={{ minHeight: "min(70vh, calc(92vw * 1.4142))" }}
+            onLoad={handleLoad}
+            className="w-full border-0 bg-white"
+            style={{ height: docHeight ?? "min(70vh, calc(92vw * 1.4142))" }}
           />
         )}
       </A4Dialog>

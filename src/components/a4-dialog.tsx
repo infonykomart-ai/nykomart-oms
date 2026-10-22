@@ -54,6 +54,7 @@ export function A4Dialog({
   children,
   footer,
   flushBody = false,
+  fitContent = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -64,6 +65,16 @@ export function A4Dialog({
   footer?: ReactNode;
   /** Edge-to-edge body (no padding/gray) — for iframe-embedded full pages. */
   flushBody?: boolean;
+  /**
+   * 2026-10-22 — "jo ye alag se dikh rahi hai vo auto adjust honi chahiye na
+   * page bhi iske hisab se khud adjust ho jaye": a preview/print sheet was
+   * always forced to A4's full aspect ratio, so a two-line document sat in a
+   * tall panel with half the sheet blank. When true the panel's HEIGHT
+   * follows its content (still capped at 96vh, scrolling internally only
+   * when the document is genuinely taller than the screen); width stays the
+   * usual A4 width. Forms keep the fixed A4 panel.
+   */
+  fitContent?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -104,7 +115,11 @@ export function A4Dialog({
         aria-modal="true"
         tabIndex={-1}
         className="a4-dialog-panel flex flex-col overflow-hidden rounded-xl bg-white shadow-2xl outline-none"
-        style={{ width: A4_DIALOG_WIDTH, height: "min(calc(92vw * 1.4142), 96vh)" }}
+        style={
+          fitContent
+            ? { width: A4_DIALOG_WIDTH, height: "auto", maxHeight: "96vh" }
+            : { width: A4_DIALOG_WIDTH, height: "min(calc(92vw * 1.4142), 96vh)" }
+        }
       >
         <style>{`
           @media print {

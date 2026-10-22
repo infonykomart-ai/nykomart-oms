@@ -92,15 +92,21 @@ export function DocStatementDialog({
       ) : (
         <span className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50">📄 View</span>
       );
+    // 2026-10-22 — same dead-trigger fix as bill-statement-dialog.tsx: the
+    // sheet was only mounted on the autoOpen branch, so a click fetched the
+    // document and rendered nothing. Trigger + Sheet are both returned now.
     return (
-      <button
-        type="button"
-        onClick={openSheet}
-        className="text-left"
-        title={`Open read-only ${KIND_LABEL[type]} statement (print / WhatsApp / Telegram / email / PDF)`}
-      >
-        {trigger}
-      </button>
+      <>
+        <button
+          type="button"
+          onClick={openSheet}
+          className="text-left"
+          title={`Open read-only ${KIND_LABEL[type]} statement (print / WhatsApp / Telegram / email / PDF)`}
+        >
+          {trigger}
+        </button>
+        <Sheet type={type} open={open} close={close} loading={loading} error={error} data={data} />
+      </>
     );
   }
 

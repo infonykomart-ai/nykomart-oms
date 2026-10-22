@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
@@ -124,12 +125,19 @@ async function DutyBillReportInner({ id }: { id: string }) {
     };
   });
 
+  // 2026-10-22 — same embed handling as the freight report: inside the A4
+  // preview dialog (?embed=1 → x-embed) the dialog owns the toolbar, so the
+  // page's own Back/Download bar is not rendered.
+  const embedded = (await headers()).get("x-embed") === "1";
+
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between print:hidden">
-        <Link href="/dashboard/documents" className="text-sm text-slate-500 hover:underline">← Back to Document Entry</Link>
-        <PrintButton label="🖨 Download PDF" />
-      </div>
+      {!embedded && (
+        <div className="mb-4 flex items-center justify-between print:hidden">
+          <Link href="/dashboard/documents" className="text-sm text-slate-500 hover:underline">← Back to Document Entry</Link>
+          <PrintButton label="🖨 Download PDF" />
+        </div>
+      )}
 
       <PrintArea id="duty-report-area">
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">

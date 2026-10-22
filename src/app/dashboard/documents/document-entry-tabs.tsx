@@ -835,6 +835,7 @@ function PurchaseBillInvoiceList({
           onClose={() => setViewingKey(null)}
           title={`View — ${viewing.vendor_invoice_no}`}
           subtitle="A4 preview of the whole invoice — Print / Save PDF prints this document only."
+          fitContent
           footer={
             <div className="flex items-center justify-end gap-2">
               <PrintButton label="🖨 Print / Save PDF" />
@@ -989,6 +990,7 @@ function DocList<T extends { id: string }>({
               onClose={() => setViewingId(null)}
               title={`View — ${r.no}`}
               subtitle="A4 preview — Print / Save PDF prints this document only; no page navigation."
+              fitContent
               footer={
                 <div className="flex items-center justify-end gap-2">
                   <PrintButton label="🖨 Print / Save PDF" />
