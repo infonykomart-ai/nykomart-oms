@@ -13,6 +13,7 @@
 // Data, etc.) is gated behind; this belongs alongside them.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { resolveOrderByReference } from "@/lib/orders/find-order";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
@@ -100,12 +101,15 @@ export async function lookupOrderForPackages(query: string): Promise<OrderPackag
   const trimmed = query.trim();
   if (!trimmed) return { ...EMPTY, error: "Enter a PO/RF/RG number." };
 
-  const { data: order } = await supabase
-    .from("orders")
-    .select("id, ref_no, company_id")
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
-    .maybeSingle();
+  // 2026-10-22 — exact ilike + maybeSingle() here meant a partial number, a
+  // different case, or a ref that exists in two companies answered "No order
+  // found" for an order that is right there. resolveOrderByReference tries
+  // the exact ref first, then a unique partial match on ref_no /
+  // marketplace order no. — see src/lib/orders/find-order.ts.
+  const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+  if (!match.ok) return { ...EMPTY, error: match.error };
+
+  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id").eq("id", match.id).maybeSingle();
 
   if (!order) return { ...EMPTY, error: `No order found for "${trimmed}".` };
 

@@ -107,13 +107,17 @@ export async function lookupOrderForEntry(refNo: string): Promise<OrderLookup> {
   const trimmed = refNo.trim();
   if (!trimmed) return { ...EMPTY_LOOKUP, error: "Enter a PO/RF/RG number." };
 
+  // 2026-10-22 — same "order exists but is not found" fix as the other
+  // pickers: exact ilike + maybeSingle() → resolveOrderByReference.
+  const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+  if (!match.ok) return { ...EMPTY_LOOKUP, error: match.error };
+
   const { data: order } = await supabase
     .from("orders")
     .select(
       "id, ref_no, company_id, store_id, buyer_name_address, contact_no, order_value_original, order_currency, order_value_usd, order_value_inr, invoice_id, vendor_party_id"
     )
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
+    .eq("id", match.id)
     .maybeSingle();
 
   if (!order) return { ...EMPTY_LOOKUP, error: `No order found for "${trimmed}".` };
@@ -4370,17 +4374,20 @@ export async function lookupOrderForShipmentChalan(query: string): Promise<Chala
   if (!trimmed) return { error: "Enter a PO/RF/RG or AWB number.", order: null, dispatch: null, alreadyHandedOver: false };
 
   let orderId: string | null = null;
-  const { data: byRef } = await supabase
-    .from("orders")
-    .select("id")
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
-    .maybeSingle();
-  orderId = byRef?.id ?? null;
+  // 2026-10-22 — same exact-match/maybeSingle dead end as the other order
+  // pickers; a partial ref or one duplicated across companies answered
+  // "No order found". AWB fallback also uses limit(2) now, so a duplicated
+  // AWB resolves instead of erroring out.
+  const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+  orderId = match.ok ? match.id : null;
 
   if (!orderId) {
-    const { data: byAwb } = await supabase.from("dispatch_invoices").select("order_id").ilike("awb_no", trimmed).maybeSingle();
-    if (byAwb) orderId = byAwb.order_id;
+    const { data: awbRows } = await supabase
+      .from("dispatch_invoices")
+      .select("order_id")
+      .ilike("awb_no", trimmed)
+      .limit(2);
+    if (awbRows && awbRows.length > 0) orderId = awbRows[0].order_id;
   }
   if (!orderId) return { error: `No order found for "${trimmed}".`, order: null, dispatch: null, alreadyHandedOver: false };
 
