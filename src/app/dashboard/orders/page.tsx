@@ -5,6 +5,7 @@ import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { matchMarketplaceFees } from "@/lib/orders/marketplace-fees";
 import { OrderListTable } from "./order-list-table";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { sanitizeSearchTerm } from "@/lib/orders/find-order";
 
 const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
 
@@ -46,6 +47,14 @@ export default async function OrdersPage({
   // isn't Dispatched/Delivered/Cancelled/Returned.
   const lateOnly = sp.late === "1";
   const todayStr = new Date().toISOString().slice(0, 10);
+  // Everything from the URL EXCEPT the search term — the in-table search box
+  // navigates to ?q=… and must keep company/status/date/late intact.
+  const preservedParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(sp)) {
+    if (key === "q" || value == null) continue;
+    for (const v of Array.isArray(value) ? value : [value]) preservedParams.set(key, v);
+  }
+  const preservedQuery = preservedParams.toString();
 
   const [{ data: companies }, { data: itemCategories }, { data: sizes }, { data: currencies }, { data: parties }, { data: stores }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
@@ -77,7 +86,30 @@ export default async function OrdersPage({
   if (status) query = query.eq("status", status as never);
   if (fromDate) query = query.gte("order_date", fromDate);
   if (toDate) query = query.lte("order_date", toDate);
-  if (q) query = query.or(`ref_no.ilike.%${q}%,buyer_name_address.ilike.%${q}%,contact_no.ilike.%${q}%`);
+  // 2026-10-22 — "order page par search karte hai to show nahi karta, filter
+  // laga kar dekhte hai to pata chalta hai ki order hai": the server search
+  // only ever looked at ref_no / buyer / contact, so a PO searched by its
+  // marketplace order number, SKU or tracking number found nothing even
+  // though the order was right there. It also pasted the raw term into a
+  // PostgREST `or=(…)` filter, where a comma/parenthesis/percent in the
+  // input produces a malformed request — PostgREST answers with an error and
+  // the page renders an empty list, indistinguishable from "no such order".
+  if (q) {
+    const safeQ = sanitizeSearchTerm(q);
+    if (safeQ) {
+      query = query.or(
+        [
+          `ref_no.ilike.%${safeQ}%`,
+          `buyer_name_address.ilike.%${safeQ}%`,
+          `contact_no.ilike.%${safeQ}%`,
+          `marketplace_order_no.ilike.%${safeQ}%`,
+          `sku_label.ilike.%${safeQ}%`,
+          `advance_tracking.ilike.%${safeQ}%`,
+          `final_tracking.ilike.%${safeQ}%`,
+        ].join(",")
+      );
+    }
+  }
   if (lateOnly) {
     query = query
       .lt("dispatch_date", todayStr)
@@ -265,6 +297,8 @@ export default async function OrdersPage({
       </form>
 
       <OrderListTable
+        initialSearch={q}
+        preservedQuery={preservedQuery}
         orders={orders ?? []}
         itemCategories={itemCategories ?? []}
         sizes={sizes ?? []}

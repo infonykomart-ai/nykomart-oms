@@ -14,6 +14,7 @@
 // and the bulk CSV upload.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { resolveOrderByReference } from "@/lib/orders/find-order";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -295,15 +296,12 @@ export async function lookupOrderForStock(query: string): Promise<StockOrderLook
   const trimmed = query.trim();
   if (!trimmed) return { error: "Enter a PO/RF/RG number.", order: null };
 
-  const { data: order } = await supabase
-    .from("orders")
-    .select("id, ref_no, company_id")
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
-    .maybeSingle();
-
-  if (!order) return { error: `No order found for "${trimmed}".`, order: null };
-  return { error: null, order: { id: order.id, ref_no: order.ref_no } };
+  // 2026-10-22 — exact ilike + maybeSingle() meant a partial or duplicated
+  // ref answered "No order found" for an order that exists (same bug class
+  // as the Purchase/Courier pickers) — see src/lib/orders/find-order.ts.
+  const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+  if (!match.ok) return { error: match.error, order: null };
+  return { error: null, order: { id: match.id, ref_no: match.ref_no } };
 }
 
 export async function deleteStockOut(rowId: string): Promise<SimpleResult> {

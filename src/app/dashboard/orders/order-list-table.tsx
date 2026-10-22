@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { deleteOrder } from "./actions";
 import { OrderPhotoThumb } from "./order-photo-thumb";
 import { OrderEditForm, type EditableOrder } from "./order-edit-form";
@@ -151,6 +152,8 @@ export function OrderListTable({
   etsyFeesByOrder,
   ebayFeesByOrder,
   amazonFeesByOrder,
+  initialSearch = "",
+  preservedQuery = "",
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -169,7 +172,22 @@ export function OrderListTable({
   etsyFeesByOrder: Record<string, EtsyFeeMatch>;
   ebayFeesByOrder: Record<string, EbayFeeMatch>;
   amazonFeesByOrder: Record<string, AmazonFeeMatch>;
+  /**
+   * 2026-10-22 — "order page par bhi search karte hai to show nahi karta ...
+   * filter laga kar dekhte hai to pata chalta hai ki order hai": this box
+   * used to filter ONLY the rows the page had already loaded (the newest
+   * 300 orders), so an older order was invisible to search while the
+   * server-side Filter form found it. The box now ALSO pushes the term to
+   * `?q=` (debounced) so the MATCH happens in the database, over every
+   * order — `initialSearch` is that current server term, and the local
+   * filter still runs on top for instant feedback while the request lands.
+   */
+  initialSearch?: string;
+  /** Current URL query string WITHOUT `q`, so the search keeps company /
+   *  status / date / late filters intact when it navigates. */
+  preservedQuery?: string;
 }) {
+  const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -179,7 +197,7 @@ export function OrderListTable({
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalSearch, setGlobalSearch] = useState(initialSearch);
   const [showColumnPanel, setShowColumnPanel] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => {
@@ -591,6 +609,15 @@ export function OrderListTable({
     },
   ];
 
+  // Same search, but across every company this login can see — see the
+  // empty-state note below.
+  const allCompaniesSearchHref = (() => {
+    const params = new URLSearchParams(preservedQuery);
+    params.set("company", "");
+    params.set("q", initialSearch.trim());
+    return `/dashboard/orders?${params.toString()}`;
+  })();
+
   const visibleColumns = ALL_COLUMNS.filter((c) => !hiddenKeys.has(c.key));
   const activeFilterCount = Object.values(filters).filter(Boolean).length + (globalSearch.trim() ? 1 : 0);
 
@@ -598,6 +625,25 @@ export function OrderListTable({
     setFilters({});
     setGlobalSearch("");
   }
+
+  // 2026-10-22 — push the typed term into ?q= after a short pause so the
+  // search covers EVERY order in the database, not just the 300 newest rows
+  // this page preloads (see the initialSearch prop's comment). Comparing
+  // against initialSearch (the server's current term) is what keeps this
+  // from looping: once the navigation lands, the two match and nothing
+  // fires again.
+  useEffect(() => {
+    const term = globalSearch.trim();
+    if (term === initialSearch.trim()) return;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(preservedQuery);
+      if (term) params.set("q", term);
+      else params.delete("q");
+      const qs = params.toString();
+      router.replace(`/dashboard/orders${qs ? `?${qs}` : ""}`, { scroll: false });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [globalSearch, initialSearch, preservedQuery, router]);
 
   // 2026-08-26 — "SEARCH BAAR BHI JISME ORDER SE RELATED KUCH BHI SUCH KARO
   // US SE RELATED DATA NIKAL KE AAJAYE": one search box that matches ANY
@@ -847,7 +893,21 @@ export function OrderListTable({
       )}
 
       {orders.length === 0 ? (
-        <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">No orders found.</p>
+        <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">
+          <p>No orders found.</p>
+          {/* 2026-10-22 — the most common reason a search comes back empty
+              while the order plainly exists: it belongs to another company
+              (the page scopes to the company selected in the top nav). One
+              click re-runs the same search across every company. */}
+          {initialSearch.trim() && (
+            <p className="mt-2 text-xs">
+              Nothing in the selected company matches &ldquo;{initialSearch.trim()}&rdquo;.{" "}
+              <Link href={allCompaniesSearchHref} className="font-medium text-amber-600 underline">
+                Search all companies →
+              </Link>
+            </p>
+          )}
+        </div>
       ) : (
         <PrintArea id="orders-print-area">
           {/* max-h + overflow-auto turns this into its own scroll box so the
@@ -908,7 +968,14 @@ export function OrderListTable({
                 {filteredOrders.length === 0 && (
                   <tr>
                     <td className={CELL} colSpan={visibleColumns.length + 2}>
-                      <p className="p-2 text-center text-slate-400">No orders match the current search / column filters.</p>
+                      <p className="p-2 text-center text-slate-400">
+                        No orders match the current search / column filters.{" "}
+                        {initialSearch.trim() && (
+                          <Link href={allCompaniesSearchHref} className="font-medium text-amber-600 underline">
+                            Search all companies →
+                          </Link>
+                        )}
+                      </p>
                     </td>
                   </tr>
                 )}

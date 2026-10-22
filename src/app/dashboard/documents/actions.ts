@@ -38,6 +38,7 @@ import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
+import { resolveOrderByReference, sanitizeSearchTerm } from "@/lib/orders/find-order";
 // 2026-10-21 — the field-by-field diff written to the audit chain (pure, so it
 // is testable outside this server-action module).
 import { purchaseBillChanges } from "@/lib/purchase-bill-audit";
@@ -1406,11 +1407,17 @@ export async function lookupOrderForPurchaseBill(refNo: string): Promise<Purchas
   const trimmed = refNo.trim();
   if (!trimmed) return { error: "Enter a PO/RF/RG number.", order: null, existingBillCount: 0 };
 
+  // 2026-10-22 — "order hote hue bhi order show nahi hota": exact-only +
+  // maybeSingle() turned a partial/duplicated ref into "No order found".
+  // resolveOrderByReference tries the exact ref first, then a unique partial
+  // match on ref_no / marketplace order no. — see src/lib/orders/find-order.ts.
+  const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+  if (!match.ok) return { error: match.error, order: null, existingBillCount: 0 };
+
   const { data: order } = await supabase
     .from("orders")
     .select("id, ref_no, company_id, size_label, qty, item_categories(name)")
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
+    .eq("id", match.id)
     .maybeSingle();
 
   if (!order) return { error: `No order found for "${trimmed}".`, order: null, existingBillCount: 0 };
@@ -1460,14 +1467,21 @@ export async function searchOrdersForPurchaseBill(query: string): Promise<Purcha
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
-  const trimmed = query.trim();
+  const trimmed = sanitizeSearchTerm(query);
   if (trimmed.length < 2) return [];
 
+  // 2026-10-22 — "purchase section me order hote hue bhi order show nahi
+  // hota": this only ever matched ref_no, so a PO searched by its
+  // marketplace order number, buyer or SKU came back empty even though the
+  // order was right there. Same identifiers the Orders hub's own search
+  // covers now.
   const { data } = await supabase
     .from("orders")
     .select("id, ref_no, size_label, item_categories(name)")
-    .ilike("ref_no", `%${trimmed}%`)
     .in("company_id", employee.companyIds)
+    .or(
+      `ref_no.ilike.%${trimmed}%,marketplace_order_no.ilike.%${trimmed}%,buyer_name_address.ilike.%${trimmed}%,sku_label.ilike.%${trimmed}%`
+    )
     .order("ref_no")
     .limit(15);
 
@@ -1978,22 +1992,50 @@ export async function lookupOrderForReconciliation(
   let orderId: string | null = null;
   let orderShipmentId: string | null = null;
 
-  const { data: byAwb } = await supabase.from("order_shipments").select("id, order_id").ilike("awb_no", trimmed).maybeSingle();
-  if (byAwb) {
-    orderId = byAwb.order_id;
-    orderShipmentId = byAwb.id;
+  // 2026-10-22 — "AWB courier weight dimension daal diya uske baad bhi assign
+  // nahi hota". Two dead ends lived here:
+  //
+  //   1. `.ilike("awb_no", trimmed).maybeSingle()` — when the same AWB sits on
+  //      two shipment rows (the order page's manual shipping form used to
+  //      create a fresh shipment on every save — see
+  //      orders/[id]/shipping-actions.ts), maybeSingle() errors out and gives
+  //      `data: null`, i.e. "No order found" for an AWB that is visibly on
+  //      file. limit(2) + lowest shipment_no keeps it working.
+  //   2. An order with more than one shipment refused the PO/RF/RG path
+  //      outright. When all of those shipments carry the SAME AWB (exactly
+  //      the duplicate case above) there is nothing left to choose between,
+  //      so the lowest shipment_no is used; genuinely different AWBs still
+  //      ask for the AWB, unchanged.
+  //
+  // The ref path itself also used an exact ilike + maybeSingle, so a partial
+  // / duplicated ref looked like a missing order — resolveOrderByReference
+  // handles that (see src/lib/orders/find-order.ts).
+  const { data: awbRows } = await supabase
+    .from("order_shipments")
+    .select("id, order_id, awb_no, shipment_no")
+    .ilike("awb_no", trimmed)
+    .order("shipment_no")
+    .limit(2);
+  if ((awbRows ?? []).length > 0) {
+    orderId = awbRows![0].order_id;
+    orderShipmentId = awbRows![0].id;
   }
 
   if (!orderId) {
+    const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+    if (!match.ok) return { ...EMPTY_RECON, error: match.error };
     const { data: byRef } = await supabase
       .from("orders")
       .select("id, ref_no, company_id, order_value_inr")
-      .ilike("ref_no", trimmed)
-      .in("company_id", employee.companyIds)
+      .eq("id", match.id)
       .maybeSingle();
+    const { data: shipments } = await supabase
+      .from("order_shipments")
+      .select("id, awb_no, shipment_no")
+      .eq("order_id", match.id)
+      .order("shipment_no");
     if (byRef) {
       orderId = byRef.id;
-      const { data: shipments } = await supabase.from("order_shipments").select("id").eq("order_id", byRef.id);
       if (!shipments || shipments.length === 0) {
         // 2026-08-24: return the order (not just the error) so the caller
         // can offer an inline "add shipment" box right here instead of a
@@ -2001,7 +2043,8 @@ export async function lookupOrderForReconciliation(
         // claude/tracking-manual-match-no-shipment-gap-2026-08-24.md.
         return { ...EMPTY_RECON, order: byRef, error: `Order "${trimmed}" has no shipment/AWB entered yet — add one below.` };
       }
-      if (shipments.length > 1) {
+      const distinctAwbs = new Set(shipments.map((s) => (s.awb_no ?? "").trim().toLowerCase()).filter(Boolean));
+      if (shipments.length > 1 && distinctAwbs.size > 1) {
         return { ...EMPTY_RECON, error: `Order "${trimmed}" has ${shipments.length} shipments/AWBs — search by AWB instead to pick the specific one.` };
       }
       orderShipmentId = shipments[0].id;

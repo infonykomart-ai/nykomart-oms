@@ -92,33 +92,72 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
   //    same convention as createManualBooking.
   let shipmentId: string | null = null;
   if (awbNo || courierName || weightKg != null || lengthCm != null) {
-    const { data: last } = await supabase
+    // 2026-10-22 — "AWB courier weight dimension daal diya uske baad bhi
+    // assign nahi hota". This always INSERTED a new shipment
+    // (shipment_no = last + 1), so saving the form a second time — AWB first,
+    // weight/dims after, or just correcting a typo — left the SAME AWB on two
+    // shipment rows. The courier bill's Assign-AWB screen then refused the
+    // order ("has 2 shipments/AWBs — search by AWB instead"), and its AWB
+    // lookup itself errored out on the duplicate, so the AWB could never be
+    // assigned at all. Now the order's existing shipment is REUSED when it
+    // has one — the normal case for this form (see the header comment) — and
+    // a shipment is only created when the order has none. An order that
+    // genuinely has several shipments is the Order Shipments & Packages
+    // screen's job, so this form says so instead of inventing a duplicate.
+    const { data: existingShipments, error: existingError } = await supabase
       .from("order_shipments")
-      .select("shipment_no")
+      .select("id, awb_no, shipment_no")
       .eq("order_id", orderId)
-      .order("shipment_no", { ascending: false })
-      .limit(1);
-    const shipmentNo = (last?.[0]?.shipment_no ?? 0) + 1;
+      .order("shipment_no");
+    if (existingError) {
+      return { error: existingError.message, success: false, dispatched: false };
+    }
+    const existing = (existingShipments ?? [])[0] ?? null;
+    if ((existingShipments ?? []).length > 1) {
+      return {
+        error: "This order already has more than one shipment/AWB — manage them on Order Shipments & Packages instead of this form.",
+        success: false,
+        dispatched: false,
+      };
+    }
 
-    const { data: shipment, error: shipmentError } = await supabase
-      .from("order_shipments")
-      .upsert(
-        {
+    let shipment: { id: string } | null = null;
+    if (existing) {
+      // Only the fields the form actually carries are written, and awb_no /
+      // courier_name only when typed — so saving weight or dimensions can
+      // never blank out an AWB that came from a real courier booking.
+      const patch: { last_update_date: string; awb_no?: string; courier_name?: string } = { last_update_date: today };
+      if (awbNo) patch.awb_no = awbNo;
+      if (courierName) patch.courier_name = courierName;
+      const { data, error } = await supabase
+        .from("order_shipments")
+        .update(patch)
+        .eq("id", existing.id)
+        .select("id")
+        .single();
+      if (error || !data) {
+        return { error: error?.message ?? "Could not save the shipment.", success: false, dispatched: false };
+      }
+      shipment = data;
+    } else {
+      const { data, error } = await supabase
+        .from("order_shipments")
+        .insert({
           order_id: orderId,
-          shipment_no: shipmentNo,
+          shipment_no: 1,
           awb_no: awbNo,
           courier_name: courierName,
           last_update_date: today,
           created_by_employee_id: employee.id,
           booked_amount_source: "manual",
           remark: "Manual shipping-details entry from the order page (2026-09-13).",
-        },
-        { onConflict: "order_id,shipment_no" }
-      )
-      .select("id")
-      .single();
-    if (shipmentError || !shipment) {
-      return { error: shipmentError?.message ?? "Could not save the shipment.", success: false, dispatched: false };
+        })
+        .select("id")
+        .single();
+      if (error || !data) {
+        return { error: error?.message ?? "Could not save the shipment.", success: false, dispatched: false };
+      }
+      shipment = data;
     }
     shipmentId = shipment.id;
 
