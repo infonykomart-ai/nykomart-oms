@@ -168,6 +168,26 @@ export default async function BillPaymentPage({
     })
   );
 
+  // 2026-10-22 — "courior me bills payment me link hone par ye vali sheet
+  // show honi chahiye": rows typed straight into this ledger have source
+  // NULL, so they have no source_id to open a document from — yet many of
+  // them ARE courier bills whose freight_bills record exists (imported /
+  // hand-entered against the same invoice number). freight_bills.invoice_no
+  // is UNIQUE, so one batched lookup on the manual rows' invoice numbers is
+  // enough to find those records. This only feeds the invoice-number LINK —
+  // `source` stays NULL, so those rows stay editable here exactly as before.
+  const manualInvoiceNos = Array.from(
+    new Set(
+      (bills ?? [])
+        .filter((b) => !b.source && !b.source_id && !!b.invoice_no)
+        .map((b) => b.invoice_no as string)
+    )
+  );
+  const { data: manualCourierBills } = manualInvoiceNos.length
+    ? await supabase.from("freight_bills").select("id, invoice_no").in("invoice_no", manualInvoiceNos)
+    : { data: [] as { id: string; invoice_no: string }[] };
+  const courierBillIdByInvoice = new Map((manualCourierBills ?? []).map((f) => [f.invoice_no, f.id] as const));
+
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
     company_id: b.company_id,
@@ -188,6 +208,20 @@ export default async function BillPaymentPage({
     source: b.source,
     source_id: b.source_id,
     item_label: b.source === "purchase_bill" && b.source_id ? itemLabelBySourceId.get(b.source_id) ?? null : null,
+    // 2026-10-22 — the document sheet the invoice number opens (see
+    // BillDocLink): the source bill's own report page when there is one,
+    // otherwise a freight_bills record matched by invoice number for a
+    // manually-entered courier bill. null = no document exists → bill
+    // statement (or plain text for salary/advance).
+    doc_href: (() => {
+      if (b.source_id) {
+        if (b.source === "freight_bill") return `/dashboard/documents/freight-bills/${b.source_id}/report`;
+        if (b.source === "duty_tax_bill") return `/dashboard/documents/duty-bills/${b.source_id}/report`;
+        if (b.source === "purchase_bill") return `/dashboard/documents/purchase-bills/${b.source_id}/report`;
+      }
+      const matchedCourierId = !b.source && b.invoice_no ? courierBillIdByInvoice.get(b.invoice_no) : undefined;
+      return matchedCourierId ? `/dashboard/documents/freight-bills/${matchedCourierId}/report` : null;
+    })(),
     due_date: b.due_date,
     total_amt: Number(b.total_amt),
     credit_note_amt: Number(b.credit_note_amt),

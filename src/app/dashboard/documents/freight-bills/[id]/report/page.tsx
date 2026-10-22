@@ -28,6 +28,7 @@
 //                  "courier ka bill kitne ka hai or gst kitna laga hai or
 //                  apne ko pay kitna karna hai".
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
@@ -366,12 +367,21 @@ async function FreightBillReportInner({ id }: { id: string }) {
 
   const fmt = (n: number | null | undefined) => (n == null ? "—" : n.toFixed(2));
 
+  // 2026-10-22 — in the A4 preview dialog this page is embedded with
+  // ?embed=1 (src/components/print-dialog.tsx), which proxy.ts turns into
+  // the x-embed header. The dialog supplies its own Print/Close footer, so
+  // the page's own "← Back / Download PDF" bar is dropped there — the sheet
+  // then shows the document and nothing else.
+  const embedded = (await headers()).get("x-embed") === "1";
+
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between print:hidden">
-        <Link href="/dashboard/documents" className="text-sm text-slate-500 hover:underline">← Back to Document Entry</Link>
-        <PrintButton label="🖨 Download PDF" />
-      </div>
+      {!embedded && (
+        <div className="mb-4 flex items-center justify-between print:hidden">
+          <Link href="/dashboard/documents" className="text-sm text-slate-500 hover:underline">← Back to Document Entry</Link>
+          <PrintButton label="🖨 Download PDF" />
+        </div>
+      )}
 
       <PrintArea id="freight-report-area">
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">

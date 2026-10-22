@@ -94,6 +94,14 @@ export function BillStatementDialog({
 
   // Controlled variant: no trigger — the parent mounts this only while it
   // wants the sheet open.
+  //
+  // 2026-10-22 BUGFIX — "bill payment section me link to ban raha lekin work
+  // nahi kar raha": this returned ONLY the trigger button for the
+  // non-autoOpen case, so openSheet() flipped `open`/fetched the statement
+  // and the <Sheet> was never rendered — every invoice number / "📄 View" /
+  // "🧾 Statement" trigger in the app (Bill Payment, Documents, Party
+  // Ledger, Related-notes badges) was a dead link. Both variants now render
+  // the button AND the sheet (Sheet itself returns null while closed).
   if (!autoOpen) {
     const trigger =
       label != null && label !== "" ? (
@@ -102,9 +110,12 @@ export function BillStatementDialog({
         <span className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50">📄 View</span>
       );
     return (
-      <button type="button" onClick={openSheet} className="text-left" title="Open read-only bill statement (print / WhatsApp / Telegram / email / PDF)">
-        {trigger}
-      </button>
+      <>
+        <button type="button" onClick={openSheet} className="text-left" title="Open read-only bill statement (print / WhatsApp / Telegram / email / PDF)">
+          {trigger}
+        </button>
+        <Sheet open={open} close={close} loading={loading} error={error} data={data} reload={openSheet} />
+      </>
     );
   }
 
