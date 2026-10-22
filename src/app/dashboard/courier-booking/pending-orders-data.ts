@@ -11,6 +11,7 @@
 // an engineering judgment call, not a guessed business rule; flagged here
 // and in the round writeup for the user to correct if wrong.
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { sanitizeSearchTerm } from "@/lib/orders/find-order";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -51,6 +52,18 @@ export type PendingOrdersFilters = {
 
 const MAX_ROWS = 300;
 
+/** Local-midnight ISO date (yyyy-mm-dd) — the same clock computeDueBucket
+ *  compares with, so the SQL filter and the badge can never disagree. */
+function isoDateLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function addDays(d: Date, days: number): Date {
+  const copy = new Date(d);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
 function computeDueBucket(estimatedDispatchDate: string | null): PendingOrderRow["dueBucket"] {
   if (!estimatedDispatchDate) return "unknown";
   const today = new Date();
@@ -81,6 +94,30 @@ export async function getPendingOrders(
   if (filters.dateFrom) query = query.gte("order_date", filters.dateFrom);
   if (filters.dateTo) query = query.lte("order_date", filters.dateTo);
   if (filters.destinationCountry) query = query.eq("destination_country", filters.destinationCountry);
+
+  // 2026-10-22 — "order hote hue bhi order show nahi hota ... jab filter laga
+  // kar dekhte hai to pata chalta hai ki order hai": the search term and the
+  // Due filter were applied in JS AFTER `.limit(MAX_ROWS)`, so they only ever
+  // looked at the newest 300 orders of this company. An older order was
+  // invisible to search, while a date/destination filter (which narrows in
+  // the database) pulled it back into that window — exactly the reported
+  // symptom. Both conditions now narrow the QUERY, so the search covers every
+  // pending order rather than the newest page of them.
+  const searchTerm = filters.q ? sanitizeSearchTerm(filters.q) : "";
+  if (searchTerm) {
+    query = query.or(
+      `ref_no.ilike.%${searchTerm}%,marketplace_order_no.ilike.%${searchTerm}%,buyer_name_address.ilike.%${searchTerm}%,contact_no.ilike.%${searchTerm}%`
+    );
+  }
+  if (filters.due) {
+    // Same boundaries computeDueBucket uses below: overdue = before today,
+    // due_soon = today..today+2, later = after today+2.
+    const todayIso = isoDateLocal(new Date());
+    const soonIso = isoDateLocal(addDays(new Date(), 2));
+    if (filters.due === "overdue") query = query.not("estimated_dispatch_date", "is", null).lt("estimated_dispatch_date", todayIso);
+    else if (filters.due === "due_soon") query = query.gte("estimated_dispatch_date", todayIso).lte("estimated_dispatch_date", soonIso);
+    else if (filters.due === "later") query = query.gt("estimated_dispatch_date", soonIso);
+  }
 
   const { data: orders } = await query;
   if (!orders || orders.length === 0) return [];

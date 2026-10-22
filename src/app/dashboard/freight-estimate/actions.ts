@@ -14,6 +14,7 @@
 // on record (optionally linked to an order).
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { resolveOrderByReference } from "@/lib/orders/find-order";
 import { revalidatePath } from "next/cache";
 
 function str(formData: FormData, key: string): string {
@@ -192,11 +193,15 @@ export async function lookupOrderForFreightEstimate(refNo: string): Promise<Frei
   const trimmed = refNo.trim();
   if (!trimmed) return { error: "Enter a PO/RF/RG number.", order: null };
 
+  // 2026-10-22 — "order hote hue bhi order show nahi hota": exact ilike +
+  // maybeSingle() here too — see src/lib/orders/find-order.ts.
+  const match = await resolveOrderByReference(supabase, trimmed, employee.companyIds);
+  if (!match.ok) return { error: match.error, order: null };
+
   const { data: order } = await supabase
     .from("orders")
     .select("id, ref_no, company_id, destination_country, buyer_name_address")
-    .ilike("ref_no", trimmed)
-    .in("company_id", employee.companyIds)
+    .eq("id", match.id)
     .maybeSingle();
 
   if (!order) return { error: `No order found for "${trimmed}".`, order: null };

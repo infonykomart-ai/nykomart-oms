@@ -12,6 +12,7 @@
 // `never`).
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { CourierKey } from "@/lib/couriers/credentials";
+import { sanitizeSearchTerm } from "@/lib/orders/find-order";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -47,18 +48,68 @@ export async function getTrackedShipments(
   companyIds: string[],
   filters: TrackingFilters
 ): Promise<TrackedShipment[]> {
-  let query = supabase
-    .from("courier_shipments")
-    .select("id, courier, manual_courier_name, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, created_at, order_id")
-    .order("created_at", { ascending: false })
-    .limit(MAX_ROWS);
+  // 2026-10-22 — "AWB assign courier vale section me order hote hue bhi order
+  // show nahi hota ... filter laga kar dekhte hai to pata chalta hai": this
+  // searched the AWB in SQL but matched the ORDER'S ref no. in JS, AFTER
+  // `.limit(MAX_ROWS)` — so a PO/RF/RG search only ever looked at the newest
+  // 200 shipments, and a courier/status filter (which narrows in the
+  // database) pulled the row into that window, which is exactly the reported
+  // behaviour. The ref/marketplace search now resolves in the database too.
+  const term = filters.q ? sanitizeSearchTerm(filters.q) : "";
 
-  if (filters.courier) query = query.eq("courier", filters.courier);
-  if (filters.status) query = query.eq("status", filters.status);
-  if (filters.q) query = query.ilike("awb_no", `%${filters.q}%`);
+  type ShipmentQueryRow = {
+    id: string;
+    courier: string;
+    manual_courier_name: string | null;
+    status: string;
+    awb_no: string | null;
+    label_url: string | null;
+    booked_amt: number | null;
+    booked_currency: string | null;
+    booked_amount_source: string | null;
+    created_at: string;
+    order_id: string;
+  };
 
-  const { data: shipments } = await query;
-  if (!shipments || shipments.length === 0) return [];
+  // One query shape, used twice when searching: once for the AWB itself, once
+  // for the shipment rows of every order whose ref/marketplace no. matched.
+  async function fetchShipments(orderIds?: string[]): Promise<ShipmentQueryRow[]> {
+    let q = supabase
+      .from("courier_shipments")
+      .select("id, courier, manual_courier_name, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, created_at, order_id")
+      .order("created_at", { ascending: false })
+      .limit(MAX_ROWS);
+    if (filters.courier) q = q.eq("courier", filters.courier);
+    if (filters.status) q = q.eq("status", filters.status);
+    if (orderIds) q = q.in("order_id", orderIds);
+    else if (term) q = q.ilike("awb_no", `%${term}%`);
+    const { data } = await q;
+    return (data ?? []) as ShipmentQueryRow[];
+  }
+
+  let shipments: ShipmentQueryRow[];
+  if (!term) {
+    shipments = await fetchShipments();
+  } else {
+    const { data: matchingOrders } = await supabase
+      .from("orders")
+      .select("id")
+      .in("company_id", companyIds)
+      .or(`ref_no.ilike.%${term}%,marketplace_order_no.ilike.%${term}%`)
+      .limit(500);
+    const matchingOrderIds = (matchingOrders ?? []).map((o) => o.id);
+    const [byAwb, byOrder] = await Promise.all([
+      fetchShipments(),
+      matchingOrderIds.length ? fetchShipments(matchingOrderIds) : Promise.resolve([] as ShipmentQueryRow[]),
+    ]);
+    const merged = new Map<string, ShipmentQueryRow>();
+    for (const s of [...byAwb, ...byOrder]) merged.set(s.id, s);
+    shipments = Array.from(merged.values())
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+      .slice(0, MAX_ROWS);
+  }
+
+  if (shipments.length === 0) return [];
 
   const orderIds = Array.from(new Set(shipments.map((s) => s.order_id)));
   const { data: orders } = await supabase
@@ -78,9 +129,6 @@ export async function getTrackedShipments(
   for (const s of shipments) {
     const order = orderById.get(s.order_id);
     if (!order) continue; // not in a company this employee can see
-    if (filters.q && !order.ref_no.toLowerCase().includes(filters.q.toLowerCase()) && !(s.awb_no ?? "").toLowerCase().includes(filters.q.toLowerCase())) {
-      continue;
-    }
     result.push({
       id: s.id,
       courier: s.courier as CourierKey | "other",
