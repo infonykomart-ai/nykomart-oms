@@ -7,6 +7,7 @@ import {
   plainTextToEditableHtml,
   renderTemplate,
   todayFormatted,
+  TEMPLATE_DERIVED_VALUES,
   type LetterTemplate,
 } from "@/lib/hr-letters/templates";
 import { PrintArea } from "@/components/print-view";
@@ -107,9 +108,13 @@ export function LetterForm({
       if (f.type === "date" && values[f.key]) values[f.key] = formatLetterDate(values[f.key]);
     }
     // 2026-10-23 — computed tokens (e.g. the company notice letter's notice
-    // period, which falls back to its custom text box). Applied after the
-    // date formatting above so a derive() can rely on readable dates.
-    if (template.derive) Object.assign(values, template.derive(values));
+    // period, which falls back to its custom text box). Looked up by slug
+    // rather than carried on the template object: templates come in as a
+    // server -> client prop, and a function there can't be serialized (it
+    // crashed this page). Applied after the date formatting above so a derive
+    // can rely on readable dates.
+    const derive = TEMPLATE_DERIVED_VALUES[template.slug];
+    if (derive) Object.assign(values, derive(values));
     // 2026-09-23 — bodyText now holds rich-text HTML (see
     // rich-text-editor.tsx) so the editor's toolbar formatting carries
     // into print/Word, but the templates themselves are still plain text
