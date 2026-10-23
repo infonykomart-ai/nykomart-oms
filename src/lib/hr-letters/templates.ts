@@ -31,17 +31,33 @@ export type LetterTemplate = {
   toWhomsoever: boolean; // true = "TO WHOMSOEVER IT MAY CONCERN" (no addressee block)
   fields: LetterField[]; // template-specific fields, IN ADDITION to the common employee/date/ref fields
   bodyTemplate: string; // {{tokens}} substituted to build the initial editable body text
-  /**
-   * 2026-10-23 — optional hook for a template that needs a token which is
-   * COMPUTED from the filled-in fields rather than typed directly. The
-   * company-issued notice letter is the first user: its notice period is a
-   * dropdown (10/15/20 days, 1-6 months) with a "custom" choice, so the
-   * value printed in the letter body has to fall back to the custom text
-   * box when that choice is picked. Runs AFTER date fields are formatted
-   * (so it sees "07 November 2026", not "2026-11-07"), and only affects the
-   * body — the subject line is rendered from the raw field values.
-   */
-  derive?: (values: Record<string, string>) => Record<string, string>;
+};
+
+// 2026-10-23 — computed {{tokens}} for a template that needs a value derived
+// from the filled-in fields rather than typed directly. The company-issued
+// notice letter is the first (and so far only) user: its notice period is a
+// dropdown (10/15/20 days, 1-6 months) with a "custom" choice, so the value
+// printed in the letter body has to fall back to the custom text box when
+// that choice is picked.
+//
+// DELIBERATELY A SEPARATE MAP, not a function on the LetterTemplate object:
+// templates are passed from the server page (hr-letters/[slug]/page.tsx) into
+// the client LetterForm as a prop, and React Server Components cannot
+// serialize a function across that boundary — putting `derive` on the
+// template crashed exactly this page ("This page couldn't load") while every
+// other letter kept working. Both sides import this module directly instead,
+// so the template object stays plain JSON data.
+//
+// Runs AFTER date fields are formatted (so a derive sees "07 November 2026",
+// not "2026-11-07") and only affects the body — the subject line is rendered
+// from the raw field values.
+export const TEMPLATE_DERIVED_VALUES: Record<string, (values: Record<string, string>) => Record<string, string>> = {
+  "company-notice-letter": (values) => ({
+    notice_period_phrase:
+      values.notice_period === "Custom period / date"
+        ? values.custom_notice_period?.trim() || "as per the date mentioned below"
+        : values.notice_period,
+  }),
 };
 
 const today = () => new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
@@ -380,12 +396,6 @@ export const LETTER_TEMPLATES: LetterTemplate[] = [
       { key: "company_property", label: "Company Property to Return", type: "text", default: "laptop, ID card, access card, office keys" },
       { key: "settlement_days", label: "Full & Final Settlement Within (days)", type: "text", default: "45 days" },
     ],
-    derive: (values) => ({
-      notice_period_phrase:
-        values.notice_period === "Custom period / date"
-          ? values.custom_notice_period?.trim() || "as per the date mentioned below"
-          : values.notice_period,
-    }),
     bodyTemplate:
       "Dear {{employee_name}},\n\n" +
       "This letter is issued by the Management of {{company_name}} and is served on you as a formal notice " +
