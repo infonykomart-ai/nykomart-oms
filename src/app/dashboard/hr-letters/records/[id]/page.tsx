@@ -31,6 +31,7 @@ export default async function IssuedLetterPage({ params }: { params: Promise<{ i
     <div>
       <IssuedLetterView
         letter={{
+          id: letter.id,
           refNo: letter.ref_no,
           letterDate: letter.letter_date,
           employeeName: letter.for_employee_name_snapshot,

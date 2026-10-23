@@ -2,7 +2,13 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { plainTextToEditableHtml, renderTemplate, todayFormatted, type LetterTemplate } from "@/lib/hr-letters/templates";
+import {
+  formatLetterDate,
+  plainTextToEditableHtml,
+  renderTemplate,
+  todayFormatted,
+  type LetterTemplate,
+} from "@/lib/hr-letters/templates";
 import { PrintArea } from "@/components/print-view";
 import { downloadLetterDoc, mailtoLetterLink, shareLetterOnWhatsApp } from "@/lib/hr-letters/letter-export";
 import { RichTextEditor } from "@/components/hr-letters/rich-text-editor";
@@ -97,6 +103,13 @@ export function LetterForm({
       date_issued: dateIssued,
       ...fieldValues,
     };
+    for (const f of template.fields) {
+      if (f.type === "date" && values[f.key]) values[f.key] = formatLetterDate(values[f.key]);
+    }
+    // 2026-10-23 — computed tokens (e.g. the company notice letter's notice
+    // period, which falls back to its custom text box). Applied after the
+    // date formatting above so a derive() can rely on readable dates.
+    if (template.derive) Object.assign(values, template.derive(values));
     // 2026-09-23 — bodyText now holds rich-text HTML (see
     // rich-text-editor.tsx) so the editor's toolbar formatting carries
     // into print/Word, but the templates themselves are still plain text
@@ -206,7 +219,11 @@ export function LetterForm({
           </div>
         )}
 
-        {template.fields.map((f) => (
+        {template.fields
+          // 2026-10-23 — the custom notice-period box (company notice letter)
+          // is only shown when "Custom period / date" is the chosen period.
+          .filter((f) => f.key !== "custom_notice_period" || fieldValues.notice_period === "Custom period / date")
+          .map((f) => (
           <div key={f.key}>
             <label className={labelClass} htmlFor={f.key}>{f.label}</label>
             {f.type === "textarea" ? (
@@ -217,6 +234,21 @@ export function LetterForm({
                 value={fieldValues[f.key] ?? ""}
                 onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
               />
+            ) : f.type === "select" ? (
+              // 2026-10-23 — used by the new notice letters for "15 days /
+              // 20 days / 30 days": the chosen string is what gets
+              // substituted into the letter body, so it must stay a fixed
+              // choice rather than something that can be mistyped.
+              <select
+                id={f.key}
+                className={inputClass}
+                value={fieldValues[f.key] ?? ""}
+                onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
+              >
+                {(f.options ?? []).map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
             ) : (
               <input
                 id={f.key}

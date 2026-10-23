@@ -11,13 +11,16 @@
 // print" principle and keeps every letter type using the same generic
 // form/preview/print component (letter-form.tsx) instead of one-off UIs.
 
-export type LetterFieldType = "text" | "textarea" | "date" | "number";
+export type LetterFieldType = "text" | "textarea" | "date" | "number" | "select";
 
 export type LetterField = {
   key: string;
   label: string;
   type: LetterFieldType;
   default?: string;
+  /** Only for type "select" — the choices shown in the form (and the exact
+   *  values substituted into the body, e.g. "15 days"). */
+  options?: string[];
 };
 
 export type LetterTemplate = {
@@ -28,6 +31,17 @@ export type LetterTemplate = {
   toWhomsoever: boolean; // true = "TO WHOMSOEVER IT MAY CONCERN" (no addressee block)
   fields: LetterField[]; // template-specific fields, IN ADDITION to the common employee/date/ref fields
   bodyTemplate: string; // {{tokens}} substituted to build the initial editable body text
+  /**
+   * 2026-10-23 — optional hook for a template that needs a token which is
+   * COMPUTED from the filled-in fields rather than typed directly. The
+   * company-issued notice letter is the first user: its notice period is a
+   * dropdown (10/15/20 days, 1-6 months) with a "custom" choice, so the
+   * value printed in the letter body has to fall back to the custom text
+   * box when that choice is picked. Runs AFTER date fields are formatted
+   * (so it sees "07 November 2026", not "2026-11-07"), and only affects the
+   * body — the subject line is rendered from the raw field values.
+   */
+  derive?: (values: Record<string, string>) => Record<string, string>;
 };
 
 const today = () => new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
@@ -203,6 +217,200 @@ export const LETTER_TEMPLATES: LetterTemplate[] = [
       "For {{company_name}}\n\n" +
       "Employee Acknowledgement: _______________________  Date: ___________",
   },
+  // 2026-10-23 — "agar kisi employee ko MD ki taraf se notice mile ki 15 ya
+  // 20 din me improvement nahi hua to terminate kar diya jayega ... ya
+  // direct notice ki aapke paas 15 din hai": two dedicated notice letters,
+  // separate from the existing Warning Letter (which is incident/conduct
+  // based, tied to a policy clause) and Termination Letter (which is issued
+  // AFTER the decision). Both are ordinary LETTER_TEMPLATES, so they use the
+  // exact same form/preview/print/Word/Email/WhatsApp/record workflow as
+  // every other HR letter, and both file under the existing 'Warning
+  // Letter' enum value in letter-type-map.ts — no DB enum change, so no
+  // migration has to be applied before they work.
+  {
+    slug: "improvement-notice",
+    title: "Improvement Notice (15/20 Days)",
+    icon: "⏳",
+    subject: "Notice of Required Improvement in Work Performance",
+    toWhomsoever: false,
+    fields: [
+      { key: "job_title", label: "Designation", type: "text" },
+      { key: "issue_summary", label: "Performance Concern(s) Observed", type: "textarea" },
+      { key: "improvement_area_1", label: "Improvement Required (1)", type: "text" },
+      { key: "improvement_area_2", label: "Improvement Required (2)", type: "text" },
+      {
+        key: "review_days",
+        label: "Notice Period Given",
+        type: "select",
+        options: ["15 days", "20 days", "30 days"],
+        default: "15 days",
+      },
+      { key: "review_date", label: "Improvement Deadline (Review Date)", type: "date" },
+      {
+        key: "support_provided",
+        label: "Support / Guidance to be Provided by Company",
+        type: "text",
+        default: "regular feedback and guidance from your reporting manager",
+      },
+    ],
+    bodyTemplate:
+      "Dear {{employee_name}},\n\n" +
+      "This letter is issued on behalf of the Management of {{company_name}} with reference to your work " +
+      "performance in the position of {{job_title}}.\n\n" +
+      "It has been observed that your work performance has not been up to the standard expected from your " +
+      "position, specifically: {{issue_summary}}. The matter has also been discussed with you earlier.\n\n" +
+      "You are hereby given a notice period of {{review_days}} from the date of this letter, i.e. up to " +
+      "{{review_date}}, to show a clear and measurable improvement in your work. During this period you are " +
+      "specifically required to:\n" +
+      "- {{improvement_area_1}}\n" +
+      "- {{improvement_area_2}}\n\n" +
+      "The Company will extend the necessary guidance and support, including {{support_provided}}. You are " +
+      "expected to maintain regular attendance, complete the work assigned to you within the given timelines, " +
+      "and keep your reporting manager informed of your progress.\n\n" +
+      "Please note that if your work does not improve to the satisfaction of the Management within the said " +
+      "period of {{review_days}}, the Management will have no option but to terminate your employment with " +
+      "{{company_name}} without any further notice or reminder. This letter may therefore be treated as a " +
+      "final opportunity to improve your performance.\n\n" +
+      "We hope that you will take this notice seriously and make the required improvement.\n\n" +
+      "Kindly acknowledge the receipt of this letter by signing the duplicate copy enclosed.\n\n" +
+      "For {{company_name}}\n\n" +
+      "Employee Acknowledgement: _______________________  Date: ___________",
+  },
+  {
+    slug: "final-notice",
+    title: "Final Notice (15 Days)",
+    icon: "⏰",
+    subject: "Final Notice regarding Continuation of Your Services",
+    toWhomsoever: false,
+    fields: [
+      { key: "job_title", label: "Designation", type: "text" },
+      { key: "performance_concern", label: "Reason / Performance Concern", type: "textarea" },
+      {
+        key: "notice_days",
+        label: "Notice Given",
+        type: "select",
+        options: ["15 days", "20 days"],
+        default: "15 days",
+      },
+      { key: "notice_end_date", label: "Notice Period Ends On (Last Working Day)", type: "date" },
+      { key: "handover_contact", label: "Hand Over Pending Work To", type: "text" },
+      { key: "settlement_days", label: "Full & Final Settlement Within (days)", type: "text", default: "45 days" },
+      {
+        key: "company_property",
+        label: "Company Property to Return",
+        type: "text",
+        default: "laptop, ID card, access card",
+      },
+    ],
+    bodyTemplate:
+      "Dear {{employee_name}},\n\n" +
+      "This letter is issued on behalf of the Management of {{company_name}}.\n\n" +
+      "Despite the time and opportunities given to you to improve your work, your performance in the position " +
+      "of {{job_title}} has not improved to the level expected by the Company. The specific concern is as " +
+      "follows: {{performance_concern}}.\n\n" +
+      "The Management has therefore decided that your services cannot be continued beyond the notice period. " +
+      "You are hereby given a notice of {{notice_days}} from the date of this letter, ending on " +
+      "{{notice_end_date}}. You will not be required to report for duty after that date.\n\n" +
+      "During the notice period you are expected to:\n" +
+      "- Continue your regular duties and complete all pending work\n" +
+      "- Hand over all pending work, files and records to {{handover_contact}}\n" +
+      "- Return all Company property in your possession, including {{company_property}}\n\n" +
+      "Your full and final settlement will be processed within {{settlement_days}} from your last working day, " +
+      "subject to completion of the exit formalities and handover. No further notice or reminder will be " +
+      "issued to you in this regard.\n\n" +
+      "We thank you for your service and wish you the best in your future endeavors.\n\n" +
+      "For {{company_name}}\n\n" +
+      "Employee Acknowledgement: _______________________  Date: ___________",
+  },
+  // 2026-10-23 — "ek vo letter bhi add karo ki company khud employee ke liye
+  // notice deti hai 10, 15, 20, mahina, custom date ke according. Due to many
+  // reasons add via dropdown — work related, behaviour and many more."
+  //
+  // This is the company's own notice TO the employee (with a notice period),
+  // not the employee's resignation and not the after-the-fact Termination
+  // Letter below — hence its own template. Notice period is a dropdown
+  // (10/15/20 days, 1/2/3/6 months, or a custom period/date) and the reason
+  // is a dropdown too (work related, behaviour, performance, absenteeism,
+  // policy violation, insubordination, business requirement, other), with a
+  // free-text detail box for the specifics. Entirely in English, like every
+  // other letter here.
+  {
+    slug: "company-notice-letter",
+    title: "Company Notice Letter (10 / 15 / 20 Days · Months)",
+    icon: "📨",
+    subject: "Formal Notice regarding Your Employment",
+    toWhomsoever: false,
+    fields: [
+      { key: "job_title", label: "Designation", type: "text" },
+      {
+        key: "reason_category",
+        label: "Reason for Notice",
+        type: "select",
+        options: [
+          "Work related",
+          "Behaviour / Conduct",
+          "Performance",
+          "Absenteeism",
+          "Violation of Company Policy",
+          "Insubordination",
+          "Business / Operational Requirement",
+          "Other (specified below)",
+        ],
+        default: "Work related",
+      },
+      {
+        key: "reason_detail",
+        label: "Reason Details (what exactly happened / why this notice is being given)",
+        type: "textarea",
+      },
+      {
+        key: "notice_period",
+        label: "Notice Period",
+        type: "select",
+        options: ["10 days", "15 days", "20 days", "1 month", "2 months", "3 months", "6 months", "Custom period / date"],
+        default: "15 days",
+      },
+      {
+        key: "custom_notice_period",
+        label: "Custom Notice Period (fill only if 'Custom period / date' is selected above)",
+        type: "text",
+      },
+      { key: "notice_end_date", label: "Notice Ends On (Last Working Day)", type: "date" },
+      { key: "handover_contact", label: "Hand Over Pending Work To", type: "text" },
+      { key: "company_property", label: "Company Property to Return", type: "text", default: "laptop, ID card, access card, office keys" },
+      { key: "settlement_days", label: "Full & Final Settlement Within (days)", type: "text", default: "45 days" },
+    ],
+    derive: (values) => ({
+      notice_period_phrase:
+        values.notice_period === "Custom period / date"
+          ? values.custom_notice_period?.trim() || "as per the date mentioned below"
+          : values.notice_period,
+    }),
+    bodyTemplate:
+      "Dear {{employee_name}},\n\n" +
+      "This letter is issued by the Management of {{company_name}} and is served on you as a formal notice " +
+      "in respect of your employment with the Company in the position of {{job_title}}.\n\n" +
+      "Notice Details\n" +
+      "- Notice period: {{notice_period_phrase}}\n" +
+      "- Notice ends on (last working day): {{notice_end_date}}\n\n" +
+      "Reason for this notice\n" +
+      "- Category: {{reason_category}}\n" +
+      "- Details: {{reason_detail}}\n\n" +
+      "Your employment with {{company_name}} will accordingly come to an end at the close of business hours " +
+      "on {{notice_end_date}}, and you will stand relieved from the services of the Company with effect from " +
+      "that date. You will be paid your regular salary and allowances up to your last working day.\n\n" +
+      "During the notice period you are required to:\n" +
+      "- Continue to perform your regular duties as {{job_title}} with the same diligence and discipline as before\n" +
+      "- Complete all pending work and hand over the same, along with all files and records, to {{handover_contact}}\n" +
+      "- Return all Company property in your possession, including {{company_property}}\n" +
+      "- Co-operate fully in the completion of the exit formalities\n\n" +
+      "Your full and final settlement will be processed within {{settlement_days}} from your last working day, " +
+      "subject to the completion of the handover and exit formalities.\n\n" +
+      "This notice is issued in accordance with the terms of your appointment and the policies of the Company.\n\n" +
+      "Kindly acknowledge receipt of this letter by signing the duplicate copy enclosed.\n\n" +
+      "For {{company_name}}\n\n" +
+      "Employee Acknowledgement: _______________________  Date: ___________",
+  },
   {
     slug: "termination-letter",
     title: "Termination Letter",
@@ -240,6 +448,21 @@ export function findTemplate(slug: string): LetterTemplate | undefined {
 
 export function renderTemplate(template: string, values: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => values[key] ?? `[${key}]`);
+}
+
+/**
+ * 2026-10-23 — a <input type="date"> holds an ISO string ("2026-11-07"),
+ * and that raw value used to be substituted straight into the letter body,
+ * so a printed notice said "up to 2026-11-07". This is the readable form
+ * used on letters and PDFs ("07 November 2026"); anything that isn't a
+ * parseable ISO date is returned exactly as typed, so existing free-text
+ * dates and older records are unaffected.
+ */
+export function formatLetterDate(value: string): string {
+  if (!value) return value;
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 // 2026-09-23 — the letter body editor (letter-form.tsx) switched from a

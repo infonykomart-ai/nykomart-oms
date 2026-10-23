@@ -50,5 +50,20 @@ export const TEMPLATE_TO_LETTER_TYPE: Record<string, LetterTypeValue> = {
   "relieving-letter": "Relieving Letter",
   "salary-certificate": "Salary Slip",
   "warning-letter": "Warning Letter",
+  // 2026-10-23 — the two new notice templates (templates.ts) are warning
+  // letters in every sense the records log cares about (a formal written
+  // warning ahead of termination), so they deliberately reuse the existing
+  // 'Warning Letter' enum value instead of needing a new one + a migration
+  // applied before they can be issued. The exact template is still shown
+  // per row from template_slug, so the record never confuses them.
+  "improvement-notice": "Warning Letter",
+  "final-notice": "Warning Letter",
+  // 2026-10-23 — the company-issued notice letter (10/15/20 days, months or
+  // a custom period) is a notice that the employment will end on a stated
+  // date, so it files under the 'Termination Letter' (TL) series rather
+  // than 'Warning Letter' — it is not a warning to improve. The record log
+  // still shows the exact template title from template_slug, so it never
+  // gets confused with the after-the-fact Termination Letter.
+  "company-notice-letter": "Termination Letter",
   "termination-letter": "Termination Letter",
 };
