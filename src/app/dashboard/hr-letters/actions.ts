@@ -90,3 +90,70 @@ export async function issueHrLetter(input: IssueLetterInput): Promise<IssueLette
   revalidatePath("/dashboard/hr-letters/records");
   return { ok: true, id: data.id, refNo: data.ref_no ?? "" };
 }
+
+// 2026-10-23 — "print section dekh lena sath me edit vgera ka bhi dekh lena
+// sahi se": an issued letter used to be read-only forever, so a typo in a
+// notice (wrong day count, wrong name, a line the MD wants reworded) could
+// only be fixed by burning a NEW dispatch number on a fresh letter. This
+// updates the SAVED snapshot in place — ref_no, letter_type and the
+// dispatch-number series are deliberately untouched, since this is the same
+// letter being corrected, not a new one being issued. The same
+// hr_letters capability + company-scope check as issueHrLetter() applies;
+// the record page's reprint/re-export paths read these columns, so a
+// corrected letter reprints exactly as corrected.
+export type UpdateLetterInput = {
+  id: string;
+  letterDate: string; // ISO yyyy-mm-dd (a date input, not the printed free-text form)
+  employeeName: string;
+  employeeAddress: string;
+  subjectLine: string;
+  bodyText: string;
+  signatoryName: string;
+  signatoryDesignation: string;
+};
+
+export type UpdateLetterResult = { ok: true } | { ok: false; error: string };
+
+export async function updateIssuedHrLetter(input: UpdateLetterInput): Promise<UpdateLetterResult> {
+  const employee = await requireCapability("hr_letters");
+
+  if (!input.id) return { ok: false, error: "Missing letter id." };
+  if (!input.employeeName.trim()) return { ok: false, error: "Employee name is required." };
+  if (!input.bodyText.trim()) return { ok: false, error: "Letter text cannot be empty." };
+
+  const parsedDate = new Date(input.letterDate);
+  const letterDate = Number.isNaN(parsedDate.getTime())
+    ? new Date().toISOString().slice(0, 10)
+    : parsedDate.toISOString().slice(0, 10);
+
+  const db = createServiceRoleClient();
+  const { data: existing, error: readError } = await db
+    .from("hr_letters")
+    .select("id, for_company_id")
+    .eq("id", input.id)
+    .single();
+
+  if (readError || !existing) return { ok: false, error: "Letter record not found." };
+  if (!employee.companyIds.includes(existing.for_company_id)) {
+    return { ok: false, error: "You do not have access to this company's letters." };
+  }
+
+  const { error } = await db
+    .from("hr_letters")
+    .update({
+      for_employee_name_snapshot: input.employeeName.trim(),
+      employee_address: input.employeeAddress.trim() || null,
+      letter_date: letterDate,
+      subject_line: input.subjectLine.trim() || null,
+      body_text: input.bodyText,
+      signatory_name: input.signatoryName.trim() || null,
+      signatory_designation: input.signatoryDesignation.trim() || null,
+    })
+    .eq("id", input.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard/hr-letters/records");
+  revalidatePath(`/dashboard/hr-letters/records/${input.id}`);
+  return { ok: true };
+}
