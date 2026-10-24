@@ -43,6 +43,53 @@ function fyStartYearOf(dateStr: string): number {
   return d.getUTCMonth() + 1 < FY_START_MONTH ? d.getUTCFullYear() - 1 : d.getUTCFullYear();
 }
 
+/**
+ * 2026-10-24 — FY reporting helpers (Party Balance Summary is the first caller).
+ * A financial year is identified by the calendar year it STARTS in: "2026" =
+ * 2026-04-01 → 2027-03-31, printed as "2026-27".
+ *
+ * `fyStartYear(dateStr)` gives the FY a date falls in (same rule as fyLabel),
+ * `fyWindow(startYear)` gives the FY's own date range, and
+ * `fyOptions(latestStartYear, now)` builds the dropdown list newest-first — all
+ * derived from FY_START_MONTH, so changing that one constant moves everything.
+ */
+export function fyStartYear(dateStr: string): number {
+  return fyStartYearOf((dateStr ?? "").slice(0, 10));
+}
+
+export function fyWindow(startYear: number): { start: string; end: string; label: string; shortLabel: string } {
+  const start = `${startYear}-${String(FY_START_MONTH).padStart(2, "0")}-01`;
+  const end = `${startYear + 1}-03-31`;
+  return {
+    start,
+    end,
+    label: `${startYear}-${String(startYear + 1).slice(2)}`,
+    shortLabel: `${String(startYear).slice(2)}-${String(startYear + 1).slice(2)}`,
+  };
+}
+
+/**
+ * Newest-first FY choices for a picker. `earliestStartYear` widens the list to
+ * cover the oldest data on the page; capped at MAX_FY_OPTIONS so a 2016-era
+ * import can't produce a 40-item dropdown (the current FY is always included).
+ */
+export const MAX_FY_OPTIONS = 8;
+
+export function fyOptions(
+  earliestStartYear: number | null,
+  now: Date = new Date()
+): { startYear: number; value: string; label: string }[] {
+  const current = fyStartYearOf(now.toISOString().slice(0, 10));
+  const oldest = earliestStartYear != null && Number.isFinite(earliestStartYear) ? Math.min(earliestStartYear, current) : current;
+  const min = Math.max(oldest, current - (MAX_FY_OPTIONS - 1));
+  const out: { startYear: number; value: string; label: string }[] = [];
+  for (let y = current; y >= min; y -= 1) {
+    const w = fyWindow(y);
+    out.push({ startYear: y, value: w.label, label: `FY ${w.label}${y === current ? " (current)" : ""}` });
+  }
+  return out;
+}
+
 // The inclusive calendar window any business date may fall in, derived from
 // the FY system relative to TODAY at call time — never a frozen year.
 export function fyDateWindow(now: Date = new Date()): { min: string; max: string; minLabel: string; maxLabel: string } {

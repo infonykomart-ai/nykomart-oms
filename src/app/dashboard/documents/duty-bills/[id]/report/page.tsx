@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { CompanyLetterheadHeader } from "@/components/company-letterhead";
+import { loadCompanyLetterhead, resolveBillCompanyId } from "@/lib/company-letterhead";
 
 // 2026-08-12 (round 10): mirrors freight-bills/[id]/report — matches the
 // Duty Tax Bill Excel the user supplied (New_Microsoft_Excel_Worksheet.
@@ -62,6 +64,14 @@ async function DutyBillReportInner({ id }: { id: string }) {
 
   const orderIds = (assignments ?? []).map((a) => a.order_id);
   const shipmentIds = (assignments ?? []).map((a) => a.order_shipment_id);
+
+  // 2026-10-24 — "jo bill jis company me add hua hai report me usi company ka
+  // letterhead aaye": this sheet used to print with NO letterhead at all.
+  // duty_tax_bills has no company_id, so the owning company comes from the
+  // finance-ledger row (else the company of its orders) — see
+  // src/lib/company-letterhead.ts.
+  const billCompanyId = await resolveBillCompanyId(supabase, { source: "duty_tax_bill", sourceId: id, orderIds });
+  const letterhead = await loadCompanyLetterhead(supabase, billCompanyId);
   // Gap 1 (2026-08-20): awb_no comes from the SPECIFIC order_shipments row
   // this assignment points at — see claude/gap1-multipackage-design-
   // 2026-08-20.md and the identical fix in freight-bills/[id]/report.
@@ -145,13 +155,14 @@ async function DutyBillReportInner({ id }: { id: string }) {
         </div>
       )}
 
-      <PrintArea id="duty-report-area">
+      <PrintArea id="duty-report-area" companyName={letterhead?.name} companyLogoUrl={letterhead?.logo_url ?? undefined}>
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-slate-900">Duty &amp; Tax Bill Report</h1>
-              <p className="text-slate-500">Invoice {bill.invoice_no} · {bill.invoice_date ?? "—"}</p>
-            </div>
+          <div className="mb-4 flex items-start justify-between">
+            <CompanyLetterheadHeader
+              letterhead={letterhead}
+              title="Duty & Tax Bill Report"
+              subtitle={`Invoice ${bill.invoice_no} · ${bill.invoice_date ?? "—"}`}
+            />
             <div className="text-right text-slate-600">
               <p>Duty ₹{bill.duty_tax_amt_inr} + GST ₹{bill.gst_18pct_amt}{bill.duty_tax_amt_usd ? ` (≈ $${bill.duty_tax_amt_usd})` : ""}</p>
               <p className="font-semibold text-slate-900">Gross Total ₹{bill.gross_total_amt ?? bill.duty_tax_amt_inr}</p>

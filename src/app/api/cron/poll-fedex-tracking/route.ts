@@ -71,6 +71,16 @@ import { fetchDhlTracking, getDhlApiKey, bucketFromDhlStatus } from "@/lib/couri
 // same OAuth2 client_credentials call instead of duplicating it — see
 // fedex-auth.ts's header comment.
 import { getFedexAccessToken, FEDEX_API_BASE } from "@/lib/couriers/fedex-auth";
+// 2026-10-24 — the two daily Telegram digests ride along with this 03:00 UTC
+// (08:30 IST) job. vercel.json has no free cron slot (see the Hobby-cap note at
+// the top of this file), so a separate schedule was not an option; calling the
+// shared runners here is what actually STARTS them. Both are best-effort: a
+// digest failure is reported under `digests` and never fails the courier poll.
+// Set TRACKING_DIGESTS=off once an external scheduler hits
+// /api/cron/leave-digest and /api/cron/overdue-digest directly, so the same
+// message is not sent twice a day.
+import { runLeaveDigest } from "@/lib/leave/digest-run";
+import { runOverdueDigest } from "@/lib/parties/overdue-digest";
 
 export const maxDuration = 60;
 
@@ -360,6 +370,32 @@ export async function GET(req: NextRequest) {
     );
   } catch (err) {
     results.dhl = { error: err instanceof Error ? err.message : String(err) };
+  }
+
+  // Daily digests LAST, after every courier has had its turn: a slow Telegram
+  // call must never delay tracking, and a digest error must never mark the
+  // tracking run as failed (a scheduler retry would re-poll everything).
+  if (String(process.env.TRACKING_DIGESTS ?? "").toLowerCase() !== "off") {
+    const digests: Record<string, unknown> = {};
+    try {
+      const leave = await runLeaveDigest(supabase);
+      digests.leave = leave.error
+        ? { error: leave.error }
+        : { sent: leave.sent, onLeave: leave.onLeaveCount, wouldSendTo: leave.wouldSendTo, note: leave.note, failed: leave.failed };
+    } catch (err) {
+      digests.leave = { error: err instanceof Error ? err.message : String(err) };
+    }
+    try {
+      // skipEmpty: a "nothing overdue" message every morning is noise — the
+      // Ageing report still shows the zero state.
+      const overdue = await runOverdueDigest(supabase, { skipEmpty: true });
+      digests.overdue = overdue.error
+        ? { error: overdue.error }
+        : { sent: overdue.sent, overdue: overdue.overdue, skipped: overdue.skipped, note: overdue.note, failed: overdue.failed };
+    } catch (err) {
+      digests.overdue = { error: err instanceof Error ? err.message : String(err) };
+    }
+    results.digests = digests;
   }
 
   return NextResponse.json(results);

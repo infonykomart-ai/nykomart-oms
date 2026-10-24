@@ -9,6 +9,10 @@ import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 // (recharge/refund/history) + per-bill "Pay from Wallet" balance map.
 import { WalletSection } from "./wallet-section";
 import { getWalletOverview } from "./wallet-actions";
+// 2026-10-24 — financial-year filter (same FY system the Party Balance
+// Summary uses): Bill Payment used to be "everything unpaid, ever", so the
+// FY the admin is actually closing was buried under old carry-forward bills.
+import { fyOptions, fyWindow } from "@/lib/fy-date";
 
 // Bill Payment (round 11) — see actions.ts header comment. Lists every
 // bill_pass_register row (any invoice_type — vendor/courier/duty/salary/
@@ -57,6 +61,13 @@ export default async function BillPaymentPage({
       ? employee.companyIds
       : [employee.currentCompanyId];
   const status = typeof sp.status === "string" ? sp.status : "";
+  // "2026-27" — the FY the bill was RAISED in (invoice_date), not the due
+  // date: a March bill falling due in April still belongs to the FY that
+  // raised it, which is how the P&L and the Ageing report count it too.
+  const fyParam = typeof sp.fy === "string" ? sp.fy : "";
+  const fyStartYear = /^\d{4}-\d{2}$/.test(fyParam) ? Number(fyParam.slice(0, 4)) : null;
+  const fyWin = fyStartYear != null ? fyWindow(fyStartYear) : null;
+  const fyChoices = fyOptions(null);
   const todayStr = new Date().toISOString().slice(0, 10);
 
   const [{ data: companies }, { data: parties }] = await Promise.all([
@@ -73,6 +84,8 @@ export default async function BillPaymentPage({
     )
     .in("company_id", effectiveCompanyIds)
     .order("due_date", { ascending: true, nullsFirst: false });
+
+  if (fyWin) query = query.gte("invoice_date", fyWin.start).lte("invoice_date", fyWin.end);
 
   if (status === "paid") {
     query = query.lte("balance_due", 0);
@@ -267,6 +280,15 @@ export default async function BillPaymentPage({
           </select>
         </div>
         <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="fy">Financial Year</label>
+          <select id="fy" name="fy" defaultValue={fyParam} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+            <option value="">All years</option>
+            {fyChoices.map((f) => (
+              <option key={f.value} value={f.value}>{f.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="status">Status</label>
           <select id="status" name="status" defaultValue={status} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
             <option value="">All Unpaid (default)</option>
@@ -278,6 +300,11 @@ export default async function BillPaymentPage({
         <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
           Filter
         </button>
+        {fyWin && (
+          <span className="text-[11px] text-slate-500">
+            Bills raised {fyWin.start} → {fyWin.end} ({rows.length} row{rows.length === 1 ? "" : "s"})
+          </span>
+        )}
         <a href="/dashboard/bill-payment" className="text-xs text-slate-400 underline">Clear</a>
       </form>
 

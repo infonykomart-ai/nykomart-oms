@@ -927,3 +927,94 @@ shipping, courier, purchase %) cover all rows, order-level figures are counted
 ONCE per PO, and a Company-wise table splits entries/POs/amounts per company.
 `PrintDialog`'s existing overflow detection switches the A4 preview to landscape
 once the extra column makes the sheet too wide.
+
+**Audit rule after this round (2026-10-24).** A sweep of every `.select()` in
+`src` found four more places with the same failure mode, all now `select("*")`:
+the bill statement loader (`lib/bill-statement.ts` — this also generates the
+shared PDF, so one missing `size_mode` killed both the dialog and every
+WhatsApp/email PDF), Document Entry's Courier Bill and Duty & Tax cards
+(`round_off_amt`), its Recent Washing list, and the freight-bill sheet's AWB
+rows (`billed_*`). **Any SELECT whose table carries a column from a recent
+round must use `*` (or retry with the pre-migration column list)** — PostgREST
+rejects the whole query for one unknown column, so the symptom is always "the
+whole section/statement/page is empty or 404", never "one field is blank".
+`src/lib/db/schema-status.ts` now also tracks
+`2026-10-24b-round-figure-printing-bill-and-size-mode.sql` — it was the one
+file whose absence caused the reported 404 but the card didn't list it.
+
+**Letterhead belongs to the DOCUMENT's company, not the switcher.**
+`src/lib/company-letterhead.ts` + `src/components/company-letterhead.tsx`.
+`purchase_bills` has `company_id`, so the purchase sheet simply prints the seed
+row's company — including when the same invoice number spans companies (the
+letterhead stays the issuing company's; the other companies appear as the
+Company column / per-company table). `freight_bills` and `duty_tax_bills` have
+NO `company_id` at all, which is why the Courier and Duty sheets printed no
+letterhead until this round: `resolveBillCompanyId()` takes it from the
+`bill_pass_register` row they were posted as (source + source_id), falling back
+to the company of their orders. Any future bill-type report should use the same
+pair rather than `employee.currentCompanyId`.
+
+**Party Balance Summary is now an FY statement** (`parties/summary`, plus
+`fyStartYear` / `fyWindow` / `fyOptions` in `src/lib/fy-date.ts`). It still
+reads only `bill_pass_register` — no new table, no recomputation of
+`balance_due`.
+
+- Default scope is the **running FY**; `?fy=` (empty) is the old all-time
+  open-balance view, `?fy=2025-26` any past year. The dropdown is built from
+the oldest bill on screen (capped at 8, the selected year always stays).
+- Per party: `opening` (everything dated before 1 April) + `billed` (bills in
+the FY) − `credited` (CN/DN adjustments dated in the FY) − `paid` (payments
+dated in the FY) = `closing`. "As on" is today for the running FY, 31 March
+  for a closed one; anything dated after it is excluded, and overdue is a
+  today-fact so closed years report none.
+- Dating comes from the child rows (`bill_pass_register_payments.payment_date`,
+  `..._adjustments.created_at`) and the bill's own `invoice_date ?? invoice_recv_date
+  ?? created_at`. Legacy bills whose payment/credit is only an aggregate number
+  on the row get that remainder posted on the BILL's date — which is what makes
+  the invariant hold: for the running FY, closing === live `balance_due` per
+  party, so the FY view can never disagree with Bill Payment / Party Ledger.
+  Keep that invariant if this is ever extended (e.g. a per-FY ledger).
+- The table/export columns switch on `fy`; the all-time path is unchanged.
+
+## 13. Round 2026-10-24c — ageing report, digests actually scheduled, FY filter
+
+**"Kitna paisa kitna purana pada hai" = Payables Ageing**
+(`src/lib/parties/ageing.ts` → `reports/ageing`). Source is unchanged
+(`bill_pass_register.balance_due > 0`), paged 1000 at a time because PostgREST
+silently truncates past its row cap and a truncated ageing understates the debt.
+Bucket boundaries are fixed — 1-30 / 31-60 / 61-90 / 90+ past due, measured from
+`due_date` (generated as invoice received + 7 days), with `invoice_date` as the
+legacy fallback. Rows are grouped per (party × company) because a vendor exists
+once per company and the admin chases each payable separately. The WhatsApp
+reminder is a plain `wa.me` link built from the row's own figures (no API key,
+nothing sent until the user presses send) — same rule as the bill statement.
+
+**A digest that nothing calls is not a feature.** Both Telegram digests existed
+as routes but no scheduler hit them, because `vercel.json` is at Hobby's hard
+2-cron cap (a third entry blocks *every* future deploy — see the postmortem at
+the top of `poll-fedex-tracking/route.ts`). They are now invoked from the daily
+03:00 UTC tracking cron *after* the courier poll, each wrapped in its own
+try/catch so a Telegram/migration/network failure only shows up under
+`digests` in that route's JSON and never fails tracking. The sending logic moved
+to `src/lib/leave/digest-run.ts` and `src/lib/parties/overdue-digest.ts`; the
+routes are thin wrappers that keep `?dry=1` / `?skipEmpty=1`. **If you ever add
+a real third cron slot (or an external scheduler), set `TRACKING_DIGESTS=off`**
+first — otherwise the office gets every digest twice. The overdue digest sends
+with `skipEmpty`, the leave digest does not (its "aaj koi leave par nahi hai" is
+the proof the job ran).
+
+**Bill Payment finally has a Financial Year filter.** It used to be "every
+unpaid bill, ever" — the FY being closed was buried under carry-forward rows.
+`?fy=2026-27` filters on `invoice_date` (the FY that RAISED the bill), not
+`due_date`, so a March bill falling due in April stays in the year it was booked
+— the same rule the P&L and the Ageing report use. `?fy=` (empty) is the old
+all-years view.
+
+**Purchase sheet now answers "kitna paid, kitna baaki".** The page reads the
+`bill_pass_register` rows posted for the invoice's items (one batched query) and
+prints per-company **Paid** and **Balance** columns plus BILLED / CREDIT
+NOTES+ADJ / PAID / BALANCE DUE in the summary. It reads the ledger, it never
+recomputes a payment — so the sheet, Bill Payment and the Party Ledger cannot
+disagree. A bill that has not been posted to finance says so instead of showing
+₹0 paid. This is the pattern for any sheet that should show settlement status:
+read `bill_pass_register`, don't re-derive.

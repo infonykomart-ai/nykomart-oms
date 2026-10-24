@@ -132,6 +132,16 @@ export default async function ReportsPage({
           >
             💳 Outstanding Balances Report
           </Link>
+          {/* 2026-10-24 — "kitna paisa kitna purana pada hai": outstanding
+              total ka jawab deta tha, umar (ageing) ka nahi. 0-30/31-60/
+              61-90/90+ buckets, party × company wise, WhatsApp reminder ke
+              saath. Same data source: bill_pass_register.balance_due > 0. */}
+          <Link
+            href="/dashboard/reports/ageing"
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+          >
+            ⏳ Payables Ageing (0-30 / 31-60 / 61-90 / 90+)
+          </Link>
           {/* 2026-08-22 — 3 more reports added after "Reports hub —
               remaining scope": Party/Vendor Ledger, Sale & Profit,
               Salary/Attendance (see each page's own header comment). */}

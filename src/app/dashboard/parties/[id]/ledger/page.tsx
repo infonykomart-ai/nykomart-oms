@@ -10,6 +10,8 @@ import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAd
 import { BillDocLink } from "@/components/bill-doc-link";
 import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 import { buildWalletLedgerLines, walletSettlementNote, type WalletSettlement } from "@/lib/ledger/wallet-ledger-lines";
+import { fyOptions, fyStartYear, fyWindow } from "@/lib/fy-date";
+import { todayIST } from "@/lib/attendance/ist-date";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
 // MERE HISAB SE". Investigated first (see db/2026-08-17-freight-duty-bills-
@@ -100,6 +102,8 @@ async function PartyLedgerInner(
   if (!party) notFound();
 
   const spVal = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const todayISTStr = todayIST();
   // #4 — cross-company merge toggle. Deliberately opt-in (default OFF =
   // today's per-company view): parties is deliberately NOT company-scoped
   // (one party can have bills against more than one company), so the
@@ -486,6 +490,12 @@ async function PartyLedgerInner(
   const totalDebit = ledgerLines.reduce((s, t) => s + t.debit, 0);
   const totalCredit = ledgerLines.reduce((s, t) => s + t.credit, 0);
   const closingBalance = ledgerLines.length ? ledgerLines[ledgerLines.length - 1].balance : 0;
+  // FY presets built from this party's own history (newest first) — the same
+  // helper the Party Balance Summary uses, so both pages offer identical years.
+  const fyChoices = fyOptions(
+    ledgerLines.length ? fyStartYear(ledgerLines[0].date) : null,
+    new Date(`${todayISTStr}T00:00:00Z`)
+  );
 
   // 2026-08-19 — "kaha pata chal raha hai ki apne ko ab kitna payment
   // karna hai" + "ladger me bhi to filter hona chaihiye credit debit date
@@ -497,8 +507,17 @@ async function PartyLedgerInner(
   // in the app having one. This is the single shared page every party's
   // ledger renders through (`/dashboard/parties/[id]/ledger`), so both
   // fixes apply to every party automatically, not just this one.
-  const fromDate = spVal("from");
-  const toDate = spVal("to");
+  // 2026-10-24 — "PARTY BALANCE SUMMERY FY KE HISAB SE" ke saath ledger me bhi
+  // FY jump: ek FY chunne par From/To usi FY ki window par set ho jaate hain
+  // aur Opening/Closing balance alag se dikhte hain, taaki ledger aur summary
+  // ka figure ek hi din par milta ho.
+  const fyParam = spVal("fy");
+  const fyMatch = /^(\d{4})-\d{2}$/.exec(fyParam);
+  const fyStartYearSelected = fyMatch ? Number(fyMatch[1]) : null;
+  const fy = fyStartYearSelected != null && fyStartYearSelected >= 2000 ? fyWindow(fyStartYearSelected) : null;
+  const fyTo = fy ? (todayISTStr < fy.end ? todayISTStr : fy.end) : "";
+  const fromDate = fy ? fy.start : spVal("from");
+  const toDate = fy ? fyTo : spVal("to");
   const txnType = spVal("type");
 
   const displayedLines = ledgerLines.filter((t) => {
@@ -508,9 +527,16 @@ async function PartyLedgerInner(
     if (txnType === "credit" && !(t.credit > 0)) return false;
     return true;
   });
-  const filtersActive = Boolean(fromDate || toDate || txnType);
+  const filtersActive = Boolean(fromDate || toDate || txnType || fy);
   const shownDebit = displayedLines.reduce((s, t) => s + t.debit, 0);
   const shownCredit = displayedLines.reduce((s, t) => s + t.credit, 0);
+  // Opening = everything before the visible range (same sign convention as the
+  // running balance: credit − debit). Closing = opening + this range's
+  // movements; with no From date the opening is simply 0.
+  const openingBalance = fromDate
+    ? round2(ledgerLines.filter((t) => t.date < fromDate).reduce((s, t) => s + t.credit - t.debit, 0))
+    : 0;
+  const periodClosing = round2(openingBalance + shownCredit - shownDebit);
 
   const isPayable = closingBalance > 0.005;
   const isCredit = closingBalance < -0.005;
@@ -582,6 +608,18 @@ async function PartyLedgerInner(
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm print:hidden">
+        {/* 2026-10-24 — FY jump: picks the whole FY window (From/To below follow it). */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="fy">Financial year</label>
+          <select id="fy" name="fy" defaultValue={fy?.label ?? ""} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500" title="Sets From/To to that financial year and adds Opening / Closing balance">
+            <option value="">No FY (use dates below)</option>
+            {fyChoices.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">From</label>
           <input id="from" name="from" type="date" defaultValue={fromDate} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500" />
@@ -628,9 +666,24 @@ async function PartyLedgerInner(
               <p className="text-[10px] uppercase tracking-wide text-slate-400">{allCompanies ? "All companies (merged)" : currentCompanyName}</p>
             </div>
             <div className="text-right text-slate-600">
-              <p>Total Debit ₹{totalDebit.toFixed(2)}</p>
-              <p>Total Credit ₹{totalCredit.toFixed(2)}</p>
-              <p className="font-semibold text-slate-900">Closing Balance ₹{closingBalance.toFixed(2)}</p>
+              {filtersActive ? (
+                <>
+                  <p>Opening ₹{openingBalance.toFixed(2)}</p>
+                  <p>
+                    Debit ₹{shownDebit.toFixed(2)} · Credit ₹{shownCredit.toFixed(2)}
+                  </p>
+                  <p className="font-semibold text-slate-900">
+                    Closing as on {toDate || todayISTStr} ₹{periodClosing.toFixed(2)}
+                  </p>
+                  <p className="text-[10px] text-slate-400">Whole ledger closing ₹{closingBalance.toFixed(2)}</p>
+                </>
+              ) : (
+                <>
+                  <p>Total Debit ₹{totalDebit.toFixed(2)}</p>
+                  <p>Total Credit ₹{totalCredit.toFixed(2)}</p>
+                  <p className="font-semibold text-slate-900">Closing Balance ₹{closingBalance.toFixed(2)}</p>
+                </>
+              )}
             </div>
           </div>
 
@@ -690,6 +743,20 @@ async function PartyLedgerInner(
               </tr>
             </thead>
             <tbody>
+              {/* 2026-10-24 — filtered view (incl. any FY) starts from a real
+                  opening balance, so “balance” column adds up from zero. */}
+              {filtersActive && fromDate && (
+                <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                  <td className="whitespace-nowrap py-1 pr-2">{fromDate}</td>
+                  <td className="py-1 pr-2"></td>
+                  <td className="py-1 pr-2 font-medium">Opening balance (brought forward)</td>
+                  <td className="py-1 pr-2"></td>
+                  <td className="py-1 pr-2"></td>
+                  <td className="py-1 pr-2"></td>
+                  <td className="py-1 pr-2"></td>
+                  <td className="py-1 pr-2 text-right font-medium">{openingBalance.toFixed(2)}</td>
+                </tr>
+              )}
               {displayedLines.map((t, i) => (
                 <tr key={i} className={`group border-b border-slate-100 align-top text-slate-700 ${t.status ? rowShade[t.status] : ""}`}>
                   <td className="whitespace-nowrap py-1 pr-2">{t.date}</td>
@@ -769,6 +836,16 @@ async function PartyLedgerInner(
                   <td colSpan={8} className="py-3 text-center text-slate-400">
                     {ledgerLines.length === 0 ? "No bills against this party yet." : "No entries match the selected filter."}
                   </td>
+                </tr>
+              )}
+              {filtersActive && displayedLines.length > 0 && (
+                <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold text-slate-900">
+                  <td colSpan={5} className="py-1 pr-2 text-right">
+                    Closing balance as on {toDate || todayISTStr}
+                  </td>
+                  <td className="py-1 pr-2 text-right">{shownDebit.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{shownCredit.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{periodClosing.toFixed(2)}</td>
                 </tr>
               )}
             </tbody>

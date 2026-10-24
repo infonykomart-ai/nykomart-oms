@@ -42,6 +42,22 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-10-24 — added because this file's absence was reported as "bill
+    // ki sheet par 404 aa raha hai": every A4 sheet named one of its columns
+    // in its SELECT, and a single missing column rejects the whole query. The
+    // sheets are tolerant now (`select("*")`), so what remains is the quiet
+    // half — figures falling back to pre-migration values.
+    file: "2026-10-24b-round-figure-printing-bill-and-size-mode.sql",
+    title: "Round-figure bills, printing-bill section, 'as billed' sizes",
+    probe: { table: "purchase_bills", column: "size_mode" },
+    features: [
+      "Purchase / Courier / Duty / Washing bills: ROUND OFF line prints ₹0.00 (net payable is short by the vendor's rounding)",
+      "Purchase Bill entry: the separate 'Printing' bill tab is unavailable",
+      "Fabric bills can't be marked 'as billed' — every size prints as a Sq Ft area even when the vendor billed running metres",
+      "Courier bill sheets: per-AWB GST breakup falls back to the flat 18% estimate",
+    ],
+  },
+  {
     file: "2026-10-24-shipment-charge-lines.sql",
     title: "Courier charge ledger (charge heads, export vs return-to-India)",
     probe: { table: "shipment_charge_lines", column: "charge_head" },

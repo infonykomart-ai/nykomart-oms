@@ -1,3 +1,116 @@
+PAYABLES AGEING + DAILY DIGESTS CHALU + FY FILTER + SHEET PAID/BALANCE
+(2026-10-24c)
+======================================================================
+
+NAYA SQL: koi zaroori nahi — is round me koi column/table add nahi hua.
+Sirf naye reports/routes + chhoti improvements hain. (2026-10-24b wala
+round agar nahi chala hai to wahi ek file pending hai — /dashboard ka
+Schema Status card batata hai.)
+
+
+1) "KITNA PAISA KITNA PURANA PADA HAI" — PAYABLES AGEING REPORT
+---------------------------------------------------------------
+Pehle ka Outstanding report sirf total batata tha, umar (ageing) nahi.
+Ab: Reports → ⏳ Payables Ageing (0-30 / 31-60 / 61-90 / 90+ days past due),
+party × company wise, one page par:
+  • 5 KPI cards (Not due / 1-30 / 31-90 / 90+ / Total payable)
+  • party-wise table, 90+ wali rows red, 61-90 amber
+  • har row par "📱 Remind" — us party ke pending amount ka WhatsApp
+    message pehle se likha hua opens (wa.me link, koi API key nahi,
+    bhejne se pehle aap padh sakte hain)
+  • Export (Excel/CSV) + Print, same ExportBar/PrintArea pattern
+  • Company selector (ya "All companies"), party search, "Only overdue"
+MatHS ek hi jagah: src/lib/parties/ageing.ts — isi ko daily digest bhi
+padhta hai, is liye screen aur Telegram message kabhi alag figure nahi
+dikha sakte. Bill ki umar uske due_date se (na ho to invoice date se),
+source bill_pass_register.balance_due > 0 (Bill Payment / Ledger ke same
+rows). Kuch bhi store nahi hota.
+
+
+2) DAILY DIGESTS AB SACH ME CHALTE HAIN (leave + overdue payables)
+------------------------------------------------------------------
+Pehle ye routes code me the par koi unhe roz call nahi karta tha — kyunki
+vercel.json Hobby plan ke 2-cron cap par hai (teesri entry daalne se
+saare future deploys block ho jaate hain).
+
+Ab dono digest usi roz wale 03:00 UTC (08:30 IST) courier-poll cron ke
+saath chalte hain (/api/cron/poll-fedex-tracking), poll khatam hone ke
+BAAD, best-effort:
+  • Leave digest  → "Aaj 4 log leave par — Neelu, Rahul…" + per-person
+    range/type/company. Recipients: LEAVE_DIGEST_CHAT_ID (comma-separated)
+    ya har active leave_admin jiska Telegram connected hai.
+  • Overdue digest → "Overdue ₹X · 90+ ₹Y" + top 5 parties.
+    Recipients: OVERDUE_DIGEST_CHAT_ID ya har Telegram-connected admin.
+    Din me kuch overdue nahi to message skip (skipEmpty) — noise nahi.
+Kisi bhi digest ki failure courier poll ko fail nahi karti; response me
+`digests` object me status aata hai.
+
+Agar aap baad me in routes ko alag scheduler se chalana chahein:
+    GET /api/cron/leave-digest     Authorization: Bearer $CRON_SECRET
+    GET /api/cron/overdue-digest   Authorization: Bearer $CRON_SECRET
+(?dry=1 = message + recipients dikhao, bhejo mat; ?skipEmpty=1 = khali din
+chup raho.) Aur cron se double na jaye is liye env TRACKING_DIGESTS=off
+kar dena.
+
+Note: Telegram bhejne ke liye TELEGRAM_BOT_TOKEN pehle se hi chahiye
+(attendance punch notifications isi se jaate hain).
+
+
+3) BILL PAYMENT ME FINANCIAL YEAR FILTER
+----------------------------------------
+Bill Payment "sab kuch, hamesha" dikhata tha — FY closing ke waqt purane
+carry-forward bills naye FY ko dhak dete the. Ab filter bar me
+"Financial Year" dropdown (FY 2026-27 (current) … pichhle 8 FY, ya
+"All years"). Filter invoice_date par lagta hai (jis FY me bill bana), due
+date par nahi — P&L / Ageing bhi isi rule par count karte hain. Filter
+lagne par "Bills raised 2026-04-01 → 2027-03-31 (N rows)" line dikhti hai.
+
+
+4) PURCHASE BILL SHEET PAR PAID / BALANCE
+-----------------------------------------
+Sheet par ab tak sirf gross total tha; "kitna paid, kitna baaki" dekhne
+ke liye Bill Payment kholna padta tha. Ab sheet (jab bill finance ledger
+me post ho chuka hai) dikhati hai:
+  • left company-wise table me 2 extra column: Paid, Balance
+    (har company ka apna paid/balance — 3 company ke PO ho to 3 figures)
+  • right summary me BILLED / CREDIT NOTES+ADJ / PAID / BALANCE DUE
+Figures bill_pass_register se hi aate hain (koi naya hisab nahi), is liye
+Bill Payment / Party Ledger se hamesha match karenge. Post nahi hua bill
+ho to chhoti line: "Not sent to the finance ledger yet".
+
+
+VERIFY (is sandbox me jo possible tha)
+--------------------------------------
+  • Focused tsc (tsconfig.focus.json — is round ki saari files + unke
+    imports: ageing lib/report/table, digest libs + dono routes + poll
+    route, bill-payment page, purchase-bill sheet, fy-date) → exit 0
+  • eslint --quiet un sabhi files par → exit 0 (koi eslint-disable nahi)
+  • Poora-project tsc sandbox me OOM (exit 137) — pehle se aisa hi hai.
+  • Live Supabase/Telegram is workspace me nahi hai, is liye actual send /
+    ageing figures real data par nahi chale. Pehla production check:
+    Reports → Payables Ageing kholo (figures Bill Payment se milao), phir
+    /api/cron/leave-digest?dry=1 aur /api/cron/overdue-digest?dry=1
+    browser me kholo (Authorization: Bearer $CRON_SECRET ke saath).
+
+
+FILES
+-----
+N  src/lib/parties/ageing.ts                                (ageing maths, shared)
+N  src/lib/parties/overdue-digest.ts                        (overdue digest runner)
+N  src/lib/leave/digest-run.ts                              (leave digest runner)
+N  src/app/dashboard/reports/ageing/page.tsx                 (Ageing report)
+N  src/app/dashboard/reports/ageing/ageing-table.tsx         (table + export/print)
+M  src/app/api/cron/overdue-digest/route.ts                  (thin wrapper)
+M  src/app/api/cron/leave-digest/route.ts                    (thin wrapper)
+M  src/app/api/cron/poll-fedex-tracking/route.ts             (dono digest ab yahan se chalte hain)
+M  src/app/dashboard/bill-payment/page.tsx                   (FY filter)
+M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx (Paid/Balance)
+M  src/app/dashboard/reports/page.tsx                        (Ageing ka link)
+M  BRAIN.md, CHANGES.txt
+
+KOI NAYA NPM PACKAGE NAHI CHAHIYE.
+
+
 BILL SHEET FIX + LEDGER LINK + SAABHI COMPANY KE PO (2026-10-24)
 =================================================================
 
@@ -82,11 +195,122 @@ File: src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx
       (loadInvoiceRows + per-company totals)
 
 
+4) EXTRA AUDIT — AUR 4 JAGAH WAHI "PENDING MIGRATION = TOOTA FEATURE" BUG
+--------------------------------------------------------------------------
+"Aur bhi error dekho" par poora src scan kiya (har .select() ka column list,
+saare /dashboard links vs router, aur eslint --quiet poore src par). Jo mila:
+
+SEVERE (fix) — bill statement AUR uska PDF:
+  lib/bill-statement.ts purchase_bills se size_mode naam se select karta tha.
+  2026-10-24b pending ho to poori query fail → statement dialog "Could not
+  load this bill statement" deta tha AUR WhatsApp/Telegram/Email ka PDF bhi
+  nahi banta tha (wahi loader PDF route me bhi chalta hai). Ab select("*").
+
+SEVERE (fix) — Document Entry ke Courier Bill / Duty & Tax cards:
+  documents/page.tsx freight_bills/duty_tax_bills se round_off_amt naam se
+  select karta tha (wahi 10-24b). Pending hone par poora section khaali —
+  koi courier/duty bill card hi nahi dikhta tha. Ab select("*").
+
+MEDIUM (fix) — Document Entry ka "Recent Washing Entries" + uska total:
+  washing_entries.round_off_amt (10-24b) naam se select → pending hone par
+  list aur total dono khaali. Ab select("*").
+
+MEDIUM (fix) — Courier Bill sheet ke AWB rows:
+  freight-bill report billed_base/fuel/remote/other/gst_amt naam se select
+  karta tha (2026-09-21 + 10-24b). Ek bhi missing → sheet me koi AWB row nahi.
+  Ab select("*").
+
+SIGNAL (fix) — Schema card:
+  /dashboard ka Schema Status card 2026-10-24b ko track hi nahi karta tha —
+  wahi file jiske pending hone se sheet 404 ho rahi thi. Ab wo sabse upar
+  hai (probe: purchase_bills.size_mode) aur saaf likhta hai kya-kya degrade
+  hota hai (round off ₹0.00, printing tab nahi, as-billed size, per-AWB GST).
+
+NAYA RULE (aage ke liye): jin rows me haal ki migrations ke optional columns
+aate hain unhe select("*") se padho (ya pre-migration column list se retry
+karo). Naam se likha ek missing column POORI query reject karta hai — sirf
+wo field nahi.
+
+JO CHECK KIYA AUR THEEK MILA (koi change nahi):
+  • shipment_charge_lines (Courier charges), leave-* queries already tolerant
+    hain (select * / retry / "run this SQL" notice).
+  • Purchase Bill save/edit already pending-migration par retry karte hain —
+    bill save kabhi nahi rukta.
+  • Saare /dashboard links vs app router — koi dead link nahi.
+  • eslint --quiet poore src par: 0 error.
+
+BACHTA HAI (jaan-boojh kar nahi chheda — crash nahi karta, sirf purana figure
+dikhata hai): ad-spend country split, B2B PI export fields, customs rate
+table, FX cache — inka fallback already hai aur Schema card inhe track karta
+hai.
+
+
+5) BILL SHEET PAR USI COMPANY KA LETTERHEAD (naya is round me)
+--------------------------------------------------------------
+"jo bill jis company me add hua hai report me usi company ka letterhead aaye":
+
+  • PURCHASE BILL SHEET: pehle cross-company invoice par letterhead hi blank
+    ho jaata tha (na logo, na company naam). Ab letterhead HAMESHA us company
+    ka hai jisme bill add hua hai (bill_pass_register.company_id ->
+    purchase_bills.company_id) — top-nav switcher se koi matlab nahi. Saath
+    me ab address + GSTIN + phone + email bhi print hote hain (pehle sirf
+    naam + GSTIN).
+  • COURIER BILL SHEET: is par letterhead BILKUL nahi tha — sirf title +
+    invoice. Ab logo, company naam, address, GSTIN/phone/email aate hain.
+  • DUTY & TAX BILL SHEET: same, pehle koi letterhead nahi tha — ab hai.
+
+Courier/Duty bills me company_id column hi nahi hai, is liye naya helper
+(src/lib/company-letterhead.ts -> resolveBillCompanyId) company aise nikalta
+hai: pehle us bill ka finance-ledger row (bill_pass_register source+source_id
+-> company_id), warna uske orders ki company. Matlab jo company bill ki owner
+hai usi ka letterhead — ledger me khud dikhta hai ki payable kis company ka hai.
+
+N  src/lib/company-letterhead.ts        (letterhead loader + bill company resolver)
+N  src/components/company-letterhead.tsx (printable letterhead block)
+M  purchase/freight/duty bill report pages
+
+
+6) PARTY BALANCE SUMMARY — FY KE HISAB SE + FY SELECTOR (naya is round me)
+--------------------------------------------------------------------------
+"PARTY BALANCE SUMMERY FY KE HISAB SE NIKL KE AAYE OR SELECT KARNE KA OPTION HO"
+
+  • Naya dropdown: Financial year — "FY 2026-27 (current)", "FY 2025-26", ...
+    aur "All time (as on today)". Page khulte hi CURRENT FY chalti hai; All time
+    option pehle jaisa open-balance view deta hai.
+  • FY chuniye to har party ki row ek proper statement ban jaati hai:
+        Opening (1 April ko) + is FY ke bills − credit notes − payments
+        = Closing (current FY me aaj tak, purani FY me 31 March tak)
+    Table me columns: Opening | Billed | Credit Notes | Paid | Closing +
+    Overdue / Advance / Oldest Due.
+  • Upar ke cards bhi FY ke hisab se (5): Opening / Bills in FY / Paid in FY /
+    Closing payable / Advance.
+  • Total row aur Excel/PDF export bhi wahi FY columns export karte hain
+    (file name me FY label aata hai).
+  • Dates asli documents se aati hain: bill = invoice_date (warna recv date,
+    warna created), payment = payment_date, CN/DN = created_at. Jin purane
+    bills me payment/adjustment sirf aggregate numbers hain (koi child row
+    nahi), unka amount BILL ki date par post hota hai — is liye kisi bhi FY
+    ka closing wahi hota hai jo live balance hai, koi andaaza nahi.
+  • Overdue sirf running FY me dikhta hai (purani FY historical position hai).
+  • FY list data se banti hai (sabse purane bill se aaj tak, max 8) — koi
+    hardcoded saal nahi; FY_START_MONTH badalne se sab kuch saath badalta hai
+    (src/lib/fy-date.ts me 3 naye helpers: fyStartYear / fyWindow / fyOptions).
+
+IMPORTANT NUMBER CHECK: current FY ka Closing = live balance_due (all history
+ka net), is liye default FY view kabhi Bill Payment / Party Ledger se disagree
+nahi karta. Farak sirf purani (closed) FY me aata hai — jo point hai.
+
+M  src/lib/fy-date.ts                              (FY window + dropdown helpers)
+M  src/app/dashboard/parties/summary/page.tsx      (FY computation + selector + cards)
+M  src/app/dashboard/parties/summary/summary-table.tsx (FY columns + export + caption)
+
+
 VERIFY (is sandbox me jo possible tha)
 --------------------------------------
   • Focused tsc (focused tsconfig: sirf badli hui files + unke saare
-    imports, 8 source files) → exit 0
-  • eslint un badli hui files par → exit 0 (koi eslint-disable nahi)
+    imports, 16 source files) → exit 0
+  • eslint un badli hui files par, aur eslint --quiet poore src par → exit 0
+    (koi eslint-disable nahi)
   • Poora-project tsc sandbox me OOM se kill hota hai (exit 137) — pehle
     bhi hota tha, code ki galti nahi. Isi liye focused scope chalaya.
   • Live Supabase is workspace me nahi hai, is liye real bill par sheet
@@ -103,8 +327,16 @@ M  src/app/dashboard/bill-payment/page.tsx                          (shared reso
 M  src/app/dashboard/bill-payment/bill-payment-list.tsx             (shared link component)
 M  src/app/dashboard/parties/[id]/ledger/page.tsx                   (ledger se bhi wahi sheet)
 M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx  (404 fix + cross-company + company-wise)
-M  src/app/dashboard/documents/freight-bills/[id]/report/page.tsx   (404 fix: select *)
+M  src/app/dashboard/documents/freight-bills/[id]/report/page.tsx   (404 fix: select * + AWB rows)
 M  src/app/dashboard/documents/duty-bills/[id]/report/page.tsx      (404 fix: select *)
+M  src/app/dashboard/documents/page.tsx                             (Courier/Duty/Washing lists: select *)
+M  src/lib/bill-statement.ts                                        (statement + PDF: select *)
+M  src/lib/db/schema-status.ts                                      (2026-10-24b card entry)
+M  src/lib/fy-date.ts                                               (FY window + dropdown helpers)
+M  src/app/dashboard/parties/summary/page.tsx                        (FY-wise balances + FY selector)
+M  src/app/dashboard/parties/summary/summary-table.tsx               (FY columns, totals, export)
+N  src/lib/company-letterhead.ts                                    (letterhead + bill company resolver)
+N  src/components/company-letterhead.tsx                            (printable letterhead block)
 M  BRAIN.md                                                         (§12 is round ka)
 M  CHANGES.txt
 

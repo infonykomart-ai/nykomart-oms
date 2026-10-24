@@ -133,9 +133,13 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
+    // 2026-10-24 — `*` instead of a column list: round_off_amt arrives with
+    // db/2026-10-24b-…, and naming one column the database hasn't got yet
+    // makes PostgREST reject the WHOLE query — which silently emptied this
+    // "Recent Washing Entries" list (and its total) on an un-migrated DB.
     supabase
       .from("washing_entries")
-      .select("id, chalan_no, chalan_date, company_id, party_id, store_id, item_size, pcs, sq_mtr_ft, rate, debit_charges, round_off_amt, amount")
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
@@ -177,10 +181,13 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     })(),
     (() => {
       let query = supabase
+        // 2026-10-24 — `*`: round_off_amt arrives with db/2026-10-24b-…. A
+        // named-but-missing column rejects the whole query, which silently
+        // emptied the entire Courier Bill section of Document Entry instead
+        // of just zeroing the round-off line. Every field read below has a
+        // null fallback.
         .from("freight_bills")
-        .select(
-          "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, round_off_amt, vendor_party_id"
-        )
+        .select("*")
         .order("created_at", { ascending: false })
         .limit(fbFiltered ? FILTERED_LIMIT : 8);
       if (fbVendor) query = query.eq("vendor_party_id", fbVendor);
@@ -190,10 +197,11 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     })(),
     (() => {
       let query = supabase
+        // 2026-10-24 — `*` for the same reason as freight_bills above
+        // (round_off_amt from db/2026-10-24b-…): one missing column used to
+        // blank this whole Duty & Tax section.
         .from("duty_tax_bills")
-        .select(
-          "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, round_off_amt, vendor_party_id"
-        )
+        .select("*")
         .order("created_at", { ascending: false })
         .limit(dbFiltered ? FILTERED_LIMIT : 8);
       if (dbVendor) query = query.eq("vendor_party_id", dbVendor);
@@ -287,7 +295,13 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             // 2026-10-24b: billed_base/fuel/remote/other + billed_gst_amt come
             // along too — the bill card and each AWB row now show that
             // parcel's own GST and total ("PER-AWB GST FORM PAR DIKHE").
-            "id, freight_bill_id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, billed_freight_amt, billed_base_amt, billed_fuel_amt, billed_remote_amt, billed_other_amt, billed_gst_amt, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
+            // 2026-10-24 — `*`: the billed_* breakup columns arrive with
+            // newer one-time SQL files (2026-09-21, 2026-10-24b per-AWB GST),
+            // and naming one that a database hasn't got yet rejects the WHOLE
+            // query — which silently removed every AWB row from these Courier
+            // Bill cards. `*` returns whatever exists; each field below has a
+            // null fallback.
+            "*"
           )
           .in("freight_bill_id", freightBillIds)
       : Promise.resolve({ data: [] }),

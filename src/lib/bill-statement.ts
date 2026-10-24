@@ -220,9 +220,19 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
     // vendor_invoice_no) pair that defines the group. A single-item bill
     // trivially matches only itself, so nothing changes there. Order-ref
     // is resolved per line (each row can point at a different PO).
+    // 2026-10-24 — SELECT * on purpose. This loader feeds the bill statement
+    // AND its PDF (src/app/api/bill-statement/[billId]?format=pdf, which every
+    // WhatsApp/Telegram/email share button downloads). It used to name
+    // purchase_bills.size_mode, which arrives with
+    // db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql — and on a
+    // database where that file hasn't been run PostgREST rejects the WHOLE
+    // query (42703), so the statement AND its PDF failed for every purchase
+    // bill with a generic "Could not load this bill statement". `*` returns
+    // whatever columns exist; a missing size_mode just falls back to the
+    // previous area behaviour below instead of taking the document down.
     const { data: pbRows } = await supabase
       .from("purchase_bills")
-      .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, total_amount, gst_rate_pct, gst_type, work_description, size_mode")
+      .select("*")
       .eq("vendor_party_id", bill.party_id)
       .eq("vendor_invoice_no", bill.vendor_invoice_no ?? "")
       .order("created_at", { ascending: true });

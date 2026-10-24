@@ -33,6 +33,8 @@ import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { CompanyLetterheadHeader } from "@/components/company-letterhead";
+import { loadCompanyLetterhead, resolveBillCompanyId } from "@/lib/company-letterhead";
 
 export default async function FreightBillReportPage({ params }: { params: Promise<{ id: string }> }) {
   try {
@@ -81,13 +83,24 @@ async function FreightBillReportInner({ id }: { id: string }) {
     // billed_other_amt/billed_gst_amt — the per-AWB charge breakup straight
     // off the courier bill (db/2026-09-21-freight-awb-billed-charge-
     // breakup.sql), so Total Shipping / GST / Gross are REAL bill figures.
-    .select(
-      "id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, billed_freight_amt, billed_base_amt, billed_fuel_amt, billed_remote_amt, billed_other_amt, billed_gst_amt, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark"
-    )
+    //
+    // 2026-10-24 — `*` rather than naming them: if that file (or the
+    // 2026-10-24b per-AWB GST one) hasn't been run, one missing column makes
+    // PostgREST reject the whole query and this sheet prints with NO AWB rows
+    // at all. Every field below already has a null fallback.
+    .select("*")
     .eq("freight_bill_id", id);
 
   const orderIds = (assignments ?? []).map((a) => a.order_id);
   const shipmentIds = (assignments ?? []).map((a) => a.order_shipment_id);
+
+  // 2026-10-24 — "jo bill jis company me add hua hai report me usi company ka
+  // letterhead aaye": freight_bills has no company_id, so the owning company
+  // comes from the finance-ledger row this bill was posted as (else from the
+  // company of its orders). The sheet then prints THAT company's logo, name,
+  // address and GSTIN — not the company selected in the top-nav switcher.
+  const billCompanyId = await resolveBillCompanyId(supabase, { source: "freight_bill", sourceId: id, orderIds });
+  const letterhead = await loadCompanyLetterhead(supabase, billCompanyId);
   // Gap 1 (2026-08-20): awb_no/weight come from the SPECIFIC order_shipments/
   // order_packages row this assignment points at (accurate per-AWB, an order
   // can have more than one now), not dispatch_invoices' order-level summary
@@ -396,13 +409,14 @@ async function FreightBillReportInner({ id }: { id: string }) {
         </div>
       )}
 
-      <PrintArea id="freight-report-area">
+      <PrintArea id="freight-report-area" companyName={letterhead?.name} companyLogoUrl={letterhead?.logo_url ?? undefined}>
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
           <div className="mb-4 flex items-start justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-slate-900">Courier Bill Report</h1>
-              <p className="text-slate-500">Invoice {bill.invoice_no} · {bill.invoice_date ?? "—"}</p>
-            </div>
+            <CompanyLetterheadHeader
+              letterhead={letterhead}
+              title="Courier Bill Report"
+              subtitle={`Invoice ${bill.invoice_no} · ${bill.invoice_date ?? "—"}`}
+            />
             {/* 2026-09-22: payables summary — bill total + GST + net payable
                 after credit note, now computed from the sum of the AWB
                 assignments themselves rather than the bill's own header

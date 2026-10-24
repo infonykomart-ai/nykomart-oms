@@ -140,7 +140,13 @@ async function loadInvoiceRows(supabase: Client, seed: PurchaseBillRow): Promise
     .ilike("vendor_invoice_no", escapeLike(invoiceNo))
     .order("created_at", { ascending: true });
 
-  const rows = (data ?? []).filter((r) => normText(r.vendor_invoice_no) === normText(invoiceNo));
+  // Same vendor invoice NUMBER and same bill KIND — a Printing bill and a
+  // normal Purchase bill never share a sheet even if a vendor reused the
+  // number. `bill_kind` arrives with db/2026-10-24b-…; before that file is
+  // run every row IS a purchase bill, so a missing column reads as 'purchase'.
+  const kindOf = (r: PurchaseBillRow) => (r as { bill_kind?: string | null }).bill_kind ?? "purchase";
+  const seedKind = kindOf(seed);
+  const rows = (data ?? []).filter((r) => normText(r.vendor_invoice_no) === normText(invoiceNo) && kindOf(r) === seedKind);
   // The seed row must always be on its own sheet, even if its invoice number
   // has since been edited to something that no longer matches.
   if (!rows.some((r) => r.id === seed.id)) rows.unshift(seed);
@@ -197,13 +203,29 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   const orderRef = new Map((orders ?? []).map((o) => [o.id, o.ref_no] as const));
   const orderSize = new Map((orders ?? []).map((o) => [o.id, o.size_label] as const));
 
-  // Cross-company invoice? Then there is no single right company header, so
-  // the footer branding falls back to the generic line and the Company column
-  // is printed.
+  // 2026-10-24b — a "Printing" bill reuses purchase_bills, so name the sheet
+  // after what it actually is (printing = job work billed against a PO).
+  const sheetTitle = ((seed as { bill_kind?: string | null }).bill_kind ?? "purchase") === "printing" ? "Printing Bill" : "Purchase Bill";
+
   const multiCompany = companyIds.length > 1;
-  const headerCompanyId = multiCompany ? null : seed.company_id ?? companyIds[0] ?? null;
+  // 2026-10-24 — "jo bill jis company me add hua hai report me usi company ka
+  // letterhead aaye": the letterhead is ALWAYS the company this bill row
+  // belongs to (bill_pass_register.company_id → purchase_bills.company_id),
+  // never the company picked in the top-nav switcher, and never blank just
+  // because the same invoice number also exists in the other companies. The
+  // other companies' entries are still listed, but the document is issued by
+  // the company whose bill this is — so the Company column and the per-company
+  // table carry the rest.
+  const headerCompanyId = seed.company_id ?? companyIds[0] ?? null;
   const headerCompany = headerCompanyId ? { id: headerCompanyId, name: companyNameById.get(headerCompanyId) ?? "—", logo_url: companyLogoById.get(headerCompanyId) ?? null } : null;
   const headerProfile = headerCompanyId ? profileById.get(headerCompanyId) ?? null : null;
+  const headerContact = [
+    headerProfile?.gstin ? `GSTIN: ${headerProfile.gstin}` : null,
+    headerProfile?.phone ? `Ph: ${headerProfile.phone}` : null,
+    headerProfile?.email,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   // 2026-10-24 — "PURCHASE BILL SHEET JO GENRATE HO RAHI HAI, USME KUCH DATA OR
   // CHAHIYE JAISE FREIGHT SHEET ME AATA HAI: SHIPPING CHARGES, SHIPPING
@@ -213,6 +235,36 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   // a courier bill's charges is reflected the very next time this sheet is
   // opened.
   const figures = await loadOrderShippingFigures(supabase, orderIds);
+
+  // 2026-10-24 — "sheet par paid / balance bhi dikhe": the finance-ledger rows
+  // this bill was posted as (one per item per company). Read-only totals — the
+  // source of truth stays bill_pass_register, so the sheet can never disagree
+  // with Bill Payment / the Party Ledger. Missing rows simply means the bill
+  // has not been sent to Finance yet.
+  const { data: ledgerRows } = await supabase
+    .from("bill_pass_register")
+    .select("company_id, total_amt, credit_note_amt, adj_amt, total_paid, balance_due")
+    .eq("source", "purchase_bill")
+    .in("source_id", rows.map((r) => r.id));
+  const payableByCompany = new Map<string, { paid: number; credited: number; balance: number; billed: number }>();
+  let ledgerPaid = 0;
+  let ledgerCredited = 0;
+  let ledgerBalance = 0;
+  let ledgerBilled = 0;
+  for (const l of ledgerRows ?? []) {
+    const key = l.company_id ?? "none";
+    const bucket = payableByCompany.get(key) ?? { paid: 0, credited: 0, balance: 0, billed: 0 };
+    bucket.paid += Number(l.total_paid ?? 0);
+    bucket.credited += Number(l.credit_note_amt ?? 0) + Number(l.adj_amt ?? 0);
+    bucket.balance += Number(l.balance_due ?? 0);
+    bucket.billed += Number(l.total_amt ?? 0);
+    payableByCompany.set(key, bucket);
+    ledgerPaid += Number(l.total_paid ?? 0);
+    ledgerCredited += Number(l.credit_note_amt ?? 0) + Number(l.adj_amt ?? 0);
+    ledgerBalance += Number(l.balance_due ?? 0);
+    ledgerBilled += Number(l.total_amt ?? 0);
+  }
+  const hasLedger = (ledgerRows ?? []).length > 0;
 
   const lines = rows.map((r, i) => {
     const qty = Number(r.qty);
@@ -398,13 +450,20 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                 // eslint-disable-next-line @next/next/no-img-element -- print document; a plain <img> keeps the logo out of next/image's optimizer
                 <img src={headerCompany.logo_url} alt={headerCompany.name} className="h-10 w-10 object-contain" />
               )}
-              <div>
-                <h1 className="text-lg font-bold text-slate-900">Purchase Bill</h1>
+              <div className="leading-tight">
+                {/* 2026-10-24 — full letterhead of the company this bill was
+                    entered under: name, address, GSTIN/phone/email, then the
+                    document title. Same shape as the Courier/Duty sheets, so
+                    all three bills print an identical letterhead. */}
+                {headerCompany?.name && <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{headerCompany.name}</p>}
+                {headerProfile?.address && (
+                  <p className="max-w-[22rem] whitespace-pre-wrap text-[10px] text-slate-500">{headerProfile.address}</p>
+                )}
+                {headerContact && <p className="text-[10px] text-slate-500">{headerContact}</p>}
+                <h1 className="mt-1 text-lg font-bold text-slate-900">{sheetTitle}</h1>
                 <p className="text-slate-500">
                   Invoice {seed.vendor_invoice_no || "—"} · {seed.vendor_invoice_date ?? "—"}
                 </p>
-                {headerCompany?.name && <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{headerCompany.name}</p>}
-                {headerProfile?.gstin && <p className="text-[11px] text-slate-500">GSTIN: {headerProfile.gstin}</p>}
               </div>
             </div>
             <div className="text-right text-slate-600">
@@ -420,9 +479,9 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
               from. Prints too, so the vendor sees the same scope. */}
           {multiCompany && (
             <p className="mb-3 rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] text-sky-900 print:border-slate-300 print:bg-transparent">
-              This invoice number exists in <strong>{companyTotalsList.length} companies</strong> — every entry is included:{" "}
-              {rows.length} entries · {countedOrders.size} PO{countedOrders.size === 1 ? "" : "s"} ·{" "}
-              {companyTotalsList.map((c) => c.name).join(", ")}
+              This bill is issued by <strong>{headerCompany?.name ?? "—"}</strong>. The same invoice number also exists in the
+              other companies — every entry is included: {rows.length} entries · {countedOrders.size} PO
+              {countedOrders.size === 1 ? "" : "s"} · {companyTotalsList.map((c) => c.name).join(", ")}
             </p>
           )}
 
@@ -529,8 +588,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
               {/* Per-company split — only when the invoice really spans companies. */}
               {multiCompany && (
                 <div className="mt-2 border-t border-slate-200 pt-2">
-                  <p className="mb-1 font-semibold text-slate-700">Company-wise</p>
-                  <table className="w-full border-collapse text-left text-[10px]">
+                  <p className="mb-1 font-semibold text-slate-700">Company-wise</p>                      <table className="w-full border-collapse text-left text-[10px]">
                     <thead>
                       <tr className="text-slate-500">
                         <th className="py-0.5 pr-2">Company</th>
@@ -538,20 +596,31 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                         <th className="py-0.5 pr-2 text-right">POs</th>
                         <th className="py-0.5 pr-2 text-right">Pre-GST</th>
                         <th className="py-0.5 pr-2 text-right">GST</th>
-                        <th className="py-0.5 text-right">Total</th>
+                        <th className="py-0.5 pr-2 text-right">Total</th>
+                        {hasLedger && <th className="py-0.5 pr-2 text-right">Paid</th>}
+                        {hasLedger && <th className="py-0.5 text-right">Balance</th>}
                       </tr>
                     </thead>
                     <tbody>
-                      {companyTotalsList.map((c) => (
-                        <tr key={c.id ?? "none"} className="text-slate-700">
-                          <td className="py-0.5 pr-2">{c.name}</td>
-                          <td className="py-0.5 pr-2 text-right">{c.entries}</td>
-                          <td className="py-0.5 pr-2 text-right">{c.poCount}</td>
-                          <td className="py-0.5 pr-2 text-right">{money(c.subtotal)}</td>
-                          <td className="py-0.5 pr-2 text-right">{money(c.gst)}</td>
-                          <td className="py-0.5 text-right font-semibold">{money(c.total)}</td>
-                        </tr>
-                      ))}
+                      {companyTotalsList.map((c) => {
+                        const pay = c.id ? payableByCompany.get(c.id) : undefined;
+                        return (
+                          <tr key={c.id ?? "none"} className="text-slate-700">
+                            <td className="py-0.5 pr-2">{c.name}</td>
+                            <td className="py-0.5 pr-2 text-right">{c.entries}</td>
+                            <td className="py-0.5 pr-2 text-right">{c.poCount}</td>
+                            <td className="py-0.5 pr-2 text-right">{money(c.subtotal)}</td>
+                            <td className="py-0.5 pr-2 text-right">{money(c.gst)}</td>
+                            <td className="py-0.5 pr-2 text-right font-semibold">{money(c.total)}</td>
+                            {hasLedger && <td className="py-0.5 pr-2 text-right text-emerald-700">{money(pay?.paid ?? 0)}</td>}
+                            {hasLedger && (
+                              <td className={`py-0.5 text-right font-semibold ${(pay?.balance ?? 0) > 0 ? "text-amber-800" : "text-slate-500"}`}>
+                                {money(pay?.balance ?? 0)}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -562,6 +631,17 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
               <p className="text-slate-600">GST: ₹{money(gstTotal)}</p>
               <p className="text-slate-600">ROUND OFF: ₹{money(roundOff)}</p>
               <p className="mt-1 text-sm font-bold text-slate-900">GROSS TOTAL: ₹{money(grossTotal)}</p>
+              {hasLedger && (
+                <div className="mt-1 border-t border-slate-200 pt-1">
+                  <p className="text-slate-600">BILLED (finance): ₹{money(ledgerBilled)}</p>
+                  <p className="text-slate-600">CREDIT NOTES / ADJ: ₹{money(ledgerCredited)}</p>
+                  <p className="text-slate-600">PAID: ₹{money(ledgerPaid)}</p>
+                  <p className={`font-semibold ${ledgerBalance > 0.005 ? "text-amber-800" : "text-emerald-700"}`}>
+                    BALANCE DUE: ₹{money(ledgerBalance)}
+                  </p>
+                </div>
+              )}
+              {!hasLedger && <p className="mt-1 text-[10px] text-slate-400">Not sent to the finance ledger yet — no paid/balance yet.</p>}
               {countedOrders.size > 0 && (
                 <div className="mt-2 border-t border-slate-200 pt-2">
                   <p className="text-slate-600">ORDER VALUE: ₹{money(totalOrderValue)}</p>
