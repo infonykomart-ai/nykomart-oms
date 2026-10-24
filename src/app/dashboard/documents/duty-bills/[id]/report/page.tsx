@@ -72,7 +72,10 @@ async function DutyBillReportInner({ id }: { id: string }) {
   // — same fix as freight-bills/[id]/report, see its comment for the why.
   const [{ data: orders }, { data: dispatches }, { data: shipments }] = await Promise.all([
     orderIds.length
-      ? supabase.from("orders").select("id, ref_no, size_label, order_value_inr, item_categories(name)").in("id", orderIds)
+      ? supabase
+          .from("orders")
+          .select("id, ref_no, size_label, order_value_inr, buyer_country, destination_country, item_categories(name)")
+          .in("id", orderIds)
       : Promise.resolve({ data: [] }),
     orderIds.length
       ? supabase.from("dispatch_invoices").select("order_id, buyer_country, our_freight_amt").in("order_id", orderIds)
@@ -107,7 +110,9 @@ async function DutyBillReportInner({ id }: { id: string }) {
       category: categoryName,
       size: order?.size_label ?? "—",
       awb: shipment?.awb_no ?? "—",
-      buyerCountry: dispatch?.buyer_country ?? "—",
+      // 2026-10-24 — live order country, same fix as the courier bill sheet:
+      // a country corrected on the order after dispatch must show here too.
+      buyerCountry: order?.destination_country || order?.buyer_country || dispatch?.buyer_country || "—",
       orgSale,
       shippingAmt,
       dutyUsd: a.duty_tax_amt_usd != null ? Number(a.duty_tax_amt_usd) : null,

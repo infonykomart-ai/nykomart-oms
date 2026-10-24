@@ -1433,6 +1433,40 @@ CREATE TABLE duty_bill_awb_assignments (
 CREATE INDEX idx_duty_awb_assign_bill ON duty_bill_awb_assignments(duty_tax_bill_id);
 CREATE INDEX idx_duty_awb_assign_shipment ON duty_bill_awb_assignments(order_shipment_id);
 
+-- 2026-10-24 — per-shipment courier charge ledger. The four fixed charge
+-- columns on freight_bill_awb_assignments above (Base / Fuel / Remote /
+-- Other) can't represent what a FedEx / UPS / Aramex invoice actually
+-- itemises, and they only exist once a freight bill does. This table records
+-- one line per charge head against the order (and its AWB when known), for
+-- BOTH directions — an outbound export and a PO returning to India carry
+-- separate freight/customs/duty costs. See
+-- db/2026-10-24-shipment-charge-lines.sql for the full rationale.
+CREATE TABLE shipment_charge_lines (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id                 uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  order_shipment_id        uuid REFERENCES order_shipments(id) ON DELETE SET NULL,
+  awb_no                   text,
+  courier_name             text NOT NULL DEFAULT 'FedEx',
+  direction                text NOT NULL DEFAULT 'export'
+                             CHECK (direction IN ('export', 'return_to_india')),
+  charge_head              text NOT NULL,
+  amount                   numeric(14,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  currency                 text NOT NULL DEFAULT 'INR',
+  gst_pct                  numeric(5,2) NOT NULL DEFAULT 18 CHECK (gst_pct >= 0 AND gst_pct <= 100),
+  gst_amt                  numeric(14,2) GENERATED ALWAYS AS (amount * gst_pct / 100) STORED,
+  total_amt                numeric(14,2) GENERATED ALWAYS AS (amount + amount * gst_pct / 100) STORED,
+  bill_no                  text,
+  bill_date                date,
+  remark                   text,
+  entered_by_employee_id   uuid REFERENCES employees(id) ON DELETE SET NULL,
+  entered_by_name          text,
+  created_at               timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_shipment_charge_lines_order ON shipment_charge_lines(order_id);
+CREATE INDEX idx_shipment_charge_lines_shipment ON shipment_charge_lines(order_shipment_id);
+CREATE INDEX idx_shipment_charge_lines_awb ON shipment_charge_lines(awb_no);
+CREATE INDEX idx_shipment_charge_lines_created ON shipment_charge_lines(created_at DESC);
+
 -- The recomputed/looked-up part of the old Freight Reconciliation sheet
 -- (everything that was an INDEX/MATCH-by-AWB formula pulling from Dispatch
 -- & Invoice) — a straight VIEW joining the manual assignment table above to
@@ -1468,7 +1502,11 @@ SELECT
   ic.name                    AS item_type,
   COALESCE(o.size_label, s.label) AS sizes,
   COALESCE(os.awb_no, di.awb_no) AS awb_no,
-  di.buyer_country,
+  -- 2026-10-24 — live order country, never the stale dispatch copy: a country
+  -- corrected on the order after dispatch must show correctly on every
+  -- freight/duty reconciliation sheet. See
+  -- db/2026-10-24-live-order-country-on-bill-views.sql.
+  COALESCE(NULLIF(o.destination_country, ''), NULLIF(o.buyer_country, ''), di.buyer_country) AS buyer_country,
   o.order_value_inr          AS org_sale_amt_inr,
   di.our_freight_amt         AS our_shipping_amt,
   di.demand_surcharge_other_charge AS other_charges,
@@ -1560,7 +1598,11 @@ SELECT
   ic.name                      AS item_type,
   COALESCE(o.size_label, s.label) AS sizes,
   COALESCE(os.awb_no, di.awb_no) AS awb_no,
-  di.buyer_country,
+  -- 2026-10-24 — live order country, never the stale dispatch copy: a country
+  -- corrected on the order after dispatch must show correctly on every
+  -- freight/duty reconciliation sheet. See
+  -- db/2026-10-24-live-order-country-on-bill-views.sql.
+  COALESCE(NULLIF(o.destination_country, ''), NULLIF(o.buyer_country, ''), di.buyer_country) AS buyer_country,
   o.order_value_inr AS org_sale_amt_inr,
   frv.gross_shipping_amt         AS shipping_amt,
   a.duty_tax_amt_usd,

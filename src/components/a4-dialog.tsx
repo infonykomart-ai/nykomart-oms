@@ -45,6 +45,7 @@ import { createPortal } from "react-dom";
 //     dialog body (the PrintArea'd document) prints.
 
 export const A4_DIALOG_WIDTH = "min(92vw, 850px)";
+export const A4_DIALOG_WIDE_WIDTH = "min(96vw, 1180px)";
 
 export function A4Dialog({
   open,
@@ -55,6 +56,7 @@ export function A4Dialog({
   footer,
   flushBody = false,
   fitContent = false,
+  wide = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -75,6 +77,15 @@ export function A4Dialog({
    * usual A4 width. Forms keep the fixed A4 panel.
    */
   fitContent?: boolean;
+  /**
+   * 2026-10-24 — "print portrait & landscape me auto ho jaye": a WIDE sheet
+   * (a courier bill with 20 charge columns) is unreadable squeezed into A4
+   * portrait width, and its landscape print preview needs to look like the
+   * page that will actually print. When true the panel uses the A4 LANDSCAPE
+   * width (up to 1180px) instead of portrait's min(92vw, 850px); height keeps
+   * following the content in fitContent mode.
+   */
+  wide?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -117,8 +128,11 @@ export function A4Dialog({
         className="a4-dialog-panel flex flex-col overflow-hidden rounded-xl bg-white shadow-2xl outline-none"
         style={
           fitContent
-            ? { width: A4_DIALOG_WIDTH, height: "auto", maxHeight: "96vh" }
-            : { width: A4_DIALOG_WIDTH, height: "min(calc(92vw * 1.4142), 96vh)" }
+            ? { width: wide ? A4_DIALOG_WIDE_WIDTH : A4_DIALOG_WIDTH, height: "auto", maxHeight: "96vh" }
+            : {
+                width: wide ? A4_DIALOG_WIDE_WIDTH : A4_DIALOG_WIDTH,
+                height: wide ? "min(calc(96vw / 1.4142), 96vh)" : "min(calc(92vw * 1.4142), 96vh)",
+              }
         }
       >
         <style>{`

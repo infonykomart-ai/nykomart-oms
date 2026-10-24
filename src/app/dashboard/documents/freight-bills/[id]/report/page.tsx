@@ -111,7 +111,10 @@ async function FreightBillReportInner({ id }: { id: string }) {
   // override it manually.
   const [{ data: orders }, { data: dispatches }, { data: shipments }, { data: packages }] = await Promise.all([
     orderIds.length
-      ? supabase.from("orders").select("id, ref_no, size_label, order_value_inr, item_categories(name)").in("id", orderIds)
+      ? supabase
+          .from("orders")
+          .select("id, ref_no, size_label, order_value_inr, buyer_country, destination_country, item_categories(name)")
+          .in("id", orderIds)
       : Promise.resolve({ data: [] }),
     orderIds.length
       ? supabase
@@ -208,7 +211,14 @@ async function FreightBillReportInner({ id }: { id: string }) {
       // 2026-09-21: the shipment's own AWB — the dispatch summary is
       // order-level and goes stale once an order has multiple AWBs.
       awb: shipment?.awb_no ?? "—",
-      buyerCountry: dispatch?.buyer_country ?? "—",
+      // 2026-10-24 — "FREIGHT ME ORDER COUNTRY AUTO NAHI AATI … order me
+      // country mistake thi or sheet generate hone ke baad thik karte hai to
+      // vo update nahi hoti sheet me": the country is now read LIVE off the
+      // order (destination_country, then its auto-derived buyer_country) and
+      // the dispatch row's own stale copy is only the legacy fallback. Before
+      // this, a corrected order kept printing the country captured at
+      // dispatch time.
+      buyerCountry: order?.destination_country || order?.buyer_country || dispatch?.buyer_country || "—",
       orgSale,
       ourShipping,
       ourGst,

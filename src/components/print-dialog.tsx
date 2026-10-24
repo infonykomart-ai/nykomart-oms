@@ -31,8 +31,36 @@
 // The embedded report pages hide their own "← Back / Download PDF" toolbar
 // when ?embed=1 (see their `x-embed` check), so the sheet shows the document
 // and nothing else.
+//
+// 2026-10-24 — "A4 DILOG BOX ME JO REPORT GENRATE HO RAHI HAI USME AUTO
+// ADJUST HO OR USKA PRINT PORTRAIT & LANDSCAPE ME AUTO HO JAYE SATH ME PDF ME
+// BHI SAHI SE HO JAYE":
+//
+//   AUTO ORIENTATION. Every report inside this dialog used to print on the
+//   A4 PORTRAIT page size that PrintArea hard-codes. A wide sheet (the
+//   courier bill has 21 columns) then printed with its right-hand columns
+//   cut off — and so did the PDF, since "Save as PDF" is the same print
+//   pipeline. Two halves to the fix:
+//
+//   (a) DETECT: after load, the document's own width is compared to its
+//       visible width. The frame is ~850px wide (≈ A4 portrait), so content
+//       that already overflows here would certainly be clipped on a portrait
+//       sheet. When it overflows, the preview switches to LANDSCAPE
+//       automatically (the dialog widens so the sheet on screen matches what
+//       will print). Anything that fits stays portrait.
+//
+//   (b) OVERRIDE + APPLY: a Portrait / Landscape switch in the footer lets
+//       the user force either one (e.g. a signed portrait letter). Whichever
+//       is active is injected into the FRAME's own <head> as
+//       `@page { size: A4 portrait|landscape }` immediately before printing,
+//       so the physical print — and "Save as PDF", which uses the same page
+//       box — is laid out for that orientation instead of being clipped.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { A4Dialog } from "./a4-dialog";
+
+type PrintOrientation = "portrait" | "landscape";
+
+const ORIENTATION_STYLE_ID = "oms-print-orientation";
 
 export function PrintDialog({
   href,
@@ -51,6 +79,14 @@ export function PrintDialog({
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [docHeight, setDocHeight] = useState<number | null>(null);
+  const [orientation, setOrientation] = useState<PrintOrientation>("portrait");
+  // Set once the user picks an orientation by hand, so the automatic
+  // overflow detection stops overriding their choice for this document.
+  // Kept in a ref for the measurement callback (which must read the latest
+  // value without re-running) AND mirrored into state for the footer label —
+  // reading a ref during render is not allowed.
+  const manualOrientation = useRef(false);
+  const [manualPicked, setManualPicked] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // 2026-10-19 — "dialog box me open ho to sirf page hi open ho": the page
   // this previews is a normal dashboard route, so without ?embed=1 the
@@ -64,7 +100,25 @@ export function PrintDialog({
   const openDialog = useCallback(() => {
     setLoaded(false);
     setDocHeight(null);
+    setOrientation("portrait");
+    manualOrientation.current = false;
+    setManualPicked(false);
     setOpen(true);
+  }, []);
+
+  // Writes (or refreshes) the frame document's @page rule. Kept out of the
+  // report pages themselves: they are shared by the full-page route and this
+  // embed, and the page size is only this dialog's decision to make.
+  const applyOrientation = useCallback((doc: Document, value: PrintOrientation) => {
+    let style = doc.getElementById(ORIENTATION_STYLE_ID) as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = ORIENTATION_STYLE_ID;
+      doc.head?.appendChild(style);
+    }
+    style.textContent = `@page { size: A4 ${value}; margin: ${
+      value === "landscape" ? "10mm 10mm 14mm 10mm" : "14mm 12mm 16mm 12mm"
+    }; }`;
   }, []);
 
   // Height of the embedded document itself (not the iframe's own viewport),
@@ -77,6 +131,8 @@ export function PrintDialog({
   // + main's top padding + a normal bottom padding — main's pb-24 exists for
   // the floating messenger/companion widgets, which embed mode doesn't
   // render, so it is capped rather than counted in full.
+  //
+  // Also decides the print orientation (see the 2026-10-24 note above).
   const measure = useCallback(() => {
     const frame = iframeRef.current;
     const doc = frame?.contentDocument;
@@ -85,6 +141,20 @@ export function PrintDialog({
     try {
       const main = doc.querySelector("main");
       const content = main?.firstElementChild as HTMLElement | null;
+
+      // Overflow detection: any horizontal overflow inside a frame that is
+      // already about A4-portrait wide means a portrait sheet would clip the
+      // right-hand columns, so default this document to landscape.
+      const rootEl = doc.documentElement;
+      const contentOverflow = content ? content.scrollWidth - content.clientWidth : 0;
+      const rootOverflow = rootEl ? rootEl.scrollWidth - rootEl.clientWidth : 0;
+      const overflows = Math.max(contentOverflow, rootOverflow) > 8;
+      if (!manualOrientation.current) {
+        const next: PrintOrientation = overflows ? "landscape" : "portrait";
+        setOrientation(next);
+        applyOrientation(doc, next);
+      }
+
       if (main && content) {
         const cs = win.getComputedStyle(main);
         const padT = parseFloat(cs.paddingTop) || 0;
@@ -100,7 +170,7 @@ export function PrintDialog({
     } catch {
       // Cross-origin or a document mid-navigation — keep the default height.
     }
-  }, []);
+  }, [applyOrientation]);
 
   const handleLoad = useCallback(() => {
     setLoaded(true);
@@ -118,10 +188,20 @@ export function PrintDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // Re-apply the page box whenever the orientation changes, so a manual
+  // switch also applies if the frame is printed with the browser's own
+  // Ctrl+P instead of the button below.
+  useEffect(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (doc) applyOrientation(doc, orientation);
+  }, [orientation, applyOrientation]);
+
   const printNow = useCallback(() => {
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     try {
+      // The @page rule must be in the frame before print() snapshots layout.
+      if (win.document) applyOrientation(win.document, orientation);
       win.focus();
       win.print();
     } catch {
@@ -131,7 +211,18 @@ export function PrintDialog({
       // feature itself. Tell the user rather than doing nothing.
       window.alert("The document is still loading — please try Print again in a moment.");
     }
+  }, [applyOrientation, orientation]);
+
+  const pickOrientation = useCallback((value: PrintOrientation) => {
+    manualOrientation.current = true;
+    setManualPicked(true);
+    setOrientation(value);
   }, []);
+
+  const segBtn = (value: PrintOrientation) =>
+    `rounded px-2 py-1 text-[11px] font-medium ${
+      orientation === value ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
+    }`;
 
   return (
     <>
@@ -151,14 +242,29 @@ export function PrintDialog({
         open={open}
         onClose={() => setOpen(false)}
         title={title ?? "Print Preview"}
-        subtitle={subtitle ?? "A4 preview — prints exactly this document."}
+        subtitle={subtitle ?? `A4 ${orientation} preview — prints exactly this document.`}
         flushBody
         fitContent
+        wide={orientation === "landscape"}
         footer={
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] text-slate-500">
-              {loaded ? "A4 preview loaded." : "Loading document…"}
-            </span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
+                <button type="button" onClick={() => pickOrientation("portrait")} className={segBtn("portrait")}>
+                  📄 Portrait
+                </button>
+                <button type="button" onClick={() => pickOrientation("landscape")} className={segBtn("landscape")}>
+                  📐 Landscape
+                </button>
+              </div>
+              <span className="text-[11px] text-slate-500">
+                {manualPicked
+                  ? `Printing A4 ${orientation}.`
+                  : orientation === "landscape"
+                    ? "Wide sheet — landscape picked automatically."
+                    : "Fits A4 portrait."}
+              </span>
+            </div>
             <div className="flex gap-2">
               <button
                 type="button"

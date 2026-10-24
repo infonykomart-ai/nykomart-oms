@@ -8884,6 +8884,91 @@ export type Database = {
           },
         ];
       };
+      shipment_charge_lines: {
+        Row: {
+          id: string;
+          order_id: string;
+          order_shipment_id: string | null;
+          awb_no: string | null;
+          courier_name: string;
+          direction: string;
+          charge_head: string;
+          amount: number;
+          currency: string;
+          gst_pct: number;
+          gst_amt: number | null;
+          total_amt: number | null;
+          bill_no: string | null;
+          bill_date: string | null;
+          remark: string | null;
+          entered_by_employee_id: string | null;
+          entered_by_name: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          order_id: string;
+          order_shipment_id?: string | null;
+          awb_no?: string | null;
+          courier_name?: string;
+          direction?: string;
+          charge_head: string;
+          amount?: number;
+          currency?: string;
+          gst_pct?: number;
+          gst_amt?: number | null;
+          total_amt?: number | null;
+          bill_no?: string | null;
+          bill_date?: string | null;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          entered_by_name?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          order_shipment_id?: string | null;
+          awb_no?: string | null;
+          courier_name?: string;
+          direction?: string;
+          charge_head?: string;
+          amount?: number;
+          currency?: string;
+          gst_pct?: number;
+          gst_amt?: number | null;
+          total_amt?: number | null;
+          bill_no?: string | null;
+          bill_date?: string | null;
+          remark?: string | null;
+          entered_by_employee_id?: string | null;
+          entered_by_name?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "shipment_charge_lines_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipment_charge_lines_order_shipment_id_fkey";
+            columns: ["order_shipment_id"];
+            isOneToOne: false;
+            referencedRelation: "order_shipments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "shipment_charge_lines_entered_by_employee_id_fkey";
+            columns: ["entered_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       shipment_handover_chalan_lines: {
         Row: {
           id: string;

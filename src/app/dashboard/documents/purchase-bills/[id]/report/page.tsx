@@ -24,6 +24,7 @@ import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { loadOrderShippingFigures } from "@/lib/orders/shipping-figures";
 
 const money = (n: number | null | undefined) =>
   n == null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -88,6 +89,15 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   const orderRef = new Map((orders ?? []).map((o) => [o.id, o.ref_no] as const));
   const orderSize = new Map((orders ?? []).map((o) => [o.id, o.size_label] as const));
 
+  // 2026-10-24 — "PURCHASE BILL SHEET JO GENRATE HO RAHI HAI, USME KUCH DATA OR
+  // CHAHIYE JAISE FREIGHT SHEET ME AATA HAI: SHIPPING CHARGES, SHIPPING
+  // CHARGES COURIER, ORDER VALUE, PURCHASE %". All four are LIVE reads of the
+  // order and its courier bill (src/lib/orders/shipping-figures.ts) — nothing
+  // is copied onto purchase_bills, so correcting an order's value/country or
+  // a courier bill's charges is reflected the very next time this sheet is
+  // opened.
+  const figures = await loadOrderShippingFigures(supabase, orderIds);
+
   const lines = rows.map((r, i) => {
     const qty = Number(r.qty);
     const size = Number(r.sq_feet ?? 0);
@@ -97,9 +107,12 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
     const storedRate = r.gst_rate_pct != null ? Number(r.gst_rate_pct) : null;
     const totalRatePct = storedRate != null ? (r.gst_type === "IGST" ? storedRate : storedRate * 2) : 5;
     const gstAmount = Math.round(amount * totalRatePct) / 100;
+    const fig = r.order_id ? figures.get(r.order_id) : undefined;
+    const orderValue = fig?.orderValueInr ?? 0;
     return {
       sr: i + 1,
       id: r.id,
+      orderId: r.order_id,
       refNo: r.order_id ? orderRef.get(r.order_id) ?? "—" : "—",
       orderSize: r.order_id ? orderSize.get(r.order_id) ?? null : null,
       description: r.work_description,
@@ -112,6 +125,14 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       gstType: r.gst_type,
       gstAmount,
       lineTotal: amount + gstAmount,
+      orderValue,
+      ourShipping: fig?.ourShippingInr ?? null,
+      courierShipping: fig?.courierGrossInr ?? null,
+      courierBillSourced: fig?.courierBillSourced ?? false,
+      // Purchase % = this line's pre-GST purchase cost as a share of the
+      // order's own value (GST is recoverable input credit, so it is not
+      // part of what the purchase actually costs us).
+      purchasePct: orderValue > 0 ? (amount / orderValue) * 100 : null,
     };
   });
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
@@ -119,6 +140,22 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   const roundOff = rows.reduce((s, r) => s + Number(r.round_off_amt ?? 0), 0);
   const grossTotal = subtotal + gstTotal + roundOff;
   const isGst = gstTotal > 0;
+
+  // Order-level totals are summed ONCE PER ORDER, not once per purchase line:
+  // one vendor invoice commonly covers several lines for the same PO, and
+  // adding that PO's order value/shipping once per line would multiply it.
+  let totalOrderValue = 0;
+  let totalOurShipping = 0;
+  let totalCourierShipping = 0;
+  const countedOrders = new Set<string>();
+  for (const l of lines) {
+    if (!l.orderId || countedOrders.has(l.orderId)) continue;
+    countedOrders.add(l.orderId);
+    totalOrderValue += l.orderValue;
+    totalOurShipping += l.ourShipping ?? 0;
+    totalCourierShipping += l.courierShipping ?? 0;
+  }
+  const overallPurchasePct = totalOrderValue > 0 ? (subtotal / totalOrderValue) * 100 : null;
 
   // Inside the A4 preview dialog this page is embedded with ?embed=1
   // (src/components/print-dialog.tsx) → x-embed; the dialog supplies its own
@@ -175,6 +212,10 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                 <th className="py-1 pr-2 text-right">Amount</th>
                 <th className="py-1 pr-2 text-right">GST</th>
                 <th className="py-1 pr-2 text-right">Total</th>
+                <th className="py-1 pr-2 text-right">Order Value</th>
+                <th className="py-1 pr-2 text-right">Shipping</th>
+                <th className="py-1 pr-2 text-right">Courier</th>
+                <th className="py-1 pr-2 text-right">Purchase %</th>
               </tr>
             </thead>
             <tbody>
@@ -199,11 +240,17 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                     )}
                   </td>
                   <td className="py-1 pr-2 text-right font-semibold">{money(r.lineTotal)}</td>
+                  <td className="py-1 pr-2 text-right">{r.orderValue > 0 ? money(r.orderValue) : "—"}</td>
+                  <td className="py-1 pr-2 text-right text-slate-500">{r.ourShipping != null ? money(r.ourShipping) : "—"}</td>
+                  <td className={`py-1 pr-2 text-right ${r.courierBillSourced ? "text-slate-900" : "text-slate-400"}`}>
+                    {r.courierShipping != null ? money(r.courierShipping) : "—"}
+                  </td>
+                  <td className="py-1 pr-2 text-right font-medium">{r.purchasePct != null ? `${r.purchasePct.toFixed(1)}%` : "—"}</td>
                 </tr>
               ))}
               {lines.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="py-3 text-center text-slate-400">
+                  <td colSpan={15} className="py-3 text-center text-slate-400">
                     No items on this invoice.
                   </td>
                 </tr>
@@ -216,6 +263,10 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2 text-right">{money(subtotal)}</td>
                   <td className="py-1 pr-2 text-right">{isGst ? money(gstTotal) : "—"}</td>
                   <td className="py-1 pr-2 text-right">{money(subtotal + gstTotal)}</td>
+                  <td className="py-1 pr-2 text-right">{totalOrderValue > 0 ? money(totalOrderValue) : "—"}</td>
+                  <td className="py-1 pr-2 text-right">{money(totalOurShipping)}</td>
+                  <td className="py-1 pr-2 text-right">{money(totalCourierShipping)}</td>
+                  <td className="py-1 pr-2 text-right">{overallPurchasePct != null ? `${overallPurchasePct.toFixed(1)}%` : "—"}</td>
                 </tr>
               )}
             </tbody>
@@ -236,6 +287,16 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
               <p className="text-slate-600">GST: ₹{money(gstTotal)}</p>
               <p className="text-slate-600">ROUND OFF: ₹{money(roundOff)}</p>
               <p className="mt-1 text-sm font-bold text-slate-900">GROSS TOTAL: ₹{money(grossTotal)}</p>
+              {countedOrders.size > 0 && (
+                <div className="mt-2 border-t border-slate-200 pt-2">
+                  <p className="text-slate-600">ORDER VALUE: ₹{money(totalOrderValue)}</p>
+                  <p className="text-slate-600">OUR SHIPPING CHARGE: ₹{money(totalOurShipping)}</p>
+                  <p className="text-slate-600">COURIER SHIPPING CHARGE (incl. GST): ₹{money(totalCourierShipping)}</p>
+                  <p className="font-semibold text-slate-900">
+                    PURCHASE % (of order value): {overallPurchasePct != null ? `${overallPurchasePct.toFixed(1)}%` : "—"}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>

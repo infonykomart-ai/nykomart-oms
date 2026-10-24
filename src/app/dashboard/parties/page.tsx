@@ -54,12 +54,22 @@ export default async function PartiesPage({
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🤝 Party Master</h1>
         </div>
-        <Link
-          href="/dashboard/parties/bulk-upload"
-          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-        >
-          📤 Bulk Upload (CSV)
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* 2026-10-24 — "sabhi party ke ledger summery ... company wise":
+              the roll-up lives next to the master + bulk upload. */}
+          <Link
+            href="/dashboard/parties/summary"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🧾 Balance Summary
+          </Link>
+          <Link
+            href="/dashboard/parties/bulk-upload"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📤 Bulk Upload (CSV)
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

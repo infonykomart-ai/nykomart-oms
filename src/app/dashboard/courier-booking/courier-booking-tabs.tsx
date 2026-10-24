@@ -11,7 +11,16 @@ import { AutoRefresh } from "@/components/auto-refresh";
 // `tab` search param (set by the Track Shipments filter form's hidden
 // input, and by GenerateLabelButton's revalidatePath) so a filter submit or
 // a label generation doesn't bounce the user back to the first tab.
-export type CourierBookingTab = "setup" | "book" | "track" | "pending" | "pickup" | "report" | "ndr" | "performance";
+export type CourierBookingTab =
+  | "setup"
+  | "book"
+  | "track"
+  | "pending"
+  | "pickup"
+  | "report"
+  | "ndr"
+  | "performance"
+  | "charges";
 
 // 2026-09-04 (EGS-integration round) — 3 new tabs added alongside the
 // original 3: Pending Orders / Pickup Request / Daily Shipment Report,
@@ -35,6 +44,11 @@ const TABS: { key: CourierBookingTab; label: string }[] = [
   { key: "ndr", label: "🚫 NDR" },
   { key: "report", label: "📊 Daily Report" },
   { key: "performance", label: "🌍 Courier Performance" },
+  // 2026-10-24 — "our shipping charges add karne ka option nahi hai kaha
+  // par kare": one place to record a courier's actual charge heads (fuel,
+  // remote, duty, RTO, …) against a shipment found by PO/RF/RG or AWB, for
+  // both outbound export and a PO returning to India.
+  { key: "charges", label: "💸 Charges" },
 ];
 
 // 2026-09-10 — "har 10-20 second me data sync hota rahe": scoped to the
@@ -59,6 +73,7 @@ export function CourierBookingTabs({
   report,
   ndr,
   performance,
+  charges,
 }: {
   initialTab: CourierBookingTab;
   setup: ReactNode;
@@ -69,6 +84,7 @@ export function CourierBookingTabs({
   report: ReactNode;
   ndr: ReactNode;
   performance: ReactNode;
+  charges: ReactNode;
 }) {
   const [tab, setTab] = useState<CourierBookingTab>(initialTab);
   // 2026-09-12 — real reported bug: clicking "Book" on a Pending Orders row
@@ -125,6 +141,7 @@ export function CourierBookingTabs({
       <div hidden={tab !== "ndr"}>{ndr}</div>
       <div hidden={tab !== "report"}>{report}</div>
       <div hidden={tab !== "performance"}>{performance}</div>
+      <div hidden={tab !== "charges"}>{charges}</div>
     </div>
   );
 }

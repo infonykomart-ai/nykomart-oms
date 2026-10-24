@@ -18,6 +18,8 @@ import { getUnresolvedNdrSummary } from "./ndr-summary-data";
 import { NdrSummaryPanel } from "./ndr-summary-panel";
 import { getCourierPerformanceReport, type CourierPerformanceFilters } from "./courier-performance-data";
 import { CourierPerformanceReport } from "./courier-performance-report";
+import { ShippingCharges } from "./shipping-charges";
+import { getShippingChargeData } from "./shipping-charges-data";
 
 // Courier Ops Dashboard — Account Setup / Pending Orders / Book Shipment /
 // Pickup Request / Track Shipments / Daily Report, all in one page.
@@ -79,7 +81,7 @@ export default async function CourierBookingPage({
     destinationCountry: str("perf_destination_country"),
   };
 
-  const validTabs: CourierBookingTab[] = ["setup", "pending", "book", "pickup", "track", "ndr", "report", "performance"];
+  const validTabs: CourierBookingTab[] = ["setup", "pending", "book", "pickup", "track", "ndr", "report", "performance", "charges"];
   const initialTab: CourierBookingTab = validTabs.includes(sp.tab as CourierBookingTab) ? (sp.tab as CourierBookingTab) : "book";
 
   const [
@@ -92,6 +94,7 @@ export default async function CourierBookingPage({
     dailyReportRows,
     ndrSummary,
     performanceReport,
+    chargeData,
     candidatesByCourier,
     setupMatrixStatuses,
     ...prefillByCourier
@@ -105,6 +108,9 @@ export default async function CourierBookingPage({
     getDailyShipmentReport(serviceSupabase, employee.currentCompanyId, reportFilters, false),
     getUnresolvedNdrSummary(serviceSupabase, employee.companyIds),
     getCourierPerformanceReport(serviceSupabase, employee.currentCompanyId, performanceFilters),
+    // 2026-10-24 — the Charges tab's saved courier charge lines. Tolerates
+    // the table being absent (shows a "run this SQL" notice instead).
+    getShippingChargeData(serviceSupabase, employee.companyIds),
     // 2026-09-10 perf fix — this Pickup Request tab's candidate list used
     // to be fetched in a SECOND, separate `await Promise.all(...)` AFTER
     // this whole block had already resolved (see getPickupCandidatesForAllCouriers's
@@ -192,6 +198,7 @@ export default async function CourierBookingPage({
             />
           </div>
         }
+        charges={<ShippingCharges data={chargeData} />}
       />
     </div>
   );

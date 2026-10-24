@@ -42,6 +42,16 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    file: "2026-10-24-shipment-charge-lines.sql",
+    title: "Courier charge ledger (charge heads, export vs return-to-India)",
+    probe: { table: "shipment_charge_lines", column: "charge_head" },
+    features: [
+      "Courier Ops → Charges tab shows a \"run this SQL\" notice instead of the entry form",
+      "Courier charges can only be recorded in a freight bill's four fixed Base/Fuel/Remote/Other columns",
+      "No per-shipment charge breakdown (customs, duty, RTO, weight discrepancy, …) for export or return-to-India shipments",
+    ],
+  },
+  {
     file: "2026-10-21-purchase-bill-entered-by.sql",
     title: "Purchase Bill — entered by + edit history",
     probe: { table: "purchase_bills", column: "entered_by_employee_id" },
