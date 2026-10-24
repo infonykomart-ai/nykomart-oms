@@ -1138,6 +1138,13 @@ type PurchaseBillParams = {
   // shared invoice becomes several rows and a single round-off figure
   // can't be unambiguously split across them.
   roundOffAmt: number;
+  // 2026-10-24b — printing job-work bill vs a normal purchase bill (same
+  // table, same maths; see
+  // db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql).
+  billKind?: "purchase" | "printing";
+  // 2026-10-24b — 'area' (default) normalises sq_feet to Sq Ft on the sheet;
+  // 'as_billed' is a linear length billed in MTR/CM and is never squared.
+  sizeMode?: "area" | "as_billed";
 };
 
 /**
@@ -1232,22 +1239,37 @@ async function savePurchaseBillCore(
   // block real entry work. So the insert is retried without the attribution
   // columns; the bill saves exactly as before, "Entered by" just stays blank,
   // and the Admin's Schema Status card names the pending file.
-  const insertWithAttribution = () =>
-    supabase
+  // 2026-10-24b — same tolerant-fallback rule for the two newest columns: a
+  // pending migration must never block real entry work, so an unknown-column
+  // rejection just retries without them (the bill saves as a normal purchase
+  // bill, of size_mode 'area', exactly as before).
+  const newBillFields = {
+    bill_kind: p.billKind === "printing" ? ("printing" as const) : ("purchase" as const),
+    size_mode: p.sizeMode === "as_billed" ? ("as_billed" as const) : ("area" as const),
+  };
+  let { data, error } = await supabase
+    .from("purchase_bills")
+    .insert({
+      ...billFields,
+      ...newBillFields,
+      entered_by_employee_id: employee.id,
+      entered_by_name: employee.name,
+    })
+    .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
+    .single();
+  if (error && /entered_by_(employee_id|name)/i.test(error.message)) {
+    ({ data, error } = await supabase
       .from("purchase_bills")
-      .insert({ ...billFields, entered_by_employee_id: employee.id, entered_by_name: employee.name })
+      .insert({ ...billFields, ...newBillFields })
       .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
-      .single();
-  const insertWithoutAttribution = () =>
-    supabase
+      .single());
+  }
+  if (error && /(bill_kind|size_mode)/i.test(error.message)) {
+    ({ data, error } = await supabase
       .from("purchase_bills")
       .insert(billFields)
       .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
-      .single();
-
-  let { data, error } = await insertWithAttribution();
-  if (error && /entered_by_(employee_id|name)/i.test(error.message)) {
-    ({ data, error } = await insertWithoutAttribution());
+      .single());
   }
 
   if (error || !data) {
@@ -1275,7 +1297,11 @@ async function savePurchaseBillCore(
     .from("bill_pass_register")
     .insert({
       company_id: companyId,
-      invoice_type: "Purchase",
+      // 2026-10-24b — a printing bill posts to the ledger's own Printing
+      // bucket, which is exactly what the Printing register and the printing
+      // P&L line already read, so no other wiring was needed for it to show up
+      // in both.
+      invoice_type: p.billKind === "printing" ? "Printing" : "Purchase",
       vendor_invoice_no: p.vendorInvoiceNo,
       invoice_date: p.vendorInvoiceDate,
       invoice_recv_date: p.vendorInvoiceDate,
@@ -1369,6 +1395,8 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
     gstRatePct: strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null,
     gstType: gstTypeUnion(strOrNull(formData, "gst_type")),
     roundOffAmt: numOrZero(formData, "round_off_amt"),
+    billKind: str(formData, "bill_kind") === "printing" ? "printing" : "purchase",
+    sizeMode: str(formData, "size_mode") === "as_billed" ? "as_billed" : "area",
   });
 
   if (result.error) return initialFail(result.error);
@@ -1715,12 +1743,24 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
     round_off_amt: numOrZero(formData, "round_off_amt"),
   };
 
-  const { data: updated, error } = await supabase
+  // 2026-10-24b — as-billed mode travels with the edit too; tolerant of the
+  // migration not being run yet (retried without it below).
+  const sizeMode = str(formData, "size_mode") === "as_billed" ? ("as_billed" as const) : ("area" as const);
+
+  let { data: updated, error } = await supabase
     .from("purchase_bills")
-    .update(nextValues)
+    .update({ ...nextValues, size_mode: sizeMode })
     .eq("id", id)
     .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
     .single();
+  if (error && /size_mode/i.test(error.message)) {
+    ({ data: updated, error } = await supabase
+      .from("purchase_bills")
+      .update(nextValues)
+      .eq("id", id)
+      .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
+      .single());
+  }
 
   if (error) {
     const msg = error.message.includes("duplicate key") ? "This vendor already has a bill with that invoice number." : error.message;

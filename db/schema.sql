@@ -1009,6 +1009,11 @@ CREATE TABLE freight_bills (
   credit_note_no          text,
   credit_note_date         date,
   credit_note_amt           numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-10-24b: round-figure adjustment — net payable = gross_total_amt +
+  -- round_off_amt (kept out of the generated gross on purpose so the
+  -- variance views keep meaning what they meant).
+  round_off_amt             numeric(8,2) NOT NULL DEFAULT 0
+                              CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   created_at               timestamptz NOT NULL DEFAULT now(),
   -- 2026-08-17 (folded 2026-09-19): vendor party link — mirrors purchase_bills.vendor_party_id.
   vendor_party_id          uuid REFERENCES parties(id)
@@ -1042,6 +1047,10 @@ CREATE TABLE duty_tax_bills (
   disbursement_fee            numeric(14,2) NOT NULL DEFAULT 0,
   courier_duty_charges_adj      numeric(14,2) NOT NULL DEFAULT 0,
   total_payable_amt               numeric(14,2),
+  -- 2026-10-24b: round-figure adjustment — net payable = gross_total_amt +
+  -- round_off_amt.
+  round_off_amt                   numeric(8,2) NOT NULL DEFAULT 0
+                                    CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   created_at                timestamptz NOT NULL DEFAULT now(),
   -- 2026-08-17 (folded 2026-09-19): vendor party link — mirrors purchase_bills.vendor_party_id.
   vendor_party_id          uuid REFERENCES parties(id)
@@ -1128,6 +1137,17 @@ CREATE TABLE purchase_bills (
   -- a real round-off is always small.
   round_off_amt                   numeric(8,2) NOT NULL DEFAULT 0
                                      CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
+  -- 2026-10-24b: printing job-work bills share this table (same vendor
+  -- invoice / PO link / qty x rate / GST / round-off shape), tagged instead
+  -- of getting a parallel table — see
+  -- db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql.
+  bill_kind                       text NOT NULL DEFAULT 'purchase'
+                                     CHECK (bill_kind IN ('purchase', 'printing')),
+  -- 2026-10-24b: 'area' = sq_feet is an area in qty_unit, normalised to
+  -- Sq Ft on the sheet; 'as_billed' = a linear length billed in MTR/CM, shown
+  -- exactly as entered. See the same migration.
+  size_mode                       text NOT NULL DEFAULT 'area'
+                                     CHECK (size_mode IN ('area', 'as_billed')),
   -- TOTAL SQ FEET = QTY * SQ FEET, then TOTAL AMOUNT = TOTAL SQ FEET * UNIT
   -- RATE — inlined fully (qty * sq_feet * unit_rate) since a generated
   -- column can't reference another generated column.
@@ -1683,6 +1703,9 @@ CREATE TABLE washing_entries (
   rate                               numeric(14,2),
   amount                              numeric(14,2) GENERATED ALWAYS AS (sq_mtr_ft * rate) STORED,   -- AMOUNT = SQ/MTR/FT * RATE
   debit_charges                       numeric(14,2),
+  -- 2026-10-24b: round-figure adjustment — net payable = amount + round_off_amt.
+  round_off_amt                       numeric(8,2) NOT NULL DEFAULT 0
+                                        CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   store_id                              uuid REFERENCES stores(id),
   created_at                             timestamptz NOT NULL DEFAULT now()
 );

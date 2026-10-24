@@ -193,6 +193,49 @@ export const SHIPPING_CHARGE_HEADS: ChargeHead[] = [
 
 export const CHARGE_HEAD_BY_KEY = new Map(SHIPPING_CHARGE_HEADS.map((h) => [h.key, h]));
 
+// 2026-10-24 (2) — "CHARGE HEAD DROP DOWN SE AATA HAI IS SE TO HAR BAAR
+// DROPDOWN SE KARNA PADEGA ... PURA A4 KA DIALOG BOX OPEN HO LANDSCAPE ME
+// SABHI HEAD KA APNA COLUMN HO": the entry form's head dropdown means one
+// round-trip per charge, and a courier invoice arrives with every head on
+// it at once. These ten are the heads that actually appear on the FedEx /
+// UPS / Aramex invoices seen so far; the grid dialog shows them as COLUMNS
+// (one shipment per row), so a whole invoice is typed side by side. The
+// remaining heads (residential, extended area, export docs, insurance, COD,
+// address correction, re-delivery, storage, special commodity,
+// cancellation) are still reachable — each row has an "Other" column and
+// the existing single-charge form keeps its full dropdown.
+export const CHARGE_GRID_HEADS: ChargeHead[] = [
+  "base_freight",
+  "fuel_surcharge",
+  "remote_area",
+  "pickup",
+  "packaging",
+  "handling",
+  "customs_clearance",
+  "duty_import_tax",
+  "rto_return",
+  "weight_discrepancy",
+]
+  .map((key) => CHARGE_HEAD_BY_KEY.get(key))
+  .filter((h): h is ChargeHead => !!h);
+
+/** Head key used by the grid's trailing catch-all column. */
+export const CHARGE_GRID_OTHER_KEY = "other";
+
+/** The grid's trailing catch-all column (the real "23. Other Charge" head). */
+export const CHARGE_GRID_OTHER_HEAD: ChargeHead = CHARGE_HEAD_BY_KEY.get(CHARGE_GRID_OTHER_KEY) ?? {
+  key: CHARGE_GRID_OTHER_KEY,
+  label: "Other Charge",
+  when: "Anything not covered above — describe it in the remark.",
+  couriers: ["FedEx", "UPS", "Aramex", "DHL Express", "Delhivery", "Shiprocket"],
+  gstPct: 18,
+};
+
+/** "1. Base Freight / Shipping Charge" → "Base Freight / Shipping Charge". */
+export function chargeHeadShortLabel(key: string): string {
+  return (CHARGE_HEAD_BY_KEY.get(key)?.label ?? key).replace(/^\d+\.\s*/, "");
+}
+
 export function chargeHeadLabel(key: string): string {
   return CHARGE_HEAD_BY_KEY.get(key)?.label ?? key;
 }

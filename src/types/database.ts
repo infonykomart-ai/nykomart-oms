@@ -4019,6 +4019,8 @@ export type Database = {
           disbursement_fee: number;
           courier_duty_charges_adj: number;
           total_payable_amt: number | null;
+          // 2026-10-24b — db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql
+          round_off_amt: number;
           created_at: string;
           vendor_party_id: string | null;
         };
@@ -4036,6 +4038,7 @@ export type Database = {
           disbursement_fee?: number;
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
+          round_off_amt?: number;
           created_at?: string;
           vendor_party_id?: string | null;
         };
@@ -4053,6 +4056,7 @@ export type Database = {
           disbursement_fee?: number;
           courier_duty_charges_adj?: number;
           total_payable_amt?: number | null;
+          round_off_amt?: number;
           created_at?: string;
           vendor_party_id?: string | null;
         };
@@ -5994,6 +5998,8 @@ export type Database = {
           credit_note_no: string | null;
           credit_note_date: string | null;
           credit_note_amt: number;
+          // 2026-10-24b — db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql
+          round_off_amt: number;
           created_at: string;
           vendor_party_id: string | null;
         };
@@ -6011,6 +6017,7 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
+          round_off_amt?: number;
           created_at?: string;
           vendor_party_id?: string | null;
         };
@@ -6028,6 +6035,7 @@ export type Database = {
           credit_note_no?: string | null;
           credit_note_date?: string | null;
           credit_note_amt?: number;
+          round_off_amt?: number;
           created_at?: string;
           vendor_party_id?: string | null;
         };
@@ -7884,6 +7892,9 @@ export type Database = {
           gst_rate_pct: number | null;
           gst_type: "CGST_SGST" | "IGST" | null;
           round_off_amt: number;
+          // 2026-10-24b — db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql
+          bill_kind: "purchase" | "printing";
+          size_mode: "area" | "as_billed";
           total_sq_feet: number | null;
           total_amount: number | null;
           g_total_plus_gst: number | null;
@@ -7909,6 +7920,8 @@ export type Database = {
           gst_rate_pct?: number | null;
           gst_type?: "CGST_SGST" | "IGST" | null;
           round_off_amt?: number;
+          bill_kind?: "purchase" | "printing";
+          size_mode?: "area" | "as_billed";
           total_sq_feet?: number | null;
           total_amount?: number | null;
           g_total_plus_gst?: number | null;
@@ -7932,6 +7945,8 @@ export type Database = {
           gst_rate_pct?: number | null;
           gst_type?: "CGST_SGST" | "IGST" | null;
           round_off_amt?: number;
+          bill_kind?: "purchase" | "printing";
+          size_mode?: "area" | "as_billed";
           total_sq_feet?: number | null;
           total_amount?: number | null;
           g_total_plus_gst?: number | null;
@@ -9536,6 +9551,8 @@ export type Database = {
           rate: number | null;
           amount: number | null;
           debit_charges: number | null;
+          // 2026-10-24b — db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql
+          round_off_amt: number;
           store_id: string | null;
           created_at: string;
         };
@@ -9553,6 +9570,7 @@ export type Database = {
           rate?: number | null;
           amount?: number | null;
           debit_charges?: number | null;
+          round_off_amt?: number;
           store_id?: string | null;
           created_at?: string;
         };
@@ -9570,6 +9588,7 @@ export type Database = {
           rate?: number | null;
           amount?: number | null;
           debit_charges?: number | null;
+          round_off_amt?: number;
           store_id?: string | null;
           created_at?: string;
         };

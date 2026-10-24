@@ -9,6 +9,7 @@ import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
+import { RoundFigureButtons } from "./round-figure-buttons";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -25,7 +26,21 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 // order, so the link is optional again (see actions.ts's
 // savePurchaseBillCore comment for how company scoping still works
 // without one).
-export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
+export function PurchaseBillForm({
+  parties,
+  billKind = "purchase",
+}: {
+  parties: PartyOption[];
+  /**
+   * 2026-10-24b — "COTTON KI DHURRI KE PO KE ORDER KA PRINTING KA BILL AATA
+   * HAI ... USKI ENTRY KAHA HOGI": a printing bill has exactly this shape
+   * (vendor invoice, PO link, qty × rate, GST, round off), so the Printing
+   * Bill tab reuses this form and only tags the saved row bill_kind =
+   * 'printing' so it lands in the ledger's Printing bucket and the Printing
+   * register.
+   */
+  billKind?: "purchase" | "printing";
+}) {
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
   // 2026-08-20 — Gap 2: pre-filled (not locked) from the looked-up order's
@@ -49,6 +64,12 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   const [sqFeetInput, setSqFeetInput] = useState("");
   const [sqFeetUnit, setSqFeetUnit] = useState<PurchaseQtyUnit>("FT");
   const isPcs = sqFeetUnit === "PCS";
+  // 2026-10-24b — "AGAR KISI VENDOR NE MTR ME LINEAR METRES BILL KIYA HAI TO
+  // US NUMBER KO AREA MAAN KAR SQUARE KARNA MEANING NAHI RAKHTA": the
+  // Sq. Ft normalisation assumes the number is an AREA. Fabric rolls are
+  // billed as a LENGTH, so the entry now says which one it is instead of the
+  // sheet guessing. 'area' is the default and changes nothing for FT bills.
+  const [sizeMode, setSizeMode] = useState<"area" | "as_billed">("area");
   // 2026-08-27 — "AGAR PURCHASE PCS ME KIYA JATA HAI TO US PCS KI RATE KYA
   // HOGI": PCS has no feet-equivalent (it's a piece count, not a length),
   // so the reference conversion line below only makes sense for the
@@ -70,6 +91,16 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
+  // 2026-10-24b — controlled so the round-figure buttons can fill it in.
+  const [roundOffInput, setRoundOffInput] = useState("0");
+  // Payable BEFORE round-off, exactly as g_total_plus_gst computes it
+  // (qty × sq_feet × rate + GST), so the offered round figures are the ones
+  // the vendor's invoice actually lands on.
+  const preRoundAmount =
+    (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0);
+  const totalGstPct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+  const preRoundPayable = preRoundAmount + Math.round(preRoundAmount * totalGstPct) / 100;
+  const roundedPayable = preRoundPayable + (Number(roundOffInput) || 0);
 
   function handleFound(r: OrderLookup) {
     setOrderId(r.order?.id ?? "");
@@ -91,6 +122,7 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
     <form action={formAction} className="space-y-3">
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
+      <input type="hidden" name="bill_kind" value={billKind} />
 
       <OrderLookupBox label="Link to an order by PO/RF/RG No. (optional)" onFound={handleFound} />
       {!orderId && (
@@ -169,11 +201,26 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
             )}
             <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
-          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && (
+          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
             <p className="mt-0.5 text-[11px] text-slate-400">
               ≈ {sqFeetConverted.toFixed(2)} Sq. Ft (area) — reference only, saved as entered in {sqFeetUnit}
             </p>
           )}
+          {!isPcs && sqFeetUnit !== "FT" && (
+            <label className="mt-1 flex items-start gap-1.5 text-[11px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={sizeMode === "as_billed"}
+                onChange={(e) => setSizeMode(e.target.checked ? "as_billed" : "area")}
+                className="mt-0.5"
+              />
+              <span>
+                Vendor billed a <strong>linear length</strong> (e.g. fabric roll 524.20 {sqFeetUnit} @ per-{sqFeetUnit} rate) — show it as billed, do
+                not convert it to Sq Ft.
+              </span>
+            </label>
+          )}
+          <input type="hidden" name="size_mode" value={sizeMode} />
           {isPcs && (
             <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
           )}
@@ -209,8 +256,29 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
               on the vendor's own bill) — see
               db/2026-08-17-purchase-bills-round-off.sql. */}
           <label className={labelClass} htmlFor="pb_round_off">Round Off <span className="text-slate-400">(± optional)</span></label>
-          <input id="pb_round_off" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
-          <p className="mt-0.5 text-[11px] text-slate-400">e.g. −0.30 to match the vendor&apos;s exact invoice total.</p>
+          <input
+            id="pb_round_off"
+            name="round_off_amt"
+            type="number"
+            step="0.01"
+            value={roundOffInput}
+            onChange={(e) => setRoundOffInput(e.target.value)}
+            className={inputClass}
+          />
+          {/* 2026-10-24b — "round figure se payment ... payable round + difference
+              round-off me": one click sets the payable to the round figure and
+              puts only the difference in round-off. */}
+          <RoundFigureButtons payable={preRoundPayable} onApply={(diff) => setRoundOffInput(diff.toFixed(2))} />
+          <p className="mt-0.5 text-[11px] text-slate-400">
+            {preRoundPayable > 0 ? (
+              <>
+                Payable before round-off ₹{preRoundPayable.toFixed(2)} → after ₹{roundedPayable.toFixed(2)} (round off {Number(roundOffInput) >= 0 ? "+" : ""}
+                {(Number(roundOffInput) || 0).toFixed(2)})
+              </>
+            ) : (
+              "e.g. −0.30 to match the vendor's exact invoice total."
+            )}
+          </p>
         </div>
       </div>
 
@@ -219,7 +287,7 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
         disabled={pending}
         className="w-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
       >
-        {pending ? "Saving..." : "Save Purchase Bill"}
+        {pending ? "Saving..." : billKind === "printing" ? "Save Printing Bill" : "Save Purchase Bill"}
       </button>
     </form>
   );
