@@ -42,6 +42,14 @@ export type FreightBillAssignment = {
   // 2026-09-01: booking-cost-vs-billed-cost recheck — see
   // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
   billed_freight_amt: number | null;
+  // 2026-09-21 per-AWB charge breakup (see the schema comment on
+  // freight_bill_awb_assignments) — read here so each row can show that AWB's
+  // own GST and total instead of only the invoice-level figure.
+  billed_base_amt: number | null;
+  billed_fuel_amt: number | null;
+  billed_remote_amt: number | null;
+  billed_other_amt: number | null;
+  billed_gst_amt: number | null;
   booked_freight_amt: number | null;
   booked_currency: string | null;
   booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
@@ -68,6 +76,8 @@ export type FreightBillRow = {
   credit_note_no: string | null;
   credit_note_date: string | null;
   credit_note_amt: number;
+  /** 2026-10-24b — round-figure adjustment; net payable = gross + this. */
+  round_off_amt?: number;
   assignments: FreightBillAssignment[];
   sentToFinance: boolean;
   // 2026-08-17: which courier/vendor party issued this bill — optional
@@ -159,6 +169,13 @@ export function FreightBillSection({
           <div>
             <label className={labelClass} htmlFor="fb_other">Other Charges</label>
             <input id="fb_other" name="other_charges" type="number" step="0.01" className={inputClass} />
+          </div>
+          {/* 2026-10-24b — "SABHI PARKAR KE BILLS ME ROUND FIGURE SET KARNE KA
+              OPTION AAYE FREIGHT DUTY ...": negative rounds the payable down,
+              positive up; the ledger hand-off below starts at gross + this. */}
+          <div>
+            <label className={labelClass} htmlFor="fb_round">Round Off <span className="text-slate-400">(± to round the payable)</span></label>
+            <input id="fb_round" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
           </div>
         </div>
 
@@ -369,6 +386,10 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
               <label className={labelClass}>Other Charges</label>
               <input name="other_charges" type="number" step="0.01" defaultValue={bill.other_charges} className={inputClass} />
             </div>
+            <div>
+              <label className={labelClass}>Round Off</label>
+              <input name="round_off_amt" type="number" step="0.01" defaultValue={bill.round_off_amt ?? 0} className={inputClass} />
+            </div>
           </div>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
             <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>
@@ -400,7 +421,11 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
           billId={bill.id}
           kind="freight"
           companies={companies}
-          defaultAmt={Number(bill.gross_total_amt ?? bill.total_amt ?? 0) - Number(bill.credit_note_amt ?? 0)}
+          defaultAmt={
+            Number(bill.gross_total_amt ?? bill.total_amt ?? 0) +
+            Number(bill.round_off_amt ?? 0) -
+            Number(bill.credit_note_amt ?? 0)
+          }
           onDone={() => setFinanceMode(false)}
         />
       )}
@@ -424,6 +449,48 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             </button>
           </div>
           {bulkMode ? <BulkAssignAwbForm freightBillId={bill.id} /> : <AssignAwbForm freightBillId={bill.id} />}
+          {/* 2026-10-24b — "PER-AWB GST COURIER ... FORM PAR DIKHE": the same
+              summary the purchase bill form gives per PO, here per AWB. */}
+          {bill.assignments.length > 0 &&
+            (() => {
+              let gst = 0;
+              let preTaxTotal = 0;
+              for (const a of bill.assignments) {
+                const breakup =
+                  Number(a.billed_base_amt ?? 0) +
+                  Number(a.billed_fuel_amt ?? 0) +
+                  Number(a.billed_remote_amt ?? 0) +
+                  Number(a.billed_other_amt ?? 0);
+                // AWB billed as one lump sum (no breakup) still counts.
+                const preTax = breakup > 0 ? breakup : Number(a.billed_freight_amt ?? 0);
+                preTaxTotal += preTax;
+                gst += a.billed_gst_amt != null ? Number(a.billed_gst_amt) : Math.round(preTax * 18) / 100;
+              }
+              return (
+                <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600 sm:grid-cols-5">
+                  <div>
+                    <span className="block text-slate-400">AWBs</span>
+                    <span className="font-semibold text-slate-900">{bill.assignments.length}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Base + Fuel + Remote/Other</span>
+                    <span className="font-semibold text-slate-900">₹{preTaxTotal.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">GST</span>
+                    <span className="font-semibold text-slate-900">₹{gst.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Round off</span>
+                    <span className="font-semibold text-slate-900">₹{Number(bill.round_off_amt ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Payable</span>
+                    <span className="font-semibold text-slate-900">₹{(preTaxTotal + gst + Number(bill.round_off_amt ?? 0)).toFixed(2)}</span>
+                  </div>
+                </div>
+              );
+            })()}
           <div className="space-y-1.5">
             {bill.assignments.map((a) => (
               <AssignmentRow key={a.id} assignment={a} />
@@ -894,6 +961,26 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
           </button>
         </div>
       </div>
+      {/* 2026-10-24b — this AWB's own charge breakup + GST + total. GST is the
+          billed figure when the courier itemised it, else 18% of the pre-tax
+          charges, so a row always shows what that parcel actually cost. */}
+      {(() => {
+        const base = Number(assignment.billed_base_amt ?? 0);
+        const fuel = Number(assignment.billed_fuel_amt ?? 0);
+        const remote = Number(assignment.billed_remote_amt ?? 0);
+        const other = Number(assignment.billed_other_amt ?? 0);
+        const breakup = base + fuel + remote + other;
+        const preTax = breakup > 0 ? breakup : Number(assignment.billed_freight_amt ?? 0);
+        if (preTax <= 0) return null;
+        const gstAuto = assignment.billed_gst_amt == null;
+        const gst = gstAuto ? Math.round(preTax * 18) / 100 : Number(assignment.billed_gst_amt);
+        return (
+          <div className="mt-1 text-[11px] text-slate-500">
+            Base ₹{base.toFixed(2)} + Fuel ₹{fuel.toFixed(2)} + Remote/Other ₹{(remote + other).toFixed(2)} · GST{gstAuto ? " 18%" : ""} ₹
+            {gst.toFixed(2)} · <strong className="text-slate-800">AWB total ₹{(preTax + gst).toFixed(2)}</strong>
+          </div>
+        );
+      })()}
       {(assignment.credit_note_no || assignment.debit_note_no) && (
         <div className="mt-1 space-x-3 text-purple-700">
           {assignment.credit_note_no && <span>CN {assignment.credit_note_no} · −₹{assignment.credit_note_amt ?? 0}</span>}

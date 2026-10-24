@@ -61,6 +61,8 @@ export type DutyBillRow = {
   disbursement_fee: number;
   courier_duty_charges_adj: number;
   total_payable_amt: number | null;
+  /** 2026-10-24b — round-figure adjustment; net payable = gross + this. */
+  round_off_amt?: number;
   assignments: DutyBillAssignment[];
   sentToFinance: boolean;
   // 2026-08-17: same optional vendor/party linkage as FreightBillRow — see
@@ -178,6 +180,14 @@ export function DutyBillSection({
             <div>
               <label className={labelClass} htmlFor="db_total">Total Payable Amt</label>
               <input id="db_total" name="total_payable_amt" type="number" step="0.01" className={inputClass} placeholder="off the bill" />
+            </div>
+            {/* 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION ... DUTY": same
+                field as the Courier Bill form. */}
+            <div>
+              <label className={labelClass} htmlFor="db_round">
+                Round Off <span className="text-slate-400">(± to round the payable)</span>
+              </label>
+              <input id="db_round" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
             </div>
           </div>
         </div>
@@ -381,6 +391,7 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
               <input name="disbursement_fee" type="number" step="0.01" defaultValue={bill.disbursement_fee} placeholder="Disbursement Fee" className={inputClass} />
               <input name="courier_duty_charges_adj" type="number" step="0.01" defaultValue={bill.courier_duty_charges_adj} placeholder="Duty Charges (adj.)" className={inputClass} />
               <input name="total_payable_amt" type="number" step="0.01" defaultValue={bill.total_payable_amt ?? ""} placeholder="Total Payable Amt" className={inputClass} />
+              <input name="round_off_amt" type="number" step="0.01" defaultValue={bill.round_off_amt ?? 0} placeholder="Round Off" className={inputClass} />
             </div>
           </div>
           {bill.sentToFinance && (
@@ -405,7 +416,11 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
           billId={bill.id}
           kind="duty"
           companies={companies}
-          defaultAmt={Number(bill.total_payable_amt ?? bill.gross_total_amt ?? bill.duty_tax_amt_inr ?? 0) - Number(bill.credit_note_amt ?? 0)}
+          defaultAmt={
+            Number(bill.total_payable_amt ?? bill.gross_total_amt ?? bill.duty_tax_amt_inr ?? 0) +
+            Number(bill.round_off_amt ?? 0) -
+            Number(bill.credit_note_amt ?? 0)
+          }
           onDone={() => setFinanceMode(false)}
         />
       )}
@@ -429,6 +444,44 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
             </button>
           </div>
           {bulkMode ? <BulkAssignAwbForm dutyTaxBillId={bill.id} /> : <AssignAwbForm dutyTaxBillId={bill.id} />}
+          {/* 2026-10-24b — "PER-AWB GST ... DUTY FORM PAR DIKHE": the same
+              summary the purchase bill gives per PO, here across this bill's
+              AWBs — duty + that AWB's GST + round-off = what is payable. */}
+          {bill.assignments.length > 0 &&
+            (() => {
+              let duty = 0;
+              let gst = 0;
+              for (const a of bill.assignments) {
+                const amt = Number(a.duty_tax_amt_inr ?? 0) + Number(a.other_charge ?? 0);
+                duty += amt;
+                gst += a.gst_18pct != null ? Number(a.gst_18pct) : Math.round(Number(a.duty_tax_amt_inr ?? 0) * 18) / 100;
+              }
+              const roundOff = Number(bill.round_off_amt ?? 0);
+              return (
+                <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600 sm:grid-cols-5">
+                  <div>
+                    <span className="block text-slate-400">AWBs</span>
+                    <span className="font-semibold text-slate-900">{bill.assignments.length}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Duty + Other</span>
+                    <span className="font-semibold text-slate-900">₹{duty.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">GST</span>
+                    <span className="font-semibold text-slate-900">₹{gst.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Round off</span>
+                    <span className="font-semibold text-slate-900">₹{roundOff.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-slate-400">Payable</span>
+                    <span className="font-semibold text-slate-900">₹{(duty + gst + roundOff).toFixed(2)}</span>
+                  </div>
+                </div>
+              );
+            })()}
           <div className="space-y-1.5">
             {bill.assignments.map((a) => (
               <AssignmentRow key={a.id} assignment={a} />
@@ -522,7 +575,7 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
               <input name="other_charge" type="number" step="0.01" className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>GST @18%</label>
+              <label className={labelClass}>GST @18% <span className="text-slate-400">(blank = auto)</span></label>
               <input name="gst_18pct" type="number" step="0.01" className={inputClass} />
             </div>
           </div>
@@ -614,7 +667,7 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
               <input value={r.dutyTaxAmtUsd} onChange={(e) => updateRow(i, { dutyTaxAmtUsd: e.target.value })} placeholder="USD" className={inputClass} />
               <input value={r.dutyTaxAmtInr} onChange={(e) => updateRow(i, { dutyTaxAmtInr: e.target.value })} placeholder="INR" className={inputClass} />
               <input value={r.otherCharge} onChange={(e) => updateRow(i, { otherCharge: e.target.value })} placeholder="Other" className={inputClass} />
-              <input value={r.gst18pct} onChange={(e) => updateRow(i, { gst18pct: e.target.value })} placeholder="GST" className={inputClass} />
+              <input value={r.gst18pct} onChange={(e) => updateRow(i, { gst18pct: e.target.value })} placeholder="GST (auto)" className={inputClass} />
               <input value={r.remark} onChange={(e) => updateRow(i, { remark: e.target.value })} placeholder="Remark" className={inputClass} />
             </div>
           ))}
@@ -661,8 +714,16 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
           <span className="font-medium text-slate-900">{assignment.order_ref_no}</span>
           <span className="ml-2 text-slate-400">
             ₹{assignment.duty_tax_amt_inr ?? 0}
-            {assignment.duty_tax_amt_usd ? ` ($${assignment.duty_tax_amt_usd})` : ""} · GST ₹{assignment.gst_18pct ?? 0} · Other ₹
-            {assignment.other_charge ?? 0}
+            {assignment.duty_tax_amt_usd ? ` ($${assignment.duty_tax_amt_usd})` : ""} · GST ₹
+            {assignment.gst_18pct ?? Math.round(Number(assignment.duty_tax_amt_inr ?? 0) * 18) / 100} · Other ₹{assignment.other_charge ?? 0} ·{" "}
+            <strong className="text-slate-700">
+              AWB total ₹
+              {(
+                Number(assignment.duty_tax_amt_inr ?? 0) +
+                Number(assignment.gst_18pct ?? Math.round(Number(assignment.duty_tax_amt_inr ?? 0) * 18) / 100) +
+                Number(assignment.other_charge ?? 0)
+              ).toFixed(2)}
+            </strong>
           </span>
           {assignment.remark && <span className="ml-2 text-slate-400">· {assignment.remark}</span>}
         </div>

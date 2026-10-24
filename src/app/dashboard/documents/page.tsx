@@ -135,7 +135,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       .limit(8),
     supabase
       .from("washing_entries")
-      .select("id, chalan_no, chalan_date, company_id, party_id, store_id, item_size, pcs, sq_mtr_ft, rate, debit_charges, amount")
+      .select("id, chalan_no, chalan_date, company_id, party_id, store_id, item_size, pcs, sq_mtr_ft, rate, debit_charges, round_off_amt, amount")
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
@@ -179,7 +179,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       let query = supabase
         .from("freight_bills")
         .select(
-          "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, vendor_party_id"
+          "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, round_off_amt, vendor_party_id"
         )
         .order("created_at", { ascending: false })
         .limit(fbFiltered ? FILTERED_LIMIT : 8);
@@ -192,7 +192,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       let query = supabase
         .from("duty_tax_bills")
         .select(
-          "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, vendor_party_id"
+          "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, round_off_amt, vendor_party_id"
         )
         .order("created_at", { ascending: false })
         .limit(dbFiltered ? FILTERED_LIMIT : 8);
@@ -284,7 +284,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             // 2026-09-01: order_shipment_id + billed_freight_amt added — the
             // booking-cost-vs-billed-cost recheck (see
             // db/2026-09-01-multi-courier-booking-and-freight-recon.sql).
-            "id, freight_bill_id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, billed_freight_amt, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
+            // 2026-10-24b: billed_base/fuel/remote/other + billed_gst_amt come
+            // along too — the bill card and each AWB row now show that
+            // parcel's own GST and total ("PER-AWB GST FORM PAR DIKHE").
+            "id, freight_bill_id, order_id, order_shipment_id, bill_weight_kg, dimensional_weight_kg, difference_amt, billed_freight_amt, billed_base_amt, billed_fuel_amt, billed_remote_amt, billed_other_amt, billed_gst_amt, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
           )
           .in("freight_bill_id", freightBillIds)
       : Promise.resolve({ data: [] }),
@@ -529,6 +532,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             rate: r.rate != null ? Number(r.rate) : null,
             debit_charges: r.debit_charges != null ? Number(r.debit_charges) : null,
             amount: Number(r.amount ?? 0),
+            round_off_amt: r.round_off_amt != null ? Number(r.round_off_amt) : 0,
             companyName: companyName.get(r.company_id) ?? "",
           })),
           internalInvoices: (recentInternalInvoices ?? []).map((r) => ({
@@ -582,6 +586,11 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
                   dimensional_weight_kg: a.dimensional_weight_kg != null ? Number(a.dimensional_weight_kg) : null,
                   difference_amt: a.difference_amt != null ? Number(a.difference_amt) : null,
                   billed_freight_amt: a.billed_freight_amt != null ? Number(a.billed_freight_amt) : null,
+                  billed_base_amt: a.billed_base_amt != null ? Number(a.billed_base_amt) : null,
+                  billed_fuel_amt: a.billed_fuel_amt != null ? Number(a.billed_fuel_amt) : null,
+                  billed_remote_amt: a.billed_remote_amt != null ? Number(a.billed_remote_amt) : null,
+                  billed_other_amt: a.billed_other_amt != null ? Number(a.billed_other_amt) : null,
+                  billed_gst_amt: a.billed_gst_amt != null ? Number(a.billed_gst_amt) : null,
                   booked_freight_amt: booked?.booked_freight_amt != null ? Number(booked.booked_freight_amt) : null,
                   booked_currency: booked?.booked_currency ?? null,
                   // booked_amount_source is a plain `text` column (no DB-level

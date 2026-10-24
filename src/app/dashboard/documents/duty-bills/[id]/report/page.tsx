@@ -36,7 +36,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
   const { data: billRaw } = await supabase
     .from("duty_tax_bills")
     .select(
-      "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt"
+      "id, invoice_no, invoice_date, duty_tax_amt_usd, duty_tax_amt_inr, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, disbursement_fee, courier_duty_charges_adj, total_payable_amt, round_off_amt"
     )
     .eq("id", id)
     .maybeSingle();
@@ -97,7 +97,9 @@ async function DutyBillReportInner({ id }: { id: string }) {
     const shippingAmt = Number(dispatch?.our_freight_amt ?? 0);
     const dutyInr = Number(a.duty_tax_amt_inr ?? 0);
     const otherCharge = Number(a.other_charge ?? 0);
-    const gst = Number(a.gst_18pct ?? 0);
+    // 2026-10-24b — per-AWB GST: the billed figure when the courier itemised
+    // it, else 18% of that AWB's duty (same rule the bill card shows).
+    const gst = a.gst_18pct != null ? Number(a.gst_18pct) : Math.round(dutyInr * 18) / 100;
     const dutyGross = dutyInr + otherCharge + gst;
     const shippingAndDuty = shippingAmt + dutyGross;
     const shippingAndDutyPct = orgSale > 0 ? (shippingAndDuty / orgSale) * 100 : null;
@@ -154,7 +156,21 @@ async function DutyBillReportInner({ id }: { id: string }) {
             <div className="text-right text-slate-600">
               <p>Duty ₹{bill.duty_tax_amt_inr} + GST ₹{bill.gst_18pct_amt}{bill.duty_tax_amt_usd ? ` (≈ $${bill.duty_tax_amt_usd})` : ""}</p>
               <p className="font-semibold text-slate-900">Gross Total ₹{bill.gross_total_amt ?? bill.duty_tax_amt_inr}</p>
+              {/* 2026-10-24b — round-figure adjustment, then the real payable. */}
+              {Number(bill.round_off_amt ?? 0) !== 0 && (
+                <p className="text-slate-600">
+                  Round Off {Number(bill.round_off_amt) > 0 ? "+" : "−"}₹{Math.abs(Number(bill.round_off_amt)).toFixed(2)}
+                </p>
+              )}
               {bill.credit_note_amt > 0 && <p className="text-purple-700">CN {bill.credit_note_no} · −₹{bill.credit_note_amt}</p>}
+              <p className="font-semibold text-slate-900">
+                Net Payable ₹
+                {(
+                  Number(bill.gross_total_amt ?? bill.duty_tax_amt_inr) +
+                  Number(bill.round_off_amt ?? 0) -
+                  Number(bill.credit_note_amt ?? 0)
+                ).toFixed(2)}
+              </p>
             </div>
           </div>
 

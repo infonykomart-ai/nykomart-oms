@@ -738,6 +738,8 @@ type WashingEntryParams = {
   rate: number | null;
   debitCharges: number | null;
   storeId: string | null;
+  /** 2026-10-24b — round-figure adjustment; payable = amount + this. */
+  roundOffAmt?: number;
 };
 
 async function saveWashingEntryCore(
@@ -766,6 +768,7 @@ async function saveWashingEntryCore(
       rate: p.rate,
       debit_charges: p.debitCharges,
       store_id: p.storeId,
+      round_off_amt: p.roundOffAmt ?? 0,
     })
     .select("id, chalan_no")
     .single();
@@ -789,6 +792,7 @@ export async function saveWashingEntry(_prev: DocFormState, formData: FormData):
     rate: numOrNull(formData, "rate"),
     debitCharges: numOrNull(formData, "debit_charges"),
     storeId: strOrNull(formData, "store_id"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
   });
 
   if (result.error) return initialFail(result.error);
@@ -1014,6 +1018,7 @@ export async function updateWashingEntry(_prev: DocEditState, formData: FormData
       rate: numOrNull(formData, "rate"),
       debit_charges: numOrNull(formData, "debit_charges"),
       store_id: strOrNull(formData, "store_id"),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
     })
     .eq("id", id);
 
@@ -2227,6 +2232,8 @@ type FreightBillParams = {
   creditNoteNo?: string | null;
   creditNoteDate?: string | null;
   creditNoteAmt?: number;
+  /** 2026-10-24b — round-figure adjustment; net payable = gross + this. */
+  roundOffAmt?: number;
   // 2026-08-17: "SABHI PARTY KE LADGER BHI NAHI BANE" — Courier Bills had no
   // vendor/party linkage at all, so a Courier Bill sent to the Finance
   // ledger could never surface under any specific party's ledger (party_id
@@ -2242,22 +2249,27 @@ async function saveFreightBillCore(
 ): Promise<{ error: string | null; id: string | null; docNo: string | null }> {
   if (!p.invoiceNo) return { error: "Invoice No. is required.", id: null, docNo: null };
 
-  const { data, error } = await supabase
+  const freightBillFields = {
+    invoice_no: p.invoiceNo,
+    invoice_date: p.invoiceDate,
+    bill_weight_kg: p.billWeightKg,
+    freight_amt: p.freightAmt,
+    fuel_amt: p.fuelAmt,
+    other_charges: p.otherCharges,
+    credit_note_no: p.creditNoteNo ?? null,
+    credit_note_date: p.creditNoteDate ?? null,
+    credit_note_amt: p.creditNoteAmt ?? 0,
+    vendor_party_id: p.vendorPartyId ?? null,
+  };
+  let { data, error } = await supabase
     .from("freight_bills")
-    .insert({
-      invoice_no: p.invoiceNo,
-      invoice_date: p.invoiceDate,
-      bill_weight_kg: p.billWeightKg,
-      freight_amt: p.freightAmt,
-      fuel_amt: p.fuelAmt,
-      other_charges: p.otherCharges,
-      credit_note_no: p.creditNoteNo ?? null,
-      credit_note_date: p.creditNoteDate ?? null,
-      credit_note_amt: p.creditNoteAmt ?? 0,
-      vendor_party_id: p.vendorPartyId ?? null,
-    })
+    .insert({ ...freightBillFields, round_off_amt: p.roundOffAmt ?? 0 })
     .select("id, invoice_no")
     .single();
+  // A pending migration must never block a real bill: retry without it.
+  if (error && /round_off_amt/i.test(error.message)) {
+    ({ data, error } = await supabase.from("freight_bills").insert(freightBillFields).select("id, invoice_no").single());
+  }
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key") ? "A Courier Bill with that Invoice No. already exists." : error?.message;
@@ -2280,6 +2292,7 @@ export async function saveFreightBill(_prev: DocFormState, formData: FormData): 
     creditNoteNo: strOrNull(formData, "credit_note_no"),
     creditNoteDate: strOrNull(formData, "credit_note_date"),
     creditNoteAmt: numOrZero(formData, "credit_note_amt"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
     vendorPartyId: strOrNull(formData, "vendor_party_id"),
   });
 
@@ -2380,6 +2393,7 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
       credit_note_amt: numOrZero(formData, "credit_note_amt"),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       vendor_party_id: vendorPartyId,
     })
     .eq("id", freightBillId);
@@ -2754,6 +2768,8 @@ type DutyBillParams = {
   creditNoteNo?: string | null;
   creditNoteDate?: string | null;
   creditNoteAmt?: number;
+  /** 2026-10-24b — round-figure adjustment; net payable = gross + this. */
+  roundOffAmt?: number;
   // 2026-08-12 (round 10): manual bottom-summary fields off the real Duty
   // Tax Bill document — see schema.sql's comment on these columns.
   disbursementFee?: number;
@@ -2770,24 +2786,29 @@ async function saveDutyBillCore(
 ): Promise<{ error: string | null; id: string | null; docNo: string | null }> {
   if (!p.invoiceNo) return { error: "Invoice No. is required.", id: null, docNo: null };
 
-  const { data, error } = await supabase
+  const dutyBillFields = {
+    invoice_no: p.invoiceNo,
+    invoice_date: p.invoiceDate,
+    duty_tax_amt_usd: p.dutyTaxAmtUsd,
+    duty_tax_amt_inr: p.dutyTaxAmtInr,
+    gst_18pct_amt: p.gst18pctAmt,
+    credit_note_no: p.creditNoteNo ?? null,
+    credit_note_date: p.creditNoteDate ?? null,
+    credit_note_amt: p.creditNoteAmt ?? 0,
+    disbursement_fee: p.disbursementFee ?? 0,
+    courier_duty_charges_adj: p.courierDutyChargesAdj ?? 0,
+    total_payable_amt: p.totalPayableAmt ?? null,
+    vendor_party_id: p.vendorPartyId ?? null,
+  };
+  let { data, error } = await supabase
     .from("duty_tax_bills")
-    .insert({
-      invoice_no: p.invoiceNo,
-      invoice_date: p.invoiceDate,
-      duty_tax_amt_usd: p.dutyTaxAmtUsd,
-      duty_tax_amt_inr: p.dutyTaxAmtInr,
-      gst_18pct_amt: p.gst18pctAmt,
-      credit_note_no: p.creditNoteNo ?? null,
-      credit_note_date: p.creditNoteDate ?? null,
-      credit_note_amt: p.creditNoteAmt ?? 0,
-      disbursement_fee: p.disbursementFee ?? 0,
-      courier_duty_charges_adj: p.courierDutyChargesAdj ?? 0,
-      total_payable_amt: p.totalPayableAmt ?? null,
-      vendor_party_id: p.vendorPartyId ?? null,
-    })
+    .insert({ ...dutyBillFields, round_off_amt: p.roundOffAmt ?? 0 })
     .select("id, invoice_no")
     .single();
+  // A pending migration must never block a real bill: retry without it.
+  if (error && /round_off_amt/i.test(error.message)) {
+    ({ data, error } = await supabase.from("duty_tax_bills").insert(dutyBillFields).select("id, invoice_no").single());
+  }
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key") ? "A Duty & Tax Bill with that Invoice No. already exists." : error?.message;
@@ -2812,6 +2833,7 @@ export async function saveDutyBill(_prev: DocFormState, formData: FormData): Pro
     disbursementFee: numOrZero(formData, "disbursement_fee"),
     courierDutyChargesAdj: numOrZero(formData, "courier_duty_charges_adj"),
     totalPayableAmt: numOrNull(formData, "total_payable_amt"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
     vendorPartyId: strOrNull(formData, "vendor_party_id"),
   });
 
@@ -2883,6 +2905,7 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
       disbursement_fee: numOrZero(formData, "disbursement_fee"),
       courier_duty_charges_adj: numOrZero(formData, "courier_duty_charges_adj"),
       total_payable_amt: numOrNull(formData, "total_payable_amt"),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       vendor_party_id: vendorPartyId,
     })
     .eq("id", dutyTaxBillId);
@@ -2963,6 +2986,12 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
     return initialFail("That order is not accessible — look it up again.");
   }
 
+  // 2026-10-24b — "GST AUTO CALCULATE HO": the form's GST box is optional;
+  // leaving it blank used to store null, so nothing downstream (bill card,
+  // report) could total that AWB and the invoice-level GST was the only
+  // figure. Saved value is now 18% of that AWB's duty when not entered.
+  const dutyInr = numOrNull(formData, "duty_tax_amt_inr");
+  const gstEntered = numOrNull(formData, "gst_18pct");
   const { data, error } = await supabase
     .from("duty_bill_awb_assignments")
     .insert({
@@ -2970,9 +2999,9 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
       order_id: orderId,
       order_shipment_id: orderShipmentId,
       duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
-      duty_tax_amt_inr: numOrNull(formData, "duty_tax_amt_inr"),
+      duty_tax_amt_inr: dutyInr,
       other_charge: numOrNull(formData, "other_charge"),
-      gst_18pct: numOrNull(formData, "gst_18pct"),
+      gst_18pct: gstEntered ?? (dutyInr != null ? Math.round(dutyInr * 18) / 100 : null),
       remark: strOrNull(formData, "remark"),
     })
     .select("id")
@@ -3041,7 +3070,8 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
       duty_tax_amt_usd: row.dutyTaxAmtUsd,
       duty_tax_amt_inr: row.dutyTaxAmtInr,
       other_charge: row.otherCharge,
-      gst_18pct: row.gst18pct,
+      // Same blank-means-18% rule as assignDutyAwb above.
+      gst_18pct: row.gst18pct ?? (row.dutyTaxAmtInr != null ? Math.round(row.dutyTaxAmtInr * 18) / 100 : null),
       remark: row.remark,
     });
     if (error) {

@@ -20,6 +20,8 @@ export type EditableWashingEntry = {
   sq_mtr_ft: number | null;
   rate: number | null;
   debit_charges: number | null;
+  /** 2026-10-24b — round-figure adjustment; payable = amount + debit + this. */
+  round_off_amt?: number | null;
 };
 
 export function WashingEntryEditForm({
@@ -90,6 +92,11 @@ export function WashingEntryEditForm({
         <div>
           <label className={labelClass} htmlFor={`we_debit_${entry.id}`}>Debit Charges</label>
           <input id={`we_debit_${entry.id}`} name="debit_charges" type="number" step="0.01" defaultValue={entry.debit_charges ?? ""} className={inputClass} />
+        </div>
+        {/* 2026-10-24b — see washing-entry-form.tsx. */}
+        <div>
+          <label className={labelClass} htmlFor={`we_round_${entry.id}`}>Round Off</label>
+          <input id={`we_round_${entry.id}`} name="round_off_amt" type="number" step="0.01" defaultValue={entry.round_off_amt ?? 0} className={inputClass} />
         </div>
       </div>
 

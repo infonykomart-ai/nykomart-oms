@@ -90,6 +90,13 @@ export function WashingEntryForm({
           <label className={labelClass} htmlFor="we_debit">Debit Charges</label>
           <input id="we_debit" name="debit_charges" type="number" step="0.01" className={inputClass} />
         </div>
+        {/* 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION ... WASHING": the
+            difference goes in round-off so the payable lands on the round
+            figure while amount × rate stays exactly as computed. */}
+        <div>
+          <label className={labelClass} htmlFor="we_round">Round Off <span className="text-slate-400">(± to round the payable)</span></label>
+          <input id="we_round" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
+        </div>
       </div>
 
       <button
