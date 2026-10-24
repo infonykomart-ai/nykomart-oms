@@ -91,7 +91,13 @@ export function BillStatementDocument({
                 <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                   <th className="py-1 pr-2">PO / Order Ref</th>
                   <th className="py-1 pr-2">Description</th>
-                  <th className="py-1 pr-2 text-right">Sq Ft</th>
+                  <th className="py-1 pr-2 text-right">
+                    {data.poLines.some((l) => l.asBilled)
+                      ? data.poLines.some((l) => !l.asBilled)
+                        ? "Sq Ft / As billed"
+                        : "As billed"
+                      : "Sq Ft"}
+                  </th>
                   <th className="py-1 pr-2 text-right">Qty</th>
                   <th className="py-1 pr-2">Unit</th>
                   <th className="py-1 pr-2 text-right">Rate</th>
@@ -107,6 +113,9 @@ export function BillStatementDocument({
                     <td className="py-1 pr-2">{l.description ?? "—"}</td>
                     <td className="py-1 pr-2 text-right">
                       {(() => {
+                        // 2026-10-24b — a linear length billed in MTR/CM is
+                        // shown exactly as the vendor billed it.
+                        if (l.asBilled) return `${l.size} ${SQ_UNIT_WORD[l.unit] ?? l.unit}`;
                         const sqFt = purchaseAreaSqFt(l.size, l.unit);
                         if (sqFt == null) return "—";
                         return (

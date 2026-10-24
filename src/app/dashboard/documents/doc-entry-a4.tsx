@@ -167,7 +167,10 @@ export function washingEntryDoc(
   r: EditableWashingEntry & { companyName: string; amount: number },
   names: { partyName: string; storeName: string }
 ): DocEntrySpec {
-  const total = Number(r.amount) + Number(r.debit_charges ?? 0);
+  // 2026-10-24b — the round-figure difference is part of what is paid, so the
+  // sheet's total carries it (same convention as the purchase bill).
+  const roundOff = Number(r.round_off_amt ?? 0);
+  const total = Number(r.amount) + Number(r.debit_charges ?? 0) + roundOff;
   return {
     id: r.id,
     title: "WASHING ENTRY",
@@ -183,6 +186,9 @@ export function washingEntryDoc(
       { label: "Rate", value: r.rate != null ? inr(r.rate) : "—" },
       { label: "Amount", value: inr(Number(r.amount)) },
       { label: "Debit Charges", value: inr(Number(r.debit_charges ?? 0)) },
+      ...(roundOff !== 0
+        ? [{ label: "Round Off", value: `${roundOff > 0 ? "+" : "−"} ${inr(Math.abs(roundOff))}` }]
+        : []),
     ],
     // Same "amount + debit_charges" sum the list's all-time Total line and
     // the CRM P&L "Washing Chalans" line use (see page.tsx's

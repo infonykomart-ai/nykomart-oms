@@ -19,6 +19,7 @@ import { useActionState, useMemo, useState, useTransition } from "react";
 import { addShipmentCharge, deleteShipmentCharge, searchShipmentTargets, type ChargeActionResult, type ChargeTarget } from "./shipping-charges-actions";
 import { CHARGE_DIRECTIONS, SHIPPING_CHARGE_HEADS, chargeHeadLabel, chargeDirectionLabel } from "@/lib/couriers/charge-heads";
 import type { ShippingChargeData } from "./shipping-charges-data";
+import { ChargesGridDialog } from "./charges-grid-dialog";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -48,6 +49,8 @@ export function ShippingCharges({ data }: { data: ShippingChargeData }) {
   // Existing-charges filters.
   const [listQuery, setListQuery] = useState("");
   const [dirFilter, setDirFilter] = useState("all");
+  // 2026-10-24 (2) — the wide grid entry dialog (all common heads as columns).
+  const [gridOpen, setGridOpen] = useState(false);
 
   const head = SHIPPING_CHARGE_HEADS.find((h) => h.key === headKey) ?? SHIPPING_CHARGE_HEADS[0];
 
@@ -153,10 +156,24 @@ export function ShippingCharges({ data }: { data: ShippingChargeData }) {
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {/* ---------- Add a charge ---------- */}
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Add a courier charge</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            Search by PO / RF / RG no., marketplace order no., AWB or invoice no.
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Add a courier charge</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Search by PO / RF / RG no., marketplace order no., AWB or invoice no.
+              </p>
+            </div>
+            {/* 2026-10-24 (2) — "har baar dropdown se karna padega ... sabhi
+                head ka apna column ho": opens the landscape grid where every
+                common head is a column of its own. */}
+            <button
+              type="button"
+              onClick={() => setGridOpen(true)}
+              className="shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              ▦ Grid entry — all heads
+            </button>
+          </div>
 
           <div className="mt-3 flex gap-2">
             <input
@@ -405,6 +422,8 @@ export function ShippingCharges({ data }: { data: ShippingChargeData }) {
           </div>
         </div>
       </div>
+
+      <ChargesGridDialog open={gridOpen} onClose={() => setGridOpen(false)} data={data} />
     </div>
   );
 }

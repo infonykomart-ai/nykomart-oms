@@ -2,17 +2,15 @@ import Link from "next/link";
 import { requireCapability, ForbiddenError, UnauthorizedError, CURRENT_COMPANY_COOKIE } from "@/lib/auth/require-capability";
 import { cookies } from "next/headers";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { PrintArea } from "@/components/print-view";
-import { ExportBar } from "@/components/export-bar";
-import type { ExportColumn } from "@/lib/export/export-table";
 import { todayIST } from "@/lib/attendance/ist-date";
+import { PartyBalanceSummaryTable, type SummaryRow } from "./summary-table";
 
 // 2026-10-24 — "SABHI PARTY KE LADGER SUMMERY KI KONSI PARTY KA KITNA BALACE
 // HAI PAYMENT KARNA HAI. COMPANY WISE."
 //
-// The Party Ledger page (parties/[id]/ledger) answers that for ONE party, and
-// Bill Payment lists individual unpaid BILLS — neither answered "across every
-// party, what do we still owe, per company". This page is that roll-up.
+// The Party Ledger page answers that for ONE party, and Bill Payment lists
+// individual unpaid BILLS — neither answered "across every party, what do we
+// still owe, per company". This page is that roll-up.
 //
 // Source of truth is bill_pass_register — the same table the party ledger and
 // Bill Payment read — so the numbers here always tie out with both. Its
@@ -20,31 +18,25 @@ import { todayIST } from "@/lib/attendance/ist-date";
 // − total_paid) figure, so nothing is recomputed here: a party's balance is
 // simply the sum of the balances of its bills.
 //
-// Grouping is (party × company) deliberately: one party can legitimately have
-// bills against more than one company (shared purchase), and the user asked
-// for the summary COMPANY WISE — merging those into one number would hide
-// which company has to pay. `company=all` widens the view to every company
-// this login can access and keeps the company column on every row.
+// Grouping is (party × company) by default: one party can legitimately have
+// bills against more than one company (shared purchase), and the summary is
+// COMPANY WISE — merging those hides which company has to pay.
+//
+// 2026-10-24 (b) — "AGAR TEENO COMPANY ME BILL NO SAM HAI TO VO JUD KE AAYE":
+// the same vendor invoice is often billed against all three companies, and in
+// the company-wise view that reads as three separate lines for one vendor.
+// `combine=1` now merges every company into ONE row per party (the same bill
+// no across companies simply adds up), with the companies it came from listed
+// in the Company column.
 //
 // A negative net balance is shown as ADVANCE (we paid more than we owe) and
 // kept separate from PAYABLE — netting an advance against a different
 // invoice's outstanding would misstate what is actually due today.
 
-type Row = {
-  partyId: string;
-  partyName: string;
-  companyId: string;
-  companyName: string;
-  bills: number;
-  billed: number;
-  paid: number;
-  balance: number;
-  overdue: number;
-  oldestDue: string | null;
-  advance: number;
-};
+type Row = SummaryRow;
 
 const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export default async function PartyBalanceSummaryPage({
   searchParams,
@@ -69,10 +61,25 @@ export default async function PartyBalanceSummaryPage({
 // bill_pass_register can hold far more rows than PostgREST returns in one
 // response (1000 by default), and silently summarising only the first 1000
 // would understate every balance. Page through until exhausted.
+//
+// 2026-10-24 (b) — a failed read now comes back as an error the page can
+// SHOW, instead of a thrown error that replaces the whole screen with the
+// generic "This page couldn't load" card.
 async function loadAllRegisterRows(
   supabase: ReturnType<typeof createServiceRoleClient>,
   companyIds: string[]
-) {
+): Promise<{
+  rows: {
+    party_id: string | null;
+    company_id: string;
+    total_amt: number;
+    total_paid: number;
+    balance_due: number;
+    due_date: string | null;
+  }[];
+  error: string | null;
+}> {
+  if (companyIds.length === 0) return { rows: [], error: null };
   const pageSize = 1000;
   const rows: {
     party_id: string | null;
@@ -89,7 +96,7 @@ async function loadAllRegisterRows(
       .in("company_id", companyIds)
       .order("created_at", { ascending: true })
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
+    if (error) return { rows, error: error.message };
     for (const r of data ?? []) {
       rows.push({
         party_id: r.party_id,
@@ -102,7 +109,7 @@ async function loadAllRegisterRows(
     }
     if (!data || data.length < pageSize) break;
   }
-  return rows;
+  return { rows, error: null };
 }
 
 async function SummaryInner(sp: { [key: string]: string | string[] | undefined }) {
@@ -113,16 +120,18 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
   const companyParam = str("company");
   const q = str("q").trim().toLowerCase();
   const onlyDue = str("only") === "due";
+  // "teeno company me bill no sam hai to jud ke aaye" — one row per party.
+  const combine = str("combine") === "1";
   const today = todayIST();
 
   // Default: the company this login is currently acting as — the same scope
   // the party ledger defaults to. "all" = every company the login can access.
   const cookieCompany = (await cookies()).get(CURRENT_COMPANY_COOKIE)?.value;
   const current = cookieCompany && employee.companyIds.includes(cookieCompany) ? cookieCompany : employee.currentCompanyId;
-  const scopeIds = companyParam === "all" ? employee.companyIds : [companyParam || current];
+  const scopeIds = (companyParam === "all" || combine ? employee.companyIds : [companyParam || current]).filter(Boolean);
 
-  const [registerRows, { data: companies }, { data: parties }] = await Promise.all([
-    loadAllRegisterRows(supabase, scopeIds.length ? scopeIds : [current]),
+  const [{ rows: registerRows, error: loadError }, { data: companies }, { data: parties }] = await Promise.all([
+    loadAllRegisterRows(supabase, scopeIds),
     supabase.from("companies").select("id, name").in("id", employee.companyIds),
     supabase.from("parties").select("id, name"),
   ]);
@@ -131,18 +140,19 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name] as const));
 
   const grouped = new Map<string, Row>();
+  const companiesByParty = new Map<string, Set<string>>();
   for (const r of registerRows) {
     // Salary/advance register rows have no party (employee_id instead) — not
     // a party payable, so they are excluded rather than lumped under "—".
     if (!r.party_id) continue;
-    const key = `${r.party_id}::${r.company_id}`;
+    const key = combine ? r.party_id : `${r.party_id}::${r.company_id}`;
     const row =
       grouped.get(key) ??
       ({
         partyId: r.party_id,
         partyName: partyName.get(r.party_id) ?? "Unknown party",
-        companyId: r.company_id,
-        companyName: companyName.get(r.company_id) ?? "—",
+        companyId: combine ? "" : r.company_id,
+        companyName: combine ? "" : companyName.get(r.company_id) ?? "—",
         bills: 0,
         billed: 0,
         paid: 0,
@@ -160,6 +170,11 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
       if (!row.oldestDue || r.due_date < row.oldestDue) row.oldestDue = r.due_date;
     }
     grouped.set(key, row);
+    if (combine) {
+      const set = companiesByParty.get(r.party_id) ?? new Set<string>();
+      set.add(companyName.get(r.company_id) ?? "—");
+      companiesByParty.set(r.party_id, set);
+    }
   }
 
   const allRows = Array.from(grouped.values());
@@ -170,11 +185,15 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
     }
     // Rounding: sums of numeric(14,2) are exact, but a stray float can still
     // show 1234.5600000000001 — pin to paise.
-    r.billed = Math.round(r.billed * 100) / 100;
-    r.paid = Math.round(r.paid * 100) / 100;
-    r.balance = Math.round(r.balance * 100) / 100;
-    r.overdue = Math.round(r.overdue * 100) / 100;
-    r.advance = Math.round(r.advance * 100) / 100;
+    r.billed = round2(r.billed);
+    r.paid = round2(r.paid);
+    r.balance = round2(r.balance);
+    r.overdue = round2(r.overdue);
+    r.advance = round2(r.advance);
+    if (combine) {
+      r.companyName = Array.from(companiesByParty.get(r.partyId) ?? []).join(" + ") || "—";
+      r.companyId = "combined";
+    }
   }
 
   const rows = allRows
@@ -182,25 +201,17 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
     .filter((r) => (onlyDue ? r.balance > 0 : true))
     .sort((a, b) => b.balance - a.balance || a.partyName.localeCompare(b.partyName));
 
-  const totalPayable = rows.reduce((s, r) => s + r.balance, 0);
-  const totalOverdue = rows.reduce((s, r) => s + r.overdue, 0);
-  const totalAdvance = rows.reduce((s, r) => s + r.advance, 0);
-  const totalBilled = rows.reduce((s, r) => s + r.billed, 0);
-  const totalPaid = rows.reduce((s, r) => s + r.paid, 0);
+  const totals = {
+    bills: rows.reduce((s, r) => s + r.bills, 0),
+    billed: round2(rows.reduce((s, r) => s + r.billed, 0)),
+    paid: round2(rows.reduce((s, r) => s + r.paid, 0)),
+    payable: round2(rows.reduce((s, r) => s + r.balance, 0)),
+    overdue: round2(rows.reduce((s, r) => s + r.overdue, 0)),
+    advance: round2(rows.reduce((s, r) => s + r.advance, 0)),
+  };
 
-  const columns: ExportColumn<Row>[] = [
-    { key: "party", label: "Party", value: (r) => r.partyName },
-    { key: "company", label: "Company", value: (r) => r.companyName },
-    { key: "bills", label: "Bills", value: (r) => r.bills },
-    { key: "billed", label: "Billed (₹)", value: (r) => r.billed.toFixed(2) },
-    { key: "paid", label: "Paid (₹)", value: (r) => r.paid.toFixed(2) },
-    { key: "balance", label: "Balance Payable (₹)", value: (r) => r.balance.toFixed(2) },
-    { key: "overdue", label: "Overdue (₹)", value: (r) => r.overdue.toFixed(2) },
-    { key: "advance", label: "Advance (₹)", value: (r) => r.advance.toFixed(2) },
-    { key: "oldestDue", label: "Oldest Due Date", value: (r) => r.oldestDue ?? "" },
-  ];
-
-  const scopeLabel = companyParam === "all" ? "All companies" : companyName.get(scopeIds[0]) ?? "—";
+  const scopeLabel =
+    companyParam === "all" || combine ? "All companies" : companyName.get(scopeIds[0] ?? "") ?? "—";
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
@@ -244,6 +255,10 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
           <input type="checkbox" name="only" value="due" defaultChecked={onlyDue} className="h-3.5 w-3.5 rounded border-slate-300" />
           Only parties with a balance to pay
         </label>
+        <label className="flex items-center gap-2 pb-1.5 text-xs text-slate-600" title="Same bill no. in several companies adds up into one row per party">
+          <input type="checkbox" name="combine" value="1" defaultChecked={combine} className="h-3.5 w-3.5 rounded border-slate-300" />
+          All companies combined (ek party = ek row)
+        </label>
         <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
           Apply
         </button>
@@ -252,107 +267,41 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
         </Link>
       </form>
 
+      {loadError && (
+        <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+          Could not read the bill pass register: {loadError}
+        </p>
+      )}
+
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
           <p className="text-xs font-medium text-amber-700">Total payable</p>
-          <p className="mt-1 text-lg font-semibold text-amber-900">₹{money(totalPayable)}</p>
+          <p className="mt-1 text-lg font-semibold text-amber-900">₹{money(totals.payable)}</p>
         </div>
         <div className="rounded-xl border border-red-200 bg-red-50 p-3">
           <p className="text-xs font-medium text-red-700">Overdue</p>
-          <p className="mt-1 text-lg font-semibold text-red-900">₹{money(totalOverdue)}</p>
+          <p className="mt-1 text-lg font-semibold text-red-900">₹{money(totals.overdue)}</p>
         </div>
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
           <p className="text-xs font-medium text-emerald-700">Advance held by us</p>
-          <p className="mt-1 text-lg font-semibold text-emerald-900">₹{money(totalAdvance)}</p>
+          <p className="mt-1 text-lg font-semibold text-emerald-900">₹{money(totals.advance)}</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="text-xs font-medium text-slate-500">Billed / Paid</p>
           <p className="mt-1 text-sm font-semibold text-slate-900">
-            ₹{money(totalBilled)} <span className="font-normal text-slate-400">/</span> ₹{money(totalPaid)}
+            ₹{money(totals.billed)} <span className="font-normal text-slate-400">/</span> ₹{money(totals.paid)}
           </p>
         </div>
       </div>
 
-      <div className="mb-3 print:hidden">
-        <ExportBar
-          title={`Party Balance Summary — ${scopeLabel}`}
-          filenameBase="party-balance-summary"
-          columns={columns}
-          rows={rows}
-          printAreaId="party-balance-summary-print-area"
-        />
-      </div>
-
-      <PrintArea id="party-balance-summary-print-area">
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white print:overflow-visible print:border-0">
-          <div className="border-b border-slate-200 px-4 py-2 text-xs text-slate-500 print:border-slate-300">
-            <span className="font-semibold text-slate-900">Party Balance Summary</span> · {scopeLabel} · as on {today}
-          </div>
-          <table className="w-full border-collapse text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-[10px] uppercase text-slate-500">
-                <th className="px-3 py-2">Party</th>
-                {companyParam === "all" && <th className="px-2 py-2">Company</th>}
-                <th className="px-2 py-2 text-right">Bills</th>
-                <th className="px-2 py-2 text-right">Billed</th>
-                <th className="px-2 py-2 text-right">Paid</th>
-                <th className="px-2 py-2 text-right">Balance Payable</th>
-                <th className="px-2 py-2 text-right">Overdue</th>
-                <th className="px-2 py-2 text-right">Advance</th>
-                <th className="px-2 py-2">Oldest Due</th>
-                <th className="px-2 py-2 print:hidden"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.partyId}-${r.companyId}`} className="border-b border-slate-100 text-slate-700">
-                  <td className="px-3 py-1.5 font-medium text-slate-900">{r.partyName}</td>
-                  {companyParam === "all" && <td className="px-2 py-1.5 text-slate-500">{r.companyName}</td>}
-                  <td className="px-2 py-1.5 text-right">{r.bills}</td>
-                  <td className="px-2 py-1.5 text-right">{money(r.billed)}</td>
-                  <td className="px-2 py-1.5 text-right">{money(r.paid)}</td>
-                  <td className={`px-2 py-1.5 text-right font-semibold ${r.balance > 0 ? "text-amber-800" : "text-slate-400"}`}>
-                    {r.balance > 0 ? money(r.balance) : "—"}
-                  </td>
-                  <td className={`px-2 py-1.5 text-right ${r.overdue > 0 ? "font-medium text-red-700" : "text-slate-400"}`}>
-                    {r.overdue > 0 ? money(r.overdue) : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-right text-emerald-700">{r.advance > 0 ? money(r.advance) : "—"}</td>
-                  <td className="px-2 py-1.5 text-slate-500">{r.oldestDue ?? "—"}</td>
-                  <td className="px-2 py-1.5 text-right print:hidden">
-                    <Link href={`/dashboard/parties/${r.partyId}/ledger`} className="text-amber-700 hover:underline">
-                      Ledger →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={companyParam === "all" ? 10 : 9} className="px-3 py-6 text-center text-slate-400">
-                    No party has an outstanding balance in this scope.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            {rows.length > 0 && (
-              <tfoot>
-                <tr className="border-t-2 border-slate-400 font-bold text-slate-900">
-                  <td className="px-3 py-2" colSpan={companyParam === "all" ? 2 : 1}>
-                    TOTAL ({rows.length})
-                  </td>
-                  <td className="px-2 py-2 text-right">{rows.reduce((s, r) => s + r.bills, 0)}</td>
-                  <td className="px-2 py-2 text-right">{money(totalBilled)}</td>
-                  <td className="px-2 py-2 text-right">{money(totalPaid)}</td>
-                  <td className="px-2 py-2 text-right">{money(totalPayable)}</td>
-                  <td className="px-2 py-2 text-right">{money(totalOverdue)}</td>
-                  <td className="px-2 py-2 text-right">{money(totalAdvance)}</td>
-                  <td className="px-2 py-2" colSpan={2}></td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-      </PrintArea>
+      <PartyBalanceSummaryTable
+        rows={rows}
+        scopeLabel={scopeLabel}
+        today={today}
+        showCompany={companyParam === "all" || combine}
+        combined={combine}
+        totals={totals}
+      />
     </div>
   );
 }

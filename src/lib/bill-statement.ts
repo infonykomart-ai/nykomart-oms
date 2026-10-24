@@ -29,6 +29,12 @@ export type BillStatementPoLine = {
   unit: string;
   /** Size as billed (qty_unit is the unit sq_feet + unit_rate are in, e.g. FT/MTR/PCS). */
   size: number;
+  /**
+   * 2026-10-24b — true when the vendor billed a LENGTH in that unit, so the
+   * statement must print the number as-is instead of normalising it to Sq Ft
+   * (see db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql).
+   */
+  asBilled: boolean;
   rate: number;
   /** Pre-GST line amount (qty × sq_feet × unit_rate). */
   amount: number;
@@ -216,7 +222,7 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
     // is resolved per line (each row can point at a different PO).
     const { data: pbRows } = await supabase
       .from("purchase_bills")
-      .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, total_amount, gst_rate_pct, gst_type, work_description")
+      .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, total_amount, gst_rate_pct, gst_type, work_description, size_mode")
       .eq("vendor_party_id", bill.party_id)
       .eq("vendor_invoice_no", bill.vendor_invoice_no ?? "")
       .order("created_at", { ascending: true });
@@ -248,6 +254,7 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
         qty: Number(pb.qty),
         unit: pb.qty_unit,
         size: Number(pb.sq_feet ?? 0),
+        asBilled: (pb.size_mode ?? "area") === "as_billed",
         rate: Number(pb.unit_rate),
         amount,
         gstRatePct: storedRatePct && storedRatePct > 0 ? storedRatePct : null,

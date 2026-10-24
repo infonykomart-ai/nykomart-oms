@@ -54,7 +54,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   const { data: billRaw } = await supabase
     .from("purchase_bills")
     .select(
-      "id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, unit_rate, work_description, order_id, company_id, gst_rate_pct, gst_type, round_off_amt, created_at"
+      "id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, unit_rate, work_description, order_id, company_id, gst_rate_pct, gst_type, round_off_amt, size_mode, created_at"
     )
     .eq("id", id)
     .maybeSingle();
@@ -63,7 +63,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   // Whole invoice: every item/PO row sharing this vendor + vendor invoice no.
   const { data: rowsRaw } = await supabase
     .from("purchase_bills")
-    .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, work_description, gst_rate_pct, gst_type, round_off_amt, created_at")
+    .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, work_description, gst_rate_pct, gst_type, round_off_amt, size_mode, created_at")
     .eq("vendor_party_id", billRaw.vendor_party_id)
     .eq("vendor_invoice_no", billRaw.vendor_invoice_no)
     .order("created_at", { ascending: true });
@@ -124,6 +124,10 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       // same unit). `sizeSqFt` is the same area normalised to square feet for
       // DISPLAY only.
       size,
+      // 2026-10-24b — 'as_billed' means the vendor billed a LENGTH in that
+      // unit, so squaring it would be meaningless; the sheet then prints the
+      // figure exactly as entered instead of a Sq Ft conversion.
+      asBilled: (r.size_mode ?? "area") === "as_billed",
       sizeSqFt: purchaseAreaSqFt(size, r.qty_unit),
       sizeUnit: r.qty_unit ?? "FT",
       rate,
@@ -136,10 +140,11 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       ourShipping: fig?.ourShippingInr ?? null,
       courierShipping: fig?.courierGrossInr ?? null,
       courierBillSourced: fig?.courierBillSourced ?? false,
-      // Purchase % = this line's pre-GST purchase cost as a share of the
-      // order's own value (GST is recoverable input credit, so it is not
-      // part of what the purchase actually costs us).
-      purchasePct: orderValue > 0 ? (amount / orderValue) * 100 : null,
+      // 2026-10-24 (c) — "PERSENT ... PURCHASE COST WITHOUT GST VALI VALUE SE
+      // NIKAL RAHA HAI LEKIN MUJHE TOTAL VALUE SE CHAHIYE GST ADD HONE KE BAAD":
+      // purchase % is now measured on the TOTAL line value (amount + GST, i.e.
+      // what the vendor is actually paid), not on the pre-GST base.
+      purchasePct: orderValue > 0 ? ((amount + gstAmount) / orderValue) * 100 : null,
     };
   });
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
@@ -163,6 +168,12 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   // bill's unit isn't FT — so the figure can still be tied back to the
   // vendor's own bill and the Rate column's unit stays unambiguous.
   const SQ_UNIT_WORD: Record<string, string> = { FT: "ft", MTR: "mtr", INCH: "in", YARD: "yd", CM: "cm" };
+  // 2026-10-24b — the column can hold two different things now: a Sq Ft area
+  // (default) or a linear length billed as-is. Name it after what is actually
+  // on THIS invoice.
+  const anyAsBilled = lines.some((l) => l.asBilled);
+  const anyArea = lines.some((l) => !l.asBilled);
+  const sizeColumnLabel = anyAsBilled && anyArea ? "Sq Ft / As billed" : anyAsBilled ? "As billed" : "Sq Ft";
 
   // Order-level totals are summed ONCE PER ORDER, not once per purchase line:
   // one vendor invoice commonly covers several lines for the same PO, and
@@ -178,7 +189,9 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
     totalOurShipping += l.ourShipping ?? 0;
     totalCourierShipping += l.courierShipping ?? 0;
   }
-  const overallPurchasePct = totalOrderValue > 0 ? (subtotal / totalOrderValue) * 100 : null;
+  // 2026-10-24 (c) — same rule for the invoice total: total purchase value
+  // INCLUDING GST as a share of the order value.
+  const overallPurchasePct = totalOrderValue > 0 ? ((subtotal + gstTotal) / totalOrderValue) * 100 : null;
 
   // Inside the A4 preview dialog this page is embedded with ?embed=1
   // (src/components/print-dialog.tsx) → x-embed; the dialog supplies its own
@@ -230,7 +243,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                 <th className="py-1 pr-2">Type / Size</th>
                 <th className="py-1 pr-2 text-right">Qty</th>
                 <th className="py-1 pr-2">Unit</th>
-                <th className="py-1 pr-2 text-right">Sq Ft</th>
+                <th className="py-1 pr-2 text-right">{sizeColumnLabel}</th>
                 <th className="py-1 pr-2 text-right">Rate</th>
                 <th className="py-1 pr-2 text-right">Amount</th>
                 <th className="py-1 pr-2 text-right">GST</th>
@@ -251,8 +264,14 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2 text-right">{r.qty}</td>
                   <td className="py-1 pr-2">{r.unit}</td>
                   <td className="py-1 pr-2 text-right">
-                    {r.sizeSqFt != null ? money(r.sizeSqFt) : "—"}
-                    {r.sizeSqFt != null && r.sizeUnit !== "FT" && (
+                    {r.asBilled ? (
+                      `${money(r.size)} ${SQ_UNIT_WORD[r.sizeUnit] ?? r.sizeUnit}`
+                    ) : r.sizeSqFt != null ? (
+                      money(r.sizeSqFt)
+                    ) : (
+                      "—"
+                    )}
+                    {!r.asBilled && r.sizeSqFt != null && r.sizeUnit !== "FT" && (
                       <div className="text-[9px] font-normal text-slate-400">
                         ({money(r.size)} sq {SQ_UNIT_WORD[r.sizeUnit] ?? r.sizeUnit})
                       </div>
@@ -323,7 +342,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                   <p className="text-slate-600">OUR SHIPPING CHARGE: ₹{money(totalOurShipping)}</p>
                   <p className="text-slate-600">COURIER SHIPPING CHARGE (incl. GST): ₹{money(totalCourierShipping)}</p>
                   <p className="font-semibold text-slate-900">
-                    PURCHASE % (of order value): {overallPurchasePct != null ? `${overallPurchasePct.toFixed(1)}%` : "—"}
+                    PURCHASE % (of order value, incl. GST): {overallPurchasePct != null ? `${overallPurchasePct.toFixed(1)}%` : "—"}
                   </p>
                 </div>
               )}

@@ -7,6 +7,7 @@ import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
+import { RoundFigureButtons } from "./round-figure-buttons";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -26,6 +27,8 @@ export type EditablePurchaseBill = {
   gst_rate_pct: number | null;
   gst_type: string | null;
   round_off_amt: number;
+  /** 2026-10-24b — 'area' (default) or 'as_billed'; absent on pre-migration rows. */
+  size_mode?: string | null;
 };
 
 export function PurchaseBillEditForm({
@@ -55,6 +58,12 @@ export function PurchaseBillEditForm({
   // factor) and not toFeet: the entered number is an AREA in its unit.
   const sqFeetConverted =
     sqFeetInput && !isPcs ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit) : 0;
+  // 2026-10-24b — see purchase-bill-form.tsx: an area and a linear length are
+  // different things, so the bill carries which one it is.
+  const [sizeMode, setSizeMode] = useState<"area" | "as_billed">(bill.size_mode === "as_billed" ? "as_billed" : "area");
+  // 2026-10-24b — see purchase-bill-form.tsx: round figure is one click, the
+  // difference lands in round_off_amt.
+  const [roundOffInput, setRoundOffInput] = useState(String(bill.round_off_amt ?? 0));
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
@@ -138,11 +147,25 @@ export function PurchaseBillEditForm({
             )}
             <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
-          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && (
+          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
             <p className="mt-0.5 text-[11px] text-slate-400">
               ≈ {sqFeetConverted.toFixed(2)} Sq. Ft (area) — reference only, saved as entered in {sqFeetUnit}
             </p>
           )}
+          {!isPcs && sqFeetUnit !== "FT" && (
+            <label className="mt-1 flex items-start gap-1.5 text-[11px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={sizeMode === "as_billed"}
+                onChange={(e) => setSizeMode(e.target.checked ? "as_billed" : "area")}
+                className="mt-0.5"
+              />
+              <span>
+                Vendor billed a <strong>linear length</strong> — show it as billed, do not convert it to Sq Ft.
+              </span>
+            </label>
+          )}
+          <input type="hidden" name="size_mode" value={sizeMode} />
           {isPcs && (
             <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
           )}
@@ -174,7 +197,22 @@ export function PurchaseBillEditForm({
         <div>
           {/* 2026-08-17: see purchase-bill-form.tsx's Round Off field comment. */}
           <label className={labelClass} htmlFor={`pb_round_off_${bill.id}`}>Round Off <span className="text-slate-400">(± optional)</span></label>
-          <input id={`pb_round_off_${bill.id}`} name="round_off_amt" type="number" step="0.01" defaultValue={bill.round_off_amt} className={inputClass} />
+          <input
+            id={`pb_round_off_${bill.id}`}
+            name="round_off_amt"
+            type="number"
+            step="0.01"
+            value={roundOffInput}
+            onChange={(e) => setRoundOffInput(e.target.value)}
+            className={inputClass}
+          />
+          <RoundFigureButtons
+            payable={
+              (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) *
+                (1 + (gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2) / 100)
+            }
+            onApply={(diff) => setRoundOffInput(diff.toFixed(2))}
+          />
           <p className="mt-0.5 text-[11px] text-slate-400">e.g. −0.30 to match the vendor&apos;s exact invoice total.</p>
         </div>
       </div>

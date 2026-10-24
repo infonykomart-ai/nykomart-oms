@@ -28,6 +28,22 @@ export type ChargeTarget = {
 
 export type ChargeActionResult = { error: string | null; success: boolean };
 
+/** One cell of the grid dialog: a charge head's amount for one shipment. */
+export type ChargeGridLine = { chargeHead: string; amount: number; gstPct: number };
+
+export type ChargeGridRow = {
+  orderId: string;
+  orderShipmentId: string | null;
+  awbNo: string | null;
+  courier: string;
+  direction: string;
+  billNo: string | null;
+  billDate: string | null;
+  lines: ChargeGridLine[];
+};
+
+export type ChargeGridResult = { error: string | null; inserted: number; updated: number };
+
 const MAX_TARGETS = 20;
 
 export async function searchShipmentTargets(query: string): Promise<ChargeTarget[]> {
@@ -125,7 +141,7 @@ export async function addShipmentCharge(_prev: ChargeActionResult, formData: For
   const awbNo = String(formData.get("awb_no") ?? "").trim();
   const billDate = String(formData.get("bill_date") ?? "").trim();
 
-  const { error } = await supabase.from("shipment_charge_lines").insert({
+  const row = {
     order_id: orderId,
     order_shipment_id: shipmentId || null,
     awb_no: awbNo || null,
@@ -137,9 +153,30 @@ export async function addShipmentCharge(_prev: ChargeActionResult, formData: For
     bill_no: String(formData.get("bill_no") ?? "").trim() || null,
     bill_date: billDate || null,
     remark: String(formData.get("remark") ?? "").trim() || null,
-    entered_by_employee_id: employee.id,
-    entered_by_name: employee.name,
+  };
+
+  // 2026-10-24 (2) — "DOUBLE CHARGE NAHI AAYE": the same head recorded twice
+  // on the same shipment (once from this form, once from the grid, or twice
+  // by hand) used to sit there as two lines and its cost was counted twice.
+  // A repeat now REPLACES the existing line for that shipment + direction +
+  // head instead of adding a second one.
+  const existingId = await findExistingChargeLine(supabase, {
+    orderId,
+    awbNo: row.awb_no,
+    direction: row.direction,
+    chargeHead: row.charge_head,
   });
+
+  const { error } = existingId
+    ? await supabase
+        .from("shipment_charge_lines")
+        .update({ ...row, entered_by_employee_id: employee.id, entered_by_name: employee.name })
+        .eq("id", existingId)
+    : await supabase.from("shipment_charge_lines").insert({
+        ...row,
+        entered_by_employee_id: employee.id,
+        entered_by_name: employee.name,
+      });
 
   if (error) {
     // Missing table = the migration hasn't been run. Say so plainly instead
@@ -177,4 +214,133 @@ export async function deleteShipmentCharge(formData: FormData): Promise<void> {
 
   await supabase.from("shipment_charge_lines").delete().eq("id", id);
   revalidatePath("/dashboard/courier-booking");
+}
+
+/**
+ * The one existing line for this shipment + direction + head, if any.
+ *
+ * Matched on the AWB, not on order_shipment_id: the grid's "+ Recorded"
+ * rows are built from the charge ledger, which does not carry the shipment
+ * id, so an id-based match would miss the very line it is meant to update
+ * and create a duplicate charge on the same AWB. The AWB identifies the
+ * shipment (and a no-AWB charge is its own order-level bucket), so this
+ * keeps one line per head per shipment whichever path saved it.
+ */
+async function findExistingChargeLine(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  p: {
+    orderId: string;
+    awbNo: string | null;
+    direction: string;
+    chargeHead: string;
+  }
+): Promise<string | null> {
+  let q = supabase
+    .from("shipment_charge_lines")
+    .select("id")
+    .eq("order_id", p.orderId)
+    .eq("direction", p.direction)
+    .eq("charge_head", p.chargeHead);
+  q = p.awbNo ? q.eq("awb_no", p.awbNo) : q.is("awb_no", null);
+  const { data } = await q.maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+/**
+ * 2026-10-24 (2) — the grid dialog's save.
+ *
+ * Every cell is one (shipment, head) pair, so this writes the whole grid in
+ * one round-trip: an existing line for that pair is UPDATED (never a second
+ * row — see the duplicate note in addShipmentCharge), a cell left blank or at
+ * zero is skipped rather than saved as a zero charge or used to delete an
+ * existing line behind the user's back. Company scope is verified for every
+ * distinct order before anything is written, so a tampered client can't post
+ * charges onto another company's shipments.
+ */
+export async function saveShipmentChargeGrid(rows: ChargeGridRow[]): Promise<ChargeGridResult> {
+  const employee = await requireCapability("courier_booking_shipment");
+  const supabase = createServiceRoleClient();
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: "Nothing to save — enter at least one charge.", inserted: 0, updated: 0 };
+  }
+  if (rows.length > 100) {
+    return { error: "Too many shipments in one save — save in batches of 100 or fewer.", inserted: 0, updated: 0 };
+  }
+
+  const orderIds = Array.from(new Set(rows.map((r) => r.orderId).filter(Boolean)));
+  if (orderIds.length === 0) return { error: "Pick a shipment for each row.", inserted: 0, updated: 0 };
+
+  const { data: orders } = await supabase
+    .from("orders")
+    .select("id, company_id, ref_no")
+    .in("id", orderIds)
+    .in("company_id", employee.companyIds);
+  const allowed = new Set((orders ?? []).map((o) => o.id));
+  const missing = orderIds.filter((id) => !allowed.has(id));
+  if (missing.length > 0) {
+    return { error: "Some selected shipments are not in a company you have access to.", inserted: 0, updated: 0 };
+  }
+
+  let inserted = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    const direction = row.direction === "return_to_india" ? "return_to_india" : "export";
+    for (const line of row.lines) {
+      const amount = Number(line.amount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const gstPct = Number(line.gstPct);
+      if (!Number.isFinite(gstPct) || gstPct < 0 || gstPct > 100) {
+        return { error: `GST % for ${line.chargeHead} must be between 0 and 100.`, inserted, updated };
+      }
+
+      const payload = {
+        order_id: row.orderId,
+        order_shipment_id: row.orderShipmentId || null,
+        awb_no: row.awbNo || null,
+        courier_name: row.courier || "FedEx",
+        direction,
+        charge_head: line.chargeHead,
+        amount,
+        gst_pct: gstPct,
+        bill_no: row.billNo || null,
+        bill_date: row.billDate || null,
+      };
+
+      const existingId = await findExistingChargeLine(supabase, {
+        orderId: row.orderId,
+        awbNo: payload.awb_no,
+        direction,
+        chargeHead: line.chargeHead,
+      });
+
+      const { error } = existingId
+        ? await supabase
+            .from("shipment_charge_lines")
+            .update({ ...payload, entered_by_employee_id: employee.id, entered_by_name: employee.name })
+            .eq("id", existingId)
+        : await supabase.from("shipment_charge_lines").insert({
+            ...payload,
+            entered_by_employee_id: employee.id,
+            entered_by_name: employee.name,
+          });
+
+      if (error) {
+        if (error.message.toLowerCase().includes("does not exist") || error.message.toLowerCase().includes("schema cache")) {
+          return {
+            error: "The charge ledger table is missing — run db/2026-10-24-shipment-charge-lines.sql in Supabase.",
+            inserted,
+            updated,
+          };
+        }
+        return { error: error.message, inserted, updated };
+      }
+      if (existingId) updated += 1;
+      else inserted += 1;
+    }
+  }
+
+  revalidatePath("/dashboard/courier-booking");
+  return { error: null, inserted, updated };
 }

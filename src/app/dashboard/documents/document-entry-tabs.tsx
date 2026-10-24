@@ -148,6 +148,12 @@ const TABS = [
   { key: "washing-entry", label: "Washing Entry" },
   { key: "internal-invoice", label: "Internal Invoice" },
   { key: "purchase-bill", label: "Purchase Bill" },
+  // 2026-10-24b — "COTTON KI DHURRI KE PO KE ORDER KA PRINTING KA BILL AATA
+  // HAI ... USKA TO KOI SECTION HI NAHI HAI": printing job work had a register
+  // but no entry screen. Same shape as a Purchase Bill (PO link, qty × rate,
+  // GST, round off), saved with bill_kind = 'printing' and posted to the
+  // ledger's Printing bucket.
+  { key: "printing-bill", label: "Printing Bill" },
   { key: "courier-bill", label: "Courier Bill" },
   { key: "duty-tax-bill", label: "Duty & Tax Bill" },
   { key: "courier-bill-pdf", label: "Courier Bill (PDF Upload)" },
@@ -277,6 +283,15 @@ export function DocumentEntryTabs({
           {tab === "debit-note" && <DebitNoteForm companies={companies} parties={parties} />}
           {tab === "washing-entry" && <WashingEntryForm companies={companies} parties={parties} stores={stores} />}
           {tab === "internal-invoice" && <InternalInvoiceForm companies={companies} />}
+          {tab === "printing-bill" && (
+            <div>
+              <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Printing job-work bill against a PO (cotton dhurri / rug printing etc.). Saves as a <strong>Printing</strong> bill — it
+                appears in the Printing register and posts to the Finance ledger&apos;s Printing bucket, not the Purchase one.
+              </p>
+              <PurchaseBillForm parties={parties} billKind="printing" />
+            </div>
+          )}
           {tab === "purchase-bill" && (
             <div>
               <div className="mb-3 flex gap-2 text-xs font-medium">

@@ -344,6 +344,23 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
                   />
                 </div>
               </div>
+              {/* 2026-10-24b — "GST ADD HOGI YA NHI VO PAHLE HI PO KE SAMNE
+                  AAJAYE AUR KITNI LAGEGI": each PO shows its own amount, GST
+                  and total right here, before the invoice is saved. */}
+              {(() => {
+                const qty = o.qty || 0;
+                const size = isPcs ? 1 : Number(o.sqFeetDisplay) || 0;
+                const amount = qty * size * (Number(o.unitRateInput) || 0);
+                const pct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+                const gst = Math.round(amount * pct) / 100;
+                if (amount <= 0) return null;
+                return (
+                  <p className="mt-1.5 rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+                    Amount ₹{amount.toFixed(2)} · GST {pct}% ₹{gst.toFixed(2)} ·{" "}
+                    <strong className="text-slate-900">PO total ₹{(amount + gst).toFixed(2)}</strong>
+                  </p>
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -382,6 +399,53 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
           <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
         </div>
       </div>
+
+      {/* 2026-10-24b — PO-wise GST and total, summed, with the invoice total at
+          the end ("PHIR LAST ME TOTAL AAYE"). */}
+      {orders.length > 0 &&
+        (() => {
+          const pct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+          const lines = orders.map((o) => {
+            const amount = (o.qty || 0) * (isPcs ? 1 : Number(o.sqFeetDisplay) || 0) * (Number(o.unitRateInput) || 0);
+            const gst = Math.round(amount * pct) / 100;
+            return { refNo: o.refNo, amount, gst, total: amount + gst };
+          });
+          const t = lines.reduce((s, l) => ({ amount: s.amount + l.amount, gst: s.gst + l.gst, total: s.total + l.total }), {
+            amount: 0,
+            gst: 0,
+            total: 0,
+          });
+          return (
+            <div className="rounded-lg border border-slate-200">
+              <table className="w-full border-collapse text-left text-[11px]">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase text-slate-500">
+                    <th className="px-2 py-1">PO No.</th>
+                    <th className="px-2 py-1 text-right">Amount</th>
+                    <th className="px-2 py-1 text-right">GST ({pct}%)</th>
+                    <th className="px-2 py-1 text-right">PO Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((l) => (
+                    <tr key={l.refNo} className="border-b border-slate-100 text-slate-700">
+                      <td className="px-2 py-1 font-medium text-slate-900">{l.refNo}</td>
+                      <td className="px-2 py-1 text-right">{l.amount ? l.amount.toFixed(2) : "—"}</td>
+                      <td className="px-2 py-1 text-right">{(l.amount ? l.gst : 0).toFixed(2)}</td>
+                      <td className="px-2 py-1 text-right font-semibold">{l.total ? l.total.toFixed(2) : "—"}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-slate-400 font-bold text-slate-900">
+                    <td className="px-2 py-1">TOTAL ({lines.length} PO)</td>
+                    <td className="px-2 py-1 text-right">{t.amount.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right">{t.gst.toFixed(2)}</td>
+                    <td className="px-2 py-1 text-right">{t.total.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
 
       <button
         type="submit"

@@ -57,7 +57,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
   const { data: billRaw } = await supabase
     .from("freight_bills")
     .select(
-      "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt"
+      "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, round_off_amt"
     )
     .eq("id", id)
     .maybeSingle();
@@ -363,7 +363,11 @@ async function FreightBillReportInner({ id }: { id: string }) {
   // "Total Payable jo couriour ka charge hoga gst ke sath vo" — Total
   // Payable IS the courier's gross (GST-inclusive) charge, less any credit
   // note.
-  const cnNet = billGross - bill.credit_note_amt;
+  // 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION FREIGHT": the difference
+  // sits outside the generated gross (see the migration's note), so the
+  // payable is gross + round-off − credit note.
+  const roundOff = Number(bill.round_off_amt ?? 0);
+  const cnNet = billGross + roundOff - bill.credit_note_amt;
 
   // Bottom TOTAL row — 2026-09-22: a bold summary row under the last data
   // row, per user request ("last ki line ke niche bold me total aaye").
@@ -407,12 +411,13 @@ async function FreightBillReportInner({ id }: { id: string }) {
             <div className="text-right text-slate-600">
               <p>Bill: ₹{fmt(billPreTax)} + GST ₹{fmt(billGstHeader)}</p>
               <p className="font-semibold text-slate-900">Gross Total ₹{fmt(billGross)}</p>
-              {bill.credit_note_amt > 0 && (
-                <>
-                  <p className="text-purple-700">CN {bill.credit_note_no} · −₹{bill.credit_note_amt}</p>
-                  <p className="font-semibold text-purple-700">Net Payable ₹{fmt(cnNet)}</p>
-                </>
+              {roundOff !== 0 && (
+                <p className="text-slate-600">
+                  Round Off {roundOff > 0 ? "+" : "−"}₹{fmt(Math.abs(roundOff))}
+                </p>
               )}
+              {bill.credit_note_amt > 0 && <p className="text-purple-700">CN {bill.credit_note_no} · −₹{bill.credit_note_amt}</p>}
+              <p className="font-semibold text-slate-900">Net Payable ₹{fmt(cnNet)}</p>
             </div>
           </div>
 
