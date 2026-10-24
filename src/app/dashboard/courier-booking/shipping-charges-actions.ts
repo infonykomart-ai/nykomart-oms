@@ -162,7 +162,6 @@ export async function addShipmentCharge(_prev: ChargeActionResult, formData: For
   // head instead of adding a second one.
   const existingId = await findExistingChargeLine(supabase, {
     orderId,
-    orderShipmentId: row.order_shipment_id,
     awbNo: row.awb_no,
     direction: row.direction,
     chargeHead: row.charge_head,
@@ -217,12 +216,20 @@ export async function deleteShipmentCharge(formData: FormData): Promise<void> {
   revalidatePath("/dashboard/courier-booking");
 }
 
-/** The one existing line for this shipment + direction + head, if any. */
+/**
+ * The one existing line for this shipment + direction + head, if any.
+ *
+ * Matched on the AWB, not on order_shipment_id: the grid's "+ Recorded"
+ * rows are built from the charge ledger, which does not carry the shipment
+ * id, so an id-based match would miss the very line it is meant to update
+ * and create a duplicate charge on the same AWB. The AWB identifies the
+ * shipment (and a no-AWB charge is its own order-level bucket), so this
+ * keeps one line per head per shipment whichever path saved it.
+ */
 async function findExistingChargeLine(
   supabase: ReturnType<typeof createServiceRoleClient>,
   p: {
     orderId: string;
-    orderShipmentId: string | null;
     awbNo: string | null;
     direction: string;
     chargeHead: string;
@@ -234,7 +241,6 @@ async function findExistingChargeLine(
     .eq("order_id", p.orderId)
     .eq("direction", p.direction)
     .eq("charge_head", p.chargeHead);
-  q = p.orderShipmentId ? q.eq("order_shipment_id", p.orderShipmentId) : q.is("order_shipment_id", null);
   q = p.awbNo ? q.eq("awb_no", p.awbNo) : q.is("awb_no", null);
   const { data } = await q.maybeSingle();
   return (data as { id: string } | null)?.id ?? null;
@@ -304,7 +310,6 @@ export async function saveShipmentChargeGrid(rows: ChargeGridRow[]): Promise<Cha
 
       const existingId = await findExistingChargeLine(supabase, {
         orderId: row.orderId,
-        orderShipmentId: payload.order_shipment_id,
         awbNo: payload.awb_no,
         direction,
         chargeHead: line.chargeHead,
