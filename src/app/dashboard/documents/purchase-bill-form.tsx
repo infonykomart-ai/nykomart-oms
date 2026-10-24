@@ -6,7 +6,7 @@ import { savePurchaseBill, type DocFormState, type OrderLookup } from "./actions
 import { OrderLookupBox } from "./order-lookup-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
-import { toFeet, type PurchaseQtyUnit } from "@/lib/length-units";
+import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
@@ -53,7 +53,14 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
   // HOGI": PCS has no feet-equivalent (it's a piece count, not a length),
   // so the reference conversion line below only makes sense for the
   // original 5 length units.
-  const sqFeetConverted = sqFeetInput && !isPcs ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
+  //
+  // 2026-10-24 — this used to call toFeet(), i.e. the LINEAR factor, while
+  // labelling the result "Sq. Feet equivalent". The number entered here is an
+  // AREA in the chosen unit (9 with MTR = 9 sq m), so the squared factor is
+  // the correct one: 9 sq m = 9 × 3.28084² = 96.88 sq ft, not 29.53. Fixed
+  // via areaToSqFt so the reference line can't understate the area 3.28x.
+  const sqFeetConverted =
+    sqFeetInput && !isPcs ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit) : 0;
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
@@ -163,7 +170,9 @@ export function PurchaseBillForm({ parties }: { parties: PartyOption[] }) {
             <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
           {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && (
-            <p className="mt-0.5 text-[11px] text-slate-400">≈ {sqFeetConverted.toFixed(2)} Sq. Feet equivalent (reference only)</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              ≈ {sqFeetConverted.toFixed(2)} Sq. Ft (area) — reference only, saved as entered in {sqFeetUnit}
+            </p>
           )}
           {isPcs && (
             <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>

@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { updatePurchaseBill, type DocEditState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
-import { toFeet, type PurchaseQtyUnit } from "@/lib/length-units";
+import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
@@ -51,7 +51,10 @@ export function PurchaseBillEditForm({
   const isPcs = sqFeetUnit === "PCS";
   // 2026-08-27 — see purchase-bill-form.tsx's identical comment: PCS is a
   // piece count, not a length, so there's no feet-equivalent to show.
-  const sqFeetConverted = sqFeetInput && !isPcs ? toFeet(Number(sqFeetInput) || 0, sqFeetUnit) : 0;
+  // 2026-10-24 — see that same comment for why this is areaToSqFt (squared
+  // factor) and not toFeet: the entered number is an AREA in its unit.
+  const sqFeetConverted =
+    sqFeetInput && !isPcs ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit) : 0;
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
@@ -136,7 +139,9 @@ export function PurchaseBillEditForm({
             <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
           </div>
           {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && (
-            <p className="mt-0.5 text-[11px] text-slate-400">≈ {sqFeetConverted.toFixed(2)} Sq. Feet equivalent (reference only)</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              ≈ {sqFeetConverted.toFixed(2)} Sq. Ft (area) — reference only, saved as entered in {sqFeetUnit}
+            </p>
           )}
           {isPcs && (
             <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
