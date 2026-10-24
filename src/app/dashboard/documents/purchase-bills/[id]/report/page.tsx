@@ -14,22 +14,62 @@
 // like loadBillStatement does for the grouped statement — otherwise a
 // multi-item invoice would print just its first item.
 //
+// 2026-10-24 — TWO fixes the user reported against this sheet:
+//
+//  1) "sheet generate karte waqt error aa raha hai" — the whole sheet used to
+//     render Next's bare 404 page. Root cause: the SELECT named columns that
+//     arrive with the newest one-time SQL file (purchase_bills.size_mode from
+//     db/2026-10-24b-…, freight_bills/duty_tax_bills.round_off_amt from the
+//     same file). PostgREST rejects the WHOLE query with 42703 when one named
+//     column is missing, `billRaw` came back null and this page called
+//     notFound() — so an un-run migration was indistinguishable from a
+//     deleted bill. It now selects `*` (missing optional columns simply come
+//     back absent and fall back to their pre-migration defaults) and a
+//     genuinely missing row gets an explanation card, not a 404.
+//
+//  2) "agar PO 3 companies me ho to bill no par sheet sabhi PO ki bane…
+//     bill me 20 entry hai to ye sabhi aaye" — the invoice was resolved by
+//     (vendor_party_id, vendor_invoice_no) only, so a supplier filed once per
+//     company (its own parties row in Nyko Mart / Rugara / CASA ARRA) split
+//     the same invoice into 3 islands; the sheet silently printed just the
+//     one it was opened from. Rows are now resolved by the VENDOR INVOICE
+//     NUMBER across every company: the seed vendor's own rows plus every
+//     other party with the same (normalised) supplier name. The sheet then
+//     auto-adjusts — a Company column appears when the invoice spans more
+//     than one company, and every total (entries, POs, GST, round off, gross,
+//     order value, purchase %) is computed over ALL rows, with a per-company
+//     breakdown underneath.
+//
 // GST per line follows the same rule the statement uses: gst_rate_pct is the
 // CGST/SGST INDIVIDUAL rate (total = ×2) or the full rate for IGST; 0 means
 // "No GST" (2026-10-20 migration), NULL keeps the historical flat-5%
 // fallback so an old bill's lines still tie out to its stored invoice total.
 import Link from "next/link";
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { loadOrderShippingFigures } from "@/lib/orders/shipping-figures";
 import { purchaseAreaSqFt } from "@/lib/length-units";
+import type { Database } from "@/types/database";
+
+type Client = SupabaseClient<Database>;
+type PurchaseBillRow = Database["public"]["Tables"]["purchase_bills"]["Row"];
 
 const money = (n: number | null | undefined) =>
   n == null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dash = (v: string | number | null | undefined) => (v == null || v === "" ? "—" : String(v));
+
+/** Loose comparison key for invoice numbers / supplier names: case, padding and repeated spaces must not split one invoice. */
+const normText = (v: string | null | undefined) => (v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+/**
+ * Escapes LIKE wildcards so an invoice number containing % or _ is matched
+ * literally. Anything a wildcard still lets through is dropped by the
+ * normalised comparison in loadInvoiceRows — this filter can only over-fetch,
+ * never mis-group two invoices.
+ */
+const escapeLike = (v: string) => v.replace(/[\\%_]/g, (m) => `\\${m}`);
 
 export default async function PurchaseBillReportPage({ params }: { params: Promise<{ id: string }> }) {
   try {
@@ -47,48 +87,123 @@ export default async function PurchaseBillReportPage({ params }: { params: Promi
   }
 }
 
+/** Shown instead of a bare 404 — a stale link must explain itself. */
+function SheetProblem({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="mx-auto max-w-2xl rounded-xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900">
+      <p className="text-base font-semibold">⚠ {title}</p>
+      <p className="mt-2 leading-relaxed">{message}</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          href="/dashboard/bill-payment"
+          className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 hover:no-underline"
+        >
+          Open Bill Payment
+        </Link>
+        <Link
+          href="/dashboard/documents"
+          className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 hover:no-underline"
+        >
+          Open Document Entry
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every purchase_bills row that belongs to the same vendor invoice — across
+ * companies. See the 2026-10-24 (2) note above for why the vendor-name match
+ * is needed and why it is still safe (the vendor invoice NUMBER has to match
+ * too, so two unrelated bills can never be pulled together).
+ */
+async function loadInvoiceRows(supabase: Client, seed: PurchaseBillRow): Promise<PurchaseBillRow[]> {
+  const invoiceNo = (seed.vendor_invoice_no ?? "").trim();
+  if (!invoiceNo) return [seed];
+
+  // parties is deliberately global (one supplier can be billed by more than
+  // one company), but in practice the same supplier is often filed as a
+  // separate row per company — those rows carry the same NAME.
+  const { data: parties } = await supabase.from("parties").select("id, name");
+  const seedNameKey = normText((parties ?? []).find((p) => p.id === seed.vendor_party_id)?.name);
+  const vendorIds = Array.from(
+    new Set([
+      seed.vendor_party_id,
+      ...(seedNameKey ? (parties ?? []).filter((p) => normText(p.name) === seedNameKey).map((p) => p.id) : []),
+    ])
+  );
+
+  const { data } = await supabase
+    .from("purchase_bills")
+    .select("*")
+    .in("vendor_party_id", vendorIds)
+    .ilike("vendor_invoice_no", escapeLike(invoiceNo))
+    .order("created_at", { ascending: true });
+
+  const rows = (data ?? []).filter((r) => normText(r.vendor_invoice_no) === normText(invoiceNo));
+  // The seed row must always be on its own sheet, even if its invoice number
+  // has since been edited to something that no longer matches.
+  if (!rows.some((r) => r.id === seed.id)) rows.unshift(seed);
+  return rows;
+}
+
 async function PurchaseBillReportInner({ id }: { id: string }) {
   await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: billRaw } = await supabase
-    .from("purchase_bills")
-    .select(
-      "id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, qty, sq_feet, qty_unit, unit_rate, work_description, order_id, company_id, gst_rate_pct, gst_type, round_off_amt, size_mode, created_at"
-    )
-    .eq("id", id)
-    .maybeSingle();
-  if (!billRaw) notFound();
+  // `*` on purpose — see the 2026-10-24 (1) header note. A not-yet-run
+  // migration must not be able to turn this sheet into a 404.
+  const { data: seed, error: seedError } = await supabase.from("purchase_bills").select("*").eq("id", id).maybeSingle();
 
-  // Whole invoice: every item/PO row sharing this vendor + vendor invoice no.
-  const { data: rowsRaw } = await supabase
-    .from("purchase_bills")
-    .select("id, order_id, qty, sq_feet, qty_unit, unit_rate, work_description, gst_rate_pct, gst_type, round_off_amt, size_mode, created_at")
-    .eq("vendor_party_id", billRaw.vendor_party_id)
-    .eq("vendor_invoice_no", billRaw.vendor_invoice_no)
-    .order("created_at", { ascending: true });
-  const rows = rowsRaw ?? [];
+  if (seedError) {
+    return (
+      <SheetProblem
+        title="This purchase bill could not be loaded"
+        message={`The database refused the request: ${seedError.message}`}
+      />
+    );
+  }
+  if (!seed) {
+    return (
+      <SheetProblem
+        title="This purchase bill entry no longer exists"
+        message="The finance ledger still points at this Purchase Bill, but the entry itself is gone (deleted or replaced after the bill was posted). Re-save the bill from Document Entry to relink it — an un-run one-time SQL file never causes this."
+      />
+    );
+  }
+
+  const rows = await loadInvoiceRows(supabase, seed);
 
   const orderIds = Array.from(new Set(rows.map((r) => r.order_id).filter((v): v is string => !!v)));
-  const [{ data: party }, { data: orders }, { data: company }, { data: profile }] = await Promise.all([
-    supabase
-      .from("parties")
-      .select("id, name, address, contact_no, email, gst")
-      .eq("id", billRaw.vendor_party_id)
-      .maybeSingle(),
+  const companyIds = Array.from(new Set(rows.map((r) => r.company_id).filter((v): v is string => !!v)));
+
+  const [{ data: party }, { data: companies }, { data: orders }, { data: profiles }] = await Promise.all([
+    supabase.from("parties").select("id, name, address, contact_no, email, gst").eq("id", seed.vendor_party_id).maybeSingle(),
+    companyIds.length
+      ? supabase.from("companies").select("id, name, logo_url").in("id", companyIds)
+      : Promise.resolve({ data: [] as { id: string; name: string; logo_url: string | null }[] }),
     orderIds.length ? supabase.from("orders").select("id, ref_no, size_label").in("id", orderIds) : Promise.resolve({ data: [] }),
-    billRaw.company_id ? supabase.from("companies").select("id, name, logo_url").eq("id", billRaw.company_id).maybeSingle() : Promise.resolve({ data: null }),
-    billRaw.company_id
+    companyIds.length
       ? supabase
           .from("company_profiles")
-          .select("address, phone, whatsapp, email, gstin")
-          .eq("company_id", billRaw.company_id)
-          .maybeSingle()
-      : Promise.resolve({ data: null }),
+          .select("company_id, address, phone, whatsapp, email, gstin")
+          .in("company_id", companyIds)
+      : Promise.resolve({ data: [] as { company_id: string; address: string | null; phone: string | null; whatsapp: string | null; email: string | null; gstin: string | null }[] }),
   ]);
 
+  const companyNameById = new Map((companies ?? []).map((c) => [c.id, c.name] as const));
+  const companyLogoById = new Map((companies ?? []).map((c) => [c.id, c.logo_url] as const));
+  const profileById = new Map((profiles ?? []).map((p) => [p.company_id, p] as const));
   const orderRef = new Map((orders ?? []).map((o) => [o.id, o.ref_no] as const));
   const orderSize = new Map((orders ?? []).map((o) => [o.id, o.size_label] as const));
+
+  // Cross-company invoice? Then there is no single right company header, so
+  // the footer branding falls back to the generic line and the Company column
+  // is printed.
+  const multiCompany = companyIds.length > 1;
+  const headerCompanyId = multiCompany ? null : seed.company_id ?? companyIds[0] ?? null;
+  const headerCompany = headerCompanyId ? { id: headerCompanyId, name: companyNameById.get(headerCompanyId) ?? "—", logo_url: companyLogoById.get(headerCompanyId) ?? null } : null;
+  const headerProfile = headerCompanyId ? profileById.get(headerCompanyId) ?? null : null;
 
   // 2026-10-24 — "PURCHASE BILL SHEET JO GENRATE HO RAHI HAI, USME KUCH DATA OR
   // CHAHIYE JAISE FREIGHT SHEET ME AATA HAI: SHIPPING CHARGES, SHIPPING
@@ -114,6 +229,8 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       sr: i + 1,
       id: r.id,
       orderId: r.order_id,
+      companyId: r.company_id,
+      companyName: r.company_id ? companyNameById.get(r.company_id) ?? "—" : "—",
       refNo: r.order_id ? orderRef.get(r.order_id) ?? "—" : "—",
       orderSize: r.order_id ? orderSize.get(r.order_id) ?? null : null,
       description: r.work_description,
@@ -126,7 +243,9 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       size,
       // 2026-10-24b — 'as_billed' means the vendor billed a LENGTH in that
       // unit, so squaring it would be meaningless; the sheet then prints the
-      // figure exactly as entered instead of a Sq Ft conversion.
+      // figure exactly as entered instead of a Sq Ft conversion. The column
+      // may be absent on a database where that migration hasn't run — the
+      // default keeps the previous (area) behaviour.
       asBilled: (r.size_mode ?? "area") === "as_billed",
       sizeSqFt: purchaseAreaSqFt(size, r.qty_unit),
       sizeUnit: r.qty_unit ?? "FT",
@@ -147,9 +266,12 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       purchasePct: orderValue > 0 ? ((amount + gstAmount) / orderValue) * 100 : null,
     };
   });
+
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
   const gstTotal = lines.reduce((s, l) => s + l.gstAmount, 0);
-  const roundOff = rows.reduce((s, r) => s + Number(r.round_off_amt ?? 0), 0);
+  // Round off is stored per row (db/2026-10-24b); a not-yet-migrated row has
+  // no such column at all, which must read as 0 rather than NaN.
+  const roundOff = rows.reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
   const grossTotal = subtotal + gstTotal + roundOff;
   const isGst = gstTotal > 0;
 
@@ -193,6 +315,65 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   // INCLUDING GST as a share of the order value.
   const overallPurchasePct = totalOrderValue > 0 ? ((subtotal + gstTotal) / totalOrderValue) * 100 : null;
 
+  // 2026-10-24 (2) — per-company split of the same invoice, printed under the
+  // totals whenever the invoice number exists in more than one company.
+  type CompanyTotal = {
+    id: string | null;
+    name: string;
+    entries: number;
+    poCount: number;
+    subtotal: number;
+    gst: number;
+    roundOff: number;
+    total: number;
+  };
+  const companyTotals = new Map<string, CompanyTotal>();
+  for (const r of rows) {
+    const key = r.company_id ?? "none";
+    const current =
+      companyTotals.get(key) ??
+      ({
+        id: r.company_id,
+        name: r.company_id ? companyNameById.get(r.company_id) ?? "—" : "No company linked",
+        entries: 0,
+        poCount: 0,
+        subtotal: 0,
+        gst: 0,
+        roundOff: 0,
+        total: 0,
+      } satisfies CompanyTotal);
+    current.entries += 1;
+    companyTotals.set(key, current);
+  }
+  for (const l of lines) {
+    const bucket = companyTotals.get(l.companyId ?? "none");
+    if (!bucket) continue;
+    bucket.subtotal += l.amount;
+    bucket.gst += l.gstAmount;
+    bucket.total += l.lineTotal;
+  }
+  for (const r of rows) {
+    const bucket = companyTotals.get(r.company_id ?? "none");
+    if (!bucket) continue;
+    const rOff = Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0);
+    bucket.roundOff += rOff;
+    bucket.total += rOff;
+  }
+  // Count POs per company (each PO counted once even with several item rows).
+  const poKeysByCompany = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (!r.order_id) continue;
+    const key = r.company_id ?? "none";
+    const set = poKeysByCompany.get(key) ?? new Set<string>();
+    set.add(r.order_id);
+    poKeysByCompany.set(key, set);
+  }
+  for (const [key, set] of poKeysByCompany) {
+    const bucket = companyTotals.get(key);
+    if (bucket) bucket.poCount = set.size;
+  }
+  const companyTotalsList = Array.from(companyTotals.values()).sort((a, b) => a.name.localeCompare(b.name));
+
   // Inside the A4 preview dialog this page is embedded with ?embed=1
   // (src/components/print-dialog.tsx) → x-embed; the dialog supplies its own
   // Print/Close footer, so the page's own Back/Download bar is dropped there.
@@ -209,21 +390,21 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
         </div>
       )}
 
-      <PrintArea id="purchase-bill-report-area" companyName={company?.name ?? undefined} companyLogoUrl={company?.logo_url}>
+      <PrintArea id="purchase-bill-report-area" companyName={headerCompany?.name} companyLogoUrl={headerCompany?.logo_url ?? undefined}>
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-xs text-slate-900 print:border-0 print:p-0">
           <div className="mb-4 flex items-start justify-between gap-6 border-b-2 border-slate-800 pb-3">
             <div className="flex items-start gap-3">
-              {company?.logo_url && (
+              {headerCompany?.logo_url && (
                 // eslint-disable-next-line @next/next/no-img-element -- print document; a plain <img> keeps the logo out of next/image's optimizer
-                <img src={company.logo_url} alt={company.name ?? ""} className="h-10 w-10 object-contain" />
+                <img src={headerCompany.logo_url} alt={headerCompany.name} className="h-10 w-10 object-contain" />
               )}
               <div>
                 <h1 className="text-lg font-bold text-slate-900">Purchase Bill</h1>
                 <p className="text-slate-500">
-                  Invoice {billRaw.vendor_invoice_no || "—"} · {billRaw.vendor_invoice_date ?? "—"}
+                  Invoice {seed.vendor_invoice_no || "—"} · {seed.vendor_invoice_date ?? "—"}
                 </p>
-                {company?.name && <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{company.name}</p>}
-                {profile?.gstin && <p className="text-[11px] text-slate-500">GSTIN: {profile.gstin}</p>}
+                {headerCompany?.name && <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{headerCompany.name}</p>}
+                {headerProfile?.gstin && <p className="text-[11px] text-slate-500">GSTIN: {headerProfile.gstin}</p>}
               </div>
             </div>
             <div className="text-right text-slate-600">
@@ -234,10 +415,22 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
             </div>
           </div>
 
+          {/* 2026-10-24 (2) — the cross-company note: the reader must be able to
+              tell why this one sheet lists more POs than the company they came
+              from. Prints too, so the vendor sees the same scope. */}
+          {multiCompany && (
+            <p className="mb-3 rounded border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] text-sky-900 print:border-slate-300 print:bg-transparent">
+              This invoice number exists in <strong>{companyTotalsList.length} companies</strong> — every entry is included:{" "}
+              {rows.length} entries · {countedOrders.size} PO{countedOrders.size === 1 ? "" : "s"} ·{" "}
+              {companyTotalsList.map((c) => c.name).join(", ")}
+            </p>
+          )}
+
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                 <th className="py-1 pr-2">Sr.</th>
+                {multiCompany && <th className="py-1 pr-2">Company</th>}
                 <th className="py-1 pr-2">PO No.</th>
                 <th className="py-1 pr-2">Item / Work</th>
                 <th className="py-1 pr-2">Type / Size</th>
@@ -258,6 +451,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
               {lines.map((r) => (
                 <tr key={r.id} className="border-b border-slate-100 text-slate-700">
                   <td className="py-1 pr-2">{r.sr}</td>
+                  {multiCompany && <td className="py-1 pr-2 text-slate-500">{r.companyName}</td>}
                   <td className="py-1 pr-2 font-medium text-slate-900">{r.refNo}</td>
                   <td className="py-1 pr-2">{dash(r.description)}</td>
                   <td className="py-1 pr-2">{r.orderSize ?? "—"}</td>
@@ -299,14 +493,14 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
               ))}
               {lines.length === 0 && (
                 <tr>
-                  <td colSpan={15} className="py-3 text-center text-slate-400">
+                  <td colSpan={multiCompany ? 16 : 15} className="py-3 text-center text-slate-400">
                     No items on this invoice.
                   </td>
                 </tr>
               )}
               {lines.length > 0 && (
                 <tr className="border-t-2 border-slate-400 font-bold text-slate-900">
-                  <td colSpan={8} className="py-1 pr-2 text-right">
+                  <td colSpan={multiCompany ? 9 : 8} className="py-1 pr-2 text-right">
                     TOTAL
                   </td>
                   <td className="py-1 pr-2 text-right">{money(subtotal)}</td>
@@ -325,11 +519,43 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
             <div className="text-[11px] text-slate-600">
               <p className="mb-1 font-semibold text-slate-700">Invoice Summary</p>
               <p>
-                {lines.length} item{lines.length === 1 ? "" : "s"} · {rows.length} entr{rows.length === 1 ? "y" : "ies"}
-                {orderIds.length > 0 && ` · ${orderIds.length} PO`}
+                {lines.length} entr{lines.length === 1 ? "y" : "ies"}
+                {countedOrders.size > 0 && ` · ${countedOrders.size} PO`}
+                {companyTotalsList.length > 1 && ` · ${companyTotalsList.length} companies`}
               </p>
-              {billRaw.company_id == null && <p className="text-amber-700">⚠ No company linked on this bill</p>}
+              {seed.company_id == null && !multiCompany && <p className="text-amber-700">⚠ No company linked on this bill</p>}
               {party?.email && <p>Email: {party.email}</p>}
+
+              {/* Per-company split — only when the invoice really spans companies. */}
+              {multiCompany && (
+                <div className="mt-2 border-t border-slate-200 pt-2">
+                  <p className="mb-1 font-semibold text-slate-700">Company-wise</p>
+                  <table className="w-full border-collapse text-left text-[10px]">
+                    <thead>
+                      <tr className="text-slate-500">
+                        <th className="py-0.5 pr-2">Company</th>
+                        <th className="py-0.5 pr-2 text-right">Entries</th>
+                        <th className="py-0.5 pr-2 text-right">POs</th>
+                        <th className="py-0.5 pr-2 text-right">Pre-GST</th>
+                        <th className="py-0.5 pr-2 text-right">GST</th>
+                        <th className="py-0.5 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {companyTotalsList.map((c) => (
+                        <tr key={c.id ?? "none"} className="text-slate-700">
+                          <td className="py-0.5 pr-2">{c.name}</td>
+                          <td className="py-0.5 pr-2 text-right">{c.entries}</td>
+                          <td className="py-0.5 pr-2 text-right">{c.poCount}</td>
+                          <td className="py-0.5 pr-2 text-right">{money(c.subtotal)}</td>
+                          <td className="py-0.5 pr-2 text-right">{money(c.gst)}</td>
+                          <td className="py-0.5 text-right font-semibold">{money(c.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
             <div className="text-right">
               <p className="text-slate-600">SUBTOTAL (pre-GST): ₹{money(subtotal)}</p>

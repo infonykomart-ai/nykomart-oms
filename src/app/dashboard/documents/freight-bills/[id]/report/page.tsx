@@ -54,13 +54,12 @@ async function FreightBillReportInner({ id }: { id: string }) {
   await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: billRaw } = await supabase
-    .from("freight_bills")
-    .select(
-      "id, invoice_no, invoice_date, bill_weight_kg, freight_amt, fuel_amt, other_charges, total_amt, gst_18pct_amt, gross_total_amt, credit_note_no, credit_note_date, credit_note_amt, round_off_amt"
-    )
-    .eq("id", id)
-    .maybeSingle();
+  // 2026-10-24 — `*` rather than a named column list: round_off_amt arrives
+  // with db/2026-10-24b-…, and naming a column that a database hasn't got yet
+  // makes PostgREST reject the WHOLE query (42703) — which turned this sheet
+  // into a bare 404 page whenever that one-time SQL file hadn't been run.
+  // Missing optional columns now simply read as their pre-migration default.
+  const { data: billRaw } = await supabase.from("freight_bills").select("*").eq("id", id).maybeSingle();
   if (!billRaw) notFound();
   // Postgres numeric columns come back as strings over PostgREST — normalize
   // once here rather than trusting the generated `number` type (same

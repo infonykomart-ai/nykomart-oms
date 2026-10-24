@@ -3,6 +3,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 import { listRelatedNotesForBills } from "../documents/actions";
+import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 // 2026-09-15 — courier prepaid wallets ("shipment bhejne se PEHLE wallet
 // recharge karna padta hai, invoice aane pe adjust hota hai"). The panel
 // (recharge/refund/history) + per-bill "Pay from Wallet" balance map.
@@ -172,21 +173,12 @@ export default async function BillPaymentPage({
   // show honi chahiye": rows typed straight into this ledger have source
   // NULL, so they have no source_id to open a document from — yet many of
   // them ARE courier bills whose freight_bills record exists (imported /
-  // hand-entered against the same invoice number). freight_bills.invoice_no
-  // is UNIQUE, so one batched lookup on the manual rows' invoice numbers is
-  // enough to find those records. This only feeds the invoice-number LINK —
-  // `source` stays NULL, so those rows stay editable here exactly as before.
-  const manualInvoiceNos = Array.from(
-    new Set(
-      (bills ?? [])
-        .filter((b) => !b.source && !b.source_id && !!b.invoice_no)
-        .map((b) => b.invoice_no as string)
-    )
-  );
-  const { data: manualCourierBills } = manualInvoiceNos.length
-    ? await supabase.from("freight_bills").select("id, invoice_no").in("invoice_no", manualInvoiceNos)
-    : { data: [] as { id: string; invoice_no: string }[] };
-  const courierBillIdByInvoice = new Map((manualCourierBills ?? []).map((f) => [f.invoice_no, f.id] as const));
+  // hand-entered against the same invoice number).
+  //
+  // 2026-10-24 — that resolution now lives in src/lib/bill-doc-href.ts (one
+  // batched lookup, shared with the Party Ledger) so both pages open exactly
+  // the same document for the same invoice number.
+  const docHrefByBillId = await resolveBillDocHrefs(supabase, bills ?? []);
 
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
@@ -213,15 +205,7 @@ export default async function BillPaymentPage({
     // otherwise a freight_bills record matched by invoice number for a
     // manually-entered courier bill. null = no document exists → bill
     // statement (or plain text for salary/advance).
-    doc_href: (() => {
-      if (b.source_id) {
-        if (b.source === "freight_bill") return `/dashboard/documents/freight-bills/${b.source_id}/report`;
-        if (b.source === "duty_tax_bill") return `/dashboard/documents/duty-bills/${b.source_id}/report`;
-        if (b.source === "purchase_bill") return `/dashboard/documents/purchase-bills/${b.source_id}/report`;
-      }
-      const matchedCourierId = !b.source && b.invoice_no ? courierBillIdByInvoice.get(b.invoice_no) : undefined;
-      return matchedCourierId ? `/dashboard/documents/freight-bills/${matchedCourierId}/report` : null;
-    })(),
+    doc_href: docHrefByBillId.get(b.id) ?? null,
     due_date: b.due_date,
     total_amt: Number(b.total_amt),
     credit_note_amt: Number(b.credit_note_amt),

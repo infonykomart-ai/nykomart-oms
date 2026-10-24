@@ -7,7 +7,8 @@ import { groupBills } from "@/lib/bill-grouping";
 import { LedgerExportBar } from "./ledger-export-bar";
 import type { LedgerPdfInput } from "@/lib/ledger-pdf";
 import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAdminActions } from "./admin-row-actions";
-import { BillStatementDialog } from "@/components/bill-statement-dialog";
+import { BillDocLink } from "@/components/bill-doc-link";
+import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 import { buildWalletLedgerLines, walletSettlementNote, type WalletSettlement } from "@/lib/ledger/wallet-ledger-lines";
 
 // Party Ledger (2026-08-17) — "SABHI PARTY KE LADGER BHI NAHI BANE ABHI TAK
@@ -140,6 +141,12 @@ async function PartyLedgerInner(
   const currentCompanyLogoUrl = (companies ?? []).find((c) => c.id === employee.currentCompanyId)?.logo_url ?? null;
 
   const entries = entriesRaw ?? [];
+  // 2026-10-24 — "yahi sheet ledger page par bhi link rahe vaha se bhi nikal
+  // jaye": the invoice cell of a bill row now opens the bill's OWN document
+  // sheet (Courier / Duty & Tax / Purchase Bill), exactly like Bill Payment
+  // does, instead of always opening the generic statement. Same shared
+  // resolver, so the two pages can never drift apart.
+  const docHrefByBillId = await resolveBillDocHrefs(supabase, entries);
   const billIds = entries.map((e) => e.id);
   const { data: paymentsRaw } = billIds.length
     ? await supabase
@@ -252,6 +259,10 @@ async function PartyLedgerInner(
     // green/amber/red shading. Payments inherit their bill's status so
     // "dono entry green ho jaye" literally holds.
     status: "paid" | "pending" | "overdue" | null;
+    // 2026-10-24 — the bill's own document sheet (see docHrefByBillId above).
+    // Set on the bill's Credit line only; null = no document → the invoice
+    // cell falls back to the read-only bill statement.
+    docHref?: string | null;
   };
 
   // #4/#8 — group key. Purchase-only same-company grouping stays exactly
@@ -358,6 +369,7 @@ async function PartyLedgerInner(
         referenceNo: null,
         paymentItems: [],
         status,
+        docHref: eg.bills.map((b) => docHrefByBillId.get(b.id)).find((h): h is string => !!h) ?? null,
       });
     }
     if (creditNoteAmt > 0) {
@@ -690,7 +702,7 @@ async function PartyLedgerInner(
                         DIALOG — no navigation. Payment/adjustment lines
                         repeat the same invoice as plain text. */}
                     {t.type === "Credit" && t.billIds[0] ? (
-                      <BillStatementDialog billId={t.billIds[0]} label={t.invoiceNo || ""} />
+                      <BillDocLink billId={t.billIds[0]} docHref={t.docHref ?? null} label={t.invoiceNo || ""} />
                     ) : (
                       t.invoiceNo || ""
                     )}

@@ -1,271 +1,111 @@
-SCHEMA STATUS CARD + LEAVE DIGEST + "KISNE ENTRY KI" + FEDEX TEST-ALL (2026-10-21)
-==================================================================================
+BILL SHEET FIX + LEDGER LINK + SAABHI COMPANY KE PO (2026-10-24)
+=================================================================
 
-SABSE PEHLE (ek hi nayi SQL file, idempotent — dobara chalane par kuch nahi bigdega):
-    db/2026-10-21-purchase-bill-entered-by.sql
-
-Aur agar pichhla round nahi chala tha to ye bhi:
-    db/2026-10-20-purchase-bill-no-gst-and-audit.sql
-
-Iske bina bhi app chalega (kuch bhi crash nahi hoga) — bas neeche likhe features
-purane/adhoora dikhayenge. Kaunsi file pending hai, ab app khud bata dega (point 1).
+NAYA SQL: koi zaroori nahi — is round me koi column/table add nahi hua.
+(Agar pichhla 2026-10-24b wala round nahi chala tha to
+ db/2026-10-24b-round-figure-printing-bill-and-size-mode.sql chala dena —
+ uske bina sheet ab bhi khulegi, bas ROUND OFF aur "As billed" size purane
+ behaviour par chalega. /dashboard ka Schema card batayega pending hai ya nahi.)
 
 
-1) SCHEMA / MIGRATION STATUS CARD (Admin ko dashboard par)
-----------------------------------------------------------
-Problem: optional columns har jagah tolerant fallback se padhe jaate hain, is liye
-migration na chalne par error nahi aata — bas purana figure dikhta rehta hai aur
-pata hi nahi chalta kyun. Ab /dashboard kholte hi Admin/MD ko ek card dikhega:
+1) "SHEET GENERATE KARTE WAQT 404 AA RAHA HAI" — ROOT CAUSE + FIX
+------------------------------------------------------------------
+Asli wajah column ka naam nahi, POORI QUERY ka reject hona tha:
+  • purchase bill sheet, courier bill sheet aur duty & tax sheet apne
+    SELECT me naye columns ke naam likhte the — purchase_bills.size_mode,
+    freight_bills.round_off_amt, duty_tax_bills.round_off_amt
+    (teeno db/2026-10-24b-… se aate hain).
+  • Jis database me wo file nahi chali, wahan PostgREST EK bhi missing
+    column par poori query 42703 se reject kar deta hai.
+  • Code ko data null milta tha aur wo notFound() call kar deta tha —
+    is liye iframe me Next ka "404 This page could not be found" dikhta tha.
+    Migration pending hona aur bill delete hona, dono ek jaisa dikhte the.
 
-  - Sab theek: chhoti si hari line "Database schema up to date — 10 tracked
-    migrations applied".
-  - Kuch pending: amber card jisme har pending file ka naam + "iske bina kya
-    kharab hai" list, e.g.
-        db/2026-10-21-purchase-bill-entered-by.sql
-        → Purchase Bill list me "Entered by <naam>" nahi aayega
-    Saath me "↻ Recheck" button (SQL chalane ke baad dabao).
-  - Network/permission ki wajah se check na ho paye to wo "pending" nahi, alag
-    muted line me dikhta hai — jhoothe alarm nahi.
+Ab teeno sheets SELECT * use karti hain (jo column DB me nahi hai wo bas
+absent aata hai aur uski purani default value lag jaati hai), aur purchase
+sheet me asli missing entry par 404 ki jagah saaf message + "Open Bill
+Payment / Open Document Entry" buttons aate hain.
 
-Kaise kaam karta hai: har tracked migration ka ek column/table probe hota hai
-(sirf "hai ya nahi" — koi data padha nahi jaata). 10 high-impact migrations
-track hain: purchase bill entered-by, purchase bill audit stamps, leave approvers,
-customs FX rates, FX cache, B2B PI export fields, employee telegram_chat_id,
-leave types, departments, audit log. Nayi migration add karni ho to
-src/lib/db/schema-status.ts me ek line.
-
-
-2) LEAVE DAILY DIGEST (Telegram, roz subah)
--------------------------------------------
-Naya route: /api/cron/leave-digest
-
-Message aisa aayega:
-    🌴 Leave Digest — Wed, 21 Oct 2026
-
-    Aaj 4 log leave par — Neelu, Rahul, Priya aur Aman
-
-    • Neelu — aaj (21 Oct) · Nyko Mart
-    • Rahul — 20 Oct → 22 Oct (Casual) · Rug Ara
-    ...
-
-Wo hi leave_requests rows padhta hai jo Leave page ka "On Leave" board dikhata hai
-(status Approved + aaj date range me, IST). Koi naya data store nahi hota.
-
-Kisko jaata hai:
-  - LEAVE_DIGEST_CHAT_ID env set karo (comma se multiple ids bhi chalenge —
-    management group ka chat id daalna sabse practical hai), WARNA
-  - jitne active employees ke role me leave_admin capability hai aur jinka
-    Telegram connected hai (employees.telegram_chat_id), unko DM jaata hai.
-    Poori company ko kabhi nahi — kaun absent hai ye sabki info nahi hai.
-
-SCHEDULE (zaruri padho): vercel.json me ise ADD NAHI kiya. Is project me Vercel
-Hobby ka 2-cron limit pehle se poora hai (sync-orders + poll-fedex-tracking) — teesra
-add karne par deployment hi block ho jaata hai (wo bug pehle ho chuka hai, detail
-poll-fedex-tracking/route.ts ke top par likhi hai). Is liye kisi bhi free scheduler
-se roz subah call karo (cron-job.org / GitHub Actions schedule):
-      GET https://<aapka-domain>/api/cron/leave-digest
-      Header: Authorization: Bearer <CRON_SECRET>
-Udaharan: roz 08:30 IST.
-
-Pehle bina bheje test karna ho (message text + recipients dikhata hai, kuch nahi
-jaata):
-      GET .../api/cron/leave-digest?dry=1
-Jis din koi leave par nahi, us din message na chahiye to ?skipEmpty=1 laga do.
-Plan upgrade hoke cron slot khali ho jaye to vercel.json me
-{ "path": "/api/cron/leave-digest", "schedule": "30 3 * * *" } add kar dena
-(03:30 UTC = 09:00 IST) — code me kuch badalne ki zarurat nahi.
+Files: documents/purchase-bills/[id]/report/page.tsx,
+       documents/freight-bills/[id]/report/page.tsx,
+       documents/duty-bills/[id]/report/page.tsx
 
 
-3) PURCHASE BILL: "KISNE ENTRY KI" + POORI EDIT HISTORY
-------------------------------------------------------
-Pehle sirf timestamps the (Entered / Last updated), naam nahi tha.
-
-- purchase_bills me 2 naye column: entered_by_employee_id + entered_by_name.
-  Naam row par hi copy hota hai, is liye employee ka naam badle ya wo inactive ho
-  jaye to bhi history wahi dikhegi jo us waqt thi. Purane bills par NULL =
-  "not tracked (older entry)" — andaaze se kisi ka naam nahi lagaya.
-- Document Entry → Recent Purchase Bills ke card par ab:
-      👤 Neelu | 🗓 Entered 21 Oct 2026, 10:12 am | ✏️ Last updated ...
-  (sirf Admin ko — same permissions_admin gate jo timestamps ka tha). Har item ki
-  row par bhi uska apna naam.
-- Naya "🕘 History" button (Admin only): us invoice ki poori chain — kisne entry ki,
-  kab, aur har edit me kaun kaun sa field kya se kya hua, e.g.
-      ✏️ Edit ki — Neelu       21 Oct 2026, 11:05 am
-         Rate / Unit: 100 → 120
-         GST %: 2.5 → 0
-  History audit_log se aati hai; entry/update/delete teeno log hote hain.
-- Note: history un bills ke liye khali rahegi jo is round se pehle enter hue — us
-  waqt ka koi record hi nahi tha. Naye bills se chain turant banti hai.
-
-
-4) FEDEX SETUP MATRIX: EK BUTTON, TEENO COMPANIES KA TEST
---------------------------------------------------------
-Courier Ops → Setup tab ke grid par naya button:
-      "📶 Test FedEx — all 3 companies"
-
-- Ek click me har company ke liye asli FedEx Rate API test chalta hai (wahi test jo
-  per-company "Test connection" karta hai — key + account number sach me chalte hain
-  ya nahi; sirf "saved hai" dekhna wahi 2026-09-17 wala false-positive tha).
-- Grid ke FedEx column me har company ke saamne ✓ Ready / ✗ Not ready, upar
-  "2/3 ready · 10:42 am", aur neeche har company ka poora FedEx message (kya galat
-  hai — wrong account, key kis org ki, etc.).
-- 3 call ek button dabane par — page load par kabhi nahi.
-
-
-5) FILES (isi zip me)
---------------------
-NEW  db/2026-10-21-purchase-bill-entered-by.sql        <- Supabase me chalao
-NEW  src/lib/db/schema-status.ts                        (migration probes)
-NEW  src/components/schema-health-card.tsx              (Admin card)
-NEW  src/app/api/cron/leave-digest/route.ts             (digest route)
-NEW  src/lib/leave/digest.ts                            (message text)
-NEW  src/lib/purchase-bill-audit.ts                     (edit diff)
-MOD  db/schema.sql
-MOD  src/types/database.ts
-MOD  src/app/dashboard/page.tsx
-MOD  src/lib/attendance/telegram-notify.ts
-MOD  src/app/dashboard/documents/actions.ts
-MOD  src/app/dashboard/documents/page.tsx
-MOD  src/app/dashboard/documents/document-entry-tabs.tsx
-MOD  src/app/dashboard/courier-booking/credentials-actions.ts
-MOD  src/app/dashboard/courier-booking/setup-matrix.tsx
-MOD  BRAIN.md
-
-
-6) MIGRATION KE BAAD CHECK (read-only, Supabase SQL Editor)
------------------------------------------------------------
--- naye columns aa gaye?
-SELECT column_name FROM information_schema.columns
- WHERE table_name = 'purchase_bills'
-   AND column_name IN ('entered_by_employee_id', 'entered_by_name');
-
--- aaj ka leave digest ka raw data (jo message me jaata hai):
-SELECT e.name, lr.from_date, lr.to_date, c.name AS company
-  FROM leave_requests lr
-  JOIN employees e ON e.id = lr.employee_id
-  JOIN companies c ON c.id = lr.company_id
- WHERE lr.status = 'Approved'
-   AND lr.from_date <= CURRENT_DATE
-   AND lr.to_date   >= CURRENT_DATE;
-
-
-================================================================================
-PURCHASE BILL TOTAL FIX + "EK INVOICE = EK ENTRY" (2026-10-20)
-================================================================================
-
-SABSE PEHLE: Supabase SQL Editor me ye file chalao (ek hi file, idempotent):
-    db/2026-10-20-purchase-bill-no-gst-and-audit.sql
-
-Iske bina app ka naya code bhi purana galat total hi dikhayega.
-
-
-1) PROBLEM KYA THI (invoice 170 / SHARDA INTERNATIONAL RUGS)
-------------------------------------------------------------
-Aapne 6 items ki entry ki: 2970 (No GST) + 720 (No GST) + 3000 + 1200 + 1200 + 1200
-  Entry screen ka total            = 10620.00
-  Bill Payment / Party Ledger      = 10804.50
-  Farak                            = 184.50 = bilkul 5% of (2970 + 720)
-
-Wajah: purchase_bills.g_total_plus_gst (generated column) me "gst_rate_pct NULL
-ho to flat 5% jod do" wala purana default hai. Lekin GST dropdown ka pehla option
-hi "No GST" hai, aur wo NULL bhejta hai — is liye "No GST" wale bill bhi chupchap
-5% ke sath Finance (bill_pass_register.total_amt) me chale jaate the. Document
-Entry list / A4 sheet total_amount dikhati thi (is liye wahan sahi lagta tha),
-jabki Bill Payment / Ledger / P&L stored total padhte hain (is liye wahan galat).
-
-
-2) FIX KYA KIYA
----------------
-- DB: "No GST" ab gst_rate_pct = 0 save hota hai (NULL nahi). 0 ka matlab 0% GST,
-  is liye g_total_plus_gst = total_amount + round off — bilkul jo aapne entry me
-  dekha tha. Generated column ko drop nahi kiya (warna P&L/report views ud jaate),
-  sirf CHECK me 0 add kiya: 0, 2.5, 3, 4, 9.
-- Purane galat bills bhi repair: created_at >= 2026-08-17 (GST picker wali date)
-  aur gst_rate_pct NULL — unhe 0 kiya. Isse 170 jaisa har bill theek ho jayega.
-  2026-08-17 se purane NULL bills ko chheda nahi (unka 5% historical default hai).
-- bill_pass_register.total_amt sabhi purchase_bill rows ke liye
-  purchase_bills.g_total_plus_gst se RE-SYNC kiya — Bill Payment / Party Ledger /
-  P&L turant sahi ho jayenge. Payments / Credit-Debit note adjustments ko haath
-  nahi lagaya. (Agar kisi bill ka inflated amount pe payment ho chuka hai to uska
-  balance due thoda negative = overpayment dikhega, jo sach hai.)
-- App: No GST par 0 hi save hota hai (save + edit dono). Naya shared file
-  src/lib/purchase-bill-money.ts hi GST/total/label ka single source hai —
-  Document Entry list, A4 view, bill statement, sab wahi use karte hain, is liye
-  ab kisi bhi screen par total alag nahi ho sakta. (Bill statement me pehle per
-  line 5% ka hardcoded fallback tha, wo bhi theek kiya.)
-
-
-3) DOCUMENT ENTRY ME AB EK INVOICE = EK ENTRY
+2) YEH SHEET AB LEDGER PAGE SE BHI KHULTI HAI
 ---------------------------------------------
-- "Recent Purchase Bills" me ab HAR VENDOR INVOICE ka EK card aayega, item ke
-  hisaab se 6 alag cards nahi. Card par: invoice no, "6 items · 1 invoice" badge,
-  vendor, poora invoice total, invoice date.
-- "▸ Items" dabane par usi card ke andar saari entries khulti hain — har entry ka
-  description, size × qty @ rate, taxable + GST = amount, aur uske saamne apna
-  Edit aur Delete button. (Storage waisa hi hai: har item ki apni row, apni
-  qty/rate/GST — sirf dikhne me ek invoice.)
-- 👁 View = poore invoice ka ek A4 sheet (saare items + grand total), dialog me hi
-  print/PDF.
-- 🧾 Statement = Finance wala bill statement (jo bill_pass_register me gaya hai).
-- Delete invoice = us invoice ke saare items delete (har row par wahi server
-  guard lagta hai: jis item par payment ho chuka hai wo delete nahi hoga, baaki
-  ho jayenge — error message card par dikhega).
-- Edit entries = items khol deta hai, jahan se har entry alag edit/modify ho sakti
-  hai (vendor, invoice no, date, qty, size, rate, GST, description, round off).
+Pehle Party Ledger me invoice number par click karne se sirf generic bill
+statement khulta tha — wahi invoice Bill Payment me asli sheet (PO-wise
+entry, GST, order value, shipping, purchase %) kholta tha. Ab dono jagah
+EK HI sheet khulti hai:
+
+  • Bill Payment ka invoice number  → sheet (jaisa pehle tha)
+  • Party Ledger ka invoice number  → wahi sheet
+  • Jis bill ka koi document nahi (salary / advance / manually typed row
+    jiska courier bill bhi nahi) → pehle jaisa read-only bill statement
+
+Mapping ek hi jagah hai: src/lib/bill-doc-href.ts (bill_pass_register.source
+se: freight_bill → Courier sheet, duty_tax_bill → Duty & Tax sheet,
+purchase_bill → Purchase sheet, source NULL → invoice number se
+freight_bills match). Link component: src/components/bill-doc-link.tsx.
+Isi liye dono page kabhi alag document nahi kholenge.
 
 
-4) ADMIN KO DATE & TIME (ENTRY + UPDATE)
-----------------------------------------
-- purchase_bills me naya column updated_at (trigger ke sath, migration me hai).
-- Har invoice card aur har item row par ADMIN ko dikhega:
-      🗓 Entered 17 Oct 2026, 3:42 pm   |   ✏️ Last updated 20 Oct 2026, 11:05 am
-  Kabhi edit nahi hua to "not edited since entry" likha aayega.
-- Sirf permissions_admin wale user ko ye line dikhti hai (aapke Admin role me hai).
+3) EK BILL NUMBER = TEENO COMPANY KE SAABHI PO (20 ENTRY = 20 ROW)
+------------------------------------------------------------------
+Pehle purchase sheet invoice ko sirf (vendor_party_id + vendor_invoice_no)
+se dhoondhti thi. Asar:
+  • Vendor har company me alag party row ke roop me pada ho (Nyko Mart /
+    Rugara / CASA ARRA ke apne vendor records) to sirf usi company ki
+    entries aati thi — baki company ke PO gayab.
+  • Invoice number me case ya extra space ka farak ho to bhi wahi baat.
+
+Ab invoice number se resolve hota hai, company ki seema ke bina:
+  • seed vendor ki apni saari rows + usi (normalised) vendor naam wale
+    baki party records ki rows, aur invoice number case/space ignore
+    karke match hota hai (.ilike + normalised JS filter, taaki galti se
+    koi dusra bill na jud jaye — invoice number match hona zaroori hai).
+
+Sheet khud auto-adjust karti hai:
+  • 1 se zyada company ho to ek "Company" column add ho jaata hai aur
+    upar ek line: "This invoice number exists in N companies — every entry
+    is included: 20 entries · 6 POs · Nyko Mart, Rugara, CASA ARRA".
+  • TOTAL row aur niche ka summary (SUBTOTAL / GST / ROUND OFF / GROSS,
+    ORDER VALUE, SHIPPING, COURIER, PURCHASE %) sabhi rows par banta hai.
+  • Niche "Company-wise" chhoti table: per company entries, POs, pre-GST,
+    GST, total.
+  • Order value / shipping / courier / purchase % har PO par EK BAAR hi
+    ginte hain (ek PO ke 5 item rows ho to 5 baar nahi).
+  • 16 column ho jaane par A4 preview khud LANDSCAPE me chala jaata hai
+    (PrintDialog ka overflow detection) — print/PDF dono me pura sheet.
+
+File: src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx
+      (loadInvoiceRows + per-company totals)
 
 
-5) BILL PAYMENT ME BHI SAAF KIYA
---------------------------------
-- Grouped invoice kholne par per-item rows me pehle "d4bb0ea4" jaisa id aa raha
-  tha; ab wahan actual item likha aayega, e.g.
-      Plain rug 3x90 FT · 1 × 90 FT @ ₹21.03
-- "Record payment for this invoice (per item)" form me bhi item ka naam + balance
-  dikhega, is liye kis item ka payment kar rahe ho wo saaf pata chalega.
-- Amounts ab entry wale total se milte hain (upar wale fix ke baad).
+VERIFY (is sandbox me jo possible tha)
+--------------------------------------
+  • Focused tsc (focused tsconfig: sirf badli hui files + unke saare
+    imports, 8 source files) → exit 0
+  • eslint un badli hui files par → exit 0 (koi eslint-disable nahi)
+  • Poora-project tsc sandbox me OOM se kill hota hai (exit 137) — pehle
+    bhi hota tha, code ki galti nahi. Isi liye focused scope chalaya.
+  • Live Supabase is workspace me nahi hai, is liye real bill par sheet
+    render / cross-company merge actual data par test nahi hua. Pehla
+    production check: Bill Payment → kisi multi-company invoice ka number
+    kholo, upar company line aur niche Company-wise table dekh lo.
 
 
-6) FILES (isi zip me)
---------------------
-NEW  db/2026-10-20-purchase-bill-no-gst-and-audit.sql   <- Supabase me chalao
-NEW  src/lib/purchase-bill-money.ts
-MOD  db/schema.sql
-MOD  src/types/database.ts
-MOD  src/lib/bill-grouping.ts
-MOD  src/lib/bill-statement.ts
-MOD  src/app/dashboard/documents/actions.ts
-MOD  src/app/dashboard/documents/page.tsx
-MOD  src/app/dashboard/documents/document-entry-tabs.tsx
-MOD* src/app/dashboard/documents/doc-entry-a4.tsx   (*agar 16-Oct round pehle nahi laga to ye file
-     aapke repo me nahi hogi — tab ise NAYI file maankar add karna hai)
-MOD  src/app/dashboard/bill-payment/page.tsx
-MOD  src/app/dashboard/bill-payment/bill-payment-list.tsx
-MOD  BRAIN.md
+FILES
+-----
+N  src/lib/bill-doc-href.ts                                        (sheet path resolver, shared)
+N  src/components/bill-doc-link.tsx                                 (invoice number link, shared)
+M  src/app/dashboard/bill-payment/page.tsx                          (shared resolver use)
+M  src/app/dashboard/bill-payment/bill-payment-list.tsx             (shared link component)
+M  src/app/dashboard/parties/[id]/ledger/page.tsx                   (ledger se bhi wahi sheet)
+M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx  (404 fix + cross-company + company-wise)
+M  src/app/dashboard/documents/freight-bills/[id]/report/page.tsx   (404 fix: select *)
+M  src/app/dashboard/documents/duty-bills/[id]/report/page.tsx      (404 fix: select *)
+M  BRAIN.md                                                         (§12 is round ka)
+M  CHANGES.txt
 
-
-7) MIGRATION KE BAAD CHECK KARNE KE LIYE (read-only, Supabase SQL Editor)
-------------------------------------------------------------------------
--- invoice 170 ke items ka asli total (dono column barabar hone chahiye):
-SELECT vendor_invoice_no, gst_rate_pct, total_amount, g_total_plus_gst
-  FROM purchase_bills WHERE vendor_invoice_no = '170'
- ORDER BY created_at;
-
--- Finance mirror wahi total dikha raha hai?
-SELECT total_amt, to_be_pay, balance_due
-  FROM bill_pass_register
- WHERE source = 'purchase_bill' AND vendor_invoice_no = '170';
-
-Dono ka total ab 10620.00 hona chahiye (aapke 6 items ke hisaab se).
-
-NOTE: 2026-08-17 se purane jo bills "No GST" jaise lag rahe hain, unka +5%
-jaan-boojh kar nahi hataya (wo purana default tha aur usi par payment/P&L bana
-hai). Agar koi aisa purana bill bhi theek karwana ho to bata dena, ek chhoti
-repair query de dunga.
+KOI NAYA NPM PACKAGE NAHI CHAHIYE.

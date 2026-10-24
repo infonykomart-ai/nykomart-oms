@@ -41,7 +41,7 @@ import { CreditNotePanel, type AppliedCn } from "./credit-note-panel";
 // whose party holds a wallet (see wallet-actions.ts / wallet-panel.tsx).
 import { WalletPayButton } from "./wallet-pay-button";
 import { BillStatementDialog } from "@/components/bill-statement-dialog";
-import { PrintDialog } from "@/components/print-dialog";
+import { BillDocLink } from "@/components/bill-doc-link";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -304,49 +304,6 @@ export function BillPaymentList({
   );
 }
 
-// 2026-10-22 — the invoice-number link in each row. Which sheet opens
-// depends on what the bill ACTUALLY is (bill_pass_register.source):
-//   freight_bill   -> Courier Bill Report (per-AWB charges, by category)
-//   duty_tax_bill  -> Duty & Tax Bill report
-//   purchase_bill  -> Purchase Bill sheet (per-item PO/qty/rate/GST)
-//   anything else  -> the read-only bill statement (the only document that
-//                     exists for a manually-entered / salary / advance row)
-// The document pages are embedded in the SAME A4 dialog used everywhere else
-// (PrintDialog -> A4Dialog in fit-content mode), so nothing navigates away
-// and the sheet is exactly as tall as its content. A row that has no party
-// and no source document (salary/advance) renders as plain text instead of a
-// link that could only ever answer "no vendor party linked".
-function BillDocLink({ bill }: { bill: PayableBillRow }) {
-  const label = bill.invoice_no || bill.vendor_invoice_no || "";
-  // The href itself says which document it is (page.tsx builds it), so the
-  // dialog title is derived from that rather than re-deriving the source.
-  const docHref = bill.doc_href;
-
-  if (docHref) {
-    return (
-      <PrintDialog
-        href={docHref}
-        label={label || "📄 Sheet"}
-        title={
-          docHref.includes("/freight-bills/")
-            ? "Courier Bill Sheet"
-            : docHref.includes("/duty-bills/")
-              ? "Duty & Tax Bill Sheet"
-              : "Purchase Bill Sheet"
-        }
-        subtitle="A4 preview — prints exactly this document."
-        className="text-left font-medium underline decoration-amber-400 decoration-2 underline-offset-2 hover:text-amber-700"
-      />
-    );
-  }
-
-  // Salary / advance rows have no vendor party, so a statement link could only
-  // ever open an error — show the number as plain text instead.
-  if (!bill.party_id) return <span>{label || "—"}</span>;
-
-  return <BillStatementDialog billId={bill.id} label={label || undefined} />;
-}
-
 function GroupRow({
   group,
   parties,
@@ -425,7 +382,11 @@ function GroupRow({
                 duty bill / purchase bill report page, in the shared A4
                 dialog); a bill with no document behind it (manual/imported,
                 salary, advance) keeps the bill statement. See BillDocLink. */}
-            <BillDocLink bill={first} />
+            <BillDocLink
+              billId={first.party_id ? first.id : null}
+              docHref={first.doc_href}
+              label={first.invoice_no || first.vendor_invoice_no || ""}
+            />
             {group.isGroup && (
               <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
                 {group.bills.length} items · 1 invoice

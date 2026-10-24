@@ -891,3 +891,39 @@ real Rate-API test per company (intersected with `employee.companyIds`, never a
 posted id list), shows ✓ Ready / ✗ Not ready per company in the grid, a ready
 count, and each company's exact FedEx message. Three calls on an explicit click
 only — never on page load.
+
+## 12. Round 2026-10-24 — bill sheet 404, ledger link, cross-company invoice rows
+
+**"Sheet banate waqt 404" was a migration symptom, not a routing bug.** The
+Purchase / Courier / Duty bill A4 report pages named the newest optional columns
+in their SELECT (`purchase_bills.size_mode`, `freight_bills.round_off_amt`,
+`duty_tax_bills.round_off_amt` — all from `db/2026-10-24b-…`). On a database
+where that one-time file hasn't been run, PostgREST rejects the **whole** query
+(42703) when a single named column is missing, the row came back `null`, and the
+page called `notFound()` — so an un-run migration rendered exactly like a
+deleted bill, inside the A4 dialog's iframe. All three pages now `select("*")`
+(missing optional columns arrive absent and fall back to pre-migration defaults,
+never an error) and the purchase sheet shows an explanation card with links
+instead of a bare 404. **Rule for every new report page: `*` for rows that carry
+recent optional columns, or a retry with the pre-migration column list.**
+
+**One invoice number, one document — everywhere.** `src/lib/bill-doc-href.ts`
+resolves the sheet path from `bill_pass_register.source` (+ a batched
+`freight_bills.invoice_no` lookup for source-less rows typed straight into the
+ledger), and `src/components/bill-doc-link.tsx` renders it as the A4 dialog link
+with the bill statement as fallback. Bill Payment and the Party Ledger both use
+it, so the same invoice number can no longer open different documents depending
+on the page. Anything else that lists a bill number should use the same pair.
+
+**Purchase sheet = every entry of that vendor invoice, across companies.**
+`loadInvoiceRows` resolves by the vendor invoice NUMBER, not by the one party
+row it was opened from: the seed vendor's rows plus every party with the same
+normalised supplier name (suppliers are often filed once per company), matched
+case/whitespace-insensitively (`.ilike` + a normalised JS filter — the filter
+makes a wildcard over-fetch harmless, it can never merge two different
+invoices). The sheet then auto-adjusts: a Company column appears when the
+invoice spans companies, totals (pre-GST, GST, round off, gross, order value,
+shipping, courier, purchase %) cover all rows, order-level figures are counted
+ONCE per PO, and a Company-wise table splits entries/POs/amounts per company.
+`PrintDialog`'s existing overflow detection switches the A4 preview to landscape
+once the extra column makes the sheet too wide.
