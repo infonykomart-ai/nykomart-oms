@@ -70,36 +70,40 @@ export default async function BillPaymentPage({
   const fyChoices = fyOptions(null);
   const todayStr = new Date().toISOString().slice(0, 10);
 
-  const [{ data: companies }, { data: parties }] = await Promise.all([
+  // 2026-10-24 (perf) — "sabhi page fast khule": companies/parties/bills have
+  // no dependency on each other, so they go out as ONE parallel wave instead
+  // of three serial round trips (each serial Supabase hop is added straight
+  // to the page's time-to-first-byte).
+  const [{ data: companies }, { data: parties }, { data: bills }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("parties").select("id, name, party_type, invoice_type"),
+    (async () => {
+      let q = supabase
+        .from("bill_pass_register")
+        .select(
+          // 2026-10-20 — source_id added so a grouped Purchase Bill's per-item
+          // rows can name the actual item (see itemLabelBySourceId below).
+          "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, source_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
+        )
+        .in("company_id", effectiveCompanyIds)
+        .order("due_date", { ascending: true, nullsFirst: false });
+
+      if (fyWin) q = q.gte("invoice_date", fyWin.start).lte("invoice_date", fyWin.end);
+
+      if (status === "paid") {
+        q = q.lte("balance_due", 0);
+      } else if (status === "pending") {
+        q = q.gt("balance_due", 0).gte("due_date", todayStr);
+      } else if (status === "overdue") {
+        q = q.gt("balance_due", 0).lt("due_date", todayStr);
+      } else {
+        // Default (no status filter picked yet) — unchanged from before this
+        // filter UI existed: every unpaid/partially-paid bill.
+        q = q.gt("balance_due", 0);
+      }
+      return q;
+    })(),
   ]);
-
-  let query = supabase
-    .from("bill_pass_register")
-    .select(
-      // 2026-10-20 — source_id added so a grouped Purchase Bill's per-item
-      // rows can name the actual item (see itemLabelBySourceId below).
-      "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, source_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
-    )
-    .in("company_id", effectiveCompanyIds)
-    .order("due_date", { ascending: true, nullsFirst: false });
-
-  if (fyWin) query = query.gte("invoice_date", fyWin.start).lte("invoice_date", fyWin.end);
-
-  if (status === "paid") {
-    query = query.lte("balance_due", 0);
-  } else if (status === "pending") {
-    query = query.gt("balance_due", 0).gte("due_date", todayStr);
-  } else if (status === "overdue") {
-    query = query.gt("balance_due", 0).lt("due_date", todayStr);
-  } else {
-    // Default (no status filter picked yet) — unchanged from before this
-    // filter UI existed: every unpaid/partially-paid bill.
-    query = query.gt("balance_due", 0);
-  }
-
-  const { data: bills } = await query;
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
@@ -108,7 +112,54 @@ export default async function BillPaymentPage({
   // invoice se related ho to vaha dikhna cahiye": one batched lookup for
   // every bill on this page, then fanned back out per row below — never
   // call listRelatedNotesForBills per-row (see its own comment).
-  const relatedNotes = await listRelatedNotesForBills((bills ?? []).map((b) => b.id));
+  //
+  // 2026-10-24 (perf) — "sabhi page fast khule": every lookup below depends
+  // only on the bills already in memory, so they all go out as ONE parallel
+  // wave. Before this they ran as four serial awaits (notes → adjustments +
+  // credit notes → purchase items → document hrefs), each adding a full
+  // Supabase round trip to the page's load time for zero extra safety.
+  const pageBillIds = (bills ?? []).map((b) => b.id);
+  const purchaseSourceIds = (bills ?? [])
+    .filter((b) => b.source === "purchase_bill" && !!b.source_id)
+    .map((b) => b.source_id as string);
+
+  const [
+    relatedNotes,
+    { data: appliedAdj },
+    { data: pageCreditNotes },
+    { data: purchaseItems },
+    docHrefByBillId,
+    walletOverview,
+  ] = await Promise.all([
+    listRelatedNotesForBills(pageBillIds),
+    pageBillIds.length
+      ? supabase
+          .from("bill_pass_register_adjustments")
+          .select("id, bill_pass_register_id, amount, remark, credit_note_id, credit_notes(vendor_cn_no, gst_rate_pct)")
+          .in("bill_pass_register_id", pageBillIds)
+      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null; credit_notes: { vendor_cn_no: string | null; gst_rate_pct: number | null }[] | null }[] }),
+    supabase
+      .from("credit_notes")
+      .select("id, cn_no, company_id, credit_note_date, refund_amount, party_id")
+      .in("company_id", effectiveCompanyIds)
+      .order("credit_note_date", { ascending: false })
+      .limit(300),
+    purchaseSourceIds.length
+      ? supabase
+          .from("purchase_bills")
+          .select("id, work_description, qty, sq_feet, qty_unit, unit_rate")
+          .in("id", purchaseSourceIds)
+      : Promise.resolve({
+          data: [] as { id: string; work_description: string | null; qty: number; sq_feet: number; qty_unit: string | null; unit_rate: number }[],
+        }),
+    // 2026-10-24 — the invoice-number → document-sheet resolver (see
+    // src/lib/bill-doc-href.ts), shared with the Party Ledger so both pages
+    // open exactly the same document for the same invoice number.
+    resolveBillDocHrefs(supabase, bills ?? []),
+    // 2026-09-15 — courier prepaid wallet balances for the "Pay from Wallet"
+    // action, and the wallet panel itself.
+    getWalletOverview(effectiveCompanyIds),
+  ]);
   const notesByBillId = new Map<string, typeof relatedNotes>();
   for (const n of relatedNotes) {
     const list = notesByBillId.get(n.billPassRegisterId) ?? [];
@@ -126,21 +177,6 @@ export default async function BillPaymentPage({
   // immediately, which was a live TDZ crash ("Cannot access 'D' before
   // initialization", digest 122932879): the whole Bill Payment page threw
   // whenever any unpaid bill existed.
-  const pageBillIds = (bills ?? []).map((b) => b.id);
-  const [{ data: appliedAdj }, { data: pageCreditNotes }] = await Promise.all([
-    pageBillIds.length
-      ? supabase
-          .from("bill_pass_register_adjustments")
-          .select("id, bill_pass_register_id, amount, remark, credit_note_id, credit_notes(vendor_cn_no, gst_rate_pct)")
-          .in("bill_pass_register_id", pageBillIds)
-      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; credit_note_id: string | null; credit_notes: { vendor_cn_no: string | null; gst_rate_pct: number | null }[] | null }[] }),
-    supabase
-      .from("credit_notes")
-      .select("id, cn_no, company_id, credit_note_date, refund_amount, party_id")
-      .in("company_id", effectiveCompanyIds)
-      .order("credit_note_date", { ascending: false })
-      .limit(300),
-  ]);
   const adjByBillId = new Map<string, { id: string; amount: number; remark: string | null; credit_note_id: string | null; vendor_cn_no: string | null; gst_rate_pct: number | null }[]>();
   for (const a of appliedAdj ?? []) {
     const list = adjByBillId.get(a.bill_pass_register_id) ?? [];
@@ -163,17 +199,6 @@ export default async function BillPaymentPage({
   // and the per-item payment form named nothing. Each bill_pass_register row
   // already carries source_id -> purchase_bills.id; one batched lookup (never
   // per row) gives every item its description + size + rate.
-  const purchaseSourceIds = (bills ?? [])
-    .filter((b) => b.source === "purchase_bill" && !!b.source_id)
-    .map((b) => b.source_id as string);
-  const { data: purchaseItems } = purchaseSourceIds.length
-    ? await supabase
-        .from("purchase_bills")
-        .select("id, work_description, qty, sq_feet, qty_unit, unit_rate")
-        .in("id", purchaseSourceIds)
-    : {
-        data: [] as { id: string; work_description: string | null; qty: number; sq_feet: number; qty_unit: string | null; unit_rate: number }[],
-      };
   const itemLabelBySourceId = new Map(
     (purchaseItems ?? []).map((p) => {
       const unit = p.qty_unit ?? "FT";
@@ -181,17 +206,6 @@ export default async function BillPaymentPage({
       return [p.id, `${p.work_description?.trim() || "Item"} · ${size} @ ₹${Number(p.unit_rate).toFixed(2)}`] as const;
     })
   );
-
-  // 2026-10-22 — "courior me bills payment me link hone par ye vali sheet
-  // show honi chahiye": rows typed straight into this ledger have source
-  // NULL, so they have no source_id to open a document from — yet many of
-  // them ARE courier bills whose freight_bills record exists (imported /
-  // hand-entered against the same invoice number).
-  //
-  // 2026-10-24 — that resolution now lives in src/lib/bill-doc-href.ts (one
-  // batched lookup, shared with the Party Ledger) so both pages open exactly
-  // the same document for the same invoice number.
-  const docHrefByBillId = await resolveBillDocHrefs(supabase, bills ?? []);
 
   const rows: PayableBillRow[] = (bills ?? []).map((b) => ({
     id: b.id,
@@ -240,10 +254,9 @@ export default async function BillPaymentPage({
     })),
   }));
 
-  // 2026-09-15 — wallet overview for the visible companies. Client-side
-  // show/hide toggle (useState) instead of a route param so opening the
-  // panel never loses the bill filters.
-  const walletOverview = await getWalletOverview(effectiveCompanyIds);
+  // 2026-09-15 — wallet overview (loaded in the parallel wave above).
+  // Client-side show/hide toggle (useState) instead of a route param so
+  // opening the panel never loses the bill filters.
   const partyWalletBalances = Object.fromEntries(walletOverview.balances.map((b) => [b.party_id, b.balance]));
   const walletCompanies = (companies ?? []).map((c) => ({ id: c.id, name: c.name }));
   const hasWalletParties = Object.keys(partyWalletBalances).length > 0;

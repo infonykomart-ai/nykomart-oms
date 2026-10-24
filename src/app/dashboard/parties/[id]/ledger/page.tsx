@@ -98,9 +98,11 @@ async function PartyLedgerInner(
   const isAdmin = employee.capabilities.includes("employee_admin");
   const supabase = createServiceRoleClient();
 
-  const { data: party } = await supabase.from("parties").select("id, name, party_type, contact_no, email, gst").eq("id", id).maybeSingle();
-  if (!party) notFound();
-
+  // 2026-10-24 (perf) — "sabhi page fast khule": the first three reads have
+  // no dependency on each other, so they run as ONE round-trip wave instead
+  // of three in series (one serial Supabase round trip per wave is the page's
+  // whole latency budget on a slow connection — 3 waves instead of 6).
+  // `notFound()` still fires right after the first wave, when party is known.
   const spVal = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const todayISTStr = todayIST();
@@ -113,15 +115,24 @@ async function PartyLedgerInner(
   const allCompanies = spVal("allCompanies") === "1";
   const scopedCompanyIds = allCompanies ? employee.companyIds : [employee.currentCompanyId];
 
-  const { data: entriesRaw } = await supabase
-    .from("bill_pass_register")
-    .select(
-      "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
-    )
-    .eq("party_id", id)
-    .in("company_id", scopedCompanyIds)
-    .order("invoice_date", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true });
+  const [
+    { data: party },
+    { data: entriesRaw },
+    { data: companies },
+  ] = await Promise.all([
+    supabase.from("parties").select("id, name, party_type, contact_no, email, gst").eq("id", id).maybeSingle(),
+    supabase
+      .from("bill_pass_register")
+      .select(
+        "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
+      )
+      .eq("party_id", id)
+      .in("company_id", scopedCompanyIds)
+      .order("invoice_date", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true }),
+    supabase.from("companies").select("id, name, logo_url"),
+  ]);
+  if (!party) notFound();
 
   // 2026-08-17 fix — "RUGARA ME RUG ARA KI SUMMERY DIKHNI CHAHIYE NYKO MART
   // ME KYU AARI HAI": `parties` is deliberately NOT company-scoped (one
@@ -135,7 +146,6 @@ async function PartyLedgerInner(
   // matches the pattern every other per-company page in this app already
   // uses (orders/new, shipglobal, attendance, etc.). The `allCompanies=1`
   // toggle above is the explicit exception, clearly labeled in the UI.
-  const { data: companies } = await supabase.from("companies").select("id, name, logo_url");
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const currentCompanyName = companyName.get(employee.currentCompanyId) ?? "—";
   // 2026-09-17 — report footer's company logo: only when this ledger is
@@ -150,28 +160,41 @@ async function PartyLedgerInner(
   // sheet (Courier / Duty & Tax / Purchase Bill), exactly like Bill Payment
   // does, instead of always opening the generic statement. Same shared
   // resolver, so the two pages can never drift apart.
-  const docHrefByBillId = await resolveBillDocHrefs(supabase, entries);
+  // Second wave: everything below depends ONLY on `entries` (already
+  // loaded), so payments / adjustments / wallet / document-hrefs all run in
+  // parallel too — same data, one round trip instead of four.
   const billIds = entries.map((e) => e.id);
-  const { data: paymentsRaw } = billIds.length
-    ? await supabase
-        .from("bill_pass_register_payments")
-        .select("id, bill_pass_register_id, amount, payment_date, payment_mode, reference_no, remark")
-        .in("bill_pass_register_id", billIds)
-        .order("payment_date", { ascending: true })
-    : { data: [] };
+  const [docHrefByBillId, paymentsRes, adjustmentsRes, walletRes] = await Promise.all([
+    resolveBillDocHrefs(supabase, entries),
+    billIds.length
+      ? supabase
+          .from("bill_pass_register_payments")
+          .select("id, bill_pass_register_id, amount, payment_date, payment_mode, reference_no, remark")
+          .in("bill_pass_register_id", billIds)
+          .order("payment_date", { ascending: true })
+      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; payment_date: string; payment_mode: string | null; reference_no: string | null; remark: string | null }[] }),
+    billIds.length
+      ? supabase
+          .from("bill_pass_register_adjustments")
+          .select("id, bill_pass_register_id, amount, remark, created_at, debit_note_id, credit_note_id")
+          .in("bill_pass_register_id", billIds)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [] as { id: string; bill_pass_register_id: string; amount: number; remark: string | null; created_at: string; debit_note_id: string | null; credit_note_id: string | null }[] }),
+    supabase
+      .from("party_wallet_txns")
+      .select("id, company_id, txn_type, direction, amount, txn_date, payment_mode, reference_no, remark, bill_pass_register_id")
+      .eq("party_id", id)
+      .in("company_id", scopedCompanyIds)
+      .order("txn_date", { ascending: true }),
+  ]);
+  const paymentsRaw = paymentsRes.data;
 
   // 2026-09-13 — "CREDIT OR DEBIT NOTE ADJUST KI ENTRY EK SATH DIKHE NA":
   // the party's CN/DN adjustments against these bills, joined to their
   // note numbers, so EACH adjustment shows as its own dated ledger line
   // (exactly like each partial payment already does) instead of one
   // opaque adj_amt sum.
-  const { data: adjustmentsRaw } = billIds.length
-    ? await supabase
-        .from("bill_pass_register_adjustments")
-        .select("id, bill_pass_register_id, amount, remark, created_at, debit_note_id, credit_note_id")
-        .in("bill_pass_register_id", billIds)
-        .order("created_at", { ascending: true })
-    : { data: [] };
+  const adjustmentsRaw = adjustmentsRes.data;
   const noteIds = (adjustmentsRaw ?? []).map((a) => a.credit_note_id ?? a.debit_note_id).filter((v): v is string => !!v);
   const [cnRows, dnRows] = await Promise.all([
     noteIds.length ? supabase.from("credit_notes").select("id, cn_no, vendor_cn_no").in("id", noteIds) : Promise.resolve({ data: [] }),
@@ -200,12 +223,7 @@ async function PartyLedgerInner(
   // already left our bank at recharge time, so a second line double-counted
   // the same rupee. Settlements come back per-bill and are printed inside
   // the bill's own Particulars instead.
-  const { data: walletRaw } = await supabase
-    .from("party_wallet_txns")
-    .select("id, company_id, txn_type, direction, amount, txn_date, payment_mode, reference_no, remark, bill_pass_register_id")
-    .eq("party_id", id)
-    .in("company_id", scopedCompanyIds)
-    .order("txn_date", { ascending: true });
+  const walletRaw = walletRes.data;
   // 2026-10-12 — built HERE, not down where the other ledger lines are
   // pushed: the bill-grouping loop below needs `settledByBill` to annotate
   // each bill row with what the prepaid wallet paid against it.

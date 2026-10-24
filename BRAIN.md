@@ -1003,6 +1003,16 @@ first — otherwise the office gets every digest twice. The overdue digest sends
 with `skipEmpty`, the leave digest does not (its "aaj koi leave par nahi hai" is
 the proof the job ran).
 
+**Perf rule: no serial Supabase hops for independent reads.** Bill Payment and
+the Party Ledger were running 4-6 queries in SERIES per page load (related notes
+→ adjustments + credit notes → purchase items → document hrefs → wallet).
+Every one of those reads depends only on the already-loaded `bills` / `entries`
+array, so they now run as ONE `Promise.all` wave after the initial
+bill-load wave: 2 waves instead of 4-6, same queries, same data. **When adding a
+read to a server page, ask what it depends on — nothing? Then it belongs in the
+existing `Promise.all`.** A serial round trip is the entire latency budget of a
+page on a slow connection.
+
 **Bill Payment finally has a Financial Year filter.** It used to be "every
 unpaid bill, ever" — the FY being closed was buried under carry-forward rows.
 `?fy=2026-27` filters on `invoice_date` (the FY that RAISED the bill), not

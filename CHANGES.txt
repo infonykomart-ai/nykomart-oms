@@ -8,6 +8,23 @@ round agar nahi chala hai to wahi ek file pending hai — /dashboard ka
 Schema Status card batata hai.)
 
 
+0) SABHI PAGE FAST KHULE — SERIAL ROUND-TRIPS HATAYE (perf)
+-----------------------------------------------------------
+Bill Payment aur Party Ledger ke pages har page-load par ek ke baad ek
+Supabase round-trip lete the (notes → adjustments + credit notes →
+purchase items → document hrefs → wallet). Har serial hop seedha
+page-load time me add hota tha, aur kisi bhi ek par kuch bhi depend nahi
+karta tha. Ab:
+  • Bill Payment: 2 waves (companies+parties+bills, phir notes +
+    adjustments + credit notes + purchase items + doc-hrefs + wallet —
+    sab EK saath).
+  • Party Ledger: party + entries + companies, phir payments +
+    adjustments + wallet + doc-hrefs — sab EK saath. Pele 6 serial
+    round-trips, ab 2 waves.
+Data, queries aur totals wahi hain — sirf ek ke baad ek chalne ki jagah
+saath chalte hain; koi behaviour change nahi.
+
+
 1) "KITNA PAISA KITNA PURANA PADA HAI" — PAYABLES AGEING REPORT
 ---------------------------------------------------------------
 Pehle ka Outstanding report sirf total batata tha, umar (ageing) nahi.
@@ -103,7 +120,8 @@ N  src/app/dashboard/reports/ageing/ageing-table.tsx         (table + export/pri
 M  src/app/api/cron/overdue-digest/route.ts                  (thin wrapper)
 M  src/app/api/cron/leave-digest/route.ts                    (thin wrapper)
 M  src/app/api/cron/poll-fedex-tracking/route.ts             (dono digest ab yahan se chalte hain)
-M  src/app/dashboard/bill-payment/page.tsx                   (FY filter)
+M  src/app/dashboard/bill-payment/page.tsx                   (FY filter + parallel waves)
+M  src/app/dashboard/parties/[id]/ledger/page.tsx            (parallel waves, 6 serial → 2)
 M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx (Paid/Balance)
 M  src/app/dashboard/reports/page.tsx                        (Ageing ka link)
 M  BRAIN.md, CHANGES.txt
