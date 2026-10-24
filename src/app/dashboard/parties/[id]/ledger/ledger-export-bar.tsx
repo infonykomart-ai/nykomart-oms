@@ -55,12 +55,15 @@ export function LedgerExportBar({
   partyId,
   partyName,
   rows,
+  summaryRows,
   printAreaId,
   pdfInput,
 }: {
   partyId: string;
   partyName: string;
   rows: LedgerExportRow[];
+  /** Opening / totals / closing lines appended to the CSV-Excel-Word downloads. */
+  summaryRows?: LedgerExportRow[];
   printAreaId: string;
   // The on-screen rows + totals + scope — POSTed to /api/ledger-pdf for
   // the real A4 PDF attached to WhatsApp/Email/Telegram. Omit only if the
@@ -74,6 +77,7 @@ export function LedgerExportBar({
       filenameBase={filenameBase}
       columns={COLUMNS}
       rows={rows}
+      summaryRows={summaryRows}
       printAreaId={printAreaId}
       whatsappPhone={pdfInput?.party.contact_no ?? null}
       pdfEndpoint={pdfInput ? "/api/ledger-pdf" : undefined}

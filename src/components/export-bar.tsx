@@ -37,6 +37,7 @@ export function ExportBar<T>({
   filenameBase,
   columns,
   rows,
+  summaryRows,
   printAreaId,
   whatsappPhone,
   allColumns,
@@ -50,6 +51,15 @@ export function ExportBar<T>({
   filenameBase: string;
   columns: ExportColumn<T>[];
   rows: T[];
+  /**
+   * 2026-10-24 — "ledger page se summary download nahi ho rahi": rows that
+   * are appended to the CSV / Excel / Word FILES only, so the downloaded
+   * sheet carries the report's own summary lines (opening / totals /
+   * closing) underneath the data. Deliberately NOT part of `rows`: the
+   * printed PDF and the WhatsApp/Email summary text sum the real rows, and
+   * appending totals to those would double-count them.
+   */
+  summaryRows?: T[];
   /** If provided, the PDF button wraps window.print() around this element's id (see the @media print convention used across Certificates/HR Letters). Omit to hide the PDF button. */
   printAreaId?: string;
   /** Optional phone number to pre-fill the wa.me fallback (e.g. a buyer's contact_no when the report is buyer-specific). Also the mailto: recipient when pdfEndpoint is set. */
@@ -130,6 +140,10 @@ export function ExportBar<T>({
       });
     });
   }
+
+  // Data rows + summary rows, for the FILE downloads below only (see the
+  // summaryRows prop for why the share/print paths keep using `rows`).
+  const fileRows = summaryRows && summaryRows.length > 0 ? [...rows, ...summaryRows] : rows;
 
   const btnClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40";
@@ -224,14 +238,14 @@ export function ExportBar<T>({
           )}
         </div>
       )}
-      <button type="button" className={btnClass} disabled={!rows.length || downloading} onClick={() => runSafely(() => Promise.resolve(downloadCSV(filenameBase, columns, rows)))}>
+      <button type="button" className={btnClass} disabled={!rows.length || downloading} onClick={() => runSafely(() => Promise.resolve(downloadCSV(filenameBase, columns, fileRows)))}>
         ⬇️ CSV
       </button>
       <button
         type="button"
         className={btnClass}
         disabled={!rows.length || downloading}
-        onClick={() => runSafely(() => downloadXLSX(filenameBase, title, columns, rows))}
+        onClick={() => runSafely(() => downloadXLSX(filenameBase, title, columns, fileRows))}
       >
         {downloading ? "⏳ Preparing…" : "⬇️ Excel"}
       </button>
@@ -239,7 +253,7 @@ export function ExportBar<T>({
         type="button"
         className={btnClass}
         disabled={!rows.length || downloading}
-        onClick={() => runSafely(() => Promise.resolve(downloadDoc(filenameBase, title, columns, rows)))}
+        onClick={() => runSafely(() => Promise.resolve(downloadDoc(filenameBase, title, columns, fileRows)))}
       >
         ⬇️ Word
       </button>

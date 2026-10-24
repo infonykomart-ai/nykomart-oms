@@ -1003,6 +1003,20 @@ first — otherwise the office gets every digest twice. The overdue digest sends
 with `skipEmpty`, the leave digest does not (its "aaj koi leave par nahi hai" is
 the proof the job ran).
 
+**Print CSS rule: the page box belongs to whoever renders LAST.**
+`PrintArea` (`src/components/print-view.tsx`) emits `@page { size: A4 }` from a
+React-rendered `<style>` in the page BODY; the A4 `PrintDialog` injects its
+orientation override into the frame it embeds that page in. Body styles come
+AFTER head styles in document order, so a dialog override written into `<head>`
+was silently losing the cascade — the preview said landscape while "Save as
+PDF" still came out A4 **portrait** with the wide sheet's right columns cut
+off. Two invariants now hold: PrintArea's style carries the id
+`oms-printarea-page` so the dialog can strip its `@page` block before printing,
+and the dialog's own rule is appended at the END of the body. **Anything that
+wants to override a report's page size must do both.** The dialog also injects
+`table { max-width: 100% }` for print, because a browser CLIPS a too-wide sheet
+rather than shrinking it — that is the other half of "puri nahi aati".
+
 **Perf rule: no serial Supabase hops for independent reads.** Bill Payment and
 the Party Ledger were running 4-6 queries in SERIES per page load (related notes
 → adjustments + credit notes → purchase items → document hrefs → wallet).

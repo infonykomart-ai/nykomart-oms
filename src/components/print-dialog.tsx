@@ -109,16 +109,47 @@ export function PrintDialog({
   // Writes (or refreshes) the frame document's @page rule. Kept out of the
   // report pages themselves: they are shared by the full-page route and this
   // embed, and the page size is only this dialog's decision to make.
+  //
+  // 2026-10-24 (b) — TWO fixes for "preview landscape me aara hai par print
+  // karte hi portrait ho jati hai aur puri nahi aati":
+  //   1. Cascade order. PrintArea emits its own `@page { size: A4 }` from a
+  //      React-rendered <style> in the frame's BODY — which comes AFTER the
+  //      head-injected rule this dialog used to write, so the browser picked
+  //      PrintArea's portrait rule for the actual print/PDF while the preview
+  //      happily said landscape. The PrintArea rule is now found by its
+  //      #oms-printarea-page id and its @page block stripped here (the fresh
+  //      iframe loads a new document every open, so nothing is lost for the
+  //      page's own full-page print).
+  //   2. Nothing gets cut. A sheet wider than the printable page width is
+  //      clipped by the browser, not shrunk — so in addition to the correct
+  //      page box, the print rules below cap every table at the page's width
+  //      (cells wrap instead of the right-hand columns being chopped off).
   const applyOrientation = useCallback((doc: Document, value: PrintOrientation) => {
+    // (1) Neutralise the embedded page's own hard-coded portrait @page.
+    doc.querySelectorAll("style").forEach((el) => {
+      if (el.id !== "oms-printarea-page") return;
+      const text = el.textContent ?? "";
+      if (text.includes("@page")) el.textContent = text.replace(/@page\s*{[^}]*}/g, "").trim();
+    });
+
     let style = doc.getElementById(ORIENTATION_STYLE_ID) as HTMLStyleElement | null;
     if (!style) {
       style = doc.createElement("style");
       style.id = ORIENTATION_STYLE_ID;
-      doc.head?.appendChild(style);
+      // Appended to the BODY, not the head: it must win the cascade over any
+      // other @page rule the embedded report may render.
+      (doc.body ?? doc.head)?.appendChild(style);
     }
-    style.textContent = `@page { size: A4 ${value}; margin: ${
-      value === "landscape" ? "10mm 10mm 14mm 10mm" : "14mm 12mm 16mm 12mm"
-    }; }`;
+    style.textContent = [
+      `@page { size: A4 ${value}; margin: ${
+        value === "landscape" ? "10mm 10mm 14mm 10mm" : "14mm 12mm 16mm 12mm"
+      }; }`,
+      // (2) Fit the content to the printed page width instead of letting the
+      // printer clip it. Applied to every embedded document — a table that
+      // already fits is unaffected by max-width, one that is wider now wraps
+      // its cells inside the sheet rather than losing its right-hand columns.
+      "@media print { table { max-width: 100% !important; } th, td { overflow-wrap: anywhere; word-break: break-word; } }",
+    ].join("\n");
   }, []);
 
   // Height of the embedded document itself (not the iframe's own viewport),

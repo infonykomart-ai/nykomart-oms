@@ -4,7 +4,7 @@ import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea } from "@/components/print-view";
 import { groupBills } from "@/lib/bill-grouping";
-import { LedgerExportBar } from "./ledger-export-bar";
+import { LedgerExportBar, type LedgerExportRow } from "./ledger-export-bar";
 import type { LedgerPdfInput } from "@/lib/ledger-pdf";
 import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAdminActions } from "./admin-row-actions";
 import { BillDocLink } from "@/components/bill-doc-link";
@@ -576,6 +576,60 @@ async function PartyLedgerInner(
     balance: t.balance,
   }));
 
+  // 2026-10-24 — "LEDGER PAGE SE SUMMERY DOWNLOAD NAHI HORI": the CSV / Excel
+  // / Word downloads carried only the transaction rows, so the saved file had
+  // no Opening / Total Debit / Total Credit / Closing figures — those existed
+  // only on screen (inside the print area's header block). These lines are
+  // appended to the FILE downloads only: the printed PDF already shows them,
+  // and the WhatsApp/Email summary must not double-count the totals
+  // (see ExportBar's summaryRows prop).
+  const exportSummaryRows: LedgerExportRow[] = [
+    ...(fromDate
+      ? [
+          {
+            date: "",
+            invoice_no: "",
+            particulars: `SUMMARY — Opening balance as on ${fromDate}`,
+            payment_mode: "",
+            reference_no: "",
+            debit: 0,
+            credit: 0,
+            balance: openingBalance,
+          },
+        ]
+      : []),
+    {
+      date: "",
+      invoice_no: "",
+      particulars: "SUMMARY — Total Debit (bills / charges)",
+      payment_mode: "",
+      reference_no: "",
+      debit: shownDebit,
+      credit: 0,
+      balance: 0,
+    },
+    {
+      date: "",
+      invoice_no: "",
+      particulars: "SUMMARY — Total Credit (credit notes + payments)",
+      payment_mode: "",
+      reference_no: "",
+      debit: 0,
+      credit: shownCredit,
+      balance: 0,
+    },
+    {
+      date: "",
+      invoice_no: "",
+      particulars: `SUMMARY — Closing balance as on ${toDate || todayISTStr}`,
+      payment_mode: "",
+      reference_no: "",
+      debit: 0,
+      credit: 0,
+      balance: periodClosing,
+    },
+  ];
+
   // 2026-09-15 — "agar ladger bhi pdf bhejni ho to pdf to whatsaap or
   // email par a4 ke page par portrait me sabhi fixes ke sath jaye company
   // logo ke sath": the exact on-screen rows + totals + scope go to
@@ -622,7 +676,7 @@ async function PartyLedgerInner(
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <Link href="/dashboard/parties" className="text-sm text-slate-500 hover:underline">← Back to Party Master</Link>
-        <LedgerExportBar partyId={id} partyName={party.name} rows={exportRows} printAreaId="party-ledger-area" pdfInput={ledgerPdfInput} />
+        <LedgerExportBar partyId={id} partyName={party.name} rows={exportRows} summaryRows={exportSummaryRows} printAreaId="party-ledger-area" pdfInput={ledgerPdfInput} />
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm print:hidden">

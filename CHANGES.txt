@@ -25,6 +25,31 @@ Data, queries aur totals wahi hain — sirf ek ke baad ek chalne ki jagah
 saath chalte hain; koi behaviour change nahi.
 
 
+5) LEDGER KI SUMMARY DOWNLOAD + LANDSCAPE PDF AB SAHI (2 bugs)
+--------------------------------------------------------------
+a) "LEDGER PAGE SE SUMMERY DOWNLOAD NAHI HORI": CSV / Excel / Word download
+   me sirf transaction rows jaate the — Opening / Total Debit / Total Credit
+   / Closing sirf screen par the (print area ke header me). Ab file ke niche
+   SUMMARY ki 4 lines jud jaati hain. WhatsApp/Email/PDF wale raaston par
+   nahi judti — warna totals dobaar count ho jaate (ExportBar ka naya
+   `summaryRows` prop sirf file downloads me append karta hai).
+
+b) "PREVIEW LANDSCAPE ME AARA HAI PAR PRINT KARTE HI PORTRAIT HO JATI HAI
+   OR PURI NAHI AATI": do alag wajah the:
+     • Cascade order: PrintArea frame ke BODY me `@page { size: A4 }` render
+       karta hai, aur PrintDialog wahi @page HEAD me inject karta tha —
+       body wala rule document order me baad me aata hai, is liye wahi
+       jeet jaata tha. PDF hamesha portrait banti thi chahe preview
+       landscape dikhaye. Ab PrintArea ka style ek id (oms-printarea-page)
+       par milta hai aur dialog print se pehle uska @page block hata deta
+       hai; dialog ka apna @page ab BODY ke end me lagta hai (cascade me
+       sabse aakhri).
+     • Kat jaana: browser content ko chhota KARTA nahi, kaat deta hai.
+       Ab dialog print rules me table ko page-width tak cap karta hai
+       (`table { max-width: 100% }` + cell wrapping), to saari columns
+       sheet ke andar aati hain, chahe kitni bhi wide sheet ho.
+
+
 1) "KITNA PAISA KITNA PURANA PADA HAI" — PAYABLES AGEING REPORT
 ---------------------------------------------------------------
 Pehle ka Outstanding report sirf total batata tha, umar (ageing) nahi.
@@ -121,7 +146,11 @@ M  src/app/api/cron/overdue-digest/route.ts                  (thin wrapper)
 M  src/app/api/cron/leave-digest/route.ts                    (thin wrapper)
 M  src/app/api/cron/poll-fedex-tracking/route.ts             (dono digest ab yahan se chalte hain)
 M  src/app/dashboard/bill-payment/page.tsx                   (FY filter + parallel waves)
-M  src/app/dashboard/parties/[id]/ledger/page.tsx            (parallel waves, 6 serial → 2)
+M  src/app/dashboard/parties/[id]/ledger/page.tsx            (parallel waves + summary rows)
+M  src/app/dashboard/parties/[id]/ledger/ledger-export-bar.tsx (summaryRows pass-through)
+M  src/components/export-bar.tsx                             (summaryRows — file downloads only)
+M  src/components/print-view.tsx                             (id-able @page style)
+M  src/components/print-dialog.tsx                           (cascade fix + table fit-to-page)
 M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx (Paid/Balance)
 M  src/app/dashboard/reports/page.tsx                        (Ageing ka link)
 M  BRAIN.md, CHANGES.txt

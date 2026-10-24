@@ -124,7 +124,16 @@ export function PrintArea({
 }) {
   return (
     <>
-      <style>{`
+      {/* id matters: the A4 PrintDialog (src/components/print-dialog.tsx)
+          injects its own `@page { size: A4 landscape }` into the frame it
+          embeds this page in. This React-rendered <style> sits in the BODY,
+          i.e. AFTER the dialog's head-injected rule in document order, so the
+          cascade used to let this hard-coded portrait rule win — the preview
+          said landscape but "Save as PDF" still came out A4 portrait with the
+          right-hand columns cut off. The dialog now finds this rule by id and
+          strips its @page block before printing (it re-injects the correct
+          page box), so keep this id in sync with print-dialog.tsx. */}
+      <style id="oms-printarea-page">{`
         @page {
           size: A4;
           margin: 14mm 12mm 16mm 12mm;
