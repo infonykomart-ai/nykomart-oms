@@ -219,6 +219,47 @@ export function PrintDialog({
     setOrientation(value);
   }, []);
 
+  // 2026-10-24 (b) — "A4 DILOG ME JO REPORT GENRATE HOTI HAI VO DOWNLOAD BHI
+  // HONI CHAHIYE PDF EXCEL FORMAT ME LANDSCAPE OR PORTRAIT ME": PDF already
+  // goes through the print pipeline (which now honours the orientation
+  // switch, and "Save as PDF" uses the same page box), so the missing half
+  // was a real FILE download for spreadsheets. Every report in this dialog is
+  // an HTML table, so the frame's own tables are wrapped into an Excel
+  // workbook (.xls, the HTML-table flavour every Excel/Sheets/LibreOffice
+  // imports) — no library, no per-report wiring, and it always matches
+  // exactly what is on screen.
+  const downloadExcel = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    try {
+      const tables = Array.from(doc.querySelectorAll("table"));
+      if (tables.length === 0) {
+        window.alert("This document has no table to put in a spreadsheet — use “Download PDF” instead.");
+        return;
+      }
+      const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const heading = doc.querySelector("h1")?.textContent?.trim() || title || "Report";
+      const body = tables
+        .map((t, i) =>
+          `<h3>${escape(heading)}${tables.length > 1 ? ` — table ${i + 1}` : ""}</h3>${t.outerHTML}`
+        )
+        .join("<br/>");
+      const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8" /></head><body>${body}</body></html>`;
+      const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const base = (title ?? "report").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      link.href = url;
+      link.download = `${base || "report"}-${new Date().toISOString().slice(0, 10)}.xls`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      window.alert("Could not read the document to build the spreadsheet — please use “Download PDF”.");
+    }
+  }, [title]);
+
   const segBtn = (value: PrintOrientation) =>
     `rounded px-2 py-1 text-[11px] font-medium ${
       orientation === value ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
@@ -242,7 +283,10 @@ export function PrintDialog({
         open={open}
         onClose={() => setOpen(false)}
         title={title ?? "Print Preview"}
-        subtitle={subtitle ?? `A4 ${orientation} preview — prints exactly this document.`}
+        subtitle={
+          subtitle ??
+          `A4 ${orientation} preview — “Download PDF” saves it in this orientation, “Excel” saves the same sheet as a spreadsheet.`
+        }
         flushBody
         fitContent
         wide={orientation === "landscape"}
@@ -268,11 +312,21 @@ export function PrintDialog({
             <div className="flex gap-2">
               <button
                 type="button"
+                onClick={downloadExcel}
+                disabled={!loaded}
+                title="Download this sheet as an Excel file (.xls) — one section per table on the document"
+                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+              >
+                ⬇ Excel
+              </button>
+              <button
+                type="button"
                 onClick={printNow}
                 disabled={!loaded}
+                title={`Prints / saves the PDF on A4 ${orientation} — pick “Save as PDF” as the printer`}
                 className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
               >
-                🖨 Print / Save PDF
+                ⬇ PDF (A4 {orientation})
               </button>
               <button
                 type="button"

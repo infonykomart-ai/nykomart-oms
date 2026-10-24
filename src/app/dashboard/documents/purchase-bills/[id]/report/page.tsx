@@ -140,10 +140,11 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       ourShipping: fig?.ourShippingInr ?? null,
       courierShipping: fig?.courierGrossInr ?? null,
       courierBillSourced: fig?.courierBillSourced ?? false,
-      // Purchase % = this line's pre-GST purchase cost as a share of the
-      // order's own value (GST is recoverable input credit, so it is not
-      // part of what the purchase actually costs us).
-      purchasePct: orderValue > 0 ? (amount / orderValue) * 100 : null,
+      // 2026-10-24 (c) — "PERSENT ... PURCHASE COST WITHOUT GST VALI VALUE SE
+      // NIKAL RAHA HAI LEKIN MUJHE TOTAL VALUE SE CHAHIYE GST ADD HONE KE BAAD":
+      // purchase % is now measured on the TOTAL line value (amount + GST, i.e.
+      // what the vendor is actually paid), not on the pre-GST base.
+      purchasePct: orderValue > 0 ? ((amount + gstAmount) / orderValue) * 100 : null,
     };
   });
   const subtotal = lines.reduce((s, l) => s + l.amount, 0);
@@ -188,7 +189,9 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
     totalOurShipping += l.ourShipping ?? 0;
     totalCourierShipping += l.courierShipping ?? 0;
   }
-  const overallPurchasePct = totalOrderValue > 0 ? (subtotal / totalOrderValue) * 100 : null;
+  // 2026-10-24 (c) — same rule for the invoice total: total purchase value
+  // INCLUDING GST as a share of the order value.
+  const overallPurchasePct = totalOrderValue > 0 ? ((subtotal + gstTotal) / totalOrderValue) * 100 : null;
 
   // Inside the A4 preview dialog this page is embedded with ?embed=1
   // (src/components/print-dialog.tsx) → x-embed; the dialog supplies its own
@@ -339,7 +342,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                   <p className="text-slate-600">OUR SHIPPING CHARGE: ₹{money(totalOurShipping)}</p>
                   <p className="text-slate-600">COURIER SHIPPING CHARGE (incl. GST): ₹{money(totalCourierShipping)}</p>
                   <p className="font-semibold text-slate-900">
-                    PURCHASE % (of order value): {overallPurchasePct != null ? `${overallPurchasePct.toFixed(1)}%` : "—"}
+                    PURCHASE % (of order value, incl. GST): {overallPurchasePct != null ? `${overallPurchasePct.toFixed(1)}%` : "—"}
                   </p>
                 </div>
               )}
