@@ -6,6 +6,7 @@
 import type { ReactNode } from "react";
 import { PrintArea } from "@/components/print-view";
 import type { BillStatementData } from "@/lib/bill-statement";
+import { purchaseAreaSqFt } from "@/lib/length-units";
 
 export function BillStatementDocument({
   data,
@@ -20,6 +21,14 @@ export function BillStatementDocument({
 }) {
   const { bill, party, company, profile, companyName } = data;
   const inr = (n: number) => `₹${n.toFixed(2)}`;
+  // 2026-10-24 — same fix as purchase-bills/[id]/report: this column is
+  // purchase_bills.sq_feet, i.e. the billed AREA in the bill's own qty_unit,
+  // not a length and not the order's 3X20 FT size. It is shown in Sq Ft
+  // whatever unit the bill was entered in (MTR/INCH/CM/YARD converted by
+  // purchaseAreaSqFt — squared factor, never the linear toFeet), with the
+  // as-entered figure underneath so it still ties back to the vendor's bill.
+  // PCS lines carry sq_feet = 1 as a formula placeholder → no area to show.
+  const SQ_UNIT_WORD: Record<string, string> = { FT: "ft", MTR: "mtr", INCH: "in", YARD: "yd", CM: "cm" };
 
   return (
     <PrintArea id="bill-statement-print" companyName={companyName} companyLogoUrl={company?.logo_url}>
@@ -82,7 +91,7 @@ export function BillStatementDocument({
                 <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                   <th className="py-1 pr-2">PO / Order Ref</th>
                   <th className="py-1 pr-2">Description</th>
-                  <th className="py-1 pr-2 text-right">Size</th>
+                  <th className="py-1 pr-2 text-right">Sq Ft</th>
                   <th className="py-1 pr-2 text-right">Qty</th>
                   <th className="py-1 pr-2">Unit</th>
                   <th className="py-1 pr-2 text-right">Rate</th>
@@ -96,7 +105,22 @@ export function BillStatementDocument({
                   <tr key={l.purchaseBillId ?? i} className="border-b border-slate-100">
                     <td className="py-1 pr-2">{l.refNo ?? "—"}</td>
                     <td className="py-1 pr-2">{l.description ?? "—"}</td>
-                    <td className="py-1 pr-2 text-right">{l.unit === "PCS" ? "—" : `${l.size} ${l.unit}`}</td>
+                    <td className="py-1 pr-2 text-right">
+                      {(() => {
+                        const sqFt = purchaseAreaSqFt(l.size, l.unit);
+                        if (sqFt == null) return "—";
+                        return (
+                          <>
+                            {sqFt.toFixed(2)}
+                            {l.unit !== "FT" && (
+                              <div className="text-[9px] text-slate-400">
+                                ({l.size} sq {SQ_UNIT_WORD[l.unit] ?? l.unit})
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </td>
                     <td className="py-1 pr-2 text-right">{l.qty}</td>
                     <td className="py-1 pr-2">{l.unit}</td>
                     <td className="py-1 pr-2 text-right">{inr(l.rate)}</td>

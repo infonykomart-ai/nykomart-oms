@@ -25,6 +25,7 @@ import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { loadOrderShippingFigures } from "@/lib/orders/shipping-figures";
+import { purchaseAreaSqFt } from "@/lib/length-units";
 
 const money = (n: number | null | undefined) =>
   n == null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -118,7 +119,13 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       description: r.work_description,
       qty,
       unit: r.qty_unit,
+      // Raw value as billed, in the bill's own unit — this is what the amount
+      // formula below must keep using (qty × this × rate, rate being per that
+      // same unit). `sizeSqFt` is the same area normalised to square feet for
+      // DISPLAY only.
       size,
+      sizeSqFt: purchaseAreaSqFt(size, r.qty_unit),
+      sizeUnit: r.qty_unit ?? "FT",
       rate,
       amount,
       gstRatePct: storedRate,
@@ -140,6 +147,22 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
   const roundOff = rows.reduce((s, r) => s + Number(r.round_off_amt ?? 0), 0);
   const grossTotal = subtotal + gstTotal + roundOff;
   const isGst = gstTotal > 0;
+
+  // 2026-10-24 — "YE JO MENE MARK KIYA SS ME VO TO SQ FT ME AAYEGA NA TO SIZE
+  // KYA LIKHA HAI": the old "Size" header was wrong. The values there are
+  // purchase_bills.sq_feet — the billed AREA in the bill's own qty_unit (FT →
+  // sq ft, MTR → sq m, INCH → sq in…), which is why the screenshot shows
+  // 60.00 / 9.00 / 48.00 for rows whose actual 3X20 FT / 3X3 FT size is
+  // already printed in the separate "Type / Size" column. Reading it as a
+  // length made 60.00 look like 60 ft instead of 60 sq ft.
+  //
+  // 2026-10-24 (2) — "CHAHE SIZE INCH ME HO YA CM ME JO AREA HAI VO SQ FT ME
+  // NIKAL KE AAYE": rather than relabelling per unit (Sq Mtr / Sq In / Sq Cm),
+  // every row is now converted to Sq Ft for display (purchaseAreaSqFt), with
+  // the value as entered shown underneath in small grey text whenever the
+  // bill's unit isn't FT — so the figure can still be tied back to the
+  // vendor's own bill and the Rate column's unit stays unambiguous.
+  const SQ_UNIT_WORD: Record<string, string> = { FT: "ft", MTR: "mtr", INCH: "in", YARD: "yd", CM: "cm" };
 
   // Order-level totals are summed ONCE PER ORDER, not once per purchase line:
   // one vendor invoice commonly covers several lines for the same PO, and
@@ -207,7 +230,7 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                 <th className="py-1 pr-2">Type / Size</th>
                 <th className="py-1 pr-2 text-right">Qty</th>
                 <th className="py-1 pr-2">Unit</th>
-                <th className="py-1 pr-2 text-right">Size</th>
+                <th className="py-1 pr-2 text-right">Sq Ft</th>
                 <th className="py-1 pr-2 text-right">Rate</th>
                 <th className="py-1 pr-2 text-right">Amount</th>
                 <th className="py-1 pr-2 text-right">GST</th>
@@ -227,7 +250,14 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2">{r.orderSize ?? "—"}</td>
                   <td className="py-1 pr-2 text-right">{r.qty}</td>
                   <td className="py-1 pr-2">{r.unit}</td>
-                  <td className="py-1 pr-2 text-right">{money(r.size)}</td>
+                  <td className="py-1 pr-2 text-right">
+                    {r.sizeSqFt != null ? money(r.sizeSqFt) : "—"}
+                    {r.sizeSqFt != null && r.sizeUnit !== "FT" && (
+                      <div className="text-[9px] font-normal text-slate-400">
+                        ({money(r.size)} sq {SQ_UNIT_WORD[r.sizeUnit] ?? r.sizeUnit})
+                      </div>
+                    )}
+                  </td>
                   <td className="py-1 pr-2 text-right">{money(r.rate)}</td>
                   <td className="py-1 pr-2 text-right">{money(r.amount)}</td>
                   <td className="py-1 pr-2 text-right">

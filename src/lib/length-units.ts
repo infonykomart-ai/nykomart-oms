@@ -39,3 +39,35 @@ export function toFeet(value: number, unit: LengthUnit): number {
 // across units.
 export const PURCHASE_QTY_UNITS = [...LENGTH_UNITS, "PCS"] as const;
 export type PurchaseQtyUnit = (typeof PURCHASE_QTY_UNITS)[number];
+
+// 2026-10-24 — "CHAHE SIZE INCH ME HO YA CM ME JO AREA HAI VO SQ FT ME NIKAL
+// KE AAYE, GALTI NHI HO": purchase_bills.sq_feet holds the billed AREA in the
+// bill's own qty_unit — 60 with unit FT means 60 sq ft, 9 with unit MTR means
+// 9 sq m, 8640 with unit INCH means 8640 sq in. Converting that to square feet
+// is NOT toFeet(): toFeet is for LENGTHS (1 m = 3.28084 ft), while an area
+// scales by the SQUARE of that factor (1 sq m = 3.28084² = 10.7639 sq ft).
+// Using toFeet on an area would report 9 sq m as 29.53 sq ft instead of the
+// correct 96.88 — a 3.28x understatement. Kept separate from toFeet on
+// purpose so the two can never be confused at a call site.
+export function areaToSqFt(area: number, unit: LengthUnit): number {
+  if (!Number.isFinite(area)) return 0;
+  const ftPerUnit = FT_PER_UNIT[unit];
+  return area * ftPerUnit * ftPerUnit;
+}
+
+/**
+ * Purchase-bill area in Sq Ft, safe for the report/statement columns.
+ *
+ * Returns null for PCS bills — those store sq_feet = 1 purely so the
+ * qty * sq_feet * unit_rate generated column collapses to qty * rate-per-pc
+ * (db/2026-08-27-purchase-bills-pcs-unit.sql); there is no area to show.
+ * Unknown/NULL units keep the historical FT meaning, exactly like
+ * purchase-bills/[id]/report's amount maths does.
+ */
+export function purchaseAreaSqFt(area: number | null | undefined, unit: string | null | undefined): number | null {
+  const u = (unit ?? "FT") as PurchaseQtyUnit;
+  if (u === "PCS") return null;
+  const value = Number(area ?? 0);
+  if (!Number.isFinite(value)) return null;
+  return areaToSqFt(value, (LENGTH_UNITS as readonly string[]).includes(u) ? (u as LengthUnit) : "FT");
+}
