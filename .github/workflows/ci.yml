@@ -23,6 +23,13 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Business-logic tests (finance/GST, payroll, area conversion,
+      # duplicate-buyer matching, punch import, FY/date validation).
+      # Node's built-in runner + tsx, so there is no test framework to keep
+      # in sync with the rest of the toolchain.
+      - name: Test
+        run: npm test
+
       - name: Type-check
         run: npx tsc --noEmit
 

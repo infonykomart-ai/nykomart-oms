@@ -13,6 +13,18 @@
 # testing
 /coverage
 
+# Local-only records: real ledger/payment/bill/party/employee data SQL
+# lives here so it is never committed. See db/MIGRATIONS.md §6
+/.private-data/
+
+# local patch/scratch artifacts
+*.patch
+
+# single package manager: npm / package-lock.json (see README)
+bun.lock
+yarn.lock
+pnpm-lock.yaml
+
 # next.js
 /.next/
 /out/
