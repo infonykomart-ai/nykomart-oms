@@ -38,18 +38,23 @@ export function ShippingDetailsForm({
   const [state, formAction, pending] = useActionState(saveManualShippingDetails, initialState);
 
   useEffect(() => {
-    // Order status changes after a dispatch (and the page's own status
-    // grid comes from server data) — a full refresh keeps every section
+    // 2026-10-26 — reload after EVERY successful save, not only a dispatch:
+    // the form's defaults now come from the real shipment/package rows, and
+    // without the refresh the inputs kept showing what was typed instead of
+    // what actually got stored (blank weight after an AWB-only save, dims
+    // wiped from the input, etc.). A full refresh keeps every section
     // consistent, same pattern as the ledger's delete button.
-    if (state.success && state.dispatched) window.location.reload();
-  }, [state.success, state.dispatched]);
+    if (state.success) window.location.reload();
+  }, [state.success]);
 
   return (
     <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-xs print:hidden">
       <p className="mb-1 font-semibold text-slate-700">Shipping &amp; Invoice Details (manual entry)</p>
       <p className="mb-2 text-slate-400">
-        For shipments booked outside the app. Filling <strong>both</strong> AWB No. and Invoice No. marks the order{" "}
-        <strong>Dispatched</strong> automatically{orderStatus === "Dispatched" || orderStatus === "Delivered" ? " (already " + orderStatus + ")" : ""}.
+        For shipments booked outside the app. Saving an <strong>AWB No.</strong> marks the order{" "}
+        <strong>Dispatched</strong> automatically{orderStatus === "Dispatched" || orderStatus === "Delivered" ? " (already " + orderStatus + ")" : ""}, adds it
+        to Track Shipments, and lets the courier tracking API update its status. Every field is pre-filled from what is
+        already saved, so you only change what differs. Blank fields never overwrite a saved value.
       </p>
       <form action={formAction} className="space-y-2">
         <input type="hidden" name="order_id" value={orderId} />
@@ -57,6 +62,7 @@ export function ShippingDetailsForm({
         {state.success && (
           <p className="rounded bg-green-50 px-2 py-1 text-[11px] text-green-700">
             ✓ Saved{state.dispatched ? " — order marked Dispatched." : "."}
+            {state.trackingSync ? ` Tracking status: ${state.trackingSync}.` : ""}
           </p>
         )}
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">

@@ -22,7 +22,7 @@ export async function loadOrderDetail(id: string) {
 
   if (!order || !employee.companyIds.includes(order.company_id)) return null;
 
-  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }, { data: refunds }, { data: currencies }] =
+  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }, { data: refunds }, { data: currencies }, { data: shipments }, { data: courierRows }] =
     await Promise.all([
       supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
       supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
@@ -48,7 +48,9 @@ export async function loadOrderDetail(id: string) {
       listVendorAssignments(id),
       supabase
         .from("dispatch_invoices")
-        .select("invoice_no, invoice_date, courier_name, awb_no, shipping_weight_kg, length_cm, width_cm, height_cm")
+        .select(
+          "invoice_no, invoice_date, courier_name, awb_no, shipping_weight_kg, length_cm, width_cm, height_cm, volumetric_weight, delivered_status, delivered_date, last_update_date"
+        )
         .eq("order_id", id)
         .maybeSingle(),
       supabase
@@ -57,7 +59,75 @@ export async function loadOrderDetail(id: string) {
         .eq("order_id", id)
         .order("refund_date", { ascending: false }),
       supabase.from("currencies").select("code, name").order("code"),
+      // 2026-10-26 — the shipment/package rows are the SOURCE OF TRUTH for
+      // an order's AWB/weight/dimensions (order_shipments + order_packages;
+      // dispatch_invoices is only their order-level mirror). The shipping
+      // form used to pre-fill from that mirror alone, so whenever the mirror
+      // lagged (a manual save that only touched an existing shipment, an
+      // older row, a failed resync) every field looked empty again. Reading
+      // the real rows here keeps the form in step with whatever any writer
+      // — courier booking, Order Shipments & Packages, manual entry — saved.
+      supabase
+        .from("order_shipments")
+        .select("id, shipment_no, awb_no, courier_name, delivered_status, delivered_date, last_update_date")
+        .eq("order_id", id)
+        .order("shipment_no"),
+      supabase
+        .from("courier_shipments")
+        .select("courier, manual_courier_name, status, awb_no, label_url")
+        .eq("order_id", id),
     ]);
+
+  const shipmentRows = shipments ?? [];
+  const shipmentIds = shipmentRows.map((s) => s.id);
+  const { data: packageRows } = shipmentIds.length
+    ? await supabase
+        .from("order_packages")
+        .select("order_shipment_id, package_no, weight_kg, length_cm, width_cm, height_cm, volumetric_weight")
+        .in("order_shipment_id", shipmentIds)
+    : { data: [] };
+  const packages = packageRows ?? [];
+
+  function joinDistinct(values: (string | null)[]): string | null {
+    const distinct = Array.from(new Set(values.filter((v): v is string => !!v)));
+    return distinct.length ? distinct.join(", ") : null;
+  }
+
+  const totalWeight = packages.reduce((sum, p) => sum + (p.weight_kg ? Number(p.weight_kg) : 0), 0);
+  const totalVolumetric = packages.reduce((sum, p) => sum + (p.volumetric_weight ? Number(p.volumetric_weight) : 0), 0);
+  const anyWeight = packages.some((p) => p.weight_kg != null);
+  const firstShipment = shipmentRows.find((s) => s.shipment_no === 1) ?? shipmentRows[0] ?? null;
+  const firstPackage = firstShipment
+    ? packages.find((p) => p.order_shipment_id === firstShipment.id && p.package_no === 1) ??
+      packages.find((p) => p.order_shipment_id === firstShipment.id) ??
+      null
+    : null;
+
+  const shipmentsForView = shipmentRows.map((s) => {
+    const pkgs = packages.filter((p) => p.order_shipment_id === s.id);
+    const weight = pkgs.reduce((sum, p) => sum + (p.weight_kg ? Number(p.weight_kg) : 0), 0);
+    const volumetric = pkgs.reduce((sum, p) => sum + (p.volumetric_weight ? Number(p.volumetric_weight) : 0), 0);
+    const first = pkgs.find((p) => p.package_no === 1) ?? pkgs[0] ?? null;
+    const courierRow =
+      (courierRows ?? []).find((c) => !!s.awb_no && c.awb_no === s.awb_no) ?? (courierRows ?? [])[0] ?? null;
+    return {
+      id: s.id,
+      shipmentNo: s.shipment_no,
+      awbNo: s.awb_no,
+      courierName: s.courier_name,
+      deliveredStatus: s.delivered_status,
+      deliveredDate: s.delivered_date,
+      lastUpdateDate: s.last_update_date,
+      weightKg: pkgs.some((p) => p.weight_kg != null) ? Math.round(weight * 1000) / 1000 : null,
+      volumetricWeightKg: pkgs.some((p) => p.volumetric_weight != null) ? Math.round(volumetric * 100) / 100 : null,
+      lengthCm: first?.length_cm != null ? Number(first.length_cm) : null,
+      widthCm: first?.width_cm != null ? Number(first.width_cm) : null,
+      heightCm: first?.height_cm != null ? Number(first.height_cm) : null,
+      labelUrl: courierRow?.label_url ?? null,
+      bookingStatus: courierRow?.status ?? null,
+      bookingCourier: courierRow?.manual_courier_name ?? courierRow?.courier ?? null,
+    };
+  });
 
   const statusSummary = statusByOrder[order.id];
 
@@ -77,18 +147,60 @@ export async function loadOrderDetail(id: string) {
     creditNotes: (creditNotes ?? []).map((c) => ({ ...c, refund_amount: Number(c.refund_amount) })),
     vendorAssignmentParties: parties ?? [],
     vendorAssignmentCycles: vendorAssignments,
-    shippingDefaults: dispatchSummary
-      ? {
-          awb_no: dispatchSummary.awb_no,
-          courier_name: dispatchSummary.courier_name,
-          invoice_no: dispatchSummary.invoice_no,
-          invoice_date: dispatchSummary.invoice_date,
-          weight_kg: dispatchSummary.shipping_weight_kg != null ? Number(dispatchSummary.shipping_weight_kg) : null,
-          length_cm: dispatchSummary.length_cm != null ? Number(dispatchSummary.length_cm) : null,
-          width_cm: dispatchSummary.width_cm != null ? Number(dispatchSummary.width_cm) : null,
-          height_cm: dispatchSummary.height_cm != null ? Number(dispatchSummary.height_cm) : null,
-        }
-      : { awb_no: null, courier_name: null, invoice_no: null, invoice_date: null, weight_kg: null, length_cm: null, width_cm: null, height_cm: null },
+    // 2026-10-26 — real shipment/package rows win, the dispatch_invoices
+    // mirror is the fallback (see the shipment query's comment above). This
+    // is what makes the form auto-fill whatever was already saved, no matter
+    // which screen saved it.
+    shippingDefaults: {
+      awb_no: joinDistinct(shipmentRows.map((s) => s.awb_no)) ?? dispatchSummary?.awb_no ?? null,
+      courier_name: joinDistinct(shipmentRows.map((s) => s.courier_name)) ?? dispatchSummary?.courier_name ?? null,
+      invoice_no: dispatchSummary?.invoice_no ?? invoice?.invoice_no ?? null,
+      invoice_date: dispatchSummary?.invoice_date ?? invoice?.invoice_date ?? null,
+      weight_kg: anyWeight
+        ? Math.round(totalWeight * 1000) / 1000
+        : dispatchSummary?.shipping_weight_kg != null
+          ? Number(dispatchSummary.shipping_weight_kg)
+          : null,
+      length_cm:
+        firstPackage?.length_cm != null
+          ? Number(firstPackage.length_cm)
+          : dispatchSummary?.length_cm != null
+            ? Number(dispatchSummary.length_cm)
+            : null,
+      width_cm:
+        firstPackage?.width_cm != null
+          ? Number(firstPackage.width_cm)
+          : dispatchSummary?.width_cm != null
+            ? Number(dispatchSummary.width_cm)
+            : null,
+      height_cm:
+        firstPackage?.height_cm != null
+          ? Number(firstPackage.height_cm)
+          : dispatchSummary?.height_cm != null
+            ? Number(dispatchSummary.height_cm)
+            : null,
+    },
+    /** Every AWB/package on this order, plus its courier-API tracking state. */
+    shipments: shipmentsForView,
+    /** Order-level shipment summary (dispatch_invoices mirror + totals). */
+    dispatchSummary: {
+      awbNo: joinDistinct(shipmentRows.map((s) => s.awb_no)) ?? dispatchSummary?.awb_no ?? null,
+      courierName: joinDistinct(shipmentRows.map((s) => s.courier_name)) ?? dispatchSummary?.courier_name ?? null,
+      invoiceNo: dispatchSummary?.invoice_no ?? null,
+      invoiceDate: dispatchSummary?.invoice_date ?? null,
+      weightKg: anyWeight
+        ? Math.round(totalWeight * 1000) / 1000
+        : dispatchSummary?.shipping_weight_kg != null
+          ? Number(dispatchSummary.shipping_weight_kg)
+          : null,
+      volumetricWeightKg: totalVolumetric > 0 ? Math.round(totalVolumetric * 100) / 100 : null,
+      lengthCm: firstPackage?.length_cm != null ? Number(firstPackage.length_cm) : null,
+      widthCm: firstPackage?.width_cm != null ? Number(firstPackage.width_cm) : null,
+      heightCm: firstPackage?.height_cm != null ? Number(firstPackage.height_cm) : null,
+      deliveredStatus: dispatchSummary?.delivered_status ?? null,
+      deliveredDate: dispatchSummary?.delivered_date ?? null,
+      lastUpdateDate: dispatchSummary?.last_update_date ?? null,
+    },
     canManageOrders: employee.capabilities.includes("order_entry"),
     refunds: (refunds ?? []).map((r) => ({ ...r, refund_amount: Number(r.refund_amount) })),
     currencies: currencies ?? [],
