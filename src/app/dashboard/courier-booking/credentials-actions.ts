@@ -139,7 +139,7 @@ export async function testFedexAllCompaniesAction(
     .filter(Boolean);
   const companyIds = Array.from(new Set(requested.filter((id) => employee.companyIds.includes(id))));
   if (companyIds.length === 0) {
-    return { error: "Koi company test karne ke liye nahi mili (ya access nahi hai).", testedAt: null, results: [] };
+    return { error: "No company available to test (or no access).", testedAt: null, results: [] };
   }
 
   const results = await Promise.all(

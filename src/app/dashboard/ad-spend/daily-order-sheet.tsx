@@ -171,7 +171,7 @@ export function DailyOrderSheet({
                 href={`/dashboard/orders/print?ids=${data.orderIds.join(",")}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Din ka poora order file (PO) — wahi file jo Order page se banti hai, A4 PDF"
+                title="The full day's order file (PO) — the same file the Order page generates, A4 PDF"
                 className="print:hidden flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
               >
                 📄 Generate PO File (A4)

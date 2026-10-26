@@ -146,7 +146,7 @@ export async function resolveLeaveDigestRecipients(
       recipients: [],
       source: "none",
       note: /telegram_chat_id/i.test(adminError.message)
-        ? "employees.telegram_chat_id nahi hai — db/2026-09-30c-employee-telegram-chat-id.sql run karein (ya LEAVE_DIGEST_CHAT_ID env set karein)."
+        ? "employees.telegram_chat_id is missing — run db/2026-09-30c-employee-telegram-chat-id.sql (or set LEAVE_DIGEST_CHAT_ID)."
         : adminError.message,
     };
   }
@@ -162,7 +162,7 @@ export async function resolveLeaveDigestRecipients(
   return {
     recipients,
     source: recipients.length > 0 ? "leave_admins" : "none",
-    note: recipients.length === 0 ? "Koi leave_admin ka Telegram connected nahi hai — LEAVE_DIGEST_CHAT_ID set karein." : undefined,
+    note: recipients.length === 0 ? "No leave_admin has Telegram connected — set LEAVE_DIGEST_CHAT_ID." : undefined,
   };
 }
 

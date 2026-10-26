@@ -1867,7 +1867,7 @@ export async function getPurchaseBillHistory(
     // file instead of a raw PostgREST message — this panel is exactly where an
     // Admin is trying to find that out.
     const message = /audit_log/i.test(error.message)
-      ? "audit_log table nahi hai — pehle db/2026-08-24-audit-log.sql run karein (Schema Status card dekhein)."
+      ? "The audit_log table is missing — run db/2026-08-24-audit-log.sql first (see the Schema Status card)."
       : error.message;
     return { error: message, entries: [] };
   }

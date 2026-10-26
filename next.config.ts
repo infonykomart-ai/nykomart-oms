@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Development-only: the hosted preview serves the app from a per-workspace
+  // *.e2b.app origin, which Next otherwise blocks from loading dev assets
+  // ("Blocked cross-origin request to Next.js dev resource") — the page then
+  // renders unstyled/broken. Production hosts are unaffected by this list.
+  allowedDevOrigins: ["*.e2b.app"],
   // pdfjs-dist (courier-bill PDF parsing, src/lib/courier-bills/pdf-layout.ts)
   // must NOT be webpack-bundled — its legacy Node build does its own runtime
   // conditional requires that break under bundling. Left external, Node

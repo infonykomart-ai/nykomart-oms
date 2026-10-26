@@ -342,7 +342,7 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     return {
       error: null,
       success: true,
-      message: `Leave application filed for ${targetEmployee.name} and approved — us range ki Attendance 'Leave' mark ho gayi.`,
+      message: `Leave application filed for ${targetEmployee.name} and approved — Attendance for that range is marked 'Leave'.`,
     };
   }
 
@@ -352,9 +352,9 @@ export async function submitLeaveRequest(_prev: LeaveActionState, formData: Form
     error: null,
     success: true,
     message: filingForSomeoneElse
-      ? `Leave application filed for ${targetEmployee.name} — ab approval pending hai.`
+      ? `Leave application filed for ${targetEmployee.name} — approval is pending.`
       : isBackDated
-        ? "Back-dated leave request sent for approval — approve hote hi us range ki Attendance 'Leave' mark ho jayegi."
+        ? "Back-dated leave request sent for approval — Attendance for that range is marked 'Leave' as soon as it is approved."
         : "Leave request sent for approval.",
   };
 }

@@ -29,7 +29,6 @@ export default async function YearlyReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/yearly-report"
       heading="Yearly Report"
-      blurb="Current financial year (1 April – 31 March) ka per-employee performance summary — Present, Late, Half Day, Leave, Absent, Work hrs aur OT hrs — export ke saath."
       reportTypes={yearlyReportTypes()}
       defaultReport="performance"
       defaultFrom={fy.from}

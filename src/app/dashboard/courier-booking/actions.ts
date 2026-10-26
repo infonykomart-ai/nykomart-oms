@@ -554,7 +554,7 @@ export async function saveCourierShipperProfile(_prev: ShipperProfileState, form
 // 2026-09-17 — "delete ka option" on the shipper profile view card.
 // Clears the whole row for this company (the form above rebuilds it from
 // scratch); re-checks the capability server-side like every action here.
-export async function deleteCourierShipperProfile(_prev: ShipperProfileState, _formData: FormData): Promise<ShipperProfileState> {
+export async function deleteCourierShipperProfile(): Promise<ShipperProfileState> {
   const employee = await requireCapability("courier_booking_shipment");
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("courier_shipper_profiles").delete().eq("company_id", employee.currentCompanyId);

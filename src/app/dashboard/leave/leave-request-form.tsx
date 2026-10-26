@@ -141,8 +141,8 @@ export function LeaveRequestForm({
           </select>
           {filingForSomeoneElse && (
             <p className="mt-1 text-[11px] text-sky-700">
-              Yeh application us employee ke naam par file hogi — approval ke baad Attendance usi ke naam par &quot;Leave&quot;
-              mark hogi.
+              This application is filed under that employee&apos;s name — after approval, Attendance is marked &quot;Leave&quot;
+              under their name.
             </p>
           )}
         </div>
@@ -202,9 +202,8 @@ export function LeaveRequestForm({
         </div>
       </div>
       <p className="text-[11px] text-slate-400">
-        Back-dated leave bhi apply kar sakte hain — From date aaj ({today}) se pehle ki bhi ho sakti hai.
-        Approve hone par us range ke dinon ki Attendance &quot;Leave&quot; mark hogi (jin dinon par koi
-        Present punch nahi hai — wo din waise hi Present rahenge).
+        Back-dated leave is allowed — the From date can be earlier than today ({today}). After approval, Attendance for
+        that range is marked &quot;Leave&quot; (days with a Present punch stay Present).
       </p>
 
       <div>
@@ -213,7 +212,7 @@ export function LeaveRequestForm({
           name="reason"
           required
           rows={3}
-          placeholder={filingForSomeoneElse ? "Kis wajah se leave (employee ki taraf se likhein)" : "Why are you requesting leave?"}
+          placeholder={filingForSomeoneElse ? "Why is this employee on leave? (write on their behalf)" : "Why are you requesting leave?"}
           className={inputClass}
         />
       </div>

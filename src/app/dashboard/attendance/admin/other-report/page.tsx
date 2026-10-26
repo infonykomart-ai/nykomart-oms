@@ -19,7 +19,6 @@ export default async function OtherReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/other-report"
       heading="Other Report"
-      blurb="Miscellaneous reports — punch source summary, department rollup aur working-hours summary (default: pichhle 30 din), company/department/employee filter + export ke saath."
       reportTypes={OTHER_REPORT_TYPES}
       defaultReport="source"
     />

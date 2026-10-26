@@ -21,7 +21,6 @@ export default async function LeaveReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/leave-report"
       heading="Leave Report"
-      blurb="Period ki leave summary per employee — leave days (paid/unpaid + type ke hisaab se) aur Approved/Pending/Rejected request counts (default: pichhle 30 din)."
       reportTypes={REPORT_TYPES}
       defaultReport="leave"
     />

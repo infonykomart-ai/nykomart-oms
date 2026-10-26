@@ -131,8 +131,8 @@ export default async function SalaryDetailsPage({
         <div>
           <h1 className="text-lg font-semibold text-slate-900">🧾 Salary Details</h1>
           <p className="text-sm text-slate-500">
-            Salary master sheet — har employee ki structure (monthly/CTC, PF/ESI/PT %, allowed leaves) + live statutory preview.
-            Structure set/update karne ke liye Payroll screen use karo.
+            Salary master sheet — every employee&apos;s structure (monthly/CTC, PF/ESI/PT %, allowed leaves) plus a live statutory
+            preview. Use the Payroll screen to set or update a structure.
           </p>
         </div>
         <div className="flex gap-2">

@@ -46,10 +46,9 @@ export function SchemaHealthCard({ status }: { status: SchemaStatus }) {
             </span>
           </h2>
           <p className="mt-1 max-w-3xl text-xs text-amber-900/90">
-            Ye SQL file{status.pending.length === 1 ? "" : "s"} abhi live database par run nahi hui
-            {status.pending.length === 1 ? "" : " hain"}. Isliye neeche likhe features purana / adhoora data dikha rahe
-            hain — code galat nahi hai, column hi nahi hai. Supabase → SQL Editor me file run karke &quot;Recheck&quot;
-            dabao.
+            This SQL file{status.pending.length === 1 ? " has" : "s have"} not been run on the live database yet. That is
+            why the features below show old / incomplete data — the code is not wrong, the column just does not exist. Run
+            the file in Supabase → SQL Editor, then press &quot;Recheck&quot;.
           </p>
         </div>
         <Link

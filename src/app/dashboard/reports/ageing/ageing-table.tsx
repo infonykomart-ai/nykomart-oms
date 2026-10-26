@@ -42,10 +42,10 @@ export function AgeingTable({
   const overdueOf = (r: AgeingRow) => r.d1_30 + r.d31_60 + r.d61_90 + r.d90plus;
 
   const reminderText = (r: AgeingRow) =>
-    `Namaste ${r.partyName} ji,\n\n` +
-    `${r.companyName} ke hisab se ₹${money(r.total)} payment pending hai` +
-    (r.oldestDays > 0 ? ` — sabse purana bill ${r.oldestDays} din purana hai (₹${money(r.d90plus)} 90+ din).` : ".") +
-    `\n\nKindly payment release karne ki kripa karein.\n— ${r.companyName}`;
+    `Hello ${r.partyName},\n\n` +
+    `As per ${r.companyName}, ₹${money(r.total)} is pending payment` +
+    (r.oldestDays > 0 ? ` — the oldest bill is ${r.oldestDays} days old (₹${money(r.d90plus)} is 90+ days).` : ".") +
+    `\n\nKindly release the payment.\n— ${r.companyName}`;
 
   const rowClass = (r: AgeingRow) =>
     r.d90plus > 0 ? "bg-red-50/60" : r.d61_90 > 0 ? "bg-amber-50/60" : r.d31_60 > 0 ? "bg-amber-50/30" : "";
