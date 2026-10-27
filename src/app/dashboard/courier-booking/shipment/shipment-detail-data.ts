@@ -20,6 +20,7 @@
 // This is disclosed on the page itself, not just here.
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { CourierKey } from "@/lib/couriers/credentials";
+import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -53,6 +54,11 @@ export type ShipmentDetail = {
   courierLabel: string;
   status: "pending" | "created" | "failed" | "cancelled";
   awbNo: string | null;
+  /** 2026-10-26 — the forwarder/aggregator's own number for this same parcel
+   * (Shiprocket shipment id, Shipglobal order number, …), captured from the
+   * booking API beside the carrier AWB. See
+   * db/2026-10-26-order-shipment-forwarding-no.sql. */
+  forwardingNo: string | null;
   labelUrl: string | null;
   // The courier's own raw API response for this booking attempt (already
   // captured at booking time into courier_shipments.response_payload —
@@ -115,13 +121,51 @@ function bucketFromRawStatusText(text: string | null): TimelineStage["stage"] {
 }
 
 export async function getShipmentDetail(supabase: ServiceClient, companyIds: string[], courierShipmentId: string): Promise<ShipmentDetail | null> {
-  const { data: shipment } = await supabase
+  // 2026-10-26 — read tolerantly: on a database where
+  // db/2026-10-26-order-shipment-forwarding-no.sql has not been run, listing
+  // forwarding_no here makes PostgREST reject the select and this page would
+  // 404 over a booking that plainly exists. The base columns are retried
+  // (src/lib/db/missing-column.ts).
+  type ShipmentRow = {
+    id: string;
+    courier: string;
+    manual_courier_name: string | null;
+    order_id: string;
+    order_shipment_id: string | null;
+    service_code: string | null;
+    ddp_ddu: string | null;
+    status: string;
+    awb_no: string | null;
+    forwarding_no: string | null;
+    label_url: string | null;
+    response_payload: unknown;
+    booked_amt: number | null;
+    booked_currency: string | null;
+    booked_amount_source: string | null;
+    error_message: string | null;
+    created_at: string;
+    cancel_reason: string | null;
+    cancel_remark: string | null;
+    cancelled_at: string | null;
+  };
+  const full = await supabase
     .from("courier_shipments")
     .select(
-      "id, courier, manual_courier_name, order_id, order_shipment_id, service_code, ddp_ddu, status, awb_no, label_url, response_payload, booked_amt, booked_currency, booked_amount_source, error_message, created_at, cancel_reason, cancel_remark, cancelled_at"
+      "id, courier, manual_courier_name, order_id, order_shipment_id, service_code, ddp_ddu, status, awb_no, forwarding_no, label_url, response_payload, booked_amt, booked_currency, booked_amount_source, error_message, created_at, cancel_reason, cancel_remark, cancelled_at"
     )
     .eq("id", courierShipmentId)
     .maybeSingle();
+  let shipment: ShipmentRow | null = full.data;
+  if (!shipment && full.error && isMissingSchemaPiece(full.error)) {
+    const base = await supabase
+      .from("courier_shipments")
+      .select(
+        "id, courier, manual_courier_name, order_id, order_shipment_id, service_code, ddp_ddu, status, awb_no, label_url, response_payload, booked_amt, booked_currency, booked_amount_source, error_message, created_at, cancel_reason, cancel_remark, cancelled_at"
+      )
+      .eq("id", courierShipmentId)
+      .maybeSingle();
+    shipment = base.data ? { ...base.data, forwarding_no: null } : null;
+  }
   if (!shipment) return null;
 
   const { data: order } = await supabase
@@ -195,6 +239,8 @@ export async function getShipmentDetail(supabase: ServiceClient, companyIds: str
     courierLabel,
     status: shipment.status as ShipmentDetail["status"],
     awbNo: shipment.awb_no,
+    // `?? null` covers the un-migrated read above (column absent, not null).
+    forwardingNo: shipment.forwarding_no ?? null,
     labelUrl: shipment.label_url,
     responsePayload: shipment.response_payload,
     serviceCode: shipment.service_code,

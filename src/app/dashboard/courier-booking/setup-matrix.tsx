@@ -64,7 +64,7 @@ export function SetupMatrix({ companies }: { companies: MatrixCompany[] }) {
             onClick={runTestAll}
             disabled={isTesting || companies.length === 0}
             className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 disabled:opacity-50"
-            title="Har company ke liye asli FedEx Rate API call — batata hai key + account number sach me chal rahe hain ya nahi"
+            title="A real FedEx Rate API call for every company — shows whether the key and account number actually work"
           >
             {isTesting ? "⏳ Testing FedEx…" : `📶 Test FedEx — all ${companies.length} companies`}
           </button>
@@ -156,7 +156,7 @@ export function SetupMatrix({ companies }: { companies: MatrixCompany[] }) {
       </div>
       <p className="mt-2 text-[11px] text-slate-400">
         ✓ Saved = company&apos;s own key · ✓ env = shared env-var key · # = account number saved · 🏠 = ship-from profile saved · ✓
-        Ready / ✗ Not ready = FedEx ne is company ke key + account number ko abhi accept kiya / reject kiya
+        Ready / ✗ Not ready = whether FedEx accepted or rejected this company&apos;s key + account number
       </p>
 
       {test.results.length > 0 && (

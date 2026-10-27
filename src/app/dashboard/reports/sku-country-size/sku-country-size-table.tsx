@@ -112,7 +112,8 @@ export function SkuCountrySizeTable({
           <Link href="/dashboard/reports" className="text-sm text-slate-500 hover:underline">← Orders Report</Link>
         </div>
         <p className="mt-1 text-sm text-slate-500">
-          Konsa SKU jyada sale ho raha, konsa size jyada bik raha, kis country mein order jyada hai — Value (INR) hamesha order_value_inr se hai (Cancelled orders excluded).
+          Which SKU sells the most, which size sells the most, and which country has the most orders — Value (INR) always
+          comes from order_value_inr (cancelled orders excluded).
         </p>
       </div>
 

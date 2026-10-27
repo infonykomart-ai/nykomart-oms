@@ -16,7 +16,6 @@ export default async function PeriodicReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/periodic-report"
       heading="Periodic Report"
-      blurb="Kisi bhi date range (default: pichhle 30 din) ki performance, IN/OUT, absent/late/OT reports — company/employee filter aur export ke saath."
       reportTypes={RANGE_REPORT_TYPES}
       defaultReport="performance"
     />

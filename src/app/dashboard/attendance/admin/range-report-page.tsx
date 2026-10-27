@@ -18,7 +18,6 @@ export async function RangeReportPage({
   mode,
   basePath,
   heading,
-  blurb,
   reportTypes,
   defaultReport,
   defaultFrom,
@@ -28,7 +27,6 @@ export async function RangeReportPage({
   mode: "date" | "range";
   basePath: string;
   heading: string;
-  blurb: string;
   reportTypes: { key: RangeReportKey; label: string }[];
   defaultReport: RangeReportKey;
   /** range mode only — defaults to (today − 30 days) .. today. */
@@ -68,7 +66,6 @@ export async function RangeReportPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-slate-900">{heading}</h1>
-          <p className="text-sm text-slate-500">{blurb}</p>
         </div>
         <Link
           href="/dashboard/attendance/admin"

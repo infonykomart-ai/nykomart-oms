@@ -3067,6 +3067,9 @@ export type Database = {
           ddp_ddu: "DDP" | "DDU" | null;
           status: "pending" | "created" | "failed" | "cancelled";
           awb_no: string | null;
+          // 2026-10-26 — mirror of order_shipments.forwarding_no; see
+          // db/2026-10-26-order-shipment-forwarding-no.sql.
+          forwarding_no: string | null;
           label_url: string | null;
           booked_amt: number | null;
           booked_currency: string | null;
@@ -3090,6 +3093,7 @@ export type Database = {
           ddp_ddu?: "DDP" | "DDU" | null;
           status?: "pending" | "created" | "failed" | "cancelled";
           awb_no?: string | null;
+          forwarding_no?: string | null;
           label_url?: string | null;
           booked_amt?: number | null;
           booked_currency?: string | null;
@@ -3113,6 +3117,7 @@ export type Database = {
           ddp_ddu?: "DDP" | "DDU" | null;
           status?: "pending" | "created" | "failed" | "cancelled";
           awb_no?: string | null;
+          forwarding_no?: string | null;
           label_url?: string | null;
           booked_amt?: number | null;
           booked_currency?: string | null;
@@ -7243,6 +7248,9 @@ export type Database = {
           shipment_no: number;
           courier_name: string | null;
           awb_no: string | null;
+          // 2026-10-26 — the forwarder/aggregator's own number for the same
+          // parcel; see db/2026-10-26-order-shipment-forwarding-no.sql.
+          forwarding_no: string | null;
           delivered_status: "Delivered" | "NOT Delivered" | null;
           delivered_date: string | null;
           last_update_date: string | null;
@@ -7259,6 +7267,7 @@ export type Database = {
           shipment_no: number;
           courier_name?: string | null;
           awb_no?: string | null;
+          forwarding_no?: string | null;
           delivered_status?: "Delivered" | "NOT Delivered" | null;
           delivered_date?: string | null;
           last_update_date?: string | null;
@@ -7275,6 +7284,7 @@ export type Database = {
           shipment_no?: number;
           courier_name?: string | null;
           awb_no?: string | null;
+          forwarding_no?: string | null;
           delivered_status?: "Delivered" | "NOT Delivered" | null;
           delivered_date?: string | null;
           last_update_date?: string | null;

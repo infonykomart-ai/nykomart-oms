@@ -380,7 +380,7 @@ Both are now integrated instead of one winning:
 
 `.github/workflows/ci.yml` runs on every push/PR to `main`:
 
-1. **build** — `npm run lint`, `npx tsc --noEmit`, `npm run build`
+1. **build** — `npm run lint`, `npm test`, `npx tsc --noEmit`, `npm run build`
 2. **schema-check** — applies `db/schema.sql` to a throwaway Postgres 16, regenerates the
    database types, and fails if `src/types/database.ts` differs from what's committed.
 
@@ -443,4 +443,8 @@ src/
 - New form fields: add the column via a dated `db/2026-*.sql` migration **and** fold it into
   `db/schema.sql`, regenerate types, then wire the server action + form.
 - Validate all business dates with `validateDateFields()` (`src/lib/fy-date.ts`).
-- `npx tsc --noEmit` must stay clean; lint with `npm run lint`.
+- `npx tsc --noEmit` must stay clean; lint with `npm run lint`; test with `npm test`
+  (Node's built-in runner + `tsx` — see `db/MIGRATIONS.md` for the migration process and the
+  rule that no production data may be committed to `db/`).
+- **Package manager is npm.** `package-lock.json` is the only lockfile; CI runs `npm ci`. Do not
+  add `bun.lock`, `yarn.lock` or `pnpm-lock.yaml`.

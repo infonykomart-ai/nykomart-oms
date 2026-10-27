@@ -88,6 +88,14 @@ export type ShiprocketShipInput = {
 export type ShiprocketShipResult = {
   success: boolean;
   trackingNo: string | null;
+  // 2026-10-26 — Shiprocket's OWN shipment id, the number to look this parcel
+  // up with inside Shiprocket's dashboard/API, kept beside the partner
+  // courier's tracking number in trackingNo (Shiprocket allocates an AWB from
+  // whichever logistics partner it picked, so the two genuinely differ).
+  // Stored as `SR-<shipment_id>` — the id alone is a bare integer that would
+  // be indistinguishable from a PO/RF number anywhere else in the app.
+  // See db/2026-10-26-order-shipment-forwarding-no.sql.
+  forwardingNo: string | null;
   labelUrl: null; // label generation is a further separate endpoint (`courier/generate/label`) — out of scope this round
   bookedAmt: number | null;
   bookedCurrency: string | null;
@@ -207,6 +215,7 @@ export async function createShiprocketShipment(
   return {
     success: true,
     trackingNo: data.awb_code,
+    forwardingNo: orderParsed.shipment_id ? `SR-${orderParsed.shipment_id}` : null,
     labelUrl: null,
     bookedAmt: typeof data.freight_charges === "number" ? data.freight_charges : null,
     bookedCurrency: typeof data.freight_charges === "number" ? "INR" : null,

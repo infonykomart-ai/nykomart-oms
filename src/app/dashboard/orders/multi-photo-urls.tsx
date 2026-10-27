@@ -85,7 +85,7 @@ export function MultiPhotoUrls({
             defaultValue={row.initial}
             placeholder={
               i < fixedSlots
-                ? `https://… (${slotLabel.toLowerCase()} photo ${i + 1} — khali chhod sakte hain)`
+                ? `https://… (${slotLabel.toLowerCase()} photo ${i + 1} — optional)`
                 : "https://… (extra photo link)"
             }
             className={inputClass}

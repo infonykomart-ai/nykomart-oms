@@ -46,6 +46,16 @@ export const TRACKING_COLUMNS: TrackingColumn[] = [
     help: "Leave blank for a single-shipment order (defaults to 1). Only set this if the order has multiple AWBs.",
   },
   { label: "AWB No", example: "", required: false },
+  {
+    // 2026-10-26 — aggregator couriers (Shiprocket / Shipglobal / OnPoint /
+    // Delhivery) report TWO numbers for one parcel; their own download/sheet
+    // carries both, so the sheet can be pasted in as-is. See
+    // db/2026-10-26-order-shipment-forwarding-no.sql.
+    label: "Forwarding No",
+    example: "",
+    required: false,
+    help: "Optional second number from an aggregator courier (Shiprocket / Shipglobal / OnPoint / Delhivery) — the forwarder's own ref beside the AWB.",
+  },
   { label: "Courier Name", example: "", required: false },
   { label: "Delivered Status", example: "", required: false, help: DELIVERED_STATUSES.join(" / ") },
   { label: "Delivered Date", example: "", required: false, help: "YYYY-MM-DD" },

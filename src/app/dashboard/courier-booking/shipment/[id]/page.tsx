@@ -45,6 +45,17 @@ export default async function ShipmentDetailPage({ params }: { params: Promise<{
             >
               {detail.status}
             </span>
+            {/* 2026-10-26 — the forwarder/aggregator's own number for the same
+                parcel, captured from the booking API (Shiprocket shipment id,
+                Shipglobal order number, …). Shown only when there is one. */}
+            {detail.forwardingNo && (
+              <>
+                {" · "}
+                <span className="text-slate-500">
+                  Forwarding No. <span className="font-mono text-slate-700">{detail.forwardingNo}</span>
+                </span>
+              </>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

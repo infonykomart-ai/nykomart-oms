@@ -22,8 +22,8 @@ export default async function ImportPunchReportPage() {
         <div>
           <h1 className="text-lg font-semibold text-slate-900">Import Punch Report</h1>
           <p className="text-sm text-slate-500">
-            TeamOffice (or any biometric/Excel) daily IN/OUT export ko yahan se submit karein — wo din reports aur salary
-            calculation me web punch jaisa count hoga.
+            Submit a TeamOffice (or any biometric/Excel) daily IN/OUT export here — those days then count toward reports and
+            salary exactly like a web punch.
           </p>
         </div>
         <Link

@@ -1,3 +1,55 @@
+DO TRACKING NUMBER (AWB + FORWARDING NO) — SABHI JAGAH
+(2026-10-26)
+======================================================================
+
+NAYA SQL — YE FILE CHALANI ZAROORI HAI (ek baar, Supabase SQL editor me):
+  db/2026-10-26-order-shipment-forwarding-no.sql
+Jab tak nahi chalti, naya Forwarding No. field save nahi hoga (baaki
+sab — AWB, courier, weight, booking — pehle jaisa chalta rahega, kuch
+toota nahi hai). /dashboard ke Schema Status card me ye file "pending"
+dikhegi aur exact naam likha hoga.
+
+
+0) KYA ADD HUA
+-----------------
+Shiprocket / Shipglobal / OnPoint / Delhivery jaise courier ek hi parcel ke
+DO number dete hain — pehla carrier ka tracking (AWB), dusra unka apna
+forwarding/order reference. Ab dusra number bhi system me save hota hai
+(pehle bahar — notes/WhatsApp — rakhna padta tha).
+
+  • Naya column: order_shipments.forwarding_no (asli jagah) +
+courier_shipments.forwarding_no (mirror, taki Courier Ops me bhi dikhe).
+
+1) KAHAN DIKHEGA / KAHAN BHARNA HAI
+------------------------------------
+  • Order page: "Forwarding No." field shipping form me; AWB ke saath
+    summary me aur shipments table me bhi column.
+  • Order page ka print sheet: AWB ke niche "Forwarding No." (sirf jab
+    number ho — baaki sheets waise hi rahengi).
+  • Order Shipments & Packages: shipment form me naya field, aur
+    shipment card par "Fwd <no.>" dikhta hai.
+  • Courier Booking → Booked Outside (Manual Entry): naya field — yahin
+    sabse zyada haath se type hota hai.
+  • Track Shipments: AWB ke niche "Fwd: ..." dikhta hai, aur search box
+    ab AWB, Forwarding No. aur PO/RF/RG — teeno se dhundta hai.
+  • Charges tab (Our Shipping Charges): search ab forwarding no. se bhi,
+    aur result me "Fwd ..." dikhta hai.
+  • Bulk Tracking Update (CSV): naya "Forwarding No" column.
+  • Courier bill / Duty bill match: bill par jo number ho (AWB ya
+    forwarding) usse order apne aap jud jayega — pehle sirf AWB se judta
+    tha, isliye aise bill haath se assign karne padte the.
+
+2) API BOOKING SE AUTO
+-----------------------
+  • Shiprocket booking: apne aap "SR-<shipment id>" save hota hai (unka
+    apna shipment id; AWB partner courier ka alag hota hai).
+  • Shipglobal booking: unka order number (na ho to waybill number) apne
+    aap save hota hai — agar wo number AWB ke barabar hi ho to kuch nahi
+    likha jata, taaki wahi baat do baar na dikhe.
+  • FedEx/UPS/Aramex/DHL/Delhivery direct courier hain — unke yahan AWB hi
+tracking number hai, isliye wahan sirf manual field hai.
+
+
 PAYABLES AGEING + DAILY DIGESTS CHALU + FY FILTER + SHEET PAID/BALANCE
 (2026-10-24c)
 ======================================================================

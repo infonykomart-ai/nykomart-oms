@@ -143,7 +143,7 @@ export async function POST(request: Request) {
     if (photoUrl) {
       const fetched = await safeExternalFetch(photoUrl);
       if (!fetched.ok) {
-        return Response.json({ ok: false, error: `Order ki photo fetch nahi ho payi (${fetched.error}).` }, { status: 502 });
+        return Response.json({ ok: false, error: `Could not fetch the order photo (${fetched.error}).` }, { status: 502 });
       }
       const photoBuffer = Buffer.from(await fetched.response.arrayBuffer());
       const mimeType = fetched.response.headers.get("content-type") || "image/jpeg";

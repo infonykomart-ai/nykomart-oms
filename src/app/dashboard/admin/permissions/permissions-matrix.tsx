@@ -67,7 +67,7 @@ export function PermissionsMatrix({
               <tr key={cap.code}>
                 <td className="sticky left-0 z-10 bg-white px-4 py-2.5">
                   <div className="font-medium text-slate-900">{cap.label ?? cap.code}</div>
-                  <div className="text-xs text-slate-400">{cap.code}{cap.description ? ` — ${cap.description}` : ""}</div>
+                  <div className="text-xs text-slate-400">{cap.code}</div>
                 </td>
                 {roles.map((r) => {
                   const k = key(r.id, cap.code);

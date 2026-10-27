@@ -82,7 +82,7 @@ export default async function GpsApprovalsPage({
         <div>
           <h1 className="text-lg font-semibold text-slate-900">🛰️ GPS Approvals</h1>
           <p className="text-sm text-slate-500">
-            Web-Punch GPS fixes ki review queue — coordinates + map link dekh kar ✅ Approve ya ❌ Reject karo (remark optional).
+            Review queue for Web-Punch GPS fixes — check the coordinates and map link, then ✅ Approve or ❌ Reject (remark optional).
           </p>
         </div>
         <div className="flex gap-2">
@@ -157,7 +157,7 @@ export default async function GpsApprovalsPage({
             {(punches ?? []).length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
-                  {status === "Pending" ? "No pending GPS reviews — sab clear! 🎉" : "No punches match this filter."}
+                  {status === "Pending" ? "No pending GPS reviews — all clear! 🎉" : "No punches match this filter."}
                 </td>
               </tr>
             )}
@@ -247,8 +247,8 @@ export default async function GpsApprovalsPage({
       </div>
 
       <p className="text-xs text-slate-400">
-        Server-side punches (login/logout) aur TeamOffice imports ke paas GPS hota hi nahi — wo queue me kabhi nahi aate. Sirf
-        Web-Punch se capture hue fixes Pending hote hain. Max 200 rows per view.
+        Server-side punches (login/logout) and TeamOffice imports never carry GPS, so they never enter this queue. Only fixes
+        captured by Web-Punch become Pending. Max 200 rows per view.
       </p>
     </div>
   );

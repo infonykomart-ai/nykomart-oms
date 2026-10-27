@@ -20,7 +20,7 @@
     { id: "daylight", label: "Daylight" },
   ];
   function currentTheme() {
-    try { return localStorage.getItem("ncr_theme") || "midnight-gold"; } catch (e) { return "midnight-gold"; }
+    try { return localStorage.getItem("ncr_theme") || "midnight-gold"; } catch { return "midnight-gold"; }
   }
   function applyTheme(id) {
     if (id === "midnight-gold") document.documentElement.removeAttribute("data-theme");
@@ -29,7 +29,7 @@
   applyTheme(currentTheme());
 
   var auth = null;
-  try { auth = JSON.parse(sessionStorage.getItem("ncr_auth") || "null"); } catch (e) { auth = null; }
+  try { auth = JSON.parse(sessionStorage.getItem("ncr_auth") || "null"); } catch { auth = null; }
   if (!auth || !auth.token) return; // unauth pages stay untouched
 
   var perms = Array.isArray(auth.permissions) ? auth.permissions : [];
@@ -139,14 +139,14 @@
 
   document.getElementById("nav-logout").addEventListener("click", function () {
     sessionStorage.removeItem("ncr_auth");
-    window.location.href = "/login.html";
+    window.location.replace("/login.html");
   });
 
   var themeSel = document.getElementById("np-theme");
   themeSel.value = currentTheme();
   themeSel.addEventListener("change", function () {
     applyTheme(themeSel.value);
-    try { localStorage.setItem("ncr_theme", themeSel.value); } catch (e) {}
+    try { localStorage.setItem("ncr_theme", themeSel.value); } catch {}
   });
 
   /* ---------------- workspace (company) switcher ---------------- */

@@ -208,7 +208,7 @@ export function CreditNotePanel({
                 total; 12% option for kurti). Blank = no GST. */}
             <div>
               <label className={labelClass}>Party ka CN No. (optional)</label>
-              <input name="vendor_cn_no" placeholder="vendor ka apna number" className={inputClass} />
+              <input name="vendor_cn_no" placeholder="Vendor&apos;s own number" className={inputClass} />
             </div>
             <div>
               <label className={labelClass}>GST % (blank = no GST)</label>
@@ -265,7 +265,7 @@ export function CreditNotePanel({
           <div className="space-y-2">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div>
-                <label className={labelClass}>CN Base Amount (GST ke pehle) *</label>
+                <label className={labelClass}>CN Base Amount (before GST) *</label>
                 <input
                   name="base_amount"
                   type="number"
@@ -318,7 +318,7 @@ export function CreditNotePanel({
               </p>
             )}
             {awbBillsError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{awbBillsError}</p>}
-            {!awbBills && !awbBillsError && <p className="text-[11px] text-slate-400">Party ke bills load ho rahe hain…</p>}
+            {!awbBills && !awbBillsError && <p className="text-[11px] text-slate-400">Loading the party&apos;s bills…</p>}
             {/* 2026-10-15 — overflow-auto (not overflow-y-auto): a cramped screen must be able to scroll these columns sideways rather than squash/clip them. */}
             {awbBills && (
               <div className="max-h-44 overflow-auto rounded-lg border border-slate-200 bg-white">

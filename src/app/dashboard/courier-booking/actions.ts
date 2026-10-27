@@ -23,6 +23,11 @@
 // booked_amount_source null (never blocks the booking itself).
 import { revalidatePath } from "next/cache";
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
+// 2026-10-26 — forwarding_no (the forwarder/aggregator's own second number for
+// the same parcel — see db/2026-10-26-order-shipment-forwarding-no.sql) is
+// written tolerantly, so a booking still succeeds on a database where that
+// patch has not been run yet.
+import { tolerateMissingColumn } from "@/lib/db/missing-column";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
@@ -554,7 +559,7 @@ export async function saveCourierShipperProfile(_prev: ShipperProfileState, form
 // 2026-09-17 — "delete ka option" on the shipper profile view card.
 // Clears the whole row for this company (the form above rebuilds it from
 // scratch); re-checks the capability server-side like every action here.
-export async function deleteCourierShipperProfile(_prev: ShipperProfileState, _formData: FormData): Promise<ShipperProfileState> {
+export async function deleteCourierShipperProfile(): Promise<ShipperProfileState> {
   const employee = await requireCapability("courier_booking_shipment");
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("courier_shipper_profiles").delete().eq("company_id", employee.currentCompanyId);
@@ -581,6 +586,10 @@ async function logAttempt(
     ddpDdu?: "DDP" | "DDU" | null;
     status: "created" | "failed";
     awbNo?: string | null;
+    // 2026-10-26 — the forwarder/aggregator's own number for the same parcel
+    // (see db/2026-10-26-order-shipment-forwarding-no.sql). Only pass it when
+    // the courier's response actually carries a second number.
+    forwardingNo?: string | null;
     labelUrl?: string | null;
     bookedAmt?: number | null;
     bookedCurrency?: string | null;
@@ -591,30 +600,28 @@ async function logAttempt(
     createdBy: string;
   }
 ): Promise<string | null> {
-  const { data } = await supabase
-    .from("courier_shipments")
-    .upsert(
-      {
-        courier: args.courier,
-        order_id: args.orderId,
-        order_shipment_id: args.orderShipmentId ?? null,
-        service_code: args.serviceCode ?? null,
-        ddp_ddu: args.ddpDdu ?? null,
-        status: args.status,
-        awb_no: args.awbNo ?? null,
-        label_url: args.labelUrl ?? null,
-        booked_amt: args.bookedAmt ?? null,
-        booked_currency: args.bookedCurrency ?? null,
-        booked_amount_source: args.bookedAmountSource ?? null,
-        request_payload: (args.requestPayload ?? null) as never,
-        response_payload: (args.responsePayload ?? null) as never,
-        error_message: args.errorMessage ?? null,
-        created_by: args.createdBy,
-      },
-      { onConflict: "order_id,courier" }
-    )
-    .select("id")
-    .single();
+  const { data } = await tolerateMissingColumn(
+    {
+      courier: args.courier,
+      order_id: args.orderId,
+      order_shipment_id: args.orderShipmentId ?? null,
+      service_code: args.serviceCode ?? null,
+      ddp_ddu: args.ddpDdu ?? null,
+      status: args.status,
+      awb_no: args.awbNo ?? null,
+      forwarding_no: args.forwardingNo ?? null,
+      label_url: args.labelUrl ?? null,
+      booked_amt: args.bookedAmt ?? null,
+      booked_currency: args.bookedCurrency ?? null,
+      booked_amount_source: args.bookedAmountSource ?? null,
+      request_payload: (args.requestPayload ?? null) as never,
+      response_payload: (args.responsePayload ?? null) as never,
+      error_message: args.errorMessage ?? null,
+      created_by: args.createdBy,
+    },
+    "forwarding_no",
+    (payload) => supabase.from("courier_shipments").upsert(payload, { onConflict: "order_id,courier" }).select("id").single()
+  );
   return data?.id ?? null;
 }
 
@@ -642,6 +649,8 @@ async function writeOrderShipmentFromBooking(
     orderId: string;
     courierLabel: string;
     awbNo: string;
+    // Optional second number — only the aggregator-style couriers have one.
+    forwardingNo?: string | null;
     employeeId: string;
     weightKg: number;
     dimsCm: { length: number; width: number; height: number };
@@ -651,24 +660,22 @@ async function writeOrderShipmentFromBooking(
   }
 ): Promise<string | null> {
   const shipmentNo = await getNextShipmentNo(supabase, args.orderId);
-  const { data: shipment } = await supabase
-    .from("order_shipments")
-    .upsert(
-      {
-        order_id: args.orderId,
-        shipment_no: shipmentNo,
-        awb_no: args.awbNo,
-        courier_name: args.courierLabel,
-        last_update_date: new Date().toISOString().slice(0, 10),
-        created_by_employee_id: args.employeeId,
-        booked_freight_amt: args.bookedAmt,
-        booked_currency: args.bookedCurrency,
-        booked_amount_source: args.bookedAmountSource,
-      },
-      { onConflict: "order_id,shipment_no" }
-    )
-    .select("id")
-    .single();
+  const { data: shipment } = await tolerateMissingColumn(
+    {
+      order_id: args.orderId,
+      shipment_no: shipmentNo,
+      awb_no: args.awbNo,
+      ...(args.forwardingNo ? { forwarding_no: args.forwardingNo } : {}),
+      courier_name: args.courierLabel,
+      last_update_date: new Date().toISOString().slice(0, 10),
+      created_by_employee_id: args.employeeId,
+      booked_freight_amt: args.bookedAmt,
+      booked_currency: args.bookedCurrency,
+      booked_amount_source: args.bookedAmountSource,
+    },
+    "forwarding_no",
+    (payload) => supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" }).select("id").single()
+  );
 
   if (!shipment) return null;
 
@@ -1148,6 +1155,7 @@ async function applyCombinedSiblingShipments(
     courier: Courier;
     courierLabel: string;
     awbNo: string;
+    forwardingNo?: string | null;
     labelUrl: string | null;
     employeeId: string;
     weightKg: number;
@@ -1170,6 +1178,7 @@ async function applyCombinedSiblingShipments(
       orderId: siblingOrderId,
       courierLabel: args.courierLabel,
       awbNo: args.awbNo,
+      forwardingNo: args.forwardingNo ?? null,
       employeeId: args.employeeId,
       weightKg: args.weightKg,
       dimsCm: args.dimsCm,
@@ -1185,6 +1194,7 @@ async function applyCombinedSiblingShipments(
       ddpDdu: args.ddpDdu,
       status: "created",
       awbNo: args.awbNo,
+      forwardingNo: args.forwardingNo ?? null,
       labelUrl: args.labelUrl,
       bookedAmt: args.bookedAmt,
       bookedCurrency: args.bookedCurrency,
@@ -2205,6 +2215,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
       orderId,
       courierLabel: "Shiprocket",
       awbNo: result.trackingNo,
+      forwardingNo: result.forwardingNo,
       employeeId: employee.id,
       weightKg,
       dimsCm: dims,
@@ -2219,6 +2230,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
       orderShipmentId: shipmentId,
       status: "created",
       awbNo: result.trackingNo,
+      forwardingNo: result.forwardingNo,
       bookedAmt,
       bookedCurrency,
       bookedAmountSource: bookedSource,
@@ -2251,6 +2263,7 @@ export async function createShiprocketBooking(_prev: CourierBookingCreateState, 
       courier: "shiprocket",
       courierLabel: "Shiprocket",
       awbNo: result.trackingNo,
+      forwardingNo: result.forwardingNo,
       labelUrl: result.labelUrl ?? null,
       employeeId: employee.id,
       weightKg,

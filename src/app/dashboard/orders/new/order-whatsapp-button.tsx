@@ -260,9 +260,9 @@ export function OrderWhatsAppButton({
         copiedOk = false;
       }
       flashNotice(
-        `📷 Asli photo (koi text nahi, jaisi hai waisi) download ho gayi — WhatsApp me photo ATTACH karo, caption box me ${
-          copiedOk ? "Press Ctrl+V to paste (the caption is already copied)" : "📋 Use the Copy caption button, then paste"
-        }, phir send. Ek hi message jayega aur caption search me milega.`
+        `📷 The original photo (no text, exactly as-is) has been downloaded — attach it to WhatsApp, then ${
+          copiedOk ? "press Ctrl+V to paste the caption (already copied)" : "use the Copy caption button and paste"
+        }, and send. It goes out as one message and the caption stays searchable.`
       );
       markSent();
       return;

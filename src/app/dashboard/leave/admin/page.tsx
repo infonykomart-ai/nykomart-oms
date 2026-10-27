@@ -318,8 +318,8 @@ export default async function LeaveAdminPage({
           📝 File a leave application for an employee
         </summary>
         <p className="mt-1 text-xs text-sky-800">
-          Employee ki taraf se absence application file karein — usi ke naam par request banegi, approval ke baad usi ki
-          Attendance &quot;Leave&quot; mark hogi. &quot;Approve immediately&quot; tick karenge to attendance abhi hi mark ho jayegi.
+          File this absence application on the employee&apos;s behalf — the request is created under their name, and after
+          approval their Attendance is marked &quot;Leave&quot;. Tick &quot;Approve immediately&quot; to mark attendance right now.
         </p>
         <div className="mt-3">
           <LeaveRequestForm

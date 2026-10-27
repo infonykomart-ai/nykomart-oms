@@ -103,6 +103,7 @@ function ShipmentCard({ orderId, shipment, onChanged }: { orderId: string; shipm
           </h3>
           <p className="mt-0.5 text-xs text-slate-400">
             {shipment.courier_name ?? "—"} ·{" "}
+            {shipment.forwarding_no ? `Fwd ${shipment.forwarding_no} · ` : ""}
             <span className={shipment.delivered_status === "Delivered" ? "text-green-600" : "text-slate-400"}>
               {shipment.delivered_status ?? "Not tracked yet"}
             </span>
@@ -229,6 +230,10 @@ function ShipmentForm({ orderId, shipment, onSaved }: { orderId: string; shipmen
           <input name="awb_no" defaultValue={shipment?.awb_no ?? ""} className={inputClass} />
         </div>
         <div>
+          <label className={labelClass}>Forwarding No.</label>
+          <input name="forwarding_no" defaultValue={shipment?.forwarding_no ?? ""} placeholder="aggregator ref" className={inputClass} />
+        </div>
+        <div>
           <label className={labelClass}>Delivered Status</label>
           <select name="delivered_status" defaultValue={shipment?.delivered_status ?? ""} className={inputClass}>
             <option value="">—</option>
@@ -256,7 +261,7 @@ function AddShipmentForm({ orderId, nextShipmentNo, onSaved }: { orderId: string
   return (
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
       <h3 className="mb-2 text-xs font-semibold text-slate-600">Add another shipment/AWB</h3>
-      <ShipmentForm orderId={orderId} shipment={{ id: "", shipment_no: nextShipmentNo, courier_name: null, awb_no: null, delivered_status: null, delivered_date: null, remark: null, packages: [] }} onSaved={onSaved} />
+      <ShipmentForm orderId={orderId} shipment={{ id: "", shipment_no: nextShipmentNo, courier_name: null, awb_no: null, forwarding_no: null, delivered_status: null, delivered_date: null, remark: null, packages: [] }} onSaved={onSaved} />
     </div>
   );
 }

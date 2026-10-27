@@ -18,7 +18,6 @@ export default async function DailyReportPage({
       mode="date"
       basePath="/dashboard/attendance/admin/daily-report"
       heading="Daily Report"
-      blurb="Kisi bhi ek din ki team ki poori attendance — Day Performance (IN/OUT, Late IN, Early OUT ke saath), Present/Absent/Late lists, export toolbar ke saath."
       reportTypes={RANGE_REPORT_TYPES}
       defaultReport="day"
     />

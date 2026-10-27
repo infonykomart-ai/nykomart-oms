@@ -1,8 +1,10 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
+import { runSnapshotBackup } from "@/lib/backup/run";
 
 // Backup Export (2026-08-22) — admin-only, all-companies data export. See
 // db/2026-08-22-backup-export-admin.sql for the capability grant and full
@@ -88,6 +90,25 @@ async function fetchAllPages<T>(
     from += PAGE_SIZE;
   }
   return out;
+}
+
+// Cloud Backup (2026-10-23) — manual run of the same weekly snapshot the
+// GitHub Actions schedule triggers (see api/cron/backup-snapshot/route.ts and
+// src/lib/backup/run.ts). Same `data_export_admin` capability as everything
+// else on this page; the pipeline reads the whole database but only ever
+// WRITES new objects to R2 (restore is deliberately download-only).
+export async function runBackupNow(): Promise<{ ok: boolean; message: string }> {
+  await requireCapability("data_export_admin");
+  const result = await runSnapshotBackup({ trigger: "manual" });
+  if (!result.ok) {
+    return { ok: false, message: `Backup failed (${result.stage}): ${result.error}` };
+  }
+  // The stored-run list lives on the page this action is called from.
+  revalidatePath("/dashboard/admin/backup");
+  return {
+    ok: true,
+    message: `Backup ${result.runId} saved — ${result.manifest.tables.length} tables, ${result.manifest.totalRows.toLocaleString("en-IN")} rows.`,
+  };
 }
 
 export async function getBackupExportRows(): Promise<BackupExportRow[]> {

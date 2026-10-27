@@ -1867,7 +1867,7 @@ export async function getPurchaseBillHistory(
     // file instead of a raw PostgREST message — this panel is exactly where an
     // Admin is trying to find that out.
     const message = /audit_log/i.test(error.message)
-      ? "audit_log table nahi hai — pehle db/2026-08-24-audit-log.sql run karein (Schema Status card dekhein)."
+      ? "The audit_log table is missing — run db/2026-08-24-audit-log.sql first (see the Schema Status card)."
       : error.message;
     return { error: message, entries: [] };
   }
@@ -2065,9 +2065,26 @@ export async function lookupOrderForReconciliation(
     .ilike("awb_no", trimmed)
     .order("shipment_no")
     .limit(2);
-  if ((awbRows ?? []).length > 0) {
-    orderId = awbRows![0].order_id;
-    orderShipmentId = awbRows![0].id;
+  let matchedRow = (awbRows ?? [])[0] ?? null;
+
+  // 2026-10-26 — the number on an aggregator courier's bill (Shiprocket /
+  // Shipglobal / OnPoint / Delhivery) is often the FORWARDER's own reference
+  // rather than the carrier AWB, saved on the same order_shipments row in
+  // forwarding_no. Without this, such a bill had to be assigned by hand every
+  // time. Tried only when the AWB matches nothing, so an existing AWB match is
+  // never changed. See db/2026-10-26-order-shipment-forwarding-no.sql.
+  if (!matchedRow) {
+    const { data: fwdRows } = await supabase
+      .from("order_shipments")
+      .select("id, order_id, awb_no, shipment_no")
+      .ilike("forwarding_no", trimmed)
+      .order("shipment_no")
+      .limit(2);
+    matchedRow = (fwdRows ?? [])[0] ?? null;
+  }
+  if (matchedRow) {
+    orderId = matchedRow.order_id;
+    orderShipmentId = matchedRow.id;
   }
 
   if (!orderId) {

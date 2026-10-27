@@ -490,8 +490,8 @@ async function SummaryInner(sp: { [key: string]: string | string[] | undefined }
 
       {fyCaption && (
         <p className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 print:hidden">
-          <strong>FY view:</strong> {fyCaption}. Opening + is FY ke bills − credit notes − payments = closing. Jagah jagah ki
-          balance waisi hi dikhegi jaisi Party Ledger me hai.
+          <strong>FY view:</strong> {fyCaption}. Opening + this FY&apos;s bills − credit notes − payments = closing. Balances
+          here match Party Ledger.
         </p>
       )}
 

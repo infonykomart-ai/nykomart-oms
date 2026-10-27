@@ -219,6 +219,36 @@ function fedexDutiesPaymentType(ddpDdu: FedexDdpDdu): "SENDER" | "RECIPIENT" {
   return ddpDdu === "DDP" ? "SENDER" : "RECIPIENT";
 }
 
+/**
+ * 2026-10-23 — which rate line the BOOKED amount is taken from.
+ *
+ * FedEx's Ship API can return MORE THAN ONE entry in
+ * completedShipmentDetail.shipmentRating.shipmentRateDetails — typically
+ * an "ACCOUNT" line (this account's negotiated rate, i.e. what will
+ * actually be billed) and a "LIST" line (FedEx's published price). The
+ * previous code took `shipmentRateDetails[0]` blindly, so whenever FedEx
+ * happened to put LIST first the booking saved FedEx's list price instead
+ * of the company's own negotiated account rate.
+ *
+ * The order FedEx returns them in is not guaranteed, so this picks the
+ * ACCOUNT line explicitly — the same preference getFedexRateQuote()
+ * (fedex-rate.ts) already applies to its pre-booking quote, which keeps the
+ * compare panel and the saved booking amount talking about the same rate.
+ * Falls back to the first entry that actually carries a price when there is
+ * no ACCOUNT line (rating not enabled for the account, etc.), and to
+ * undefined when nothing is priced — callers then fall back to the
+ * company's own rate-card estimate exactly as before.
+ */
+export function pickFedexShipmentRateDetail<T extends { rateType?: string; totalNetCharge?: number }>(
+  details: T[] | undefined
+): T | undefined {
+  if (!details?.length) return undefined;
+  return (
+    details.find((d) => d.rateType === "ACCOUNT" && d.totalNetCharge != null) ??
+    details.find((d) => d.totalNetCharge != null)
+  );
+}
+
 // 2026-09-08: added after a real 503 — "The service is currently
 // unavailable and we are working to resolve the issue... Please check back
 // at a later time." — surfaced during testing. That exact text is FedEx's
@@ -599,7 +629,10 @@ export async function createFedexShipment(
         }>;
         completedShipmentDetail?: {
           masterTrackingId?: { trackingNumber?: string };
-          shipmentRating?: { shipmentRateDetails?: Array<{ totalNetCharge?: number; currency?: string }> };
+          // 2026-10-23 — rateType ("ACCOUNT" | "LIST" | ...) added: it is
+          // what pickFedexShipmentRateDetail() uses to prefer the account's
+          // negotiated rate over FedEx's published list price.
+          shipmentRating?: { shipmentRateDetails?: Array<{ rateType?: string; totalNetCharge?: number; currency?: string }> };
           // 2026-09-12 — best-effort source for originLocationCode/
           // destinationLocationCode (see FedexShipResult's header comment).
           // Both fields are optional/unconfirmed in shape, so every read
@@ -652,7 +685,9 @@ export async function createFedexShipment(
   const shipment = parsed.output?.transactionShipments?.[0];
   const detail = shipment?.completedShipmentDetail;
   const trackingNo = detail?.masterTrackingId?.trackingNumber ?? null;
-  const rateDetail = detail?.shipmentRating?.shipmentRateDetails?.[0];
+  // Not [0] — see pickFedexShipmentRateDetail(): prefer the ACCOUNT rate
+  // over LIST regardless of the order FedEx returns them in.
+  const rateDetail = pickFedexShipmentRateDetail(detail?.shipmentRating?.shipmentRateDetails);
 
   // One packageDocuments[] array per package (pieceResponses[]) — a
   // single-package shipment (the only case this app books today) has

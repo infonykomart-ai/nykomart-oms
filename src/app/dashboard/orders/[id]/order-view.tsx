@@ -7,6 +7,7 @@ import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
 import { FlagErrorButton } from "./flag-error-button";
 import { ShippingDetailsForm } from "./shipping-details-form";
 import { OrderHoldCancelActions } from "../order-hold-cancel-actions";
+import { TrackingRefreshButton } from "./tracking-refresh-button";
 
 // Read-only order detail/print view — mirrors invoice-view.tsx's structure
 // (header block -> info grids -> item table -> value breakdown -> footer)
@@ -79,6 +80,50 @@ export type OrderRefund = {
   reason: string | null;
 };
 
+// 2026-10-26 — one row per real AWB/package set (order_shipments +
+// order_packages), plus the courier-API tracking state that the nightly
+// poller/webhooks write. See order-detail-loader.ts.
+export type OrderShipmentView = {
+  id: string;
+  shipmentNo: number;
+  awbNo: string | null;
+  /** 2026-10-26 — the forwarder/aggregator's own number for this parcel
+   * (Shiprocket shipment id, Shipglobal order number, …), stored beside the
+   * carrier's AWB. See db/2026-10-26-order-shipment-forwarding-no.sql. */
+  forwardingNo: string | null;
+  courierName: string | null;
+  deliveredStatus: string | null;
+  deliveredDate: string | null;
+  lastUpdateDate: string | null;
+  weightKg: number | null;
+  volumetricWeightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  labelUrl: string | null;
+  bookingStatus: string | null;
+  bookingCourier: string | null;
+};
+
+// Order-level shipment summary (dispatch_invoices mirror + summed package
+// figures) — used by both the on-screen Dispatch & Tracking card and the
+// printed dispatch sheet.
+export type OrderDispatchSummary = {
+  awbNo: string | null;
+  forwardingNo: string | null;
+  courierName: string | null;
+  invoiceNo: string | null;
+  invoiceDate: string | null;
+  weightKg: number | null;
+  volumetricWeightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  deliveredStatus: string | null;
+  deliveredDate: string | null;
+  lastUpdateDate: string | null;
+};
+
 // 2026-08-26 — "PO SELECT KA OPTION NAHI HAI KISI PO KA JO EK SE JYADA
 // SELECT KAR KE DENA HO TO AGAR PRINT DE TO KESE DENGE 1/2 2/2 TYPE KE":
 // pulled the actual printable sheet out of OrderView into its own
@@ -98,6 +143,7 @@ export function OrderPrintSheet({
   vendorName,
   pageLabel,
   pageBreakAfter = false,
+  shipment = null,
 }: {
   order: Order;
   companyName: string;
@@ -109,8 +155,16 @@ export function OrderPrintSheet({
   vendorName: string | null;
   pageLabel?: string;
   pageBreakAfter?: boolean;
+  /** 2026-10-26 — AWB/courier/weight/dims + the dispatch invoice, so the
+   * printed sheet and its PDF carry the same shipping facts as the page. */
+  shipment?: OrderDispatchSummary | null;
 }) {
   const rate = Number(order.order_value_original || 0) / (order.qty || 1);
+  const dimsText =
+    shipment && shipment.lengthCm != null && shipment.widthCm != null && shipment.heightCm != null
+      ? `${shipment.lengthCm} × ${shipment.widthCm} × ${shipment.heightCm} cm`
+      : null;
+  const hasShipmentBlock = !!shipment && (shipment.awbNo || shipment.courierName || shipment.weightKg != null || dimsText);
 
   return (
     <div
@@ -257,10 +311,71 @@ export function OrderPrintSheet({
                 {invoice.invoice_no} ({invoice.csb_type}) · {invoice.invoice_date} · Master No.: {invoice.master_invoice_no}
                 {invoice.courier_company && ` · ${invoice.courier_company}`}
               </div>
+            ) : shipment?.invoiceNo ? (
+              // 2026-10-26 — the dispatch/commercial invoice no. + date entered
+              // on this page (or by a courier bill) is a real invoice on file
+              // even before a sales invoice exists; the sheet used to print
+              // "Not invoiced yet" and hide it.
+              <div>
+                Invoice No.: {shipment.invoiceNo}
+                {shipment.invoiceDate ? ` · Invoice Date: ${shipment.invoiceDate}` : ""}
+              </div>
             ) : (
               <div className="text-slate-500">Not invoiced yet.</div>
             )}
           </div>
+
+          {hasShipmentBlock && shipment && (
+            <div className="mb-3 border-b border-slate-300 pb-3">
+              <div className="font-semibold">Shipment &amp; Dispatch</div>
+              <div className="mt-1 grid grid-cols-4 gap-2 text-[10px] text-slate-700">
+                <div>
+                  <div className="font-semibold text-slate-500">AWB No.</div>
+                  <div>{shipment.awbNo ?? "—"}</div>
+                  {/* 2026-10-26 — aggregator couriers hand out a second,
+                      forwarder-side number; printed only when there is one so
+                      sheets for single-number couriers stay as they were. */}
+                  {shipment.forwardingNo && (
+                    <>
+                      <div className="font-semibold text-slate-500">Forwarding No.</div>
+                      <div>{shipment.forwardingNo}</div>
+                    </>
+                  )}
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Courier</div>
+                  <div>{shipment.courierName ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Weight</div>
+                  <div>{shipment.weightKg != null ? `${shipment.weightKg} kg` : "—"}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Dimensions</div>
+                  <div>{dimsText ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Volumetric Wt.</div>
+                  <div>{shipment.volumetricWeightKg != null ? `${shipment.volumetricWeightKg} kg` : "—"}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Dispatch Date</div>
+                  <div>{order.dispatch_date ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Tracking Status</div>
+                  <div>
+                    {order.shipment_status ?? "—"}
+                    {shipment.deliveredStatus ? ` · ${shipment.deliveredStatus}` : ""}
+                  </div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-500">Last Update</div>
+                  <div>{shipment.lastUpdateDate ?? "—"}</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {order.remark && (
             <div className="mb-3">
@@ -334,6 +449,8 @@ export function OrderView({
   vendorAssignmentParties = [],
   vendorAssignmentCycles = [],
   shippingDefaults = null,
+  shipments = [],
+  dispatchSummary = null,
   canManageOrders = false,
   refunds = [],
   currencies = [],
@@ -367,6 +484,7 @@ export function OrderView({
   // consumer of this view (orders/print) stays unchanged.
   shippingDefaults?: {
     awb_no: string | null;
+    forwarding_no: string | null;
     courier_name: string | null;
     invoice_no: string | null;
     invoice_date: string | null;
@@ -375,6 +493,10 @@ export function OrderView({
     width_cm: number | null;
     height_cm: number | null;
   } | null;
+  /** Every AWB/package on the order with its courier-API tracking state. */
+  shipments?: OrderShipmentView[];
+  /** Order-level shipping summary (AWB/courier/weight/dims/invoice/dispatch). */
+  dispatchSummary?: OrderDispatchSummary | null;
   /** "order_entry" capability — gates the Hold/Cancel/Return/Refund actions
    * (the same gate the Orders hub itself has). */
   canManageOrders?: boolean;
@@ -459,6 +581,7 @@ export function OrderView({
           hsnCode={hsnCode}
           invoice={invoice}
           vendorName={vendorName}
+          shipment={dispatchSummary}
         />
       </PrintArea>
 
@@ -522,9 +645,143 @@ export function OrderView({
                   : "—"}
               </dd>
             </div>
+            {/* 2026-10-26 — dispatch + the invoice no./date entered on this
+                page now show here too, not only on the entry form. */}
+            <div>
+              <dt className="text-slate-400">Dispatch</dt>
+              <dd className="text-slate-700">
+                {order.status === "Dispatched" || order.status === "Delivered"
+                  ? `✓ ${order.status}${order.dispatch_date ? ` · ${order.dispatch_date}` : ""}`
+                  : "Not dispatched yet"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Shipment / Tracking Status</dt>
+              <dd className="text-slate-700">{order.shipment_status || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Invoice No. / Date</dt>
+              <dd className="text-slate-700">
+                {dispatchSummary?.invoiceNo
+                  ? `${dispatchSummary.invoiceNo}${dispatchSummary.invoiceDate ? ` · ${dispatchSummary.invoiceDate}` : ""}`
+                  : invoice
+                    ? `${invoice.invoice_no} · ${invoice.invoice_date}`
+                    : "—"}
+              </dd>
+            </div>
           </dl>
         </div>
       )}
+
+      {/* 2026-10-26 — "AWB NO JAB SHIPMENT ME ADD HO GAYA TO DISPATCH DIKHAYE
+          OR TRACKING CHECK HOKAR STATUS SHOW HO JAYE": one card with every
+          AWB on the order, its package weight/dims, the dispatch state and
+          the status the courier tracking API last reported. "Check tracking
+          now" runs the same poll as the nightly cron for this order's AWBs
+          (see tracking-actions.ts). */}
+      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-xs print:hidden">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="font-semibold text-slate-700">Dispatch &amp; Tracking</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              {order.status === "Dispatched" || order.status === "Delivered"
+                ? `Dispatched${order.dispatch_date ? ` on ${order.dispatch_date}` : ""}`
+                : "No dispatch yet — an AWB saved below marks this order Dispatched automatically."}
+              {order.shipment_status ? ` · Shipment status: ${order.shipment_status}` : ""}
+            </p>
+          </div>
+          {canManageOrders && <TrackingRefreshButton orderId={order.id} />}
+        </div>
+
+        {dispatchSummary && (
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] sm:grid-cols-4">
+            <span className="text-slate-400">AWB</span>
+            <span className="text-slate-700">{dispatchSummary.awbNo ?? "—"}</span>
+            {dispatchSummary.forwardingNo && (
+              <>
+                <span className="text-slate-400">Forwarding No.</span>
+                <span className="text-slate-700">{dispatchSummary.forwardingNo}</span>
+              </>
+            )}
+            <span className="text-slate-400">Courier</span>
+            <span className="text-slate-700">{dispatchSummary.courierName ?? "—"}</span>
+            <span className="text-slate-400">Weight</span>
+            <span className="text-slate-700">{dispatchSummary.weightKg != null ? `${dispatchSummary.weightKg} kg` : "—"}</span>
+            <span className="text-slate-400">Volumetric</span>
+            <span className="text-slate-700">
+              {dispatchSummary.volumetricWeightKg != null ? `${dispatchSummary.volumetricWeightKg} kg` : "—"}
+            </span>
+            <span className="text-slate-400">Dimensions</span>
+            <span className="text-slate-700">
+              {dispatchSummary.lengthCm != null && dispatchSummary.widthCm != null && dispatchSummary.heightCm != null
+                ? `${dispatchSummary.lengthCm} × ${dispatchSummary.widthCm} × ${dispatchSummary.heightCm} cm`
+                : "—"}
+            </span>
+            <span className="text-slate-400">Invoice No. / Date</span>
+            <span className="text-slate-700">
+              {dispatchSummary.invoiceNo
+                ? `${dispatchSummary.invoiceNo}${dispatchSummary.invoiceDate ? ` · ${dispatchSummary.invoiceDate}` : ""}`
+                : "—"}
+            </span>
+          </div>
+        )}
+
+        {shipments.length > 0 ? (
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead className="text-slate-400">
+                <tr>
+                  <th className="py-1 pr-2 font-medium">AWB</th>
+                  <th className="py-1 pr-2 font-medium">Forwarding No.</th>
+                  <th className="py-1 pr-2 font-medium">Courier</th>
+                  <th className="py-1 pr-2 font-medium">Weight</th>
+                  <th className="py-1 pr-2 font-medium">Dims (cm)</th>
+                  <th className="py-1 pr-2 font-medium">Delivered</th>
+                  <th className="py-1 pr-2 font-medium">Last Update</th>
+                  <th className="py-1 font-medium">Label</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-700">
+                {shipments.map((s) => (
+                  <tr key={s.id} className="border-t border-slate-100">
+                    <td className="py-1 pr-2 font-medium">{s.awbNo ?? "—"}</td>
+                    <td className="py-1 pr-2">{s.forwardingNo ?? "—"}</td>
+                    <td className="py-1 pr-2">{s.courierName ?? s.bookingCourier ?? "—"}</td>
+                    <td className="py-1 pr-2">{s.weightKg != null ? `${s.weightKg} kg` : "—"}</td>
+                    <td className="py-1 pr-2">
+                      {s.lengthCm != null && s.widthCm != null && s.heightCm != null
+                        ? `${s.lengthCm} × ${s.widthCm} × ${s.heightCm}`
+                        : "—"}
+                    </td>
+                    <td className="py-1 pr-2">
+                      {s.deliveredStatus
+                        ? `${s.deliveredStatus}${s.deliveredDate ? ` · ${s.deliveredDate}` : ""}`
+                        : "Not tracked yet"}
+                    </td>
+                    <td className="py-1 pr-2">{s.lastUpdateDate ?? "—"}</td>
+                    <td className="py-1">
+                      {s.labelUrl ? (
+                        <a
+                          href={s.labelUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-amber-600 underline"
+                        >
+                          Open
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-slate-400">No AWB on this order yet.</p>
+        )}
+      </div>
 
       {/* 2026-09-13 (#5+#6) — manual AWB / courier / invoice no+date /
           weight / dims entry, with auto-Dispatch when AWB + invoice no. are

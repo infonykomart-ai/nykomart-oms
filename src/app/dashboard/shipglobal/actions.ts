@@ -10,6 +10,7 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+import { tolerateMissingColumn } from "@/lib/db/missing-column";
 import {
   shipglobalLogin,
   shipglobalAddOrder,
@@ -459,24 +460,36 @@ export async function createShipglobalShipment(
       // shipment_no 1 (a Shipglobal-manifested order that separately also
       // has manually-entered extra packages/shipments is an edge case not
       // handled specially here — shipment 1 stays Shipglobal's own).
-      const { data: shipment } = await supabase
-        .from("order_shipments")
-        .upsert(
-          {
-            order_id: orderId,
-            shipment_no: 1,
-            awb_no: manifested.trackingNo,
-            courier_name: `${carrierName} (Shipglobal)`,
-            last_update_date: new Date().toISOString().slice(0, 10),
-            created_by_employee_id: employee.id,
-            booked_freight_amt: bookedAmt,
-            booked_currency: bookedCurrency,
-            booked_amount_source: bookedSource,
-          },
-          { onConflict: "order_id,shipment_no" }
-        )
-        .select("id")
-        .single();
+      const { data: shipment } = await tolerateMissingColumn(
+        {
+          order_id: orderId,
+          shipment_no: 1,
+          awb_no: manifested.trackingNo,
+          // 2026-10-26 — Shipglobal's own order number is the second,
+          // forwarder-side reference for this parcel (it was already saved
+          // on shipglobal_shipments.shipglobal_order_number above; this puts
+          // it on the shipment too, where the order page and every AWB search
+          // read it). Falls back to the Shipglobal waybill number when
+          // addOrder returned no order number — and stores nothing at all
+          // when that reference IS the carrier tracking number, so the second
+          // field never just repeats the AWB.
+          forwarding_no:
+            (created.orderNumber ?? created.waybillNumber ?? null) === manifested.trackingNo
+              ? null
+              : created.orderNumber ?? created.waybillNumber ?? null,
+          courier_name: `${carrierName} (Shipglobal)`,
+          last_update_date: new Date().toISOString().slice(0, 10),
+          created_by_employee_id: employee.id,
+          booked_freight_amt: bookedAmt,
+          booked_currency: bookedCurrency,
+          booked_amount_source: bookedSource,
+        },
+        // Tolerant because the booking itself must not fail on a database
+        // where the forwarding-no patch has not been run yet — the label and
+        // AWB are already created on Shipglobal's side by this point.
+        "forwarding_no",
+        (payload) => supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" }).select("id").single()
+      );
 
       if (shipment) {
         await supabase.from("order_packages").upsert(

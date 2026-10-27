@@ -782,7 +782,7 @@ function PurchaseBillInvoiceList({
                     <button
                       type="button"
                       onClick={() => setHistoryKey(inv.key)}
-                      title="Poori chain — kab kisne kya badla"
+                      title="Full chain — who changed what, and when"
                       className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
                     >
                       🕘 History
@@ -924,7 +924,7 @@ function PurchaseBillInvoiceList({
           open
           onClose={() => setHistoryKey(null)}
           title={`History — ${history.vendor_invoice_no}`}
-          subtitle="Kisne entry ki, kab edit hua, aur kya badla — newest first."
+          subtitle="Who entered it, when it was edited, and what changed — newest first."
           footer={
             <div className="flex items-center justify-end gap-2">
               <button
@@ -974,7 +974,7 @@ function PurchaseBillHistoryPanel({ billIds }: { billIds: string[] }) {
         if (!cancelled) {
           setLoaded({
             key: idsKey,
-            error: err instanceof Error ? err.message : "History load nahi ho saki.",
+            error: err instanceof Error ? err.message : "Could not load history.",
             entries: [],
           });
         }
@@ -991,8 +991,8 @@ function PurchaseBillHistoryPanel({ billIds }: { billIds: string[] }) {
   if (entries.length === 0) {
     return (
       <p className="text-sm text-slate-500">
-        Koi history entry nahi hai. Iska matlab: ye bill us code ke live hone se pehle enter hua, ya audit_log abhi tak
-        likha hi nahi ja raha (Schema Status card dekhein).
+        No history entries yet. That means this bill was entered before the history code went live, or nothing is being
+        written to audit_log yet (see the Schema Status card).
       </p>
     );
   }

@@ -39,19 +39,19 @@ export function buildOverdueDigest(result: AgeingResult, today: string): string 
   const t = result.totals;
   const overdue = t.d1_30 + t.d31_60 + t.d61_90 + t.d90plus;
   if (overdue <= 0.005) {
-    return `✅ *Payables — ${today}*\n\nKoi overdue bill nahi hai. Total payable ₹${money(t.total)} (sab abhi due date ke andar).`;
+    return `✅ *Payables — ${today}*\n\nNo overdue bills. Total payable ₹${money(t.total)} (everything is still within its due date).`;
   }
   const lines = result.top.map(
-    (r, i) => `${i + 1}. ${r.partyName} (${r.companyName}) — ₹${money(r.total)}${r.oldestDays > 0 ? ` · ${r.oldestDays} din` : ""}`
+    (r, i) => `${i + 1}. ${r.partyName} (${r.companyName}) — ₹${money(r.total)}${r.oldestDays > 0 ? ` · ${r.oldestDays} days` : ""}`
   );
   return [
     `💳 *Payables overdue — ${today}*`,
     "",
     `Overdue: ₹${money(overdue)}`,
     `Total payable: ₹${money(t.total)} (not due ₹${money(t.notDue)})`,
-    `90+ din: ₹${money(t.d90plus)} · 61-90: ₹${money(t.d61_90)} · 31-60: ₹${money(t.d31_60)} · 1-30: ₹${money(t.d1_30)}`,
+    `90+ days: ₹${money(t.d90plus)} · 61-90: ₹${money(t.d61_90)} · 31-60: ₹${money(t.d31_60)} · 1-30: ₹${money(t.d1_30)}`,
     "",
-    "*Sabse zyada pending:*",
+    "*Most pending:*",
     ...lines,
     "",
     "Detail: Reports → Payables Ageing",
@@ -88,7 +88,7 @@ export async function resolveOverdueDigestRecipients(
     return {
       recipients: [],
       note: /telegram_chat_id/i.test(adminError.message)
-        ? "employees.telegram_chat_id nahi hai — db/2026-09-30c-employee-telegram-chat-id.sql run karein (ya OVERDUE_DIGEST_CHAT_ID env set karein)."
+        ? "employees.telegram_chat_id is missing — run db/2026-09-30c-employee-telegram-chat-id.sql (or set OVERDUE_DIGEST_CHAT_ID)."
         : adminError.message,
     };
   }
@@ -103,7 +103,7 @@ export async function resolveOverdueDigestRecipients(
   }
   return {
     recipients,
-    note: recipients.length === 0 ? "Koi admin ka Telegram connected nahi hai — OVERDUE_DIGEST_CHAT_ID set karein." : undefined,
+    note: recipients.length === 0 ? "No admin has Telegram connected — set OVERDUE_DIGEST_CHAT_ID." : undefined,
   };
 }
 

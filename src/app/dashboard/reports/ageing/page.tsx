@@ -89,7 +89,8 @@ async function AgeingInner(sp: { [key: string]: string | string[] | undefined })
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">⏳ Payables Ageing</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Kitna paisa kitna purana pada hai — bill ke due date se din gine jaate hain. Source: bill-pass register (Bill Payment / Party Ledger ke same rows).
+            How much money has been outstanding for how long — days are counted from each bill&apos;s due date. Source:
+            bill-pass register (the same rows as Bill Payment / Party Ledger).
           </p>
         </div>
         <div className="flex gap-3 text-sm">
@@ -124,7 +125,7 @@ async function AgeingInner(sp: { [key: string]: string | string[] | undefined })
         </div>
         <label className="flex items-center gap-2 pb-1.5 text-xs text-slate-600">
           <input type="checkbox" name="only" value="overdue" defaultChecked={onlyOverdue} className="h-3.5 w-3.5 rounded border-slate-300" />
-          Only overdue (due date nikAL chuki hai)
+          Only overdue (due date has passed)
         </label>
         <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
           Apply

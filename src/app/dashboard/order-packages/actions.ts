@@ -16,6 +16,10 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resolveOrderByReference } from "@/lib/orders/find-order";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
+// 2026-10-26 — forwarding_no (the aggregator courier's own second number for
+// the same parcel) is read/written tolerantly, so this screen keeps working on
+// a database where db/2026-10-26-order-shipment-forwarding-no.sql is pending.
+import { isMissingSchemaPiece, tolerateMissingColumn } from "@/lib/db/missing-column";
 import { revalidatePath } from "next/cache";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -47,6 +51,10 @@ export type ShipmentRow = {
   shipment_no: number;
   courier_name: string | null;
   awb_no: string | null;
+  /** 2026-10-26 — the forwarder/aggregator's own number for the same parcel
+   * (Shiprocket shipment id, Shipglobal order number, …); see
+   * db/2026-10-26-order-shipment-forwarding-no.sql. */
+  forwarding_no: string | null;
   delivered_status: "Delivered" | "NOT Delivered" | null;
   delivered_date: string | null;
   remark: string | null;
@@ -62,11 +70,28 @@ export type OrderPackagesLookup = {
 const EMPTY: OrderPackagesLookup = { error: null, order: null, shipments: [] };
 
 async function fetchShipments(supabase: ServiceClient, orderId: string): Promise<ShipmentRow[]> {
-  const { data: shipments } = await supabase
+  // 2026-10-26 — forwarding_no is read tolerantly: on a database where
+  // db/2026-10-26-order-shipment-forwarding-no.sql has not been run, naming it
+  // here makes PostgREST reject the WHOLE select, and this screen would show
+  // "no shipments" over rows that were never missing (the exact failure the
+  // leave screens hit in BRAIN.md §5p). Retry with the base columns instead.
+  type ShipmentBaseRow = Omit<ShipmentRow, "packages">;
+  let shipments: ShipmentBaseRow[] | null = null;
+  const full = await supabase
     .from("order_shipments")
-    .select("id, shipment_no, courier_name, awb_no, delivered_status, delivered_date, remark")
+    .select("id, shipment_no, courier_name, awb_no, forwarding_no, delivered_status, delivered_date, remark")
     .eq("order_id", orderId)
     .order("shipment_no");
+  if (full.error && isMissingSchemaPiece(full.error)) {
+    const base = await supabase
+      .from("order_shipments")
+      .select("id, shipment_no, courier_name, awb_no, delivered_status, delivered_date, remark")
+      .eq("order_id", orderId)
+      .order("shipment_no");
+    shipments = (base.data ?? []).map((r) => ({ ...r, forwarding_no: null }));
+  } else {
+    shipments = full.data;
+  }
   if (!shipments || shipments.length === 0) return [];
 
   const { data: packages } = await supabase
@@ -143,18 +168,22 @@ export async function saveOrderShipment(_prev: SimpleResult, formData: FormData)
   const accessError = await assertOrderAccess(supabase, employee.companyIds, orderId);
   if (accessError) return { error: accessError };
 
-  const { error } = await supabase.from("order_shipments").upsert(
+  // Tolerant of a database that hasn't had the forwarding-no patch run yet —
+  // the shipment itself must still save (src/lib/db/missing-column.ts).
+  const { error } = await tolerateMissingColumn(
     {
       order_id: orderId,
       shipment_no: shipmentNo,
       courier_name: strOrNull(formData, "courier_name"),
       awb_no: strOrNull(formData, "awb_no"),
+      forwarding_no: strOrNull(formData, "forwarding_no"),
       delivered_status: (strOrNull(formData, "delivered_status") as "Delivered" | "NOT Delivered" | null) ?? null,
       delivered_date: strOrNull(formData, "delivered_date"),
       remark: strOrNull(formData, "remark"),
       created_by_employee_id: employee.id,
     },
-    { onConflict: "order_id,shipment_no" }
+    "forwarding_no",
+    (payload) => supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" })
   );
   if (error) return { error: error.message };
 

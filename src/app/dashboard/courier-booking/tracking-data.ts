@@ -13,6 +13,9 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { CourierKey } from "@/lib/couriers/credentials";
 import { sanitizeSearchTerm } from "@/lib/orders/find-order";
+// 2026-10-26 — tolerant reads/writes for forwarding_no (see the fallback in
+// fetchShipments and db/2026-10-26-order-shipment-forwarding-no.sql).
+import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -24,6 +27,11 @@ export type TrackedShipment = {
   manualCourierName: string | null;
   status: "pending" | "created" | "failed" | "cancelled";
   awbNo: string | null;
+  // 2026-10-26 — the forwarder/aggregator's own number for the same parcel
+  // (Shiprocket shipment id, Shipglobal order number, …), searched and
+  // displayed beside the carrier's AWB. See
+  // db/2026-10-26-order-shipment-forwarding-no.sql.
+  forwardingNo: string | null;
   labelUrl: string | null;
   bookedAmt: number | null;
   bookedCurrency: string | null;
@@ -63,6 +71,7 @@ export async function getTrackedShipments(
     manual_courier_name: string | null;
     status: string;
     awb_no: string | null;
+    forwarding_no: string | null;
     label_url: string | null;
     booked_amt: number | null;
     booked_currency: string | null;
@@ -76,15 +85,36 @@ export async function getTrackedShipments(
   async function fetchShipments(orderIds?: string[]): Promise<ShipmentQueryRow[]> {
     let q = supabase
       .from("courier_shipments")
-      .select("id, courier, manual_courier_name, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, created_at, order_id")
+      .select("id, courier, manual_courier_name, status, awb_no, forwarding_no, label_url, booked_amt, booked_currency, booked_amount_source, created_at, order_id")
       .order("created_at", { ascending: false })
       .limit(MAX_ROWS);
     if (filters.courier) q = q.eq("courier", filters.courier);
     if (filters.status) q = q.eq("status", filters.status);
     if (orderIds) q = q.in("order_id", orderIds);
-    else if (term) q = q.ilike("awb_no", `%${term}%`);
-    const { data } = await q;
-    return (data ?? []) as ShipmentQueryRow[];
+    // Both numbers match — an aggregator parcel is just as likely to be
+    // looked up by its forwarding ref as by the carrier's AWB.
+    else if (term) q = q.or(`awb_no.ilike.%${term}%,forwarding_no.ilike.%${term}%`);
+    const { data, error } = await q;
+    if (!error) return (data ?? []) as ShipmentQueryRow[];
+    // 2026-10-26 — on a database where
+    // db/2026-10-26-order-shipment-forwarding-no.sql has not been run,
+    // forwarding_no does not exist and PostgREST rejects the whole select:
+    // this list would go EMPTY over rows that were never missing (the failure
+    // BRAIN.md §5p describes for the leave screens). Retry with the base
+    // columns and no forwarding_no in the search, so the tab still lists
+    // everything it did before this round (src/lib/db/missing-column.ts).
+    if (!isMissingSchemaPiece(error)) return [];
+    let base = supabase
+      .from("courier_shipments")
+      .select("id, courier, manual_courier_name, status, awb_no, label_url, booked_amt, booked_currency, booked_amount_source, created_at, order_id")
+      .order("created_at", { ascending: false })
+      .limit(MAX_ROWS);
+    if (filters.courier) base = base.eq("courier", filters.courier);
+    if (filters.status) base = base.eq("status", filters.status);
+    if (orderIds) base = base.in("order_id", orderIds);
+    else if (term) base = base.ilike("awb_no", `%${term}%`);
+    const { data: baseRows } = await base;
+    return (baseRows ?? []).map((r) => ({ ...r, forwarding_no: null }));
   }
 
   let shipments: ShipmentQueryRow[];
@@ -98,9 +128,19 @@ export async function getTrackedShipments(
       .or(`ref_no.ilike.%${term}%,marketplace_order_no.ilike.%${term}%`)
       .limit(500);
     const matchingOrderIds = (matchingOrders ?? []).map((o) => o.id);
+    // 2026-10-26 — order_shipments is the source of truth for the forwarding
+    // no. (a booking written before the mirror existed, or a flow that never
+    // writes courier_shipments at all, only has it there), so a forwarding
+    // ref is ALSO resolved to its order and that order's bookings pulled in.
+    const { data: fwdShipments } = await supabase
+      .from("order_shipments")
+      .select("order_id")
+      .ilike("forwarding_no", `%${term}%`)
+      .limit(500);
+    const searchOrderIds = Array.from(new Set([...matchingOrderIds, ...(fwdShipments ?? []).map((r) => r.order_id)]));
     const [byAwb, byOrder] = await Promise.all([
       fetchShipments(),
-      matchingOrderIds.length ? fetchShipments(matchingOrderIds) : Promise.resolve([] as ShipmentQueryRow[]),
+      searchOrderIds.length ? fetchShipments(searchOrderIds) : Promise.resolve([] as ShipmentQueryRow[]),
     ]);
     const merged = new Map<string, ShipmentQueryRow>();
     for (const s of [...byAwb, ...byOrder]) merged.set(s.id, s);
@@ -139,6 +179,9 @@ export async function getTrackedShipments(
       // convention as the `courier` cast just above.
       status: s.status as TrackedShipment["status"],
       awbNo: s.awb_no,
+      // `?? null` covers the un-migrated read above, where the column is absent
+      // rather than null.
+      forwardingNo: s.forwarding_no ?? null,
       labelUrl: s.label_url,
       bookedAmt: s.booked_amt,
       bookedCurrency: s.booked_currency,

@@ -21,7 +21,6 @@ export default async function LocationReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/location-report"
       heading="Location Report"
-      blurb="Har employee ka din-k-din kaam ki location — store name ya Web-Punch GPS fix (default: pichhle 30 din), company/department/employee filter aur export ke saath."
       reportTypes={REPORT_TYPES}
       defaultReport="location"
     />

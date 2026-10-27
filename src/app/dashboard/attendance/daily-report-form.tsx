@@ -628,7 +628,7 @@ export function DailyReportForm({
                   onBlur={() => saveRow(row.clientId)}
                   rows={2}
                   className={inputClass}
-                  placeholder="Exactly kya kaam kiya…"
+                  placeholder="What exactly did you work on…"
                 />
               </Field>
             </div>

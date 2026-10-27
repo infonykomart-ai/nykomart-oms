@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { PrintArea, PrintButton } from "@/components/print-view";
 
 type PayslipEmployee = {
@@ -75,7 +76,16 @@ export function PayslipView({
         <div className="mx-auto max-w-2xl rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-800">
           <div className="mb-4 flex items-start justify-between border-b border-slate-200 pb-3">
             <div className="flex items-center gap-3">
-              {company.logoUrl && <img src={company.logoUrl} alt="" className="h-10 w-10 rounded object-contain" />}
+              {company.logoUrl && (
+                <Image
+                  src={company.logoUrl}
+                  alt=""
+                  width={40}
+                  height={40}
+                  unoptimized
+                  className="h-10 w-10 rounded object-contain"
+                />
+              )}
               <div>
                 <div className="text-base font-bold">{company.name}</div>
                 {company.address && <div className="text-xs text-slate-500">{company.address}</div>}

@@ -1,0 +1,73 @@
+# Weekly full data snapshot -> Cloudflare R2 (2026-10-23).
+#
+# Calls the deployment's /api/cron/backup-snapshot route with the same bearer
+# token the other cron routes use. The route (src/app/api/cron/backup-snapshot/
+# route.ts) reads every table and writes three objects per run to R2:
+#   snapshot-<runId>.xlsx, snapshot-<runId>.pdf, manifest.json
+# Nothing is stored in GitHub — this workflow is only the clock.
+#
+# WHY GITHUB ACTIONS: the project's hosting plan already uses both of its cron
+# slots (see the header of src/app/api/cron/poll-fedex-tracking/route.ts), and
+# a third vercel.json entry silently blocks every future deployment.
+#
+# REQUIRED repository secret:
+#   CRON_SECRET      the same value as the deployment's CRON_SECRET env var
+# OPTIONAL repository variable/secret:
+#   BACKUP_APP_URL   defaults to https://www.nykoinfotech.com
+#
+# The R2 credentials (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
+# R2_SECRET_ACCESS_KEY / R2_BUCKET, optional R2_PREFIX) live on the deployment
+# (Settings -> Environment), never here.
+name: Weekly Cloud Backup
+
+on:
+  schedule:
+    # Sunday 02:00 IST = Saturday 20:30 UTC.
+    - cron: "30 20 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Trigger the snapshot
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          BACKUP_APP_URL: ${{ secrets.BACKUP_APP_URL }}
+        run: |
+          set -euo pipefail
+          base="${BACKUP_APP_URL:-https://www.nykoinfotech.com}"
+          base="${base%/}"
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::CRON_SECRET is not set. Add it under Settings -> Secrets and variables -> Actions, using the same value as the deployment's CRON_SECRET."
+            exit 1
+          fi
+          echo "Requesting snapshot from ${base}/api/cron/backup-snapshot"
+          status=$(curl -sS --max-time 300 -o response.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${base}/api/cron/backup-snapshot")
+          cat response.json || true
+          if [ "$status" != "200" ]; then
+            echo "::error::Backup failed with HTTP ${status} — see the response above."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("response.json") as fh:
+              data = json.load(fh)
+          summary = (
+              f"Backup {data.get('runId')} stored — {data.get('tables')} tables, "
+              f"{data.get('rows')} rows, {data.get('skipped')} skipped."
+          )
+          print(summary)
+          with open("summary.txt", "w") as fh:
+              fh.write(summary + "\n")
+          PY
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f summary.txt ]; then cat summary.txt >> "$GITHUB_STEP_SUMMARY"; fi

@@ -303,6 +303,9 @@ export function ChargesGridDialog({
                   <span>
                     <span className="font-semibold text-slate-900">{t.refNo}</span>
                     <span className="ml-2 font-mono text-slate-500">{t.awbNo ?? "no AWB"}</span>
+                    {/* 2026-10-26 — the forwarder's own number (aggregator
+                        couriers carry a second ref beside the AWB). */}
+                    {t.forwardingNo && <span className="ml-2 font-mono text-slate-400">Fwd {t.forwardingNo}</span>}
                     {t.country && <span className="ml-2 text-slate-400">{t.country}</span>}
                   </span>
                   <span className="shrink-0 text-slate-400">{t.courier ?? "—"} · add</span>

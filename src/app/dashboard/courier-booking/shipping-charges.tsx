@@ -210,6 +210,9 @@ export function ShippingCharges({ data }: { data: ShippingChargeData }) {
                     <span>
                       <span className="font-semibold text-slate-900">{t.refNo}</span>
                       <span className="ml-2 font-mono text-slate-500">{t.awbNo ?? "no AWB yet"}</span>
+                      {/* 2026-10-26 — the forwarder's own number, so a search
+                          by that second number shows which field matched. */}
+                      {t.forwardingNo && <span className="ml-2 font-mono text-slate-400">Fwd {t.forwardingNo}</span>}
                       {t.country && <span className="ml-2 text-slate-400">{t.country}</span>}
                     </span>
                     <span className="shrink-0 text-slate-400">{t.courier ?? "—"}</span>

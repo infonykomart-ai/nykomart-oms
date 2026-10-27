@@ -4,6 +4,10 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+// 2026-10-26 — this upload can now carry the Forwarding No column too; it is
+// written tolerantly so an upload still lands on a database where
+// db/2026-10-26-order-shipment-forwarding-no.sql is pending.
+import { tolerateMissingColumn } from "@/lib/db/missing-column";
 import { SHIPMENT_STATUSES, DELIVERED_STATUSES } from "./columns";
 
 export type TrackingRowResult = {
@@ -116,6 +120,7 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
     orderId: string;
     shipmentStatus: string | null;
     awbNo: string | null;
+    forwardingNo: string | null;
     courierName: string | null;
     deliveredStatus: "Delivered" | "NOT Delivered" | null;
     deliveredDate: string | null;
@@ -170,6 +175,10 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
     }
 
     const awbNo = cellStr(raw, byHeader, "AWB No") || null;
+    // 2026-10-26 — the second number an aggregator courier reports for the
+    // same parcel (see columns.ts's "Forwarding No" help). Optional; blank
+    // simply leaves whatever is on file untouched, like every other column.
+    const forwardingNo = cellStr(raw, byHeader, "Forwarding No") || null;
     const courierName = cellStr(raw, byHeader, "Courier Name") || null;
     const deliveredDate = cellStr(raw, byHeader, "Delivered Date") || null;
     const remark = cellStr(raw, byHeader, "Remark") || null;
@@ -191,6 +200,7 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
       orderId,
       shipmentStatus,
       awbNo,
+      forwardingNo,
       courierName,
       deliveredStatus: deliveredStatus as "Delivered" | "NOT Delivered" | null,
       deliveredDate,
@@ -209,7 +219,7 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
     const chunk = plans.slice(c, c + CHUNK_SIZE);
     await Promise.all(
       chunk.map(async (plan) => {
-        const { index, rowNum, refNo, orderId, shipmentStatus, awbNo, courierName, deliveredStatus, deliveredDate, remark, shipmentNo } = plan;
+        const { index, rowNum, refNo, orderId, shipmentStatus, awbNo, forwardingNo, courierName, deliveredStatus, deliveredDate, remark, shipmentNo } = plan;
 
         if (shipmentStatus) {
           const { error: statusError } = await supabase
@@ -222,22 +232,22 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
           }
         }
 
-        if (awbNo || courierName || deliveredStatus || deliveredDate || remark) {
-          const { error: upsertError } = await supabase
-            .from("order_shipments")
-            .upsert(
-              {
-                order_id: orderId,
-                shipment_no: shipmentNo,
-                ...(awbNo ? { awb_no: awbNo } : {}),
-                ...(courierName ? { courier_name: courierName } : {}),
-                ...(deliveredStatus ? { delivered_status: deliveredStatus } : {}),
-                ...(deliveredDate ? { delivered_date: deliveredDate } : {}),
-                ...(remark ? { remark } : {}),
-                last_update_date: today,
-              },
-              { onConflict: "order_id,shipment_no" }
-            );
+        if (awbNo || forwardingNo || courierName || deliveredStatus || deliveredDate || remark) {
+          const { error: upsertError } = await tolerateMissingColumn(
+            {
+              order_id: orderId,
+              shipment_no: shipmentNo,
+              ...(awbNo ? { awb_no: awbNo } : {}),
+              ...(forwardingNo ? { forwarding_no: forwardingNo } : {}),
+              ...(courierName ? { courier_name: courierName } : {}),
+              ...(deliveredStatus ? { delivered_status: deliveredStatus } : {}),
+              ...(deliveredDate ? { delivered_date: deliveredDate } : {}),
+              ...(remark ? { remark } : {}),
+              last_update_date: today,
+            },
+            "forwarding_no",
+            (payload) => supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" })
+          );
           if (upsertError) {
             results[index] = { row: rowNum, refNo, error: `Failed to update tracking details: ${upsertError.message}` };
             return;

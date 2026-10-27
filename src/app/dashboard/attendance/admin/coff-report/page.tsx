@@ -22,7 +22,6 @@ export default async function CoffReportPage({
       mode="range"
       basePath="/dashboard/attendance/admin/coff-report"
       heading="COFF Report (Compensatory Off)"
-      blurb="How much COFF was earned by working on weekly offs / holidays and how much was used (default: the last 30 days). Availed = rows whose leave type is named COFF / Comp Off."
       reportTypes={REPORT_TYPES}
       defaultReport="coff"
     />

@@ -54,8 +54,8 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500">Search (AWB or Ref No.)</label>
-          <input name="q" defaultValue={filters.q ?? ""} placeholder="e.g. PO-0123 or AWB" className={selectClass} />
+          <label className="mb-1 block text-xs font-medium text-slate-500">Search (AWB / Forwarding No. / Ref No.)</label>
+          <input name="q" defaultValue={filters.q ?? ""} placeholder="e.g. PO-0123, AWB or SR-123456" className={selectClass} />
         </div>
         <button type="submit" className="rounded-lg border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
           Filter
@@ -95,7 +95,12 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                       <span className="ml-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">manual</span>
                     )}
                   </td>
-                  <td className="px-3 py-2">{s.awbNo ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    {s.awbNo ?? "—"}
+                    {/* 2026-10-26 — the forwarder's own number under the AWB
+                        (aggregator couriers carry both for one parcel) */}
+                    {s.forwardingNo && <div className="text-[10px] text-slate-400">Fwd: {s.forwardingNo}</div>}
+                  </td>
                   <td className="px-3 py-2">
                     <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${attemptBadgeClass(s.status)}`}>{s.status}</span>
                   </td>

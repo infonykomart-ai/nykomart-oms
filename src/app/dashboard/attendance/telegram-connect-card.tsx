@@ -87,7 +87,7 @@ export function TelegramConnectCard({
         setPollNote(
           res.error
             ? `Checking… (${attempt}/${POLL_MAX_ATTEMPTS}) — server: ${res.error}`
-            : `Start ka wait kar rahe hain… (${attempt}/${POLL_MAX_ATTEMPTS}) — Telegram me bot ko START zaroor dabayein.`
+            : `Waiting for START… (${attempt}/${POLL_MAX_ATTEMPTS}) — press START in the Telegram bot chat.`
         );
         if (attempt < POLL_MAX_ATTEMPTS) await wait(POLL_INTERVAL_MS);
       }
@@ -148,7 +148,7 @@ export function TelegramConnectCard({
           </span>
         </div>
         <p className="mb-3 text-xs text-slate-500">
-          Punch In/Out alerts ab ek shared Telegram group me jaate hain (aapke naam ke saath) — koi personal connect ki zaroorat nahi.
+          Punch In/Out alerts now go to a shared Telegram group (with your name) — no personal connection needed.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <button
