@@ -1262,6 +1262,11 @@ CREATE TABLE order_shipments (
   shipment_no             integer NOT NULL,   -- 1-based; "shipment i of N" when an order has >1 AWB
   courier_name            text,
   awb_no                  text,
+  -- 2026-10-26: the FORWARDER/aggregator's second number for this same
+  -- parcel (Shiprocket shipment id, Shipglobal order number, OnPoint /
+  -- Delhivery partner ref) — see db/2026-10-26-order-shipment-
+  -- forwarding-no.sql for why aggregators hand out two numbers.
+  forwarding_no           text,
   delivered_status        delivered_status,
   delivered_date          date,
   last_update_date        date,
@@ -1286,6 +1291,9 @@ CREATE TABLE order_shipments (
 );
 CREATE INDEX idx_order_shipments_order ON order_shipments(order_id);
 CREATE INDEX idx_order_shipments_awb   ON order_shipments(awb_no);
+-- 2026-10-26: the forwarding/partner no. is NULL on almost every row and is
+-- only ever matched on its non-null values — hence the partial index.
+CREATE INDEX idx_order_shipments_forwarding_no ON order_shipments(forwarding_no) WHERE forwarding_no IS NOT NULL;
 -- 2026-09-10 perf fix — see db/2026-09-10-courier-perf-indexes.sql. Partial
 -- index covering the Pickup Request tab's "not yet delivered" candidate
 -- query (getPickupCandidatesForAllCouriers), which used to be a full
@@ -4557,6 +4565,10 @@ CREATE TABLE courier_shipments (
   ddp_ddu             text CHECK (ddp_ddu IN ('DDP', 'DDU')),
   status              text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'created', 'failed', 'cancelled')),
   awb_no              text,
+  -- 2026-10-26: mirror of order_shipments.forwarding_no (the forwarder's /
+  -- aggregator's own number for the same parcel) so Track Shipments can
+  -- search and show it — see db/2026-10-26-order-shipment-forwarding-no.sql.
+  forwarding_no       text,
   label_url           text,
   booked_amt          numeric(14,2),
   booked_currency     text,
@@ -4578,6 +4590,7 @@ CREATE TABLE courier_shipments (
 );
 CREATE INDEX idx_courier_shipments_order    ON courier_shipments(order_id);
 CREATE INDEX idx_courier_shipments_awb      ON courier_shipments(awb_no);
+CREATE INDEX idx_courier_shipments_forwarding_no ON courier_shipments(forwarding_no) WHERE forwarding_no IS NOT NULL;
 CREATE INDEX idx_courier_shipments_courier  ON courier_shipments(courier);
 -- 2026-09-10 perf fix — see db/2026-09-10-courier-perf-indexes.sql. Every
 -- Courier Ops Dashboard tab (Track Shipments, Courier Performance, Daily

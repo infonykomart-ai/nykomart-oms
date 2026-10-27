@@ -7,6 +7,7 @@ import { getAuthedEmployee } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { listVendorAssignments } from "../vendor-assignment-actions";
+import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 
 export async function loadOrderDetail(id: string) {
   const employee = await getAuthedEmployee();
@@ -22,7 +23,7 @@ export async function loadOrderDetail(id: string) {
 
   if (!order || !employee.companyIds.includes(order.company_id)) return null;
 
-  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }, { data: refunds }, { data: currencies }, { data: shipments }, { data: courierRows }] =
+  const [{ data: company }, { data: store }, { data: itemCategory }, { data: invoice }, { data: debitNotes }, { data: creditNotes }, statusByOrder, { data: parties }, vendorAssignments, { data: dispatchSummary }, { data: refunds }, { data: currencies }, { data: courierRows }] =
     await Promise.all([
       supabase.from("companies").select("id, name, logo_url").eq("id", order.company_id).single(),
       supabase.from("stores").select("id, name").eq("id", order.store_id).single(),
@@ -59,26 +60,53 @@ export async function loadOrderDetail(id: string) {
         .eq("order_id", id)
         .order("refund_date", { ascending: false }),
       supabase.from("currencies").select("code, name").order("code"),
-      // 2026-10-26 — the shipment/package rows are the SOURCE OF TRUTH for
-      // an order's AWB/weight/dimensions (order_shipments + order_packages;
-      // dispatch_invoices is only their order-level mirror). The shipping
-      // form used to pre-fill from that mirror alone, so whenever the mirror
-      // lagged (a manual save that only touched an existing shipment, an
-      // older row, a failed resync) every field looked empty again. Reading
-      // the real rows here keeps the form in step with whatever any writer
-      // — courier booking, Order Shipments & Packages, manual entry — saved.
-      supabase
-        .from("order_shipments")
-        .select("id, shipment_no, awb_no, courier_name, delivered_status, delivered_date, last_update_date")
-        .eq("order_id", id)
-        .order("shipment_no"),
       supabase
         .from("courier_shipments")
         .select("courier, manual_courier_name, status, awb_no, label_url")
         .eq("order_id", id),
     ]);
 
-  const shipmentRows = shipments ?? [];
+  // 2026-10-26 — the shipment/package rows are the SOURCE OF TRUTH for an
+  // order's AWB/weight/dimensions (order_shipments + order_packages;
+  // dispatch_invoices is only their order-level mirror). The shipping form
+  // used to pre-fill from that mirror alone, so whenever the mirror lagged (a
+  // manual save that only touched an existing shipment, an older row, a failed
+  // resync) every field looked empty again. Reading the real rows here keeps
+  // the form in step with whatever any writer — courier booking, Order
+  // Shipments & Packages, manual entry — saved.
+  //
+  // Read tolerantly: forwarding_no is one of the columns listed, and on a
+  // database where db/2026-10-26-order-shipment-forwarding-no.sql has not been
+  // run PostgREST rejects the whole select — which would blank every shipment
+  // on this page. The base columns are retried instead
+  // (src/lib/db/missing-column.ts).
+  type ShipmentRow = {
+    id: string;
+    shipment_no: number;
+    awb_no: string | null;
+    forwarding_no: string | null;
+    courier_name: string | null;
+    delivered_status: "Delivered" | "NOT Delivered" | null;
+    delivered_date: string | null;
+    last_update_date: string | null;
+  };
+  const shipmentsFull = await supabase
+    .from("order_shipments")
+    .select("id, shipment_no, awb_no, forwarding_no, courier_name, delivered_status, delivered_date, last_update_date")
+    .eq("order_id", id)
+    .order("shipment_no");
+  let shipmentRows: ShipmentRow[];
+  if (shipmentsFull.error && isMissingSchemaPiece(shipmentsFull.error)) {
+    const shipmentsBase = await supabase
+      .from("order_shipments")
+      .select("id, shipment_no, awb_no, courier_name, delivered_status, delivered_date, last_update_date")
+      .eq("order_id", id)
+      .order("shipment_no");
+    shipmentRows = (shipmentsBase.data ?? []).map((s) => ({ ...s, forwarding_no: null }));
+  } else {
+    shipmentRows = shipmentsFull.data ?? [];
+  }
+
   const shipmentIds = shipmentRows.map((s) => s.id);
   const { data: packageRows } = shipmentIds.length
     ? await supabase
@@ -114,6 +142,7 @@ export async function loadOrderDetail(id: string) {
       id: s.id,
       shipmentNo: s.shipment_no,
       awbNo: s.awb_no,
+      forwardingNo: s.forwarding_no,
       courierName: s.courier_name,
       deliveredStatus: s.delivered_status,
       deliveredDate: s.delivered_date,
@@ -153,6 +182,7 @@ export async function loadOrderDetail(id: string) {
     // which screen saved it.
     shippingDefaults: {
       awb_no: joinDistinct(shipmentRows.map((s) => s.awb_no)) ?? dispatchSummary?.awb_no ?? null,
+      forwarding_no: joinDistinct(shipmentRows.map((s) => s.forwarding_no)),
       courier_name: joinDistinct(shipmentRows.map((s) => s.courier_name)) ?? dispatchSummary?.courier_name ?? null,
       invoice_no: dispatchSummary?.invoice_no ?? invoice?.invoice_no ?? null,
       invoice_date: dispatchSummary?.invoice_date ?? invoice?.invoice_date ?? null,
@@ -185,6 +215,10 @@ export async function loadOrderDetail(id: string) {
     /** Order-level shipment summary (dispatch_invoices mirror + totals). */
     dispatchSummary: {
       awbNo: joinDistinct(shipmentRows.map((s) => s.awb_no)) ?? dispatchSummary?.awb_no ?? null,
+      // 2026-10-26 — the forwarder's own number lives only on
+      // order_shipments (dispatch_invoices never mirrors it), so this is the
+      // join of every shipment's value with no mirror fallback.
+      forwardingNo: joinDistinct(shipmentRows.map((s) => s.forwarding_no)),
       courierName: joinDistinct(shipmentRows.map((s) => s.courier_name)) ?? dispatchSummary?.courier_name ?? null,
       invoiceNo: dispatchSummary?.invoice_no ?? null,
       invoiceDate: dispatchSummary?.invoice_date ?? null,

@@ -942,6 +942,10 @@ export function CreateShipmentForm({ prefill, bookPrefill }: { prefill?: Courier
                     <label className={labelClass}>AWB / Tracking No. (if known)</label>
                     <input name="awb_no" className={inputClass} />
                   </div>
+                  <div>
+                    <label className={labelClass}>Forwarding No. (aggregator&apos;s own ref)</label>
+                    <input name="forwarding_no" placeholder="Shiprocket / Shipglobal / OnPoint ref" className={inputClass} />
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                   <div>

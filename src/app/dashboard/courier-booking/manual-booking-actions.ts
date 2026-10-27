@@ -41,6 +41,10 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+// 2026-10-26 — forwarding_no is written tolerantly: a database that has not
+// had db/2026-10-26-order-shipment-forwarding-no.sql run yet must still record
+// the manual booking, just without the second number.
+import { tolerateMissingColumn } from "@/lib/db/missing-column";
 import type { ManualBookingCourierChoice } from "./manual-booking-config";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
@@ -114,6 +118,11 @@ export async function createManualBooking(_prev: ManualBookingState, formData: F
   const bookedCurrency = str(formData, "booked_currency") || "INR";
 
   const awbNo = strOrNull(formData, "awb_no");
+  // 2026-10-26 — the forwarder/aggregator's own number for the same parcel
+  // (Shiprocket / Shipglobal / OnPoint / Delhivery partner ref — see
+  // db/2026-10-26-order-shipment-forwarding-no.sql). Booked Outside is where
+  // these aggregator numbers are most often typed in by hand.
+  const forwardingNo = strOrNull(formData, "forwarding_no");
   const remarkNote = strOrNull(formData, "remark");
   const remark = `Manual entry — booked outside the app (${courierLabel}).${remarkNote ? ` ${remarkNote}` : ""}`;
 
@@ -121,25 +130,23 @@ export async function createManualBooking(_prev: ManualBookingState, formData: F
   if (!order) return { ...MANUAL_BOOKING_INITIAL, error: "Order not found (or not in a company you can access)." };
 
   const shipmentNo = await getNextShipmentNo(supabase, orderId);
-  const { data: shipment, error: shipmentError } = await supabase
-    .from("order_shipments")
-    .upsert(
-      {
-        order_id: orderId,
-        shipment_no: shipmentNo,
-        awb_no: awbNo,
-        courier_name: courierLabel,
-        last_update_date: new Date().toISOString().slice(0, 10),
-        created_by_employee_id: employee.id,
-        booked_freight_amt: bookedAmt,
-        booked_currency: bookedCurrency,
-        booked_amount_source: "manual",
-        remark,
-      },
-      { onConflict: "order_id,shipment_no" }
-    )
-    .select("id")
-    .single();
+  const { data: shipment, error: shipmentError } = await tolerateMissingColumn(
+    {
+      order_id: orderId,
+      shipment_no: shipmentNo,
+      awb_no: awbNo,
+      forwarding_no: forwardingNo,
+      courier_name: courierLabel,
+      last_update_date: new Date().toISOString().slice(0, 10),
+      created_by_employee_id: employee.id,
+      booked_freight_amt: bookedAmt,
+      booked_currency: bookedCurrency,
+      booked_amount_source: "manual" as const,
+      remark,
+    },
+    "forwarding_no",
+    (payload) => supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" }).select("id").single()
+  );
   if (shipmentError || !shipment) return { ...MANUAL_BOOKING_INITIAL, error: shipmentError?.message ?? "Could not save the shipment." };
 
   await supabase.from("order_packages").upsert(
@@ -167,20 +174,22 @@ export async function createManualBooking(_prev: ManualBookingState, formData: F
   // domestic Delhivery API booking — those would collide. The form now
   // hints at picking "Other" + a free-text name for that case instead
   // (see the courier-picker hint in create-shipment-form.tsx).
-  const { error: attemptError } = await supabase.from("courier_shipments").upsert(
+  const { error: attemptError } = await tolerateMissingColumn(
     {
-      courier: courierChoice === "other" ? "other" : courierChoice,
+      courier: courierChoice === "other" ? ("other" as const) : courierChoice,
       manual_courier_name: courierChoice === "other" ? manualCourierNameInput : null,
       order_id: orderId,
       order_shipment_id: shipment.id,
-      status: "created",
+      status: "created" as const,
       awb_no: awbNo,
+      forwarding_no: forwardingNo,
       booked_amt: bookedAmt,
       booked_currency: bookedCurrency,
-      booked_amount_source: "manual",
+      booked_amount_source: "manual" as const,
       created_by: employee.id,
     },
-    { onConflict: "order_id,courier" }
+    "forwarding_no",
+    (payload) => supabase.from("courier_shipments").upsert(payload, { onConflict: "order_id,courier" })
   );
   if (attemptError) return { ...MANUAL_BOOKING_INITIAL, error: attemptError.message };
 

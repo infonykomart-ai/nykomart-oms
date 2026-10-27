@@ -87,6 +87,10 @@ export type OrderShipmentView = {
   id: string;
   shipmentNo: number;
   awbNo: string | null;
+  /** 2026-10-26 — the forwarder/aggregator's own number for this parcel
+   * (Shiprocket shipment id, Shipglobal order number, …), stored beside the
+   * carrier's AWB. See db/2026-10-26-order-shipment-forwarding-no.sql. */
+  forwardingNo: string | null;
   courierName: string | null;
   deliveredStatus: string | null;
   deliveredDate: string | null;
@@ -106,6 +110,7 @@ export type OrderShipmentView = {
 // printed dispatch sheet.
 export type OrderDispatchSummary = {
   awbNo: string | null;
+  forwardingNo: string | null;
   courierName: string | null;
   invoiceNo: string | null;
   invoiceDate: string | null;
@@ -327,6 +332,15 @@ export function OrderPrintSheet({
                 <div>
                   <div className="font-semibold text-slate-500">AWB No.</div>
                   <div>{shipment.awbNo ?? "—"}</div>
+                  {/* 2026-10-26 — aggregator couriers hand out a second,
+                      forwarder-side number; printed only when there is one so
+                      sheets for single-number couriers stay as they were. */}
+                  {shipment.forwardingNo && (
+                    <>
+                      <div className="font-semibold text-slate-500">Forwarding No.</div>
+                      <div>{shipment.forwardingNo}</div>
+                    </>
+                  )}
                 </div>
                 <div>
                   <div className="font-semibold text-slate-500">Courier</div>
@@ -470,6 +484,7 @@ export function OrderView({
   // consumer of this view (orders/print) stays unchanged.
   shippingDefaults?: {
     awb_no: string | null;
+    forwarding_no: string | null;
     courier_name: string | null;
     invoice_no: string | null;
     invoice_date: string | null;
@@ -682,6 +697,12 @@ export function OrderView({
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] sm:grid-cols-4">
             <span className="text-slate-400">AWB</span>
             <span className="text-slate-700">{dispatchSummary.awbNo ?? "—"}</span>
+            {dispatchSummary.forwardingNo && (
+              <>
+                <span className="text-slate-400">Forwarding No.</span>
+                <span className="text-slate-700">{dispatchSummary.forwardingNo}</span>
+              </>
+            )}
             <span className="text-slate-400">Courier</span>
             <span className="text-slate-700">{dispatchSummary.courierName ?? "—"}</span>
             <span className="text-slate-400">Weight</span>
@@ -711,6 +732,7 @@ export function OrderView({
               <thead className="text-slate-400">
                 <tr>
                   <th className="py-1 pr-2 font-medium">AWB</th>
+                  <th className="py-1 pr-2 font-medium">Forwarding No.</th>
                   <th className="py-1 pr-2 font-medium">Courier</th>
                   <th className="py-1 pr-2 font-medium">Weight</th>
                   <th className="py-1 pr-2 font-medium">Dims (cm)</th>
@@ -723,6 +745,7 @@ export function OrderView({
                 {shipments.map((s) => (
                   <tr key={s.id} className="border-t border-slate-100">
                     <td className="py-1 pr-2 font-medium">{s.awbNo ?? "—"}</td>
+                    <td className="py-1 pr-2">{s.forwardingNo ?? "—"}</td>
                     <td className="py-1 pr-2">{s.courierName ?? s.bookingCourier ?? "—"}</td>
                     <td className="py-1 pr-2">{s.weightKg != null ? `${s.weightKg} kg` : "—"}</td>
                     <td className="py-1 pr-2">

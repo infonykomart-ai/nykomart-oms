@@ -15,11 +15,20 @@
 import { revalidatePath } from "next/cache";
 import { requireCapability, getAuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+// 2026-10-26 — tolerant reads/writes for forwarding_no (the aggregator
+// courier's own second number for the same parcel — see
+// db/2026-10-26-order-shipment-forwarding-no.sql).
+import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 
 export type ChargeTarget = {
   orderId: string;
   refNo: string;
   awbNo: string | null;
+  /** 2026-10-26 — the forwarder/aggregator's own number for this same parcel
+   * (Shiprocket shipment id, Shipglobal order number, …), shown beside the AWB
+   * because for those couriers it is the number on the bill/portal most often
+   * in hand. See db/2026-10-26-order-shipment-forwarding-no.sql. */
+  forwardingNo: string | null;
   orderShipmentId: string | null;
   courier: string | null;
   country: string | null;
@@ -53,8 +62,11 @@ export async function searchShipmentTargets(query: string): Promise<ChargeTarget
   const supabase = createServiceRoleClient();
   const like = `%${q}%`;
 
-  // Three independent lookups, because the number in hand can be any of them.
-  const [{ data: byRef }, { data: byAwb }, { data: byInvoice }] = await Promise.all([
+  // Independent lookups, because the number in hand can be any of them. Two of
+  // them hit order_shipments (the AWB and, since 2026-10-26, the forwarder's
+  // own number — a Shiprocket/Shipglobal/OnPoint parcel is just as likely to
+  // be quoted by that second number as by the carrier's AWB).
+  const [{ data: byRef }, { data: byAwb }, { data: byForwarding }, { data: byInvoice }] = await Promise.all([
     supabase
       .from("orders")
       .select("id")
@@ -62,6 +74,7 @@ export async function searchShipmentTargets(query: string): Promise<ChargeTarget
       .or(`ref_no.ilike.${like},marketplace_order_no.ilike.${like}`)
       .limit(MAX_TARGETS),
     supabase.from("order_shipments").select("order_id").ilike("awb_no", like).limit(MAX_TARGETS),
+    supabase.from("order_shipments").select("order_id").ilike("forwarding_no", like).limit(MAX_TARGETS),
     supabase.from("dispatch_invoices").select("order_id").ilike("invoice_no", like).limit(MAX_TARGETS),
   ]);
 
@@ -69,23 +82,65 @@ export async function searchShipmentTargets(query: string): Promise<ChargeTarget
     new Set([
       ...(byRef ?? []).map((o) => o.id),
       ...(byAwb ?? []).map((s) => s.order_id),
+      ...(byForwarding ?? []).map((s) => s.order_id),
       ...(byInvoice ?? []).map((d) => d.order_id),
     ])
   ).slice(0, MAX_TARGETS);
   if (orderIds.length === 0) return [];
 
-  const { data: orders } = await supabase
+  type OrderRow = {
+    id: string;
+    ref_no: string;
+    status: string;
+    company_id: string;
+    buyer_country: string | null;
+    destination_country: string | null;
+    order_shipments: {
+      id: string;
+      awb_no: string | null;
+      forwarding_no: string | null;
+      courier_name: string | null;
+      created_at: string | null;
+    }[] | null;
+  };
+  const full = await supabase
     .from("orders")
     .select(
-      "id, ref_no, status, company_id, buyer_country, destination_country, order_shipments(id, awb_no, courier_name, created_at)"
+      "id, ref_no, status, company_id, buyer_country, destination_country, order_shipments(id, awb_no, forwarding_no, courier_name, created_at)"
     )
     .in("id", orderIds)
     .in("company_id", employee.companyIds)
     .order("ref_no", { ascending: true });
+  let orders: OrderRow[] | null = (full.data ?? null) as OrderRow[] | null;
+  // 2026-10-26 — the embedded select names forwarding_no, so on a database
+  // where db/2026-10-26-order-shipment-forwarding-no.sql has not been run
+  // PostgREST rejects the WHOLE query and this search silently found nothing
+  // (the reported "AWB se search karne par kuch nahi aata" class of bug).
+  // Retried without the column (src/lib/db/missing-column.ts), so the search
+  // keeps working — only the second number goes missing.
+  if (full.error && isMissingSchemaPiece(full.error)) {
+    const base = await supabase
+      .from("orders")
+      .select(
+        "id, ref_no, status, company_id, buyer_country, destination_country, order_shipments(id, awb_no, courier_name, created_at)"
+      )
+      .in("id", orderIds)
+      .in("company_id", employee.companyIds)
+      .order("ref_no", { ascending: true });
+    orders = (base.data ?? []).map((o) => ({
+      ...o,
+      order_shipments: (o.order_shipments ?? []).map((s) => ({ ...s, forwarding_no: null })),
+    }));
+  }
 
   const targets: ChargeTarget[] = [];
   for (const o of orders ?? []) {
-    const shipments = ((o.order_shipments ?? []) as { id: string; awb_no: string | null; courier_name: string | null }[])
+    const shipments = ((o.order_shipments ?? []) as {
+      id: string;
+      awb_no: string | null;
+      forwarding_no: string | null;
+      courier_name: string | null;
+    }[])
       .slice()
       .sort((a, b) => (a.awb_no ?? "").localeCompare(b.awb_no ?? ""));
     const base = {
@@ -95,10 +150,10 @@ export async function searchShipmentTargets(query: string): Promise<ChargeTarget
       status: o.status,
     };
     if (shipments.length === 0) {
-      targets.push({ ...base, awbNo: null, orderShipmentId: null, courier: null });
+      targets.push({ ...base, awbNo: null, forwardingNo: null, orderShipmentId: null, courier: null });
     } else {
       for (const s of shipments) {
-        targets.push({ ...base, awbNo: s.awb_no, orderShipmentId: s.id, courier: s.courier_name });
+        targets.push({ ...base, awbNo: s.awb_no, forwardingNo: s.forwarding_no, orderShipmentId: s.id, courier: s.courier_name });
       }
     }
   }

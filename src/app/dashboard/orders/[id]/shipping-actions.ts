@@ -37,6 +37,11 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
+// 2026-10-26 — forwarding_no (the second, forwarder-side number an aggregator
+// courier reports for the same parcel) is written/read tolerantly, so a
+// database that has not had db/2026-10-26-order-shipment-forwarding-no.sql run
+// yet keeps saving AWBs instead of failing on an unknown column.
+import { isMissingSchemaPiece, tolerateMissingColumn } from "@/lib/db/missing-column";
 
 export type ShippingDetailsState = { error: string | null; success: boolean; dispatched: boolean; trackingSync?: string | null };
 
@@ -82,51 +87,86 @@ function courierRowForName(courierName: string | null): { courier: CourierRowKey
 // shipment, not for re-labelling someone else's booking.
 async function syncCourierShipmentRow(
   supabase: ServiceClient,
-  args: { orderId: string; orderShipmentId: string; awbNo: string | null; courierName: string | null; employeeId: string }
+  args: {
+    orderId: string;
+    orderShipmentId: string;
+    awbNo: string | null;
+    forwardingNo?: string | null;
+    courierName: string | null;
+    employeeId: string;
+  }
 ): Promise<string | null> {
-  if (!args.awbNo && !args.courierName) return null;
+  if (!args.awbNo && !args.courierName && !args.forwardingNo) return null;
   const mapped = courierRowForName(args.courierName);
 
-  const { data: rows, error } = await supabase
+  // 2026-10-26 — forwarding_no is read tolerantly: on a database where
+  // db/2026-10-26-order-shipment-forwarding-no.sql has not been run, selecting
+  // it fails and would blank this whole lookup (and so the mirror row's AWB),
+  // so the base columns are retried instead (src/lib/db/missing-column.ts).
+  type CourierRow = { id: string; courier: string; awb_no: string | null; forwarding_no: string | null; booked_amount_source: string | null };
+  let rows: CourierRow[] | null = null;
+  const full = await supabase
     .from("courier_shipments")
-    .select("id, courier, awb_no, booked_amount_source")
+    .select("id, courier, awb_no, forwarding_no, booked_amount_source")
     .eq("order_id", args.orderId);
-  if (error) return error.message;
+  if (full.error && isMissingSchemaPiece(full.error)) {
+    const base = await supabase
+      .from("courier_shipments")
+      .select("id, courier, awb_no, booked_amount_source")
+      .eq("order_id", args.orderId);
+    rows = (base.data ?? []).map((r) => ({ ...r, forwarding_no: null }));
+  } else if (full.error) {
+    return full.error.message;
+  } else {
+    rows = full.data;
+  }
 
   const sameCourier = (rows ?? []).find((r) => r.courier === mapped.courier) ?? null;
   if (sameCourier) {
     if (sameCourier.booked_amount_source === "api") return null;
     if (sameCourier.awb_no && args.awbNo && sameCourier.awb_no !== args.awbNo) return null;
-    const { error: updateError } = await supabase
-      .from("courier_shipments")
-      .update({
+    const { error: updateError } = await tolerateMissingColumn(
+      {
         order_shipment_id: args.orderShipmentId,
         awb_no: args.awbNo ?? sameCourier.awb_no,
+        // never blanks a forwarding no. that came from a real API booking
+        forwarding_no: args.forwardingNo ?? sameCourier.forwarding_no,
         manual_courier_name: mapped.manual_courier_name,
-      })
-      .eq("id", sameCourier.id);
+      },
+      "forwarding_no",
+      (patch) => supabase.from("courier_shipments").update(patch).eq("id", sameCourier.id)
+    );
     return updateError?.message ?? null;
   }
 
   const sameAwb = args.awbNo ? (rows ?? []).find((r) => r.awb_no === args.awbNo) ?? null : null;
   if (sameAwb) {
-    const { error: updateError } = await supabase
-      .from("courier_shipments")
-      .update({ order_shipment_id: args.orderShipmentId })
-      .eq("id", sameAwb.id);
+    const { error: updateError } = await tolerateMissingColumn(
+      {
+        order_shipment_id: args.orderShipmentId,
+        ...(args.forwardingNo ? { forwarding_no: args.forwardingNo } : {}),
+      },
+      "forwarding_no",
+      (patch) => supabase.from("courier_shipments").update(patch).eq("id", sameAwb.id)
+    );
     return updateError?.message ?? null;
   }
 
-  const { error: insertError } = await supabase.from("courier_shipments").insert({
-    courier: mapped.courier,
-    manual_courier_name: mapped.manual_courier_name,
-    order_id: args.orderId,
-    order_shipment_id: args.orderShipmentId,
-    status: "created",
-    awb_no: args.awbNo,
-    booked_amount_source: "manual",
-    created_by: args.employeeId,
-  });
+  const { error: insertError } = await tolerateMissingColumn(
+    {
+      courier: mapped.courier,
+      manual_courier_name: mapped.manual_courier_name,
+      order_id: args.orderId,
+      order_shipment_id: args.orderShipmentId,
+      status: "created" as const,
+      awb_no: args.awbNo,
+      forwarding_no: args.forwardingNo ?? null,
+      booked_amount_source: "manual" as const,
+      created_by: args.employeeId,
+    },
+    "forwarding_no",
+    (payload) => supabase.from("courier_shipments").insert(payload)
+  );
   return insertError?.message ?? null;
 }
 
@@ -160,6 +200,11 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
   }
 
   const awbNo = strOrNull(formData, "awb_no");
+  // 2026-10-26 — the SECOND number an aggregator courier hands out (Shiprocket
+  // shipment id, Shipglobal order number, OnPoint/Delhivery partner ref).
+  // Stored on order_shipments beside awb_no and mirrored to courier_shipments
+  // below, exactly like the AWB itself.
+  const forwardingNo = strOrNull(formData, "forwarding_no");
   const courierName = strOrNull(formData, "courier_name");
   const invoiceNo = strOrNull(formData, "invoice_no");
   const invoiceDate = strOrNull(formData, "invoice_date");
@@ -168,7 +213,7 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
   const widthCm = numOrNull(formData, "width_cm");
   const heightCm = numOrNull(formData, "height_cm");
 
-  if (!awbNo && !courierName && !invoiceNo && !invoiceDate && weightKg == null && lengthCm == null && widthCm == null && heightCm == null) {
+  if (!awbNo && !forwardingNo && !courierName && !invoiceNo && !invoiceDate && weightKg == null && lengthCm == null && widthCm == null && heightCm == null) {
     return { error: "Nothing entered — fill at least one field.", success: false, dispatched: false };
   }
   if ((lengthCm == null) !== (widthCm == null) || (widthCm == null) !== (heightCm == null)) {
@@ -181,7 +226,7 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
   //    to store — AWB/courier/weight/dims). shipment_no = next per order,
   //    same convention as createManualBooking.
   let shipmentId: string | null = null;
-  if (awbNo || courierName || weightKg != null || lengthCm != null) {
+  if (awbNo || forwardingNo || courierName || weightKg != null || lengthCm != null) {
     // 2026-10-22 — "AWB courier weight dimension daal diya uske baad bhi
     // assign nahi hota". This always INSERTED a new shipment
     // (shipment_no = last + 1), so saving the form a second time — AWB first,
@@ -216,34 +261,33 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
       // Only the fields the form actually carries are written, and awb_no /
       // courier_name only when typed — so saving weight or dimensions can
       // never blank out an AWB that came from a real courier booking.
-      const patch: { last_update_date: string; awb_no?: string; courier_name?: string } = { last_update_date: today };
+      const patch: { last_update_date: string; awb_no?: string; forwarding_no?: string; courier_name?: string } = { last_update_date: today };
       if (awbNo) patch.awb_no = awbNo;
+      if (forwardingNo) patch.forwarding_no = forwardingNo;
       if (courierName) patch.courier_name = courierName;
-      const { data, error } = await supabase
-        .from("order_shipments")
-        .update(patch)
-        .eq("id", existing.id)
-        .select("id")
-        .single();
+      const { data, error } = await tolerateMissingColumn(patch, "forwarding_no", (clean) =>
+        supabase.from("order_shipments").update(clean).eq("id", existing.id).select("id").single()
+      );
       if (error || !data) {
         return { error: error?.message ?? "Could not save the shipment.", success: false, dispatched: false };
       }
       shipment = data;
     } else {
-      const { data, error } = await supabase
-        .from("order_shipments")
-        .insert({
+      const { data, error } = await tolerateMissingColumn(
+        {
           order_id: orderId,
           shipment_no: 1,
           awb_no: awbNo,
+          forwarding_no: forwardingNo,
           courier_name: courierName,
           last_update_date: today,
           created_by_employee_id: employee.id,
-          booked_amount_source: "manual",
+          booked_amount_source: "manual" as const,
           remark: "Manual shipping-details entry from the order page (2026-09-13).",
-        })
-        .select("id")
-        .single();
+        },
+        "forwarding_no",
+        (clean) => supabase.from("order_shipments").insert(clean).select("id").single()
+      );
       if (error || !data) {
         return { error: error?.message ?? "Could not save the shipment.", success: false, dispatched: false };
       }
@@ -286,6 +330,7 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
       orderId,
       orderShipmentId: shipment.id,
       awbNo,
+      forwardingNo,
       courierName,
       employeeId: employee.id,
     });

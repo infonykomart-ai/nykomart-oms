@@ -26,6 +26,7 @@ export function ShippingDetailsForm({
   orderStatus: string;
   defaults: {
     awb_no: string | null;
+    forwarding_no: string | null;
     courier_name: string | null;
     invoice_no: string | null;
     invoice_date: string | null;
@@ -69,6 +70,18 @@ export function ShippingDetailsForm({
           <div>
             <label className={labelClass} htmlFor="sd_awb">AWB / Tracking No.</label>
             <input id="sd_awb" name="awb_no" defaultValue={defaults.awb_no ?? ""} className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="sd_forwarding">
+              Forwarding No. <span className="font-normal text-slate-400">(aggregator&apos;s own ref)</span>
+            </label>
+            <input
+              id="sd_forwarding"
+              name="forwarding_no"
+              defaultValue={defaults.forwarding_no ?? ""}
+              placeholder="Shiprocket / Shipglobal / OnPoint ref"
+              className={inputClass}
+            />
           </div>
           <div>
             <label className={labelClass} htmlFor="sd_courier">Courier Company</label>

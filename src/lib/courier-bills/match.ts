@@ -25,6 +25,14 @@ const NO_MATCH: ShipmentMatch = { orderId: null, orderShipmentId: null, orderRef
 // screen can offer a manual PO/RF/RG-or-AWB lookup (reusing
 // lookupOrderForReconciliation), same as the existing manual Courier Bill /
 // Duty & Tax Bill entry flow.
+//
+// 2026-10-26 — a SECOND, fallback match on order_shipments.forwarding_no: for
+// an aggregator courier (Shiprocket / Shipglobal / OnPoint / Delhivery) the
+// number printed on the bill can be the forwarder's own reference rather than
+// the carrier AWB, and before this those rows came back unmatched and had to
+// be assigned by hand every time. It is only tried after awb_no finds nothing,
+// so it can never change an existing AWB match — it only turns a NO_MATCH into
+// a match. See db/2026-10-26-order-shipment-forwarding-no.sql.
 export async function matchShipmentByTracking(
   supabase: ServiceClient,
   employeeCompanyIds: string[],
@@ -32,13 +40,16 @@ export async function matchShipmentByTracking(
   trackingNo: string
 ): Promise<ShipmentMatch> {
   const { data: byAwb } = await supabase.from("order_shipments").select("id, order_id").ilike("awb_no", trackingNo).maybeSingle();
-  if (!byAwb) return NO_MATCH;
+  const byNumber =
+    byAwb ??
+    (await supabase.from("order_shipments").select("id, order_id").ilike("forwarding_no", trackingNo).maybeSingle()).data;
+  if (!byNumber) return NO_MATCH;
 
-  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id").eq("id", byAwb.order_id).maybeSingle();
+  const { data: order } = await supabase.from("orders").select("id, ref_no, company_id").eq("id", byNumber.order_id).maybeSingle();
   if (!order || !employeeCompanyIds.includes(order.company_id)) return NO_MATCH;
 
   const table = billKind === "freight" ? "freight_bill_awb_assignments" : "duty_bill_awb_assignments";
-  const { data: existing } = await supabase.from(table).select("id").eq("order_shipment_id", byAwb.id).maybeSingle();
+  const { data: existing } = await supabase.from(table).select("id").eq("order_shipment_id", byNumber.id).maybeSingle();
 
-  return { orderId: order.id, orderShipmentId: byAwb.id, orderRefNo: order.ref_no, alreadyAssigned: !!existing };
+  return { orderId: order.id, orderShipmentId: byNumber.id, orderRefNo: order.ref_no, alreadyAssigned: !!existing };
 }

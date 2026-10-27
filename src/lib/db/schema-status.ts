@@ -42,6 +42,21 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-10-26 — aggregator couriers (Shiprocket / Shipglobal / OnPoint /
+    // Delhivery) hand out TWO numbers per parcel: the carrier's tracking no.
+    // and their own forwarding reference. Without the column, every save of
+    // the second number is rejected by PostgREST, so the field is simply
+    // never usable — silent, which is exactly what this panel exists for.
+    file: "2026-10-26-order-shipment-forwarding-no.sql",
+    title: "Second tracking number per shipment (forwarding / partner no.)",
+    probe: { table: "order_shipments", column: "forwarding_no" },
+    features: [
+      "Order page / Order Shipments & Packages / Manual booking: the Forwarding No. field cannot be saved (every write to it errors)",
+      "Courier Ops → Track Shipments: no second number to search or display alongside the AWB",
+      "Shiprocket / Shipglobal API bookings: the forwarder's own reference is never captured automatically",
+    ],
+  },
+  {
     // 2026-10-24 — added because this file's absence was reported as "bill
     // ki sheet par 404 aa raha hai": every A4 sheet named one of its columns
     // in its SELECT, and a single missing column rejects the whole query. The
