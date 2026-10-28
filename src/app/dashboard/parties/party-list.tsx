@@ -66,8 +66,16 @@ export function PartyList({ parties }: { parties: EditableParty[] }) {
                         every bill against this party (Purchase/Courier/Duty),
                         running balance, payment history. See
                         dashboard/parties/[id]/ledger/page.tsx. */}
+                    {/* 2026-10-28 — "ledger open karte hai or uske baad koi
+                        dusri tab open kar lete hai to vapas se party show
+                        hone lagti hai": the ledger opened in THIS tab, so
+                        coming back landed on a fresh Party Master (search
+                        text, page and scroll all gone). It now opens in its
+                        own tab, leaving this list exactly where it was. */}
                     <Link
                       href={`/dashboard/parties/${p.id}/ledger`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
                     >
                       📒 Ledger

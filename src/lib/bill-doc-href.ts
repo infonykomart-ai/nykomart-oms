@@ -35,6 +35,10 @@ export function docHrefFromSource(source: string | null, sourceId: string | null
   if (source === "freight_bill") return `/dashboard/documents/freight-bills/${sourceId}/report`;
   if (source === "duty_tax_bill") return `/dashboard/documents/duty-bills/${sourceId}/report`;
   if (source === "purchase_bill") return `/dashboard/documents/purchase-bills/${sourceId}/report`;
+  // 2026-10-28b — an office expense bill entered with a party posts to the
+  // ledger (source 'office_expense', source_id = the bill's entry_group_id),
+  // so its invoice number opens the bill's own A4 sheet here too.
+  if (source === "office_expense") return `/dashboard/expenses/${sourceId}/report`;
   return null;
 }
 
@@ -42,6 +46,7 @@ export function docHrefFromSource(source: string | null, sourceId: string | null
 export function docSheetTitle(href: string): string {
   if (href.includes("/freight-bills/")) return "Courier Bill Sheet";
   if (href.includes("/duty-bills/")) return "Duty & Tax Bill Sheet";
+  if (href.includes("/dashboard/expenses/")) return "Office Expense Bill Sheet";
   return "Purchase Bill Sheet";
 }
 

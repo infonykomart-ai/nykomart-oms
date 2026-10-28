@@ -41,10 +41,25 @@ export function VendorAssignmentSection({
   orderId,
   parties,
   cycles,
+  purchaseBillVendorName = null,
+  purchaseBillLabel = null,
+  plannedVendorName = null,
 }: {
   orderId: string;
   parties: { id: string; name: string }[];
   cycles: VendorAssignmentCycle[];
+  /**
+   * 2026-10-28 — the vendor from the order's Purchase Bill (the real record
+   * of who made the goods), and the invoice label. The section used to say
+   * "Not assigned to any party yet" even after a Purchase Bill had been
+   * entered against the order, because it only ever read
+   * order_vendor_assignments — a separate, optional history. A bill IS a
+   * vendor assignment, so it is shown here rather than hidden.
+   */
+  purchaseBillVendorName?: string | null;
+  purchaseBillLabel?: string | null;
+  /** orders.vendor_party_id — the vendor planned at order-entry time. */
+  plannedVendorName?: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -114,7 +129,7 @@ export function VendorAssignmentSection({
             }}
             className="rounded-lg border border-amber-400 bg-white px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
           >
-            {cycles.length > 0 ? "+ Reassign / New Cycle" : "+ Assign to a Party"}
+            {cycles.length > 0 || purchaseBillVendorName || plannedVendorName ? "+ Reassign / New Cycle" : "+ Assign to a Party"}
           </button>
         )}
       </div>
@@ -183,7 +198,25 @@ export function VendorAssignmentSection({
         </form>
       )}
 
-      {cycles.length === 0 ? (
+      {cycles.length === 0 && purchaseBillVendorName ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-slate-700">
+          <p>
+            <span className="font-medium">Assigned to {purchaseBillVendorName}</span> — via Purchase Bill
+            {purchaseBillLabel ? ` ${purchaseBillLabel}` : ""}.
+          </p>
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            The Purchase Bill against this order is the vendor record. Use “+ Reassign / New Cycle” below only if you
+            also want a separate assign → receive history for it.
+          </p>
+        </div>
+      ) : cycles.length === 0 && plannedVendorName ? (
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-700">
+          <p>
+            Planned vendor: <span className="font-medium">{plannedVendorName}</span> — no Purchase Bill or assignment
+            cycle yet.
+          </p>
+        </div>
+      ) : cycles.length === 0 ? (
         <p className="text-slate-500">Not assigned to any party yet.</p>
       ) : (
         <ul className="space-y-2">

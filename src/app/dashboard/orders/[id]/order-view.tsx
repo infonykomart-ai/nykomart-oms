@@ -796,7 +796,23 @@ export function OrderView({
           "Purchasing From (if known)" select on the order-edit form and
           the single purchasedFromName fact in the status grid above — this
           is the full multi-cycle assign -> receive -> reassign history. */}
-      <VendorAssignmentSection orderId={order.id} parties={vendorAssignmentParties} cycles={vendorAssignmentCycles} />
+      {/* 2026-10-28 — "order page par purchase party ka bill order ke
+          against me fill ho gaya to bhi niche Vendor Assignment History me
+          'Not assigned to any party yet' likha aata hai": the bill's own
+          vendor is now passed in, so the section can show it instead of a
+          bare empty state. */}
+      <VendorAssignmentSection
+        orderId={order.id}
+        parties={vendorAssignmentParties}
+        cycles={vendorAssignmentCycles}
+        purchaseBillVendorName={statusSummary?.purchaseBillCount ? statusSummary.purchasedFromName : null}
+        purchaseBillLabel={statusSummary?.purchaseBillLabel ?? null}
+        plannedVendorName={
+          !statusSummary?.purchaseBillCount && statusSummary?.purchasedFromIsPlanned
+            ? statusSummary.purchasedFromName
+            : null
+        }
+      />
 
       {/* 2026-08-27 — "kisi order ke against me bhi agar credit debit note
           bana na pade to vo bhi link ho" — see page.tsx's own comment on
