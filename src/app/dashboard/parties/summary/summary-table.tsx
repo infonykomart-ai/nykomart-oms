@@ -194,7 +194,9 @@ export function PartyBalanceSummaryTable({
                   <td className="px-2 py-1.5 text-right text-emerald-700">{r.advance > 0 ? money(r.advance) : "—"}</td>
                   <td className="px-2 py-1.5 text-slate-500">{r.oldestDue ?? "—"}</td>
                   <td className="px-2 py-1.5 text-right print:hidden">
-                    <Link href={`/dashboard/parties/${r.partyId}/ledger`} className="text-amber-700 hover:underline">
+                    {/* 2026-10-28 — same as Party Master: the ledger opens in
+                        its own tab so the summary (filters, scroll) stays put. */}
+                    <Link href={`/dashboard/parties/${r.partyId}/ledger`} target="_blank" rel="noopener noreferrer" className="text-amber-700 hover:underline">
                       Ledger →
                     </Link>
                   </td>

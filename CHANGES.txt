@@ -1,3 +1,78 @@
+OFFICE EXPENSE BILL (PARTY + MULTI ITEM), LEDGER ME COMPANY, BILL KA DEBIT NOTE, CSB DATE FIX
+(2026-10-28)
+======================================================================
+
+NAYA SQL — YE FILE CHALANI ZAROORI HAI (ek baar, Supabase SQL editor me):
+  db/2026-10-28-internal-expense-bills.sql
+Jab tak nahi chalti, office expense screen purane (ek line wale) form me
+hi kaam karti rahegi — kuch toota nahi, bas bill ka header (party,
+invoice no/date, ek bill me kai item) save nahi hoga.
+
+
+1) OFFICE / CASH EXPENSE — PURCHASE BILL JAISA
+-----------------------------------------------
+Pehle ek expense = ek line (company, date, category, amount). Ab ek entry
+ek BILL hai, bilkul purchase bill jaisi:
+  • Company + Date (jaise pehle)
+  • Party / Vendor (optional — "No party" bhi rakh sakte hain)
+  • Invoice No. + Invoice Date (optional, "if applicable")
+  • Payment Mode + Remark
+  • Ek bill me KITNE BHI ITEM: har item ka apna Category, Description aur
+    Amount, aur niche live Total.
+  • Recent Entries me har bill ke saath Preview (poora bill ek page par),
+    Edit (usi jagah form khulta hai — items jod/hatа sakte hain) aur Delete.
+  • P&L par koi asar nahi: har item phir bhi internal_expenses me hi line
+    banke jaata hai, isliye company-wise/month-wise P&L pehle jaisa hi hai.
+
+
+2) LEDGER — COMPANY COLUMN + NAYI TAB ME KHULTA HAI
+----------------------------------------------------
+  • Party Master / Balance Summary me "Ledger" ab NAYI TAB me khulta hai —
+    wapas aane par party list apni jagah rehti hai (pehle list reset ho jaati
+    thi).
+  • Party Ledger me naya **Company** column: har row par saaf dikhta hai ki
+    bill kis company me chadha hai. Do-teen company ka ek hi vendor invoice
+    merge hone par column me sab company ke naam aate hain. Ye column CSV /
+    Excel / Word export me bhi jaata hai.
+  • Invoice number par click karne se pehle jaisa hi bill ki apni A4 sheet
+    khulti hai (Purchase / Courier / Duty) — teeno ek hi jagah se linked.
+
+
+3) ORDER PAGE — "Vendor Assignment History" AB SACH
+----------------------------------------------------
+Purchase bill order ke against bharne ke baad bhi section "Not assigned to
+any party yet" dikha raha tha. Ab:
+  • Purchase bill ho to section me dikhta hai: "Assigned to <party> — via
+    Purchase Bill <invoice no. (date)>",
+  • sirf planned vendor ho to "Planned vendor: <name> — no Purchase Bill or
+    assignment cycle yet",
+  • assign/receive cycle khud banana ho to "+ Reassign / New Cycle" waisa hi
+    kaam karta hai.
+
+
+4) DUBARA USI PO KA BILL — DEBIT NOTE KA SHORTCUT
+--------------------------------------------------
+Same PO/order ka doosra bill (alag invoice no.) aaye to wo normally save
+hota hai. Ab har Purchase Bill card par **🧾 Debit Note** button hai jo
+Debit Note tab seedha us bill ke liye kholta hai (company, party, invoice
+no. pehle se bhare hue, note us bill ke against linked). Wahan amount
+likhne ke baad "adjust against invoice" tick karke farak adjust kar sakte
+hain — paisa Bill Payment / Party Ledger me apne aap sahi ho jaata hai.
+
+
+5) CSB FILING BULK UPLOAD — DATE FORMAT FIX
+--------------------------------------------
+"date/time field value out of range: 22/10/2026" — bulk sheet me date jis
+format me likhi ho, ab system khud samajh leta hai: 22/10/2026, 22-10-2026,
+2026-10-22, 22 Oct 2026, ya Excel ki asli date cell. Ye fix CSB ke saath
+Credit Note, Debit Note, Refund, Washing Entry, Purchase Bill, Courier Bill
+aur Duty Bill — sabhi bulk uploads par lagta hai.
+
+
+PURANA REMINDER (agar abhi tak nahi chali):
+  db/2026-10-26-order-shipment-forwarding-no.sql
+
+
 DO TRACKING NUMBER (AWB + FORWARDING NO) — SABHI JAGAH
 (2026-10-26)
 ======================================================================

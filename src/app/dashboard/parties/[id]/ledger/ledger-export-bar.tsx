@@ -32,6 +32,13 @@ export type LedgerExportRow = {
   // order), so every export format shows the same revamped ledger the
   // screen shows instead of the old 5-column layout.
   invoice_no: string;
+  /**
+   * 2026-10-28 — "jis company me bill chadh gaya vaha par uski puri detail
+   * show honi chahiye": each row now names the company the bill was posted
+   * in, on screen AND in every exported file, so a merged cross-company
+   * ledger can never be misread as one company's paper.
+   */
+  company: string;
   particulars: string;
   payment_mode: string;
   reference_no: string;
@@ -43,6 +50,7 @@ export type LedgerExportRow = {
 const COLUMNS: ExportColumn<LedgerExportRow>[] = [
   { key: "date", label: "Date", value: (r) => r.date },
   { key: "invoice_no", label: "Invoice No.", value: (r) => r.invoice_no },
+  { key: "company", label: "Company", value: (r) => r.company },
   { key: "particulars", label: "Particulars", value: (r) => r.particulars },
   { key: "payment_mode", label: "Mode", value: (r) => r.payment_mode },
   { key: "reference_no", label: "UTR / Ref No.", value: (r) => r.reference_no },

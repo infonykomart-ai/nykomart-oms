@@ -565,8 +565,18 @@ async function PartyLedgerInner(
   // filter above, same as the printed view does) — CSV/Excel/Word/
   // PDF-via-Print/Email/WhatsApp, via the app's existing Universal Export
   // system (see ledger-export-bar.tsx).
+  // 2026-10-28 — the company each row's bill was posted in (a merged group
+  // names all of them). Wallet lines and other party-level rows have no bill
+  // and show "—".
+  const companyByBillId = new Map(entries.map((e) => [e.id, companyName.get(e.company_id) ?? "—"] as const));
+  const companyForRow = (billIds: string[]): string => {
+    const names = Array.from(new Set(billIds.map((billId) => companyByBillId.get(billId) ?? "").filter(Boolean)));
+    return names.length ? names.join(", ") : "—";
+  };
+
   const exportRows = displayedLines.map((t) => ({
     date: t.date,
+    company: companyForRow(t.billIds),
     particulars: t.particulars,
     invoice_no: t.invoiceNo,
     payment_mode: t.paymentMode ?? "",
@@ -589,6 +599,7 @@ async function PartyLedgerInner(
           {
             date: "",
             invoice_no: "",
+            company: "",
             particulars: `SUMMARY — Opening balance as on ${fromDate}`,
             payment_mode: "",
             reference_no: "",
@@ -601,6 +612,7 @@ async function PartyLedgerInner(
     {
       date: "",
       invoice_no: "",
+      company: "",
       particulars: "SUMMARY — Total Debit (bills / charges)",
       payment_mode: "",
       reference_no: "",
@@ -611,6 +623,7 @@ async function PartyLedgerInner(
     {
       date: "",
       invoice_no: "",
+      company: "",
       particulars: "SUMMARY — Total Credit (credit notes + payments)",
       payment_mode: "",
       reference_no: "",
@@ -621,6 +634,7 @@ async function PartyLedgerInner(
     {
       date: "",
       invoice_no: "",
+      company: "",
       particulars: `SUMMARY — Closing balance as on ${toDate || todayISTStr}`,
       payment_mode: "",
       reference_no: "",
@@ -797,7 +811,7 @@ async function PartyLedgerInner(
 
           {/* 2026-10-15 — the ledger has 8 columns; on a narrow screen it scrolls sideways (min-w keeps the columns readable) instead of squashing the amounts into each other. */}
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] border-collapse text-left print:min-w-0">
+          <table className="w-full min-w-[900px] border-collapse text-left print:min-w-0">
             <thead>
               <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                 <th className="py-1 pr-2">Date</th>
@@ -806,6 +820,7 @@ async function PartyLedgerInner(
                     screenshot showed, since the user found rows by tapping
                     Ctrl+F into this exact text. */}
                 <th className="py-1 pr-2">Invoice No.</th>
+                <th className="py-1 pr-2">Company</th>
                 <th className="py-1 pr-2">Particulars</th>
                 <th className="py-1 pr-2">Mode</th>
                 <th className="py-1 pr-2">UTR / Ref No.</th>
@@ -821,6 +836,7 @@ async function PartyLedgerInner(
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
                   <td className="whitespace-nowrap py-1 pr-2">{fromDate}</td>
                   <td className="py-1 pr-2"></td>
+                  <td className="py-1 pr-2"></td>
                   <td className="py-1 pr-2 font-medium">Opening balance (brought forward)</td>
                   <td className="py-1 pr-2"></td>
                   <td className="py-1 pr-2"></td>
@@ -832,6 +848,7 @@ async function PartyLedgerInner(
               {displayedLines.map((t, i) => (
                 <tr key={i} className={`group border-b border-slate-100 align-top text-slate-700 ${t.status ? rowShade[t.status] : ""}`}>
                   <td className="whitespace-nowrap py-1 pr-2">{t.date}</td>
+                  <td className="py-1 pr-2 text-slate-600">{companyForRow(t.billIds)}</td>
                   <td className="py-1 pr-2 font-medium text-slate-900">
                     {/* 2026-09-15 — "invoice no par click kar ke uski puri entry
                         dekhni ho to read only form open ho jaye" + "dilogbox
@@ -905,14 +922,14 @@ async function PartyLedgerInner(
               ))}
               {displayedLines.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-3 text-center text-slate-400">
+                  <td colSpan={9} className="py-3 text-center text-slate-400">
                     {ledgerLines.length === 0 ? "No bills against this party yet." : "No entries match the selected filter."}
                   </td>
                 </tr>
               )}
               {filtersActive && displayedLines.length > 0 && (
                 <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold text-slate-900">
-                  <td colSpan={5} className="py-1 pr-2 text-right">
+                  <td colSpan={6} className="py-1 pr-2 text-right">
                     Closing balance as on {toDate || todayISTStr}
                   </td>
                   <td className="py-1 pr-2 text-right">{shownDebit.toFixed(2)}</td>

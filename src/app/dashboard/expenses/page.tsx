@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { ExpenseEntrySection } from "./expense-entry-section";
+import { isMissingSchemaPiece } from "@/lib/db/missing-column";
+import { ExpenseEntrySection, type ExpenseBill } from "./expense-entry-section";
 import { ExpenseReportTable, type ExpenseReportRow } from "./expense-report-table";
 // 2026-09-15 — "kuch payment auto debit hote hai credit card se — erank,
 // etsy bill, ebay & other": the Card Auto-Debits tab (registry + one-click
@@ -17,6 +18,14 @@ import { RecurringDebitsSection, type RecurringDebitRow } from "./recurring-debi
 // running total, Universal Export). Also now feeds the P&L Dashboard
 // (crm/page.tsx) as a distinct "Internal Expenses" overhead line — see
 // pl_dashboard_by_company_view / pl_dashboard_by_month_view.
+//
+// 2026-10-28 — "office expense vale section ko jese purchase ki entry karte
+// hai vese banao: multiple item, party ka naam, invoice no (if applicable),
+// invoice date, edit / preview / delete". The Entry tab now loads one BILL per
+// entry_group_id (see db/2026-10-28-internal-expense-bills.sql). The read
+// falls back to the old flat columns when that patch has not been run yet, and
+// every pre-patch row (entry_group_id NULL) is treated as its own one-line
+// bill — so the screen never goes blank / broken mid-migration.
 export default async function ExpensesPage({
   searchParams,
 }: {
@@ -28,42 +37,91 @@ export default async function ExpensesPage({
 
   const tab = sp.tab === "report" ? "report" : sp.tab === "recurring" ? "recurring" : "entry";
 
-  const { data: companies } = await supabase
-    .from("companies")
-    .select("id, name")
-    .in("id", employee.companyIds)
-    .order("name");
-
-  let recentEntries: {
-    id: string;
-    companyName: string;
-    date: string;
-    category: string;
-    amount: number;
-    paymentMode: string | null;
-    remark: string | null;
-  }[] = [];
+  const [{ data: companies }, { data: parties }] = await Promise.all([
+    supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
+    supabase.from("parties").select("id, name").order("name"),
+  ]);
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
+
+  type BillRow = {
+    id: string;
+    company_id: string;
+    expense_date: string;
+    category: string;
+    amount_inr: number;
+    payment_mode: string | null;
+    remark: string | null;
+    party_id?: string | null;
+    invoice_no?: string | null;
+    invoice_date?: string | null;
+    description?: string | null;
+    entry_group_id?: string | null;
+  };
+
+  let recentBills: ExpenseBill[] = [];
 
   if (tab === "entry") {
-    const { data: recent } = await supabase
+    const BASE = "id, company_id, expense_date, category, amount_inr, payment_mode, remark";
+    const FULL = `${BASE}, party_id, invoice_no, invoice_date, description, entry_group_id`;
+
+    let rows: BillRow[] = [];
+    const full = await supabase
       .from("internal_expenses")
-      .select("id, company_id, expense_date, category, amount_inr, payment_mode, remark")
+      .select(FULL)
       .in("company_id", employee.companyIds)
       .order("expense_date", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(30);
+      .limit(120);
+    if (!full.error) {
+      rows = (full.data ?? []) as BillRow[];
+    } else if (isMissingSchemaPiece(full.error)) {
+      const base = await supabase
+        .from("internal_expenses")
+        .select(BASE)
+        .in("company_id", employee.companyIds)
+        .order("expense_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(120);
+      rows = (base.data ?? []) as BillRow[];
+    }
 
-    recentEntries = (recent ?? []).map((r) => ({
-      id: r.id,
-      companyName: companyName.get(r.company_id) ?? "—",
-      date: r.expense_date,
-      category: r.category,
-      amount: Number(r.amount_inr ?? 0),
-      paymentMode: r.payment_mode,
-      remark: r.remark,
-    }));
+    // One bill per group (a pre-patch row has no group → its own bill), then
+    // the newest 30 bills.
+    const byGroup = new Map<string, BillRow[]>();
+    for (const r of rows) {
+      const key = r.entry_group_id ?? r.id;
+      const list = byGroup.get(key) ?? [];
+      list.push(r);
+      byGroup.set(key, list);
+    }
+    recentBills = Array.from(byGroup.entries())
+      .map(([key, lines]) => {
+        const first = lines[0];
+        return {
+          key,
+          rowIds: lines.map((l) => l.id),
+          companyId: first.company_id,
+          companyName: companyName.get(first.company_id) ?? "—",
+          date: first.expense_date,
+          partyId: first.party_id ?? null,
+          partyName: first.party_id ? partyName.get(first.party_id) ?? null : null,
+          invoiceNo: first.invoice_no ?? null,
+          invoiceDate: first.invoice_date ?? null,
+          paymentMode: first.payment_mode,
+          remark: first.remark,
+          items: lines.map((l) => ({
+            id: l.id,
+            category: l.category,
+            description: l.description ?? null,
+            amount: Number(l.amount_inr ?? 0),
+          })),
+          total: lines.reduce((s, l) => s + Number(l.amount_inr ?? 0), 0),
+        } satisfies ExpenseBill;
+      })
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+      .slice(0, 30);
   }
 
   let reportRows: ExpenseReportRow[] = [];
@@ -148,7 +206,11 @@ export default async function ExpensesPage({
       </div>
 
       {tab === "entry" ? (
-        <ExpenseEntrySection companies={companies ?? []} recentEntries={recentEntries} />
+        <ExpenseEntrySection
+          companies={companies ?? []}
+          parties={parties ?? []}
+          recentBills={recentBills}
+        />
       ) : tab === "recurring" ? (
         <RecurringDebitsSection registry={recurringRows} companies={companies ?? []} currentMonth={currentMonth} />
       ) : (

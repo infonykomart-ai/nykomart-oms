@@ -6320,6 +6320,13 @@ export type Database = {
           created_at: string;
           recurring_debit_id: string | null;
           recurring_month: string | null;
+          // 2026-10-28 — db/2026-10-28-internal-expense-bills.sql
+          party_id: string | null;
+          invoice_no: string | null;
+          invoice_date: string | null;
+          description: string | null;
+          entry_group_id: string | null;
+          updated_at: string | null;
         };
         Insert: {
           id?: string;
@@ -6333,6 +6340,12 @@ export type Database = {
           created_at?: string;
           recurring_debit_id?: string | null;
           recurring_month?: string | null;
+          party_id?: string | null;
+          invoice_no?: string | null;
+          invoice_date?: string | null;
+          description?: string | null;
+          entry_group_id?: string | null;
+          updated_at?: string | null;
         };
         Update: {
           id?: string;
@@ -6346,6 +6359,12 @@ export type Database = {
           created_at?: string;
           recurring_debit_id?: string | null;
           recurring_month?: string | null;
+          party_id?: string | null;
+          invoice_no?: string | null;
+          invoice_date?: string | null;
+          description?: string | null;
+          entry_group_id?: string | null;
+          updated_at?: string | null;
         };
         Relationships: [
           {
@@ -6367,6 +6386,13 @@ export type Database = {
             columns: ["recurring_debit_id"];
             isOneToOne: false;
             referencedRelation: "recurring_card_debits";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "internal_expenses_party_id_fkey";
+            columns: ["party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
             referencedColumns: ["id"];
           },
         ];

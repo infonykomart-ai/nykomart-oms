@@ -42,6 +42,19 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-10-28 — office expenses became vendor-bill shaped (party, invoice
+    // no/date, multiple line items). Without the columns the screen still
+    // works but falls back to one flat line per expense (no bill header, no
+    // grouping), which is easy to miss — hence the probe.
+    file: "2026-10-28-internal-expense-bills.sql",
+    title: "Office expense bills (party, invoice no/date, multiple items)",
+    probe: { table: "internal_expenses", column: "entry_group_id" },
+    features: [
+      "Office/Cash Expenses: party, invoice no, invoice date and multiple items per bill cannot be saved",
+      "An expense bill cannot be previewed, edited or deleted as one bill — each line is a separate entry",
+    ],
+  },
+  {
     // 2026-10-26 — aggregator couriers (Shiprocket / Shipglobal / OnPoint /
     // Delhivery) hand out TWO numbers per parcel: the carrier's tracking no.
     // and their own forwarding reference. Without the column, every save of

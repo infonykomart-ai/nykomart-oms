@@ -43,6 +43,8 @@ import { resolveOrderByReference, sanitizeSearchTerm } from "@/lib/orders/find-o
 // is testable outside this server-action module).
 import { purchaseBillChanges } from "@/lib/purchase-bill-audit";
 import { validateDateFields } from "@/lib/fy-date";
+// 2026-10-28 — shared human-date parser for bulk sheets (see sheetDate below).
+import { parseDateCell } from "@/lib/attendance/punch-import";
 import { saveOrderRefundCore } from "../orders/actions";
 import { autoSettleWalletBills } from "@/lib/wallet/auto-settle";
 import { revalidatePath } from "next/cache";
@@ -3804,6 +3806,22 @@ function cellStr(row: Record<string, unknown>, byHeader: Map<string, string>, la
   return v === null || v === undefined ? "" : String(v).trim();
 }
 
+/**
+ * 2026-10-28 — "CSB filing me date 22/10/2026 dalne par date/time field
+ * value out of range aa raha hai, apne system ke according auto format
+ * change hona chahiye": a bulk sheet carries dates however the user/Excel
+ * wrote them (22/10/2026, 22-10-2026, 22 Oct 2026, or a real Excel date
+ * cell). Postgres only accepts ISO, so ONE un-normalized cell failed the
+ * whole row. Every bulk upload now runs its date cells through the shared
+ * human-date parser; a genuinely unreadable value becomes null (the row
+ * then reports "date required" instead of a raw Postgres error).
+ */
+function sheetDate(row: Record<string, unknown>, byHeader: Map<string, string>, label: string): string | null {
+  const v = cellStr(row, byHeader, label);
+  if (!v) return null;
+  return parseDateCell(v);
+}
+
 const MAX_BULK_DOC_ROWS = 500;
 
 export type BulkDocResult = { row: number; label: string; docNo: string | null; error: string | null };
@@ -3910,11 +3928,11 @@ export async function bulkSaveCreditNotes(_prev: BulkDocState, formData: FormDat
     const result = await saveCreditNoteCore(employee, supabase, {
       companyId: order.company_id,
       storeId: order.store_id,
-      creditNoteDate: cellStr(raw, byHeader, "Credit Note Date"),
+      creditNoteDate: sheetDate(raw, byHeader, "Credit Note Date") ?? "",
       orderId: order.id,
       itemId: null,
       buyerName: order.buyer_name_address,
-      refundDate: cellStr(raw, byHeader, "Refund Date") || null,
+      refundDate: sheetDate(raw, byHeader, "Refund Date"),
       itemName: cellStr(raw, byHeader, "Item Name") || null,
       itemPrice: cellStr(raw, byHeader, "Item Price") ? Number(cellStr(raw, byHeader, "Item Price")) : null,
       invoiceNo,
@@ -3994,7 +4012,7 @@ export async function bulkSaveDebitNotes(_prev: BulkDocState, formData: FormData
 
     const result = await saveDebitNoteCore(employee, supabase, {
       companyId,
-      debitNoteDate: cellStr(raw, byHeader, "Debit Note Date"),
+      debitNoteDate: sheetDate(raw, byHeader, "Debit Note Date") ?? "",
       againstInvoiceBillNo: cellStr(raw, byHeader, "Against Invoice/Bill No") || null,
       // Bulk-imported debit notes have no dropdown to pick a specific
       // bill_pass_register row from (the source file only has free text) —
@@ -4008,7 +4026,7 @@ export async function bulkSaveDebitNotes(_prev: BulkDocState, formData: FormData
       orderId,
       particulars: cellStr(raw, byHeader, "Particulars") || null,
       billNo: cellStr(raw, byHeader, "Bill No") || null,
-      billDate: cellStr(raw, byHeader, "Bill Date") || null,
+      billDate: sheetDate(raw, byHeader, "Bill Date"),
       sqFt: cellStr(raw, byHeader, "SQ FT") ? Number(cellStr(raw, byHeader, "SQ FT")) : null,
       qty: cellStr(raw, byHeader, "Qty") ? Number(cellStr(raw, byHeader, "Qty")) : null,
       rate: cellStr(raw, byHeader, "Rate") ? Number(cellStr(raw, byHeader, "Rate")) : null,
@@ -4062,7 +4080,7 @@ export async function bulkSaveRefunds(_prev: BulkDocState, formData: FormData): 
       orderId: order.id,
       refundAmount: Number(cellStr(raw, byHeader, "Refund Amount")) || 0,
       refundCurrency: cellStr(raw, byHeader, "Refund Currency").toUpperCase() || "USD",
-      refundDate: cellStr(raw, byHeader, "Refund Date"),
+      refundDate: sheetDate(raw, byHeader, "Refund Date") ?? "",
       reason: cellStr(raw, byHeader, "Reason") || null,
     });
 
@@ -4127,7 +4145,7 @@ export async function bulkSaveWashingEntries(_prev: BulkDocState, formData: Form
     const result = await saveWashingEntryCore(employee, supabase, {
       companyId,
       partyId,
-      chalanDate: cellStr(raw, byHeader, "Chalan Date"),
+      chalanDate: sheetDate(raw, byHeader, "Chalan Date") ?? "",
       orderId,
       itemSize: cellStr(raw, byHeader, "Item Size") || null,
       pcs: cellStr(raw, byHeader, "Pcs") ? Number(cellStr(raw, byHeader, "Pcs")) : null,
@@ -4178,7 +4196,7 @@ export async function bulkSavePurchaseBills(_prev: BulkDocState, formData: FormD
     const result = await savePurchaseBillCore(employee, supabase, {
       vendorPartyId,
       vendorInvoiceNo: cellStr(raw, byHeader, "Vendor Invoice No"),
-      vendorInvoiceDate: cellStr(raw, byHeader, "Vendor Invoice Date") || null,
+      vendorInvoiceDate: sheetDate(raw, byHeader, "Vendor Invoice Date"),
       qty: Number(cellStr(raw, byHeader, "Qty")) || 0,
       sqFeet: Number(cellStr(raw, byHeader, "SQ Feet")) || 0,
       // Bulk CSV template has no unit column yet — "SQ Feet" header means
@@ -4218,7 +4236,7 @@ export async function bulkSaveFreightBills(_prev: BulkDocState, formData: FormDa
 
     const result = await saveFreightBillCore(supabase, {
       invoiceNo,
-      invoiceDate: cellStr(raw, byHeader, "Invoice Date") || null,
+      invoiceDate: sheetDate(raw, byHeader, "Invoice Date"),
       billWeightKg: cellStr(raw, byHeader, "Bill Weight (kg)") ? Number(cellStr(raw, byHeader, "Bill Weight (kg)")) : null,
       freightAmt: Number(cellStr(raw, byHeader, "Freight Amount")) || 0,
       fuelAmt: Number(cellStr(raw, byHeader, "Fuel Amount")) || 0,
@@ -4249,7 +4267,7 @@ export async function bulkSaveDutyBills(_prev: BulkDocState, formData: FormData)
 
     const result = await saveDutyBillCore(supabase, {
       invoiceNo,
-      invoiceDate: cellStr(raw, byHeader, "Invoice Date") || null,
+      invoiceDate: sheetDate(raw, byHeader, "Invoice Date"),
       dutyTaxAmtUsd: cellStr(raw, byHeader, "Duty/Tax Amount USD") ? Number(cellStr(raw, byHeader, "Duty/Tax Amount USD")) : null,
       dutyTaxAmtInr: Number(cellStr(raw, byHeader, "Duty/Tax Amount INR")) || 0,
       gst18pctAmt: Number(cellStr(raw, byHeader, "GST 18% Amount")) || 0,
@@ -4416,12 +4434,12 @@ export async function bulkSaveCsbFilings(_prev: BulkDocState, formData: FormData
       totalTaxableValue: cellStr(raw, byHeader, "Total Taxable Value") ? Number(cellStr(raw, byHeader, "Total Taxable Value")) : null,
       taxableValueCurrency: cellStr(raw, byHeader, "Taxable Value Currency") || null,
       fobValueInr: cellStr(raw, byHeader, "FOB Value (In INR)") ? Number(cellStr(raw, byHeader, "FOB Value (In INR)")) : null,
-      filingDate: cellStr(raw, byHeader, "Filing Date") || null,
+      filingDate: sheetDate(raw, byHeader, "Filing Date"),
       egmNumber: cellStr(raw, byHeader, "EGM Number") || null,
-      egmDate: cellStr(raw, byHeader, "EGM Date") || null,
+      egmDate: sheetDate(raw, byHeader, "EGM Date"),
       hawbNumber: cellStr(raw, byHeader, "HAWB Number") || null,
       invoiceNo: cellStr(raw, byHeader, "Invoice Number") || null,
-      invoiceDate: cellStr(raw, byHeader, "Invoice Date") || null,
+      invoiceDate: sheetDate(raw, byHeader, "Invoice Date"),
       entryByEmployeeId: employee.id,
     });
 

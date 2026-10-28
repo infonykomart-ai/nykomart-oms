@@ -12,11 +12,25 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
-export function DebitNoteForm({ companies, parties }: { companies: { id: string; name: string }[]; parties: PartyOption[] }) {
+export function DebitNoteForm({
+  companies,
+  parties,
+  defaults,
+}: {
+  companies: { id: string; name: string }[];
+  parties: PartyOption[];
+  /**
+   * 2026-10-28 — "dubara usi po ka bill aajata hai to latest bill me debit
+   * note issue ka option ho": a Purchase Bill row's Debit Note shortcut opens
+   * this tab with the company, party, invoice and Finance bill already filled
+   * in, so the note is linked to THAT invoice from the first click.
+   */
+  defaults?: { companyId?: string; partyId?: string; billId?: string; invoiceNo?: string };
+}) {
   const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(saveDebitNote, initialState);
-  const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
-  const [partyId, setPartyId] = useState("");
+  const [companyId, setCompanyId] = useState(defaults?.companyId || companies[0]?.id || "");
+  const [partyId, setPartyId] = useState(defaults?.partyId ?? "");
   const [orderId, setOrderId] = useState("");
 
   // 2026-08-27 — "credite note ya debit note agar us invoice se related ho
@@ -29,7 +43,7 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
   // free-typed search. The pre-existing free-text "Against Invoice/Bill
   // No." field stays too, for a bill that doesn't exist in the system yet
   // — it's supplementary now, not the link.
-  const [raisedAgainstBillId, setRaisedAgainstBillId] = useState("");
+  const [raisedAgainstBillId, setRaisedAgainstBillId] = useState(defaults?.billId ?? "");
 
   // "kisi bill me agar credit debit adjust karna pade kisi dusre invocie me
   // to vo bhi hona chahiye" — optional: apply this note's amount to REDUCE
@@ -142,7 +156,12 @@ export function DebitNoteForm({ companies, parties }: { companies: { id: string;
         </div>
         <div>
           <label className={labelClass} htmlFor="dn_against">Against Invoice/Bill No. (free text note)</label>
-          <input id="dn_against" name="against_invoice_bill_no" className={inputClass} />
+          <input
+            id="dn_against"
+            name="against_invoice_bill_no"
+            defaultValue={defaults?.invoiceNo ?? ""}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor="dn_bill_no">Bill No.</label>

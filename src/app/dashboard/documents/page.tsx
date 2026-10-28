@@ -457,6 +457,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     .map((g) => ({
       ...g,
       vendorName: partyName.get(g.vendor_party_id) ?? "",
+      // 2026-10-28 — the per-invoice Debit Note shortcut needs these (see
+      // document-entry-tabs.tsx); both already came through the group.
+      companyId: g.company_id,
+      vendorPartyId: g.vendor_party_id,
       // One invoice can be entered by one person (the normal case, all items
       // share the stamp). If a later item was added by someone else, the
       // per-item line inside "▸ Items" still names them individually.
@@ -656,6 +660,15 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
         }}
         shipmentChalans={shipmentChalanRows}
         initialTab={initialTab}
+        // 2026-10-28 — a Purchase Bill row's "🧾 Debit Note" shortcut opens the
+        // Debit Note tab with the bill already linked (see
+        // PurchaseBillInvoiceList in document-entry-tabs.tsx).
+        debitNoteDefaults={{
+          companyId: typeof sp.dn_company === "string" ? sp.dn_company : undefined,
+          partyId: typeof sp.dn_party === "string" ? sp.dn_party : undefined,
+          billId: typeof sp.dn_bill === "string" ? sp.dn_bill : undefined,
+          invoiceNo: typeof sp.dn_invoice === "string" ? sp.dn_invoice : undefined,
+        }}
         billFilters={{
           purchaseBill: { vendor: pbVendor, from: pbFrom, to: pbTo },
           freightBill: { vendor: fbVendor, from: fbFrom, to: fbTo },

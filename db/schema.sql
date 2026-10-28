@@ -2656,10 +2656,22 @@ CREATE TABLE internal_expenses (
   payment_mode            text,
   remark                  text,
   created_by_employee_id  uuid REFERENCES employees(id),
-  created_at              timestamptz NOT NULL DEFAULT now()
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  -- 2026-10-28 — office expenses became vendor-bill shaped (see
+  -- db/2026-10-28-internal-expense-bills.sql): the bill's header fields sit
+  -- on every line row and the lines of one bill share entry_group_id. A NULL
+  -- entry_group_id means "this older row is its own one-line bill".
+  party_id                uuid REFERENCES parties(id) ON DELETE SET NULL,
+  invoice_no              text,
+  invoice_date            date,
+  description             text,
+  entry_group_id          uuid,
+  updated_at              timestamptz
 );
 CREATE INDEX idx_internal_expenses_company ON internal_expenses(company_id);
 CREATE INDEX idx_internal_expenses_date    ON internal_expenses(expense_date);
+CREATE INDEX idx_internal_expenses_group   ON internal_expenses(entry_group_id) WHERE entry_group_id IS NOT NULL;
+CREATE INDEX idx_internal_expenses_party   ON internal_expenses(party_id) WHERE party_id IS NOT NULL;
 
 -- 2026-09-15 — "kuch payment auto debit hote hai credit card se — erank,
 -- etsy bill, ebay & other": the REGISTRY of recurring card auto-debits

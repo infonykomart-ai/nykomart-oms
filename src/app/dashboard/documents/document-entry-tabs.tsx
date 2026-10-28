@@ -98,6 +98,11 @@ type PurchaseBillItem = EditablePurchaseBill & {
 // groupPurchaseBillInvoices — storage stays one row per item).
 type PurchaseBillInvoiceRow = PurchaseBillInvoiceGroup<PurchaseBillItem> & {
   vendorName: string;
+  // 2026-10-28 — used by the per-invoice "Debit Note" shortcut: a second bill
+  // on the same PO can be adjusted with a debit note raised against THIS
+  // invoice, so the note form needs the bill's company, party and Finance row.
+  companyId: string | null;
+  vendorPartyId: string;
   /** Who entered the invoice (first stamped item) — null on legacy bills. */
   enteredByName: string | null;
   taxableTotal: number;
@@ -193,6 +198,7 @@ export function DocumentEntryTabs({
   initialTab,
   billFilters,
   washingEntriesTotal,
+  debitNoteDefaults,
 }: {
   companies: Company[];
   parties: Party[];
@@ -207,6 +213,17 @@ export function DocumentEntryTabs({
   // resetting to Credit Note.
   initialTab: string;
   billFilters: BillFilters;
+  /**
+   * 2026-10-28 — prefill for the Debit Note tab when it is opened from a
+   * Purchase Bill's "Debit Note" shortcut (?dn_party=…&dn_bill=…). Same
+   * GET-params pattern the bill filters already use.
+   */
+  debitNoteDefaults?: {
+    companyId?: string;
+    partyId?: string;
+    billId?: string;
+    invoiceNo?: string;
+  };
   // 2026-09-17 (evening) — full-history {count, amount} for Washing
   // Entries (the "Recent" list below is capped to 8/most recent) — see
   // page.tsx's own comment on why this needed a separate unlimited query.
@@ -280,7 +297,9 @@ export function DocumentEntryTabs({
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           {tab === "credit-note" && <CreditNoteForm companies={companies} stores={stores} parties={parties} />}
-          {tab === "debit-note" && <DebitNoteForm companies={companies} parties={parties} />}
+          {tab === "debit-note" && (
+            <DebitNoteForm companies={companies} parties={parties} defaults={debitNoteDefaults} />
+          )}
           {tab === "washing-entry" && <WashingEntryForm companies={companies} parties={parties} stores={stores} />}
           {tab === "internal-invoice" && <InternalInvoiceForm companies={companies} />}
           {tab === "printing-bill" && (
@@ -788,6 +807,19 @@ function PurchaseBillInvoiceList({
                       🕘 History
                     </button>
                   )}
+                  {/* 2026-10-28 — "baad me dubara usi po order ka bill aajata
+                      hai to jo latest bill chadha hai usme us order ke against
+                      debit note issue ka option ho": the second bill is saved
+                      normally; this shortcut opens the Debit Note form for THIS
+                      invoice, pre-linked, so the difference can be debited and
+                      adjusted without retyping party/invoice. */}
+                  <a
+                    href={`/dashboard/documents?tab=debit-note&dn_company=${inv.companyId ?? ""}&dn_party=${inv.vendorPartyId}&dn_bill=${inv.finance_bpr_id ?? ""}&dn_invoice=${encodeURIComponent(inv.vendor_invoice_no)}`}
+                    title="Raise a Debit Note against this invoice (e.g. the duplicate/extra bill on the same PO)"
+                    className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 font-medium text-amber-700 hover:bg-amber-100"
+                  >
+                    🧾 Debit Note
+                  </a>
                   <button
                     type="button"
                     onClick={() => setViewingKey(inv.key)}
