@@ -126,6 +126,16 @@ export default async function ReportsPage({
           >
             🚚 Freight / Duty Bill Report
           </Link>
+          {/* 2026-10-28 — "ek csb filing ki report bhi nikalne ka option hona
+              chahiye ki kab se kab tak or konkonse colom chahiye": customs
+              CSB-V register + uske order ki poori detail, date range aur
+              column picker ke saath. */}
+          <Link
+            href="/dashboard/reports/csb-filings"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🛃 CSB Filing Report
+          </Link>
           <Link
             href="/dashboard/reports/outstanding"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"

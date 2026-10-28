@@ -1,3 +1,37 @@
+CSB FILING REPORT — DATE RANGE + COLUMN PICKER + ORDER KI POORI DETAIL
+(2026-10-28d)
+======================================================================
+
+KOI NAYA SQL NAHI. Naya page: **Reports → 🛃 CSB Filing Report**
+(`/dashboard/reports/csb-filings`), aur Document Entry ke CSB Filing tab me
+bhi **📊 Report** link.
+
+1) KAB SE KAB TAK
+-----------------
+  • Filing date — From / To (customs ne jis din file kiya)
+  • Company filter (filing ke match hue order ki company se — csb_filings
+    me apna company column nahi hai)
+
+2) KONKONSE COLUMN
+------------------
+Columns button se jitne chahiye utne tick/untick — screen, print/PDF,
+CSV, Excel, Word, WhatsApp/Email sab me wahi columns jate hain. Kuch
+nishan bhi add hue: PO/RF/RG No., Company, Store, Order/PO/Delivery/
+Dispatch date, Order status, Marketplace order no., Buyer name & address,
+Buyer country / city / state / postcode, Contact, Email, Qty, SKU, Size,
+Item category, HSN, Courier, AWB, Forwarding no., Delivered status/date,
+Booked freight, Invoice value INR/USD, Remark, Orders matched.
+
+3) ORDER SE LINK KAISE
+----------------------
+  • HAWB number → order_shipments.awb_no
+  • Invoice no. → dispatch_invoices.invoice_no
+  • ek filing me kai order ho to PO numbers " / " se jude, Qty total,
+    buyer/courier pehle match se — "Orders Matched" column me ginti
+  • jo filing kisi order se match nahi hui, wo bhi list me rehti hai (sirf
+    CSB columns ke saath) aur upar warning me ginti dikh jati hai
+
+
 HAR BILL ME + / − ROUND OFF, AUR PARTY LEDGER HAR COMPANY KI ALAG-ALAG
 (2026-10-28c)
 ======================================================================
