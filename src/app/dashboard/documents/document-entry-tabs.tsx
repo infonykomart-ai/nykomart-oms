@@ -348,9 +348,16 @@ export function DocumentEntryTabs({
                   Customs CSB-V filing confirmation — enter one row per filed shipping bill (matches the courier&apos;s
                   filing PDF).
                 </p>
-                <Link href="/dashboard/documents/bulk-upload" className="shrink-0 text-xs font-medium text-amber-600 hover:underline">
-                  📤 Bulk upload xlsx →
-                </Link>
+                <div className="flex shrink-0 items-center gap-3">
+                  {/* 2026-10-28 — filing-date range + column picker + order
+                      details wali poori report (Reports hub me bhi hai). */}
+                  <Link href="/dashboard/reports/csb-filings" className="text-xs font-medium text-slate-600 hover:underline">
+                    📊 Report
+                  </Link>
+                  <Link href="/dashboard/documents/bulk-upload" className="text-xs font-medium text-amber-600 hover:underline">
+                    📤 Bulk upload xlsx →
+                  </Link>
+                </div>
               </div>
               <CsbFilingForm currencies={currencies} />
             </div>

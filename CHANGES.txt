@@ -1,3 +1,81 @@
+CSB FILING REPORT — DATE RANGE + COLUMN PICKER + ORDER KI POORI DETAIL
+(2026-10-28d)
+======================================================================
+
+KOI NAYA SQL NAHI. Naya page: **Reports → 🛃 CSB Filing Report**
+(`/dashboard/reports/csb-filings`), aur Document Entry ke CSB Filing tab me
+bhi **📊 Report** link.
+
+1) KAB SE KAB TAK
+-----------------
+  • Filing date — From / To (customs ne jis din file kiya)
+  • Company filter (filing ke match hue order ki company se — csb_filings
+    me apna company column nahi hai)
+
+2) KONKONSE COLUMN
+------------------
+Columns button se jitne chahiye utne tick/untick — screen, print/PDF,
+CSV, Excel, Word, WhatsApp/Email sab me wahi columns jate hain. Kuch
+nishan bhi add hue: PO/RF/RG No., Company, Store, Order/PO/Delivery/
+Dispatch date, Order status, Marketplace order no., Buyer name & address,
+Buyer country / city / state / postcode, Contact, Email, Qty, SKU, Size,
+Item category, HSN, Courier, AWB, Forwarding no., Delivered status/date,
+Booked freight, Invoice value INR/USD, Remark, Orders matched.
+
+3) ORDER SE LINK KAISE
+----------------------
+  • HAWB number → order_shipments.awb_no
+  • Invoice no. → dispatch_invoices.invoice_no
+  • ek filing me kai order ho to PO numbers " / " se jude, Qty total,
+    buyer/courier pehle match se — "Orders Matched" column me ginti
+  • jo filing kisi order se match nahi hui, wo bhi list me rehti hai (sirf
+    CSB columns ke saath) aur upar warning me ginti dikh jati hai
+
+
+HAR BILL ME + / − ROUND OFF, AUR PARTY LEDGER HAR COMPANY KI ALAG-ALAG
+(2026-10-28c)
+======================================================================
+
+KOI NAYA SQL NAHI — dono cheezein pehle se maujood columns par kaam karti
+hain (round_off_amt har bill table me hai, payments bill ke apne row se aate
+hain).
+
+
+1) ROUND OFF AB + / − ME (PURCHASE · PRINTING · COURIER · DUTY · WASHING)
+-----------------------------------------------------------------------
+Bill ke aakhir me, invoice save karne wale button ke upar, ek hi tarah ka
+control har bill me:
+  • [−] / [+] button — minus se payable GHATTA hai, plus se BADHTA hai
+    (pehle sirf khaali number box tha, usme minus likhna padta tha)
+  • kitna round karna hai wo amount, aur 'Clear'
+  • neeche saaf line: "Payable before round-off ₹X → after ₹Y" — jo
+    screen par dikhta hai wahi save hota hai
+  • ₹1 / ₹5 / ₹10 / ₹50 / ₹100 ke round figure shortcuts — ek click me
+    payable exactly round figure par aa jaata hai, difference sirf
+    round-off me jaata hai
+Purchase / Printing bill me pehle se round-off tha; ab Courier, Duty aur
+Washing bills (create + edit, dono) me bhi yahi control hai.
+
+2) PARTY LEDGER: HAR COMPANY KI ALAG LEDGER
+-------------------------------------------
+Pehle ledger sirf top-nav wali EK company dikhata tha; doosri company ke
+bill/payment dekhne ke liye "merge same invoice across companies" tick
+karna padta tha (aur sab ek hi balance me jud jaata tha).
+Ab:
+  • ledger khulte hi party ki SABHI companies dikhti hain — **har company
+    ka apna block**, apna Debit/Credit, apna running balance aur apna
+    closing
+  • jis company me invoice chadha hai, uske payment/credit note bhi usi
+    block me dikhte hain (payment bill ke hi row se juda hota hai, isliye
+    idhar-udhar nahi ja sakta)
+  • upar combined total sirf cross-check ke liye; neeche "All companies —
+    combined" line
+  • filter bar me Company chunne par sirf wahi company (purana default)
+  • ek chhota bug bhi theek: table me column ka order header se ulta tha
+    (Invoice No. ki jagah Company aur Company ki jagah Invoice No. dikh
+    raha tha)
+
+
 OFFICE EXPENSE BILL AB BILL PAYMENT / PARTY LEDGER ME PAYABLE (GST KE BINA) + BILL KI APNI A4 SHEET
 (2026-10-28b)
 ======================================================================

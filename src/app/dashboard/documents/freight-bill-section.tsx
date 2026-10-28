@@ -21,6 +21,7 @@ import {
 } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { RelatedNotesBadge } from "./related-notes-badge";
+import { RoundOffField } from "./round-off-field";
 // 2026-09-15 — 📄 View opens this bill's read-only statement sheet. The
 // bill_pass_register id comes from the first related note (present only
 // after Send to Finance); before that the bill has no Finance row yet and
@@ -117,6 +118,15 @@ export function FreightBillSection({
 }) {
   const [state, formAction, pending] = useActionState(saveFreightBill, initialFormState);
   const partyGroups = groupPartyOptions(parties);
+  // 2026-10-28 — the new Courier Bill's amount fields are held in state so the
+  // round-off control can show the payable it is rounding: gross is exactly
+  // (freight + fuel + other) × 1.18, the same generated column the save uses.
+  const [freightAmt, setFreightAmt] = useState("");
+  const [fuelAmt, setFuelAmt] = useState("");
+  const [otherAmt, setOtherAmt] = useState("");
+  const amountOr0 = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const preRoundPayable =
+    Math.round((amountOr0(freightAmt) + amountOr0(fuelAmt) + amountOr0(otherAmt)) * 1.18 * 100) / 100;
 
   return (
     <div className="space-y-4">
@@ -160,23 +170,22 @@ export function FreightBillSection({
           </div>
           <div>
             <label className={labelClass} htmlFor="fb_freight">Freight Amt</label>
-            <input id="fb_freight" name="freight_amt" type="number" step="0.01" className={inputClass} />
+            <input id="fb_freight" name="freight_amt" type="number" step="0.01" value={freightAmt} onChange={(e) => setFreightAmt(e.target.value)} className={inputClass} />
           </div>
           <div>
             <label className={labelClass} htmlFor="fb_fuel">Fuel Amt</label>
-            <input id="fb_fuel" name="fuel_amt" type="number" step="0.01" className={inputClass} />
+            <input id="fb_fuel" name="fuel_amt" type="number" step="0.01" value={fuelAmt} onChange={(e) => setFuelAmt(e.target.value)} className={inputClass} />
           </div>
           <div>
             <label className={labelClass} htmlFor="fb_other">Other Charges</label>
-            <input id="fb_other" name="other_charges" type="number" step="0.01" className={inputClass} />
+            <input id="fb_other" name="other_charges" type="number" step="0.01" value={otherAmt} onChange={(e) => setOtherAmt(e.target.value)} className={inputClass} />
           </div>
           {/* 2026-10-24b — "SABHI PARKAR KE BILLS ME ROUND FIGURE SET KARNE KA
               OPTION AAYE FREIGHT DUTY ...": negative rounds the payable down,
-              positive up; the ledger hand-off below starts at gross + this. */}
-          <div>
-            <label className={labelClass} htmlFor="fb_round">Round Off <span className="text-slate-400">(± to round the payable)</span></label>
-            <input id="fb_round" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
-          </div>
+              positive up; the ledger hand-off below starts at gross + this.
+              2026-10-28 — now the shared +/− control, with the round-figure
+              shortcuts, same as Purchase / Printing bills. */}
+          <RoundOffField id="fb_round_new" payable={preRoundPayable} />
         </div>
 
         {/* 2026-08-12: "shipment ke against me courier ka credit note
@@ -386,10 +395,11 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
               <label className={labelClass}>Other Charges</label>
               <input name="other_charges" type="number" step="0.01" defaultValue={bill.other_charges} className={inputClass} />
             </div>
-            <div>
-              <label className={labelClass}>Round Off</label>
-              <input name="round_off_amt" type="number" step="0.01" defaultValue={bill.round_off_amt ?? 0} className={inputClass} />
-            </div>
+            <RoundOffField
+              id={`fb_round_${bill.id}`}
+              payable={Number(bill.gross_total_amt ?? (Number(bill.freight_amt) + Number(bill.fuel_amt) + Number(bill.other_charges)) * 1.18)}
+              defaultValue={bill.round_off_amt ?? 0}
+            />
           </div>
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
             <div className="mb-1 text-[11px] font-medium text-amber-800">Courier Credit Note (if any)</div>

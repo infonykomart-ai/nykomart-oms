@@ -7,7 +7,7 @@ import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
-import { RoundFigureButtons } from "./round-figure-buttons";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -63,7 +63,6 @@ export function PurchaseBillEditForm({
   const [sizeMode, setSizeMode] = useState<"area" | "as_billed">(bill.size_mode === "as_billed" ? "as_billed" : "area");
   // 2026-10-24b — see purchase-bill-form.tsx: round figure is one click, the
   // difference lands in round_off_amt.
-  const [roundOffInput, setRoundOffInput] = useState(String(bill.round_off_amt ?? 0));
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
@@ -194,27 +193,16 @@ export function PurchaseBillEditForm({
           <input type="hidden" name="gst_rate_pct" value={gstRatePct ?? ""} />
           <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
         </div>
-        <div>
-          {/* 2026-08-17: see purchase-bill-form.tsx's Round Off field comment. */}
-          <label className={labelClass} htmlFor={`pb_round_off_${bill.id}`}>Round Off <span className="text-slate-400">(± optional)</span></label>
-          <input
-            id={`pb_round_off_${bill.id}`}
-            name="round_off_amt"
-            type="number"
-            step="0.01"
-            value={roundOffInput}
-            onChange={(e) => setRoundOffInput(e.target.value)}
-            className={inputClass}
-          />
-          <RoundFigureButtons
-            payable={
-              (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) *
-                (1 + (gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2) / 100)
-            }
-            onApply={(diff) => setRoundOffInput(diff.toFixed(2))}
-          />
-          <p className="mt-0.5 text-[11px] text-slate-400">e.g. −0.30 to match the vendor&apos;s exact invoice total.</p>
-        </div>
+        {/* 2026-08-17: see purchase-bill-form.tsx's Round Off field comment.
+            2026-10-28 — the shared +/− control. */}
+        <RoundOffField
+          id={`pb_round_off_${bill.id}`}
+          payable={
+            (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) *
+            (1 + (gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2) / 100)
+          }
+          defaultValue={Number(bill.round_off_amt ?? 0)}
+        />
       </div>
 
       <button
