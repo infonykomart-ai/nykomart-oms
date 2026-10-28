@@ -72,6 +72,18 @@ export default async function FreightDutyReportPage({
     ? await finSupabase.from("freight_reconciliation_view").select("*").in("freight_bill_id", freightBillIds)
     : { data: [] as never[] };
 
+  // 2026-10-28e — the per-AWB/order round-off lives on the assignment row, not
+  // in the reconciliation view. Read it separately and join by assignment id;
+  // if db/2026-10-28e-awb-round-off.sql hasn't been run the select errors and
+  // every row simply shows no round-off (the report itself still renders).
+  const freightAssignmentIds = Array.from(
+    new Set((freightViewRows ?? []).map((r) => r.assignment_id).filter((v): v is string => !!v))
+  );
+  const { data: freightRoundRows } = freightAssignmentIds.length
+    ? await supabase.from("freight_bill_awb_assignments").select("id, round_off_amt").in("id", freightAssignmentIds)
+    : { data: [] as { id: string; round_off_amt: number | null }[] };
+  const freightRoundById = new Map((freightRoundRows ?? []).map((r) => [r.id, Number(r.round_off_amt ?? 0)]));
+
   // ---- Duty ----
   let dutyBillsQuery = supabase
     .from("duty_tax_bills")
@@ -88,6 +100,14 @@ export default async function FreightDutyReportPage({
   const { data: dutyViewRows } = dutyBillIds.length
     ? await finSupabase.from("duty_reconciliation_view").select("*").in("duty_tax_bill_id", dutyBillIds)
     : { data: [] as never[] };
+
+  const dutyAssignmentIds = Array.from(
+    new Set((dutyViewRows ?? []).map((r) => r.assignment_id).filter((v): v is string => !!v))
+  );
+  const { data: dutyRoundRows } = dutyAssignmentIds.length
+    ? await supabase.from("duty_bill_awb_assignments").select("id, round_off_amt").in("id", dutyAssignmentIds)
+    : { data: [] as { id: string; round_off_amt: number | null }[] };
+  const dutyRoundById = new Map((dutyRoundRows ?? []).map((r) => [r.id, Number(r.round_off_amt ?? 0)]));
 
   // ---- Company scoping: resolve every referenced order_id -> company_id
   // (freight_bills/duty_tax_bills have no company_id of their own — see
@@ -124,6 +144,7 @@ export default async function FreightDutyReportPage({
         our_shipping_amt: v.our_shipping_amt != null ? Number(v.our_shipping_amt) : null,
         gst_18pct: v.gst_18pct != null ? Number(v.gst_18pct) : null,
         gross_shipping_amt: v.gross_shipping_amt != null ? Number(v.gross_shipping_amt) : null,
+        round_off_amt: v.assignment_id != null && freightRoundById.has(v.assignment_id) ? freightRoundById.get(v.assignment_id)! : null,
         bill_weight_kg: v.bill_weight_kg != null ? Number(v.bill_weight_kg) : null,
         dimensional_weight: v.dimensional_weight != null ? Number(v.dimensional_weight) : null,
         difference_amt: v.difference_amt != null ? Number(v.difference_amt) : null,
@@ -151,6 +172,7 @@ export default async function FreightDutyReportPage({
         other_charge: v.other_charge != null ? Number(v.other_charge) : null,
         gst_18pct: v.gst_18pct != null ? Number(v.gst_18pct) : null,
         duty_gross_amt: v.duty_gross_amt != null ? Number(v.duty_gross_amt) : null,
+        round_off_amt: v.assignment_id != null && dutyRoundById.has(v.assignment_id) ? dutyRoundById.get(v.assignment_id)! : null,
         shipping_amt: v.shipping_amt != null ? Number(v.shipping_amt) : null,
         shipping_and_duty: v.shipping_and_duty != null ? Number(v.shipping_and_duty) : null,
       };

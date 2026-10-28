@@ -17,7 +17,7 @@ import {
   type BulkAwbResult,
   type RelatedNote,
 } from "./actions";
-import { SendToFinanceForm } from "./freight-bill-section";
+import { SendToFinanceForm, ResyncFinanceAmountButton } from "./freight-bill-section";
 import { RoundOffField } from "./round-off-field";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { RelatedNotesBadge } from "./related-notes-badge";
@@ -39,6 +39,8 @@ export type DutyBillAssignment = {
   duty_tax_amt_inr: number | null;
   other_charge: number | null;
   gst_18pct: number | null;
+  /** 2026-10-28e — this AWB's own round-off (entered at assignment time). */
+  round_off_amt: number | null;
   credit_note_no: string | null;
   credit_note_date: string | null;
   credit_note_amt: number | null;
@@ -405,11 +407,15 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
             </div>
           </div>
           {bill.sentToFinance && (
-            <p className="text-[11px] text-slate-400">
-              This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
-              reviewed when it was sent, EXCEPT the Courier Credit Note: changing it here adjusts that entry&apos;s total by the same
-              difference, so Bill Payment / the Party Ledger reflect the credit note immediately.
-            </p>
+            <div className="text-[11px] text-slate-400">
+              <p>
+                This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
+                reviewed when it was sent, EXCEPT the Courier Credit Note / amounts / round-off: changing them here adjusts that entry&apos;s total
+                by the same difference, so Bill Payment / the Party Ledger reflect it immediately. Round-off entered BEFORE this fix went in? Use
+                the button below once.
+              </p>
+              <ResyncFinanceAmountButton billId={bill.id} kind="duty" />
+            </div>
           )}
           <button
             type="submit"
@@ -428,7 +434,9 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
           companies={companies}
           defaultAmt={
             Number(bill.total_payable_amt ?? bill.gross_total_amt ?? bill.duty_tax_amt_inr ?? 0) +
-            Number(bill.round_off_amt ?? 0) -
+            Number(bill.round_off_amt ?? 0) +
+            // 2026-10-28e — every AWB's own round-off counts too.
+            bill.assignments.reduce((s, a) => s + Number(a.round_off_amt ?? 0), 0) -
             Number(bill.credit_note_amt ?? 0)
           }
           onDone={() => setFinanceMode(false)}
@@ -461,12 +469,15 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
             (() => {
               let duty = 0;
               let gst = 0;
+              // 2026-10-28e — every AWB's own round-off adds to the bill's.
+              let awbRoundOff = 0;
               for (const a of bill.assignments) {
                 const amt = Number(a.duty_tax_amt_inr ?? 0) + Number(a.other_charge ?? 0);
                 duty += amt;
+                awbRoundOff += Number(a.round_off_amt ?? 0);
                 gst += a.gst_18pct != null ? Number(a.gst_18pct) : Math.round(Number(a.duty_tax_amt_inr ?? 0) * 18) / 100;
               }
-              const roundOff = Number(bill.round_off_amt ?? 0);
+              const roundOff = awbRoundOff + Number(bill.round_off_amt ?? 0);
               return (
                 <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600 sm:grid-cols-5">
                   <div>
@@ -589,6 +600,8 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
               <input name="gst_18pct" type="number" step="0.01" className={inputClass} />
             </div>
           </div>
+          {/* 2026-10-28e — per-order round-off at entry time (same +/− control). */}
+          <RoundOffField id={`db_awb_round_${dutyTaxBillId}`} label="Round Off (this AWB/order)" />
           <div>
             <label className={labelClass}>Remark</label>
             <input name="remark" className={inputClass} />
@@ -609,7 +622,7 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
 function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
   const [raw, setRaw] = useState("");
   const [rows, setRows] = useState<
-    { query: string; dutyTaxAmtUsd: string; dutyTaxAmtInr: string; otherCharge: string; gst18pct: string; remark: string }[]
+    { query: string; dutyTaxAmtUsd: string; dutyTaxAmtInr: string; otherCharge: string; gst18pct: string; remark: string; roundOffAmt: string }[]
   >([]);
   const [results, setResults] = useState<BulkAwbResult[] | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -619,7 +632,7 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
       .split(/\r?\n|,/)
       .map((s) => s.trim())
       .filter(Boolean);
-    setRows(queries.map((q) => ({ query: q, dutyTaxAmtUsd: "", dutyTaxAmtInr: "", otherCharge: "", gst18pct: "", remark: "" })));
+    setRows(queries.map((q) => ({ query: q, dutyTaxAmtUsd: "", dutyTaxAmtInr: "", otherCharge: "", gst18pct: "", remark: "", roundOffAmt: "" })));
     setResults(null);
   }
 
@@ -638,6 +651,7 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
           otherCharge: r.otherCharge ? Number(r.otherCharge) : null,
           gst18pct: r.gst18pct ? Number(r.gst18pct) : null,
           remark: r.remark || null,
+          roundOffAmt: r.roundOffAmt ? Number(r.roundOffAmt) : null,
         }))
       );
       setResults(r.results);
@@ -672,12 +686,20 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
       {rows.length > 0 && (
         <div className="mt-3 space-y-2">
           {rows.map((r, i) => (
-            <div key={r.query + i} className="grid grid-cols-2 items-end gap-1.5 rounded sm:grid-cols-3 lg:grid-cols-6 border border-slate-200 bg-white p-1.5">
+            <div key={r.query + i} className="grid grid-cols-2 items-end gap-1.5 rounded sm:grid-cols-3 lg:grid-cols-7 border border-slate-200 bg-white p-1.5">
               <div className="col-span-1 font-medium text-slate-800">{r.query}</div>
               <input value={r.dutyTaxAmtUsd} onChange={(e) => updateRow(i, { dutyTaxAmtUsd: e.target.value })} placeholder="USD" className={inputClass} />
               <input value={r.dutyTaxAmtInr} onChange={(e) => updateRow(i, { dutyTaxAmtInr: e.target.value })} placeholder="INR" className={inputClass} />
               <input value={r.otherCharge} onChange={(e) => updateRow(i, { otherCharge: e.target.value })} placeholder="Other" className={inputClass} />
               <input value={r.gst18pct} onChange={(e) => updateRow(i, { gst18pct: e.target.value })} placeholder="GST (auto)" className={inputClass} />
+              {/* 2026-10-28e — per-AWB round-off (blank = 0). */}
+              <input
+                value={r.roundOffAmt}
+                onChange={(e) => updateRow(i, { roundOffAmt: e.target.value })}
+                placeholder="Round off ±₹"
+                title="Is AWB ka round-off: + se payable badhega, − se ghatayega"
+                className={inputClass}
+              />
               <input value={r.remark} onChange={(e) => updateRow(i, { remark: e.target.value })} placeholder="Remark" className={inputClass} />
             </div>
           ))}
@@ -726,12 +748,15 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
             ₹{assignment.duty_tax_amt_inr ?? 0}
             {assignment.duty_tax_amt_usd ? ` ($${assignment.duty_tax_amt_usd})` : ""} · GST ₹
             {assignment.gst_18pct ?? Math.round(Number(assignment.duty_tax_amt_inr ?? 0) * 18) / 100} · Other ₹{assignment.other_charge ?? 0} ·{" "}
+            {Number(assignment.round_off_amt ?? 0) !== 0 &&
+              `Round off ${Number(assignment.round_off_amt) > 0 ? "+" : "−"}₹${Math.abs(Number(assignment.round_off_amt)).toFixed(2)} · `}
             <strong className="text-slate-700">
               AWB total ₹
               {(
                 Number(assignment.duty_tax_amt_inr ?? 0) +
                 Number(assignment.gst_18pct ?? Math.round(Number(assignment.duty_tax_amt_inr ?? 0) * 18) / 100) +
-                Number(assignment.other_charge ?? 0)
+                Number(assignment.other_charge ?? 0) +
+                Number(assignment.round_off_amt ?? 0)
               ).toFixed(2)}
             </strong>
           </span>
@@ -773,6 +798,12 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
             <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
             <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
           </div>
+          {/* 2026-10-28e — this AWB's round-off, editable any time. */}
+          <RoundOffField
+            id={`db_awb_round_edit_${assignment.id}`}
+            label="Round Off (this AWB/order)"
+            defaultValue={Number(assignment.round_off_amt ?? 0)}
+          />
           <button type="submit" disabled={notePending} className="rounded bg-purple-600 px-2 py-1 font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
             {notePending ? "Saving..." : "Save Note"}
           </button>

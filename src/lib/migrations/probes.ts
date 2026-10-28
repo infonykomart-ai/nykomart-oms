@@ -152,6 +152,17 @@ export async function probeMigrations(
     probe("db/2026-10-20-purchase-bill-no-gst-and-audit.sql", "Purchase Bill \"No GST\" repair + edit audit stamp",
       "Bills saved as \"No GST\" after 2026-08-17 stay 5% high in Bill Payment / Party Ledger / P&L (the reported invoice-170 case), and Purchase Bills show no \"last updated\" time.",
       [{ name: "purchase_bills.updated_at", promise: hasColumn(client, "purchase_bills", "updated_at") }]),
+
+    // 2026-10-28e — per-AWB/order round-off on Courier and Duty bills. Until
+    // this file is run the AWB forms still save (the actions retry without
+    // the column), but the per-AWB round-off is dropped and the bill's
+    // payable stays the plain AWB gross.
+    probe("db/2026-10-28e-awb-round-off.sql", "Per-AWB round-off on Courier / Duty bills",
+      "AWB assignment forms can't store a per-order round-off — the bill's payable stays gross only, and only the bill-level round-off box is effective.",
+      [
+        { name: "freight_bill_awb_assignments.round_off_amt", promise: hasColumn(client, "freight_bill_awb_assignments", "round_off_amt") },
+        { name: "duty_bill_awb_assignments.round_off_amt", promise: hasColumn(client, "duty_bill_awb_assignments", "round_off_amt") },
+      ]),
   ]);
 }
 

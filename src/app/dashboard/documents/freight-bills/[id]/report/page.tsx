@@ -241,6 +241,9 @@ async function FreightBillReportInner({ id }: { id: string }) {
       totalShipping,
       gst,
       grossShipping,
+      // 2026-10-28e — this AWB/order's own round-off, entered at assignment
+      // time. Shown as its own column and added to the invoice's net payable.
+      roundOff: a.round_off_amt != null ? Number(a.round_off_amt) : 0,
       billSourced: hasBillFigures,
       ourWeight: weightByShipment.has(a.order_shipment_id) ? weightByShipment.get(a.order_shipment_id)! : null,
       billWeight: a.bill_weight_kg != null ? Number(a.bill_weight_kg) : null,
@@ -378,7 +381,11 @@ async function FreightBillReportInner({ id }: { id: string }) {
   // 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION FREIGHT": the difference
   // sits outside the generated gross (see the migration's note), so the
   // payable is gross + round-off − credit note.
-  const roundOff = Number(bill.round_off_amt ?? 0);
+  // 2026-10-28e — round-off now has two parts: the bill header's own
+  // adjustment plus every AWB's own (entered per order).
+  const awbRoundOffTotal = rows.reduce((s, r) => s + r.roundOff, 0);
+  const billHeaderRoundOff = Number(bill.round_off_amt ?? 0);
+  const roundOff = billHeaderRoundOff + awbRoundOffTotal;
   const cnNet = billGross + roundOff - bill.credit_note_amt;
 
   // Bottom TOTAL row — 2026-09-22: a bold summary row under the last data
@@ -427,6 +434,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
               {roundOff !== 0 && (
                 <p className="text-slate-600">
                   Round Off {roundOff > 0 ? "+" : "−"}₹{fmt(Math.abs(roundOff))}
+                  {awbRoundOffTotal !== 0 && billHeaderRoundOff !== 0 ? ` (per AWB ${fmt(awbRoundOffTotal)} · bill ${fmt(billHeaderRoundOff)})` : ""}
                 </p>
               )}
               {bill.credit_note_amt > 0 && <p className="text-purple-700">CN {bill.credit_note_no} · −₹{bill.credit_note_amt}</p>}
@@ -452,6 +460,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
                 <th className="py-1 pr-2 text-right">Total Shipping</th>
                 <th className="py-1 pr-2 text-right">GST 18%</th>
                 <th className="py-1 pr-2 text-right">Gross Shipping</th>
+                <th className="py-1 pr-2 text-right">Round Off</th>
                 <th className="py-1 pr-2 text-right">Our Wt.</th>
                 <th className="py-1 pr-2 text-right">Bill Wt.</th>
                 <th className="py-1 pr-2 text-right">Dim. Wt.</th>
@@ -478,6 +487,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2 text-right font-medium">{r.totalShipping.toFixed(2)}</td>
                   <td className={`py-1 pr-2 text-right ${r.billSourced ? "font-medium text-slate-900" : "text-slate-400"}`}>{r.gst.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right font-semibold">{r.grossShipping.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{r.roundOff !== 0 ? r.roundOff.toFixed(2) : "—"}</td>
                   <td className="py-1 pr-2 text-right">{r.ourWeight ?? "—"}</td>
                   <td className="py-1 pr-2 text-right">{r.billWeight ?? "—"}</td>
                   <td className="py-1 pr-2 text-right">{r.dimWeight ?? "—"}</td>
@@ -490,7 +500,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={21} className="py-3 text-center text-slate-400">No AWBs assigned to this bill yet.</td>
+                  <td colSpan={22} className="py-3 text-center text-slate-400">No AWBs assigned to this bill yet.</td>
                 </tr>
               )}
               {rows.length > 0 && (
@@ -505,6 +515,7 @@ async function FreightBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2 text-right">{courierPreGstTotal.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{courierGstTotal.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{courierShippingTotal.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{awbRoundOffTotal.toFixed(2)}</td>
                   <td className="py-1 pr-2" colSpan={3}></td>
                   <td className={`py-1 pr-2 text-right ${totalDiff < 0 ? "text-red-700" : ""}`}>{totalDiff.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{overallShippingPct != null ? `${overallShippingPct.toFixed(1)}%` : "—"}</td>

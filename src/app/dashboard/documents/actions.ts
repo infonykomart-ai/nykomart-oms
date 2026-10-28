@@ -47,7 +47,55 @@ import { validateDateFields } from "@/lib/fy-date";
 import { parseDateCell } from "@/lib/attendance/punch-import";
 import { saveOrderRefundCore } from "../orders/actions";
 import { autoSettleWalletBills } from "@/lib/wallet/auto-settle";
+import { isMissingSchemaPiece, tolerateMissingColumn } from "@/lib/db/missing-column";
 import { revalidatePath } from "next/cache";
+
+// =============================================================================
+// 2026-10-28e — ROUND-OFF REACHES THE FINANCE LEDGER.
+//
+// "jo roundoff value entry ke time hi per order honi chahiye or abhi mene ki
+// hai to vo report me ledger me kahi update nhi hori". Two things were true:
+//
+//  1. `round_off_amt` only existed on the bill HEADER — one adjustment for a
+//     whole courier invoice that covers many orders/AWBs. It is now also
+//     stored per AWB (`round_off_amt` on freight_bill_awb_assignments /
+//     duty_bill_awb_assignments, see db/2026-10-28e-awb-round-off.sql) and
+//     entered at assignment time.
+//
+//  2. Once a bill had been handed to Finance, editing its round-off changed
+//     nothing on the ledger: sendFreightBillToFinance/sendDutyBillToFinance
+//     freeze bill_pass_register.total_amt at the reviewed figure and the edit
+//     actions only re-synced the credit note. So the very round-off the user
+//     entered afterwards never appeared in Bill Payment / the Party Ledger.
+//
+// Same rule as the 2026-09-30 credit-note fix: only the CHANGE travels, never
+// an overwrite, so a manual review adjustment made at send time survives.
+// Every caller below passes a signed delta — + raises the payable, − lowers
+// it — and a bill that is not in Finance yet produces no mirror row and is
+// therefore simply a no-op (its amount is picked up at send time anyway).
+// =============================================================================
+async function applyBillLedgerDelta(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  source: "freight_bill" | "duty_tax_bill",
+  sourceId: string,
+  delta: number
+): Promise<string | null> {
+  if (!delta || !Number.isFinite(delta)) return null;
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id, total_amt")
+    .eq("source", source)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  if (!mirror) return null;
+  const next = Math.round((Number(mirror.total_amt) + delta) * 100) / 100;
+  const { error } = await supabase.from("bill_pass_register").update({ total_amt: next }).eq("id", mirror.id);
+  if (!error) {
+    revalidatePath("/dashboard/bill-payment");
+    revalidatePath("/dashboard/parties");
+  }
+  return error?.message ?? null;
+}
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -2392,13 +2440,22 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
   const invoiceDate = strOrNull(formData, "invoice_date");
   const vendorPartyId = strOrNull(formData, "vendor_party_id");
   const newCnAmt = numOrZero(formData, "credit_note_amt");
+  const newFreightAmt = numOrZero(formData, "freight_amt");
+  const newFuelAmt = numOrZero(formData, "fuel_amt");
+  const newOtherCharges = numOrZero(formData, "other_charges");
+  const newRoundOffAmt = numOrZero(formData, "round_off_amt");
 
   const { data: prevBill } = await supabase
     .from("freight_bills")
-    .select("credit_note_amt")
+    .select("credit_note_amt, round_off_amt, freight_amt, fuel_amt, other_charges")
     .eq("id", freightBillId)
     .maybeSingle();
   const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
+  const prevRoundOffAmt = Number(prevBill?.round_off_amt ?? 0);
+  // gross_total_amt is a GENERATED column ((freight + fuel + other) × 1.18),
+  // so the same formula gives the before/after figure to diff against.
+  const prevGross = (Number(prevBill?.freight_amt ?? 0) + Number(prevBill?.fuel_amt ?? 0) + Number(prevBill?.other_charges ?? 0)) * 1.18;
+  const newGross = (newFreightAmt + newFuelAmt + newOtherCharges) * 1.18;
 
   const { error } = await supabase
     .from("freight_bills")
@@ -2406,13 +2463,13 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
       invoice_no: invoiceNo,
       invoice_date: invoiceDate,
       bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
-      freight_amt: numOrZero(formData, "freight_amt"),
-      fuel_amt: numOrZero(formData, "fuel_amt"),
-      other_charges: numOrZero(formData, "other_charges"),
+      freight_amt: newFreightAmt,
+      fuel_amt: newFuelAmt,
+      other_charges: newOtherCharges,
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: numOrZero(formData, "credit_note_amt"),
-      round_off_amt: numOrZero(formData, "round_off_amt"),
+      credit_note_amt: newCnAmt,
+      round_off_amt: newRoundOffAmt,
       vendor_party_id: vendorPartyId,
     })
     .eq("id", freightBillId);
@@ -2433,22 +2490,70 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
     .eq("source", "freight_bill")
     .eq("source_id", freightBillId);
 
-  // 2026-09-30 — CN delta → ledger total (see the header comment above):
-  // the mirror's total_amt is the REVIEWED net figure, so the credit
-  // note's change must travel to it or the payable never moves. Delta,
-  // not overwrite — a manual review adjustment from send-time survives.
-  // (bpr.credit_note_amt stays untouched: the ledger total already nets
-  // the CN, writing it there too would double-reduce balance_due.)
-  if (mirror && prevCnAmt !== newCnAmt) {
-    const newLedgerTotal = Math.round((Number(mirror.total_amt) + (prevCnAmt - newCnAmt)) * 100) / 100;
-    const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+  // 2026-09-30 — CN delta → ledger total; 2026-10-28e — the same delta rule
+  // now also carries the bill's gross change and its round-off change, which
+  // is what the user reported as "round off ledger me update nahi ho rahi".
+  // All three are signed deltas on the reviewed total, never an overwrite.
+  // (bpr.credit_note_amt stays untouched: the ledger total already nets the
+  // CN, writing it there too would double-reduce balance_due.)
+  if (mirror) {
+    const delta = Math.round((((newGross - prevGross) + (newRoundOffAmt - prevRoundOffAmt)) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, delta);
     if (syncError) {
-      return { error: `Bill saved, but the Finance ledger could not be updated with the credit note change: ${syncError.message}`, success: false };
+      return { error: `Bill saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/bill-payment");
+  return { error: null, success: true };
+}
+
+/**
+ * 2026-10-28e — "abhi mene ki hai to vo report me ledger me kahi update nhi
+ * hori": bills that were sent to Finance BEFORE this round have a ledger
+ * total that was frozen without their (later) round-off, and a delta-based
+ * sync can't repair that on its own (editing the same round-off again is a
+ * zero delta). This recomputes the bill's CURRENT payable and writes it to
+ * the existing ledger row — an explicit, user-clicked re-sync, never an
+ * automatic overwrite of a reviewed amount.
+ */
+export async function resyncFreightBillFinanceAmount(freightBillId: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
+
+  const { data: bill } = await supabase
+    .from("freight_bills")
+    .select("freight_amt, fuel_amt, other_charges, round_off_amt, credit_note_amt")
+    .eq("id", freightBillId)
+    .maybeSingle();
+  if (!bill) return { error: "Courier Bill not found.", success: false };
+
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "freight_bill")
+    .eq("source_id", freightBillId)
+    .maybeSingle();
+  if (!mirror) return { error: "This Courier Bill is not in the Finance ledger yet.", success: false };
+
+  const { data: roundRows, error: roundError } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("freight_bill_id", freightBillId);
+  const awbRoundOff = isMissingSchemaPiece(roundError)
+    ? 0
+    : (roundRows ?? []).reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
+
+  const gross = (Number(bill.freight_amt ?? 0) + Number(bill.fuel_amt ?? 0) + Number(bill.other_charges ?? 0)) * 1.18;
+  const payable = Math.round((gross + Number(bill.round_off_amt ?? 0) + awbRoundOff - Number(bill.credit_note_amt ?? 0)) * 100) / 100;
+  const { error } = await supabase.from("bill_pass_register").update({ total_amt: payable }).eq("id", mirror.id);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
   return { error: null, success: true };
 }
 
@@ -2493,29 +2598,34 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
     return initialFail("That order is not accessible — look it up again.");
   }
 
-  const { data, error } = await supabase
-    .from("freight_bill_awb_assignments")
-    .insert({
-      freight_bill_id: freightBillId,
-      order_id: orderId,
-      order_shipment_id: orderShipmentId,
-      bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
-      dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
-      difference_amt: numOrNull(formData, "difference_amt"),
-      // 2026-09-01: booking-cost-vs-billed-cost recheck — see
-      // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
-      billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
-      // 2026-09-21: per-AWB charge breakup — see
-      // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
-      billed_base_amt: numOrNull(formData, "billed_base_amt"),
-      billed_fuel_amt: numOrNull(formData, "billed_fuel_amt"),
-      billed_remote_amt: numOrNull(formData, "billed_remote_amt"),
-      billed_other_amt: numOrNull(formData, "billed_other_amt"),
-      billed_gst_amt: numOrNull(formData, "billed_gst_amt"),
-      remark: strOrNull(formData, "remark"),
-    })
-    .select("id")
-    .single();
+  // 2026-10-28e — this AWB/order's own round-off, entered at assignment time
+  // ("roundoff value entry ke time hi per order honi chahiye").
+  const roundOffAmt = numOrNull(formData, "round_off_amt") ?? 0;
+  const payload = {
+    freight_bill_id: freightBillId,
+    order_id: orderId,
+    order_shipment_id: orderShipmentId,
+    bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
+    dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
+    difference_amt: numOrNull(formData, "difference_amt"),
+    // 2026-09-01: booking-cost-vs-billed-cost recheck — see
+    // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+    billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
+    // 2026-09-21: per-AWB charge breakup — see
+    // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+    billed_base_amt: numOrNull(formData, "billed_base_amt"),
+    billed_fuel_amt: numOrNull(formData, "billed_fuel_amt"),
+    billed_remote_amt: numOrNull(formData, "billed_remote_amt"),
+    billed_other_amt: numOrNull(formData, "billed_other_amt"),
+    billed_gst_amt: numOrNull(formData, "billed_gst_amt"),
+    round_off_amt: roundOffAmt,
+    remark: strOrNull(formData, "remark"),
+  };
+  // db/2026-10-28e-awb-round-off.sql may not have been run yet — the write
+  // still goes through without the column (see src/lib/db/missing-column.ts).
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+    supabase.from("freight_bill_awb_assignments").insert(p).select("id").single()
+  );
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key")
@@ -2523,7 +2633,10 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
       : error?.message;
     return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
   }
+  // Bill already in Finance? Then this AWB's round-off must reach its row.
+  const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, roundOffAmt);
   revalidatePath("/dashboard/documents");
+  if (syncError) return initialFail(`AWB assigned, but the Finance ledger could not be updated: ${syncError}`);
   return { error: null, success: { id: data.id, docNo: "" } };
 }
 
@@ -2533,14 +2646,23 @@ export async function deleteFreightAwbAssignment(id: string): Promise<SimpleResu
   // 2026-08-12 (round 11 security review): same assignment->order->company
   // check updateFreightAwbAssignmentNotes already does below — this delete
   // previously skipped it.
-  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id, freight_bill_id").eq("id", id).maybeSingle();
   if (!assignment) return { error: "Assignment not found.", success: false };
   const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "You don't have access to this assignment's company.", success: false };
   }
+  // 2026-10-28e — removing an AWB removes its round-off from the bill too, so
+  // a bill already in Finance takes the same delta back off.
+  const { data: roundRow, error: roundReadError } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const roundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
   const { error } = await supabase.from("freight_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+  await applyBillLedgerDelta(supabase, "freight_bill", assignment.freight_bill_id, -roundOffAmt);
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -2569,6 +2691,8 @@ export type BulkAwbRow = {
   billedFuelAmt: number | null;
   billedRemoteAmt: number | null;
   billedGstAmt: number | null;
+  /** 2026-10-28e — this row's own round-off (see db/2026-10-28e-awb-round-off.sql). */
+  roundOffAmt: number | null;
 };
 export type BulkAwbResult = { query: string; ok: boolean; refNo: string | null; error: string | null };
 
@@ -2578,6 +2702,7 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
   if (!freightBillId) return { error: "Missing Courier Bill.", results: [] };
 
   const results: BulkAwbResult[] = [];
+  let roundOffTotal = 0;
   for (const row of rows) {
     const lookup = await lookupOrderForReconciliation(row.query, "freight");
     if (lookup.error || !lookup.order || !lookup.orderShipmentId) {
@@ -2588,7 +2713,7 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: "Not accessible." });
       continue;
     }
-    const { error } = await supabase.from("freight_bill_awb_assignments").insert({
+    const payload = {
       freight_bill_id: freightBillId,
       order_id: lookup.order.id,
       order_shipment_id: lookup.orderShipmentId,
@@ -2602,17 +2727,25 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       billed_fuel_amt: row.billedFuelAmt,
       billed_remote_amt: row.billedRemoteAmt,
       billed_gst_amt: row.billedGstAmt,
+      // 2026-10-28e — per-row round-off.
+      round_off_amt: row.roundOffAmt ?? 0,
       remark: row.remark,
-    });
+    };
+    const { error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+      supabase.from("freight_bill_awb_assignments").insert(p)
+    );
     if (error) {
       const msg = error.message.includes("duplicate key") ? "Already assigned to a Courier Bill." : error.message;
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
     } else {
+      roundOffTotal += row.roundOffAmt ?? 0;
       results.push({ query: row.query, ok: true, refNo: lookup.order.ref_no, error: null });
     }
   }
+  // One ledger touch for the whole batch rather than per row.
+  const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, roundOffTotal);
   revalidatePath("/dashboard/documents");
-  return { error: null, results };
+  return { error: syncError ? `Assigned, but the Finance ledger could not be updated: ${syncError}` : null, results };
 }
 
 /** Attach a credit/debit note to one already-assigned AWB — "TRACKING NUMBER KE AGAINST ME AAYEGA", entered whenever the note actually arrives, not necessarily at assignment time. */
@@ -2650,33 +2783,37 @@ export async function updateFreightAwbAssignmentNotes(_prev: SimpleResult, formD
   const deltaCn = Math.round(((newCnAmt ?? 0) - Number(assignment.credit_note_amt ?? 0)) * 100) / 100;
   const deltaDn = Math.round(((newDnAmt ?? 0) - Number(assignment.debit_note_amt ?? 0)) * 100) / 100;
 
-  const { error } = await supabase
+  // 2026-10-28e — this AWB's round-off is editable here too (same "+"/"−"
+  // rule as at assignment time). Read the stored value first so only the
+  // CHANGE reaches the bill's Finance row; the column may not exist yet.
+  const { data: roundRow, error: roundReadError } = await supabase
     .from("freight_bill_awb_assignments")
-    .update({
-      credit_note_no: strOrNull(formData, "credit_note_no"),
-      credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: newCnAmt,
-      debit_note_no: strOrNull(formData, "debit_note_no"),
-      debit_note_date: strOrNull(formData, "debit_note_date"),
-      debit_note_amt: newDnAmt,
-    })
-    .eq("id", id);
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const prevRoundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
+  const submittedRound = formData.get("round_off_amt");
+  const newRoundOffAmt = submittedRound == null || submittedRound === "" ? prevRoundOffAmt : numOrZero(formData, "round_off_amt");
+  const deltaRoundOff = Math.round((newRoundOffAmt - prevRoundOffAmt) * 100) / 100;
+
+  const updatePayload = {
+    credit_note_no: strOrNull(formData, "credit_note_no"),
+    credit_note_date: strOrNull(formData, "credit_note_date"),
+    credit_note_amt: newCnAmt,
+    debit_note_no: strOrNull(formData, "debit_note_no"),
+    debit_note_date: strOrNull(formData, "debit_note_date"),
+    debit_note_amt: newDnAmt,
+    round_off_amt: newRoundOffAmt,
+  };
+  const { error } = await tolerateMissingColumn(updatePayload, "round_off_amt", (p) =>
+    supabase.from("freight_bill_awb_assignments").update(p).eq("id", id)
+  );
   if (error) return { error: error.message, success: false };
 
-  if (deltaCn !== 0 || deltaDn !== 0) {
-    const { data: mirror } = await supabase
-      .from("bill_pass_register")
-      .select("id, total_amt")
-      .eq("source", "freight_bill")
-      .eq("source_id", assignment.freight_bill_id)
-      .maybeSingle();
-    if (mirror) {
-      const newLedgerTotal = Math.round((Number(mirror.total_amt) - deltaCn + deltaDn) * 100) / 100;
-      const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
-      if (syncError) {
-        return { error: `Note saved, but the Finance ledger could not be updated: ${syncError.message}`, success: false };
-      }
-      revalidatePath("/dashboard/bill-payment");
+  if (deltaCn !== 0 || deltaDn !== 0 || deltaRoundOff !== 0) {
+    const syncError = await applyBillLedgerDelta(supabase, "freight_bill", assignment.freight_bill_id, -deltaCn + deltaDn + deltaRoundOff);
+    if (syncError) {
+      return { error: `Note saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
@@ -2902,13 +3039,24 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
   const invoiceDate = strOrNull(formData, "invoice_date");
   const vendorPartyId = strOrNull(formData, "vendor_party_id");
   const newCnAmt = numOrZero(formData, "credit_note_amt");
+  const newDutyInr = numOrZero(formData, "duty_tax_amt_inr");
+  const newGstAmt = numOrZero(formData, "gst_18pct_amt");
+  const newTotalPayable = numOrNull(formData, "total_payable_amt");
+  const newRoundOffAmt = numOrZero(formData, "round_off_amt");
 
   const { data: prevBill } = await supabase
     .from("duty_tax_bills")
-    .select("credit_note_amt")
+    .select("credit_note_amt, round_off_amt, duty_tax_amt_inr, gst_18pct_amt, total_payable_amt")
     .eq("id", dutyTaxBillId)
     .maybeSingle();
   const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
+  const prevRoundOffAmt = Number(prevBill?.round_off_amt ?? 0);
+  // The amount "Send to Finance" starts from (see the send form's default):
+  // the manually cleared Total Payable when present, else the generated gross.
+  const prevBase = Number(
+    prevBill?.total_payable_amt ?? (Number(prevBill?.duty_tax_amt_inr ?? 0) + Number(prevBill?.gst_18pct_amt ?? 0))
+  );
+  const newBase = newTotalPayable ?? newDutyInr + newGstAmt;
 
   const { error } = await supabase
     .from("duty_tax_bills")
@@ -2916,15 +3064,15 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
       invoice_no: invoiceNo,
       invoice_date: invoiceDate,
       duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
-      duty_tax_amt_inr: numOrZero(formData, "duty_tax_amt_inr"),
-      gst_18pct_amt: numOrZero(formData, "gst_18pct_amt"),
+      duty_tax_amt_inr: newDutyInr,
+      gst_18pct_amt: newGstAmt,
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: numOrZero(formData, "credit_note_amt"),
+      credit_note_amt: newCnAmt,
       disbursement_fee: numOrZero(formData, "disbursement_fee"),
       courier_duty_charges_adj: numOrZero(formData, "courier_duty_charges_adj"),
-      total_payable_amt: numOrNull(formData, "total_payable_amt"),
-      round_off_amt: numOrZero(formData, "round_off_amt"),
+      total_payable_amt: newTotalPayable,
+      round_off_amt: newRoundOffAmt,
       vendor_party_id: vendorPartyId,
     })
     .eq("id", dutyTaxBillId);
@@ -2945,22 +3093,60 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
     .eq("source", "duty_tax_bill")
     .eq("source_id", dutyTaxBillId);
 
-  // 2026-09-30 — same credit-note delta sync as updateFreightBillDetails:
-  // the Finance ledger row's total_amt is the reviewed net-of-CN figure,
-  // so a later CN change must adjust it by the DELTA or the Party
-  // Ledger/Bill Payment never see the note. (bpr.credit_note_amt stays
-  // untouched — the ledger total already nets the CN; writing it there
-  // too would double-reduce balance_due.)
-  if (mirror && prevCnAmt !== newCnAmt) {
-    const newLedgerTotal = Math.round((Number(mirror.total_amt) + (prevCnAmt - newCnAmt)) * 100) / 100;
-    const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+  // 2026-09-30 — same credit-note delta sync as updateFreightBillDetails;
+  // 2026-10-28e — the bill's base amount and round-off change now travel the
+  // same way, so a round-off entered after "Send to Finance" is no longer
+  // invisible to Bill Payment / the Party Ledger.
+  if (mirror) {
+    const delta = Math.round((((newBase - prevBase) + (newRoundOffAmt - prevRoundOffAmt)) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, delta);
     if (syncError) {
-      return { error: `Bill saved, but the Finance ledger could not be updated with the credit note change: ${syncError.message}`, success: false };
+      return { error: `Bill saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/bill-payment");
+  return { error: null, success: true };
+}
+
+/** 2026-10-28e — Duty & Tax twin of resyncFreightBillFinanceAmount above. */
+export async function resyncDutyBillFinanceAmount(dutyTaxBillId: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
+
+  const { data: bill } = await supabase
+    .from("duty_tax_bills")
+    .select("duty_tax_amt_inr, gst_18pct_amt, total_payable_amt, round_off_amt, credit_note_amt")
+    .eq("id", dutyTaxBillId)
+    .maybeSingle();
+  if (!bill) return { error: "Duty & Tax Bill not found.", success: false };
+
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "duty_tax_bill")
+    .eq("source_id", dutyTaxBillId)
+    .maybeSingle();
+  if (!mirror) return { error: "This Duty & Tax Bill is not in the Finance ledger yet.", success: false };
+
+  const { data: roundRows, error: roundError } = await supabase
+    .from("duty_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("duty_tax_bill_id", dutyTaxBillId);
+  const awbRoundOff = isMissingSchemaPiece(roundError)
+    ? 0
+    : (roundRows ?? []).reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
+
+  const base = Number(bill.total_payable_amt ?? Number(bill.duty_tax_amt_inr ?? 0) + Number(bill.gst_18pct_amt ?? 0));
+  const payable = Math.round((base + Number(bill.round_off_amt ?? 0) + awbRoundOff - Number(bill.credit_note_amt ?? 0)) * 100) / 100;
+  const { error } = await supabase.from("bill_pass_register").update({ total_amt: payable }).eq("id", mirror.id);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
   return { error: null, success: true };
 }
 
@@ -3011,20 +3197,22 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
   // figure. Saved value is now 18% of that AWB's duty when not entered.
   const dutyInr = numOrNull(formData, "duty_tax_amt_inr");
   const gstEntered = numOrNull(formData, "gst_18pct");
-  const { data, error } = await supabase
-    .from("duty_bill_awb_assignments")
-    .insert({
-      duty_tax_bill_id: dutyTaxBillId,
-      order_id: orderId,
-      order_shipment_id: orderShipmentId,
-      duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
-      duty_tax_amt_inr: dutyInr,
-      other_charge: numOrNull(formData, "other_charge"),
-      gst_18pct: gstEntered ?? (dutyInr != null ? Math.round(dutyInr * 18) / 100 : null),
-      remark: strOrNull(formData, "remark"),
-    })
-    .select("id")
-    .single();
+  // 2026-10-28e — per-AWB/order round-off, entered at assignment time.
+  const roundOffAmt = numOrNull(formData, "round_off_amt") ?? 0;
+  const payload = {
+    duty_tax_bill_id: dutyTaxBillId,
+    order_id: orderId,
+    order_shipment_id: orderShipmentId,
+    duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
+    duty_tax_amt_inr: dutyInr,
+    other_charge: numOrNull(formData, "other_charge"),
+    gst_18pct: gstEntered ?? (dutyInr != null ? Math.round(dutyInr * 18) / 100 : null),
+    round_off_amt: roundOffAmt,
+    remark: strOrNull(formData, "remark"),
+  };
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+    supabase.from("duty_bill_awb_assignments").insert(p).select("id").single()
+  );
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key")
@@ -3032,7 +3220,9 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
       : error?.message;
     return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
   }
+  const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, roundOffAmt);
   revalidatePath("/dashboard/documents");
+  if (syncError) return initialFail(`AWB assigned, but the Finance ledger could not be updated: ${syncError}`);
   return { error: null, success: { id: data.id, docNo: "" } };
 }
 
@@ -3040,14 +3230,22 @@ export async function deleteDutyAwbAssignment(id: string): Promise<SimpleResult>
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
   // 2026-08-12 (round 11 security review): same as deleteFreightAwbAssignment above.
-  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id, duty_tax_bill_id").eq("id", id).maybeSingle();
   if (!assignment) return { error: "Assignment not found.", success: false };
   const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "You don't have access to this assignment's company.", success: false };
   }
+  // 2026-10-28e — same round-off take-back as the freight delete above.
+  const { data: roundRow, error: roundReadError } = await supabase
+    .from("duty_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const roundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
   const { error } = await supabase.from("duty_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+  await applyBillLedgerDelta(supabase, "duty_tax_bill", assignment.duty_tax_bill_id, -roundOffAmt);
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -3064,6 +3262,8 @@ export type BulkDutyAwbRow = {
   otherCharge: number | null;
   gst18pct: number | null;
   remark: string | null;
+  /** 2026-10-28e — this row's own round-off (see db/2026-10-28e-awb-round-off.sql). */
+  roundOffAmt: number | null;
 };
 
 export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAwbRow[]): Promise<{ error: string | null; results: BulkAwbResult[] }> {
@@ -3072,6 +3272,7 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
   if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", results: [] };
 
   const results: BulkAwbResult[] = [];
+  let roundOffTotal = 0;
   for (const row of rows) {
     const lookup = await lookupOrderForReconciliation(row.query, "duty");
     if (lookup.error || !lookup.order || !lookup.orderShipmentId) {
@@ -3082,7 +3283,7 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: "Not accessible." });
       continue;
     }
-    const { error } = await supabase.from("duty_bill_awb_assignments").insert({
+    const payload = {
       duty_tax_bill_id: dutyTaxBillId,
       order_id: lookup.order.id,
       order_shipment_id: lookup.orderShipmentId,
@@ -3091,17 +3292,23 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
       other_charge: row.otherCharge,
       // Same blank-means-18% rule as assignDutyAwb above.
       gst_18pct: row.gst18pct ?? (row.dutyTaxAmtInr != null ? Math.round(row.dutyTaxAmtInr * 18) / 100 : null),
+      round_off_amt: row.roundOffAmt ?? 0,
       remark: row.remark,
-    });
+    };
+    const { error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+      supabase.from("duty_bill_awb_assignments").insert(p)
+    );
     if (error) {
       const msg = error.message.includes("duplicate key") ? "Already assigned to a Duty & Tax Bill." : error.message;
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
     } else {
+      roundOffTotal += row.roundOffAmt ?? 0;
       results.push({ query: row.query, ok: true, refNo: lookup.order.ref_no, error: null });
     }
   }
+  const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, roundOffTotal);
   revalidatePath("/dashboard/documents");
-  return { error: null, results };
+  return { error: syncError ? `Assigned, but the Finance ledger could not be updated: ${syncError}` : null, results };
 }
 
 export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
@@ -3131,33 +3338,35 @@ export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData
   const deltaCn = Math.round(((newCnAmt ?? 0) - Number(assignment.credit_note_amt ?? 0)) * 100) / 100;
   const deltaDn = Math.round(((newDnAmt ?? 0) - Number(assignment.debit_note_amt ?? 0)) * 100) / 100;
 
-  const { error } = await supabase
+  // 2026-10-28e — same per-AWB round-off edit as the freight AWB form.
+  const { data: roundRow, error: roundReadError } = await supabase
     .from("duty_bill_awb_assignments")
-    .update({
-      credit_note_no: strOrNull(formData, "credit_note_no"),
-      credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: newCnAmt,
-      debit_note_no: strOrNull(formData, "debit_note_no"),
-      debit_note_date: strOrNull(formData, "debit_note_date"),
-      debit_note_amt: newDnAmt,
-    })
-    .eq("id", id);
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const prevRoundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
+  const submittedRound = formData.get("round_off_amt");
+  const newRoundOffAmt = submittedRound == null || submittedRound === "" ? prevRoundOffAmt : numOrZero(formData, "round_off_amt");
+  const deltaRoundOff = Math.round((newRoundOffAmt - prevRoundOffAmt) * 100) / 100;
+
+  const updatePayload = {
+    credit_note_no: strOrNull(formData, "credit_note_no"),
+    credit_note_date: strOrNull(formData, "credit_note_date"),
+    credit_note_amt: newCnAmt,
+    debit_note_no: strOrNull(formData, "debit_note_no"),
+    debit_note_date: strOrNull(formData, "debit_note_date"),
+    debit_note_amt: newDnAmt,
+    round_off_amt: newRoundOffAmt,
+  };
+  const { error } = await tolerateMissingColumn(updatePayload, "round_off_amt", (p) =>
+    supabase.from("duty_bill_awb_assignments").update(p).eq("id", id)
+  );
   if (error) return { error: error.message, success: false };
 
-  if (deltaCn !== 0 || deltaDn !== 0) {
-    const { data: mirror } = await supabase
-      .from("bill_pass_register")
-      .select("id, total_amt")
-      .eq("source", "duty_tax_bill")
-      .eq("source_id", assignment.duty_tax_bill_id)
-      .maybeSingle();
-    if (mirror) {
-      const newLedgerTotal = Math.round((Number(mirror.total_amt) - deltaCn + deltaDn) * 100) / 100;
-      const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
-      if (syncError) {
-        return { error: `Note saved, but the Finance ledger could not be updated: ${syncError.message}`, success: false };
-      }
-      revalidatePath("/dashboard/bill-payment");
+  if (deltaCn !== 0 || deltaDn !== 0 || deltaRoundOff !== 0) {
+    const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", assignment.duty_tax_bill_id, -deltaCn + deltaDn + deltaRoundOff);
+    if (syncError) {
+      return { error: `Note saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 

@@ -59,7 +59,13 @@ async function DutyBillReportInner({ id }: { id: string }) {
 
   const { data: assignments } = await supabase
     .from("duty_bill_awb_assignments")
-    .select("id, order_id, order_shipment_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, credit_note_no, credit_note_amt, debit_note_no, debit_note_amt, remark")
+    // 2026-10-28e — `*` rather than a named list: `round_off_amt` (per-AWB
+    // round-off) only exists once db/2026-10-28e-awb-round-off.sql has been
+    // run, and naming a missing column makes PostgREST reject the WHOLE query
+    // — which would print this sheet with no AWB rows at all. Every field
+    // below already has a null fallback, so a pre-migration database simply
+    // shows no round-off.
+    .select("*")
     .eq("duty_tax_bill_id", id);
 
   const orderIds = (assignments ?? []).map((a) => a.order_id);
@@ -130,6 +136,9 @@ async function DutyBillReportInner({ id }: { id: string }) {
       dutyInr,
       otherCharge,
       gst,
+      // 2026-10-28e — this AWB/order's own round-off, entered at assignment
+      // time; added to the invoice's net payable below.
+      roundOff: a.round_off_amt != null ? Number(a.round_off_amt) : 0,
       dutyGross,
       shippingAndDuty,
       shippingAndDutyPct,
@@ -140,6 +149,12 @@ async function DutyBillReportInner({ id }: { id: string }) {
         .join(" · "),
     };
   });
+
+  // 2026-10-28e — round-off has two parts now: the bill header's own
+  // adjustment plus every AWB's own (entered per order at assignment time).
+  const awbRoundOffTotal = rows.reduce((s, r) => s + r.roundOff, 0);
+  const headerRoundOff = Number(bill.round_off_amt ?? 0);
+  const roundOffTotal = headerRoundOff + awbRoundOffTotal;
 
   // 2026-10-22 — same embed handling as the freight report: inside the A4
   // preview dialog (?embed=1 → x-embed) the dialog owns the toolbar, so the
@@ -166,10 +181,14 @@ async function DutyBillReportInner({ id }: { id: string }) {
             <div className="text-right text-slate-600">
               <p>Duty ₹{bill.duty_tax_amt_inr} + GST ₹{bill.gst_18pct_amt}{bill.duty_tax_amt_usd ? ` (≈ $${bill.duty_tax_amt_usd})` : ""}</p>
               <p className="font-semibold text-slate-900">Gross Total ₹{bill.gross_total_amt ?? bill.duty_tax_amt_inr}</p>
-              {/* 2026-10-24b — round-figure adjustment, then the real payable. */}
-              {Number(bill.round_off_amt ?? 0) !== 0 && (
+              {/* 2026-10-24b — round-figure adjustment, then the real payable.
+                  2026-10-28e — the bill header's round-off plus every AWB's own. */}
+              {roundOffTotal !== 0 && (
                 <p className="text-slate-600">
-                  Round Off {Number(bill.round_off_amt) > 0 ? "+" : "−"}₹{Math.abs(Number(bill.round_off_amt)).toFixed(2)}
+                  Round Off {roundOffTotal > 0 ? "+" : "−"}₹{Math.abs(roundOffTotal).toFixed(2)}
+                  {headerRoundOff !== 0 && awbRoundOffTotal !== 0
+                    ? ` (per AWB ${awbRoundOffTotal.toFixed(2)} · bill ${headerRoundOff.toFixed(2)})`
+                    : ""}
                 </p>
               )}
               {bill.credit_note_amt > 0 && <p className="text-purple-700">CN {bill.credit_note_no} · −₹{bill.credit_note_amt}</p>}
@@ -177,7 +196,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
                 Net Payable ₹
                 {(
                   Number(bill.gross_total_amt ?? bill.duty_tax_amt_inr) +
-                  Number(bill.round_off_amt ?? 0) -
+                  roundOffTotal -
                   Number(bill.credit_note_amt ?? 0)
                 ).toFixed(2)}
               </p>
@@ -199,6 +218,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
                 <th className="py-1 pr-2 text-right">Duty INR</th>
                 <th className="py-1 pr-2 text-right">Other</th>
                 <th className="py-1 pr-2 text-right">GST 18%</th>
+                <th className="py-1 pr-2 text-right">Round Off</th>
                 <th className="py-1 pr-2 text-right">Duty Gross</th>
                 <th className="py-1 pr-2 text-right">Shipping+Duty</th>
                 <th className="py-1 pr-2 text-right">S+D %</th>
@@ -222,6 +242,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2 text-right">{r.dutyInr.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{r.otherCharge.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{r.gst.toFixed(2)}</td>
+                  <td className="py-1 pr-2 text-right">{r.roundOff !== 0 ? r.roundOff.toFixed(2) : "—"}</td>
                   <td className="py-1 pr-2 text-right font-medium">{r.dutyGross.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{r.shippingAndDuty.toFixed(2)}</td>
                   <td className="py-1 pr-2 text-right">{r.shippingAndDutyPct != null ? `${r.shippingAndDutyPct.toFixed(1)}%` : "—"}</td>
@@ -232,7 +253,7 @@ async function DutyBillReportInner({ id }: { id: string }) {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={18} className="py-3 text-center text-slate-400">No AWBs assigned to this bill yet.</td>
+                  <td colSpan={19} className="py-3 text-center text-slate-400">No AWBs assigned to this bill yet.</td>
                 </tr>
               )}
             </tbody>

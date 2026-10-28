@@ -12,6 +12,8 @@ import {
   updateFreightAwbAssignmentNotes,
   sendFreightBillToFinance,
   sendDutyBillToFinance,
+  resyncFreightBillFinanceAmount,
+  resyncDutyBillFinanceAmount,
   updateFreightBillDetails,
   type DocFormState,
   type ReconciliationLookup,
@@ -51,6 +53,8 @@ export type FreightBillAssignment = {
   billed_remote_amt: number | null;
   billed_other_amt: number | null;
   billed_gst_amt: number | null;
+  /** 2026-10-28e — this AWB's own round-off (entered at assignment time). */
+  round_off_amt: number | null;
   booked_freight_amt: number | null;
   booked_currency: string | null;
   booked_amount_source: "api" | "rate_card_estimate" | "manual" | null;
@@ -410,11 +414,15 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             </div>
           </div>
           {bill.sentToFinance && (
-            <p className="text-[11px] text-slate-400">
-              This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
-              reviewed when it was sent, EXCEPT the Courier Credit Note: changing it here adjusts that entry&apos;s total by the same
-              difference, so Bill Payment / the Party Ledger reflect the credit note immediately.
-            </p>
+            <div className="text-[11px] text-slate-400">
+              <p>
+                This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
+                reviewed when it was sent, EXCEPT the Courier Credit Note / amounts / round-off: changing them here adjusts that entry&apos;s total
+                by the same difference, so Bill Payment / the Party Ledger reflect it immediately. Round-off entered BEFORE this fix went in? Use
+                the button below once.
+              </p>
+              <ResyncFinanceAmountButton billId={bill.id} kind="freight" />
+            </div>
           )}
           <button
             type="submit"
@@ -433,7 +441,9 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
           companies={companies}
           defaultAmt={
             Number(bill.gross_total_amt ?? bill.total_amt ?? 0) +
-            Number(bill.round_off_amt ?? 0) -
+            Number(bill.round_off_amt ?? 0) +
+            // 2026-10-28e — every AWB's own round-off counts too.
+            bill.assignments.reduce((s, a) => s + Number(a.round_off_amt ?? 0), 0) -
             Number(bill.credit_note_amt ?? 0)
           }
           onDone={() => setFinanceMode(false)}
@@ -465,6 +475,9 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             (() => {
               let gst = 0;
               let preTaxTotal = 0;
+              // 2026-10-28e — per-order round-offs add up on top of the bill's
+              // own header round-off.
+              let awbRoundOff = 0;
               for (const a of bill.assignments) {
                 const breakup =
                   Number(a.billed_base_amt ?? 0) +
@@ -474,8 +487,10 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
                 // AWB billed as one lump sum (no breakup) still counts.
                 const preTax = breakup > 0 ? breakup : Number(a.billed_freight_amt ?? 0);
                 preTaxTotal += preTax;
+                awbRoundOff += Number(a.round_off_amt ?? 0);
                 gst += a.billed_gst_amt != null ? Number(a.billed_gst_amt) : Math.round(preTax * 18) / 100;
               }
+              const roundOffTotal = awbRoundOff + Number(bill.round_off_amt ?? 0);
               return (
                 <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600 sm:grid-cols-5">
                   <div>
@@ -491,12 +506,12 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
                     <span className="font-semibold text-slate-900">₹{gst.toFixed(2)}</span>
                   </div>
                   <div>
-                    <span className="block text-slate-400">Round off</span>
-                    <span className="font-semibold text-slate-900">₹{Number(bill.round_off_amt ?? 0).toFixed(2)}</span>
+                    <span className="block text-slate-400">Round off (AWB{awbRoundOff !== 0 ? ` ${awbRoundOff.toFixed(2)}` : ""} + bill)</span>
+                    <span className="font-semibold text-slate-900">₹{roundOffTotal.toFixed(2)}</span>
                   </div>
                   <div>
                     <span className="block text-slate-400">Payable</span>
-                    <span className="font-semibold text-slate-900">₹{(preTaxTotal + gst + Number(bill.round_off_amt ?? 0)).toFixed(2)}</span>
+                    <span className="font-semibold text-slate-900">₹{(preTaxTotal + gst + roundOffTotal).toFixed(2)}</span>
                   </div>
                 </div>
               );
@@ -712,6 +727,11 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
               <input name="billed_gst_amt" type="number" step="0.01" className={inputClass} />
             </div>
           </div>
+          {/* 2026-10-28e — "roundoff value entry ke time hi per order honi
+              chahiye": this AWB/order gets its own round-off, with the same
+              +/− control every other amount uses. It adds to / deducts from
+              the bill's payable and reaches the Finance ledger. */}
+          <RoundOffField id={`fb_awb_round_${freightBillId}`} label="Round Off (this AWB/order)" />
           <div>
             <label className={labelClass}>Remark</label>
             <input name="remark" className={inputClass} />
@@ -751,6 +771,8 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
       billedFuelAmt: string;
       billedRemoteAmt: string;
       billedGstAmt: string;
+      /** 2026-10-28e — per-AWB round-off, typed per pasted row. */
+      roundOffAmt: string;
     }[]
   >([]);
   const [results, setResults] = useState<BulkAwbResult[] | null>(null);
@@ -773,6 +795,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
         billedFuelAmt: "",
         billedRemoteAmt: "",
         billedGstAmt: "",
+        roundOffAmt: "",
       }))
     );
     setResults(null);
@@ -797,6 +820,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
           billedFuelAmt: r.billedFuelAmt ? Number(r.billedFuelAmt) : null,
           billedRemoteAmt: r.billedRemoteAmt ? Number(r.billedRemoteAmt) : null,
           billedGstAmt: r.billedGstAmt ? Number(r.billedGstAmt) : null,
+          roundOffAmt: r.roundOffAmt ? Number(r.roundOffAmt) : null,
         }))
       );
       setResults(r.results);
@@ -890,6 +914,14 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
                 placeholder="GST ₹"
                 className={inputClass}
               />
+              {/* 2026-10-28e — per-AWB round-off (blank = 0). */}
+              <input
+                value={r.roundOffAmt}
+                onChange={(e) => updateRow(i, { roundOffAmt: e.target.value })}
+                placeholder="Round off ±₹"
+                title="Is AWB ka round-off: + se payable badhega, − se ghatayega"
+                className={inputClass}
+              />
             </div>
             </div>
           ))}
@@ -904,6 +936,42 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 2026-10-28e — the explicit repair for a bill whose round-off was entered
+ * (or changed) after it had already gone to Finance, i.e. before the ledger
+ * sync existed. Recomputes the bill's CURRENT payable — gross + every AWB's
+ * round-off + the bill header's round-off − credit note — and writes it to
+ * the existing ledger row. Only this button ever overwrites the reviewed
+ * amount; ordinary edits keep using deltas.
+ */
+export function ResyncFinanceAmountButton({ billId, kind }: { billId: string; kind: "freight" | "duty" }) {
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState("");
+
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            const r =
+              kind === "freight"
+                ? await resyncFreightBillFinanceAmount(billId)
+                : await resyncDutyBillFinanceAmount(billId);
+            setMessage(r.error ?? "✓ Finance amount updated");
+          })
+        }
+        title="Bill ka aaj ka payable (gross + AWB round-off + bill round-off − CN) Finance ledger me likh do"
+        className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+      >
+        {pending ? "Updating..." : "↻ Re-sync Finance amount"}
+      </button>
+      {message && <span className={message.startsWith("✓") ? "text-green-700" : "text-red-600"}>{message}</span>}
+    </span>
   );
 }
 
@@ -937,6 +1005,7 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
           <span className="ml-2 text-slate-400">
             Bill {assignment.bill_weight_kg ?? "—"} kg
             {assignment.dimensional_weight_kg != null && ` · Dim ${assignment.dimensional_weight_kg} kg`} · Diff ₹{assignment.difference_amt ?? 0}
+            {Number(assignment.round_off_amt ?? 0) !== 0 && ` · Round off ${Number(assignment.round_off_amt) > 0 ? "+" : "−"}₹${Math.abs(Number(assignment.round_off_amt)).toFixed(2)}`}
           </span>
           {assignment.remark && <span className="ml-2 text-slate-400">· {assignment.remark}</span>}
           {assignment.booked_freight_amt != null && (
@@ -987,7 +1056,13 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
         return (
           <div className="mt-1 text-[11px] text-slate-500">
             Base ₹{base.toFixed(2)} + Fuel ₹{fuel.toFixed(2)} + Remote/Other ₹{(remote + other).toFixed(2)} · GST{gstAuto ? " 18%" : ""} ₹
-            {gst.toFixed(2)} · <strong className="text-slate-800">AWB total ₹{(preTax + gst).toFixed(2)}</strong>
+            {gst.toFixed(2)}
+            {/* 2026-10-28e — this AWB's own round-off is part of the parcel's cost. */}
+            {Number(assignment.round_off_amt ?? 0) !== 0 &&
+              ` · Round off ${Number(assignment.round_off_amt) > 0 ? "+" : "−"}₹${Math.abs(Number(assignment.round_off_amt)).toFixed(2)}`}{" · "}
+            <strong className="text-slate-800">
+              AWB total ₹{(preTax + gst + Number(assignment.round_off_amt ?? 0)).toFixed(2)}
+            </strong>
           </div>
         );
       })()}
@@ -1012,6 +1087,13 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
             <input name="debit_note_date" type="date" defaultValue={assignment.debit_note_date ?? ""} className={inputClass} />
             <input name="debit_note_amt" type="number" step="0.01" defaultValue={assignment.debit_note_amt ?? ""} placeholder="Amt" className={inputClass} />
           </div>
+          {/* 2026-10-28e — this AWB's round-off can be corrected here at any
+              time; the change flows to the bill's Finance row straight away. */}
+          <RoundOffField
+            id={`fb_awb_round_edit_${assignment.id}`}
+            label="Round Off (this AWB/order)"
+            defaultValue={Number(assignment.round_off_amt ?? 0)}
+          />
           <button type="submit" disabled={notePending} className="rounded bg-purple-600 px-2 py-1 font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
             {notePending ? "Saving..." : "Save Note"}
           </button>

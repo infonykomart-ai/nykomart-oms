@@ -1437,6 +1437,13 @@ CREATE TABLE freight_bill_awb_assignments (
   billed_remote_amt numeric(14,2),
   billed_other_amt  numeric(14,2),
   billed_gst_amt    numeric(14,2),
+  -- 2026-10-28e: per-AWB/order round-off, entered at assignment time —
+  -- "jo roundoff value entry ke time hi per order honi chahiye". Signed:
+  -- + raises this AWB's payable, − lowers it. The bill's payable is the sum
+  -- of every AWB's gross + these + the header round_off_amt − credit notes
+  -- (see db/2026-10-28e-awb-round-off.sql).
+  round_off_amt     numeric(8,2) NOT NULL DEFAULT 0
+                      CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   UNIQUE (order_shipment_id)   -- one AWB is billed under exactly one freight invoice (Gap 1, 2026-08-20 — was UNIQUE(order_id))
 );
 CREATE INDEX idx_freight_awb_assign_bill ON freight_bill_awb_assignments(freight_bill_id);
@@ -1460,6 +1467,10 @@ CREATE TABLE duty_bill_awb_assignments (
   debit_note_date                     date,
   debit_note_amt                        numeric(14,2),
   remark                      text,
+  -- 2026-10-28e: per-AWB/order round-off — same rule as
+  -- freight_bill_awb_assignments.round_off_amt above.
+  round_off_amt               numeric(8,2) NOT NULL DEFAULT 0
+                                CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   UNIQUE (order_shipment_id)
 );
 CREATE INDEX idx_duty_awb_assign_bill ON duty_bill_awb_assignments(duty_tax_bill_id);
