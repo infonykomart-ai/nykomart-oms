@@ -1,0 +1,30 @@
+-- 2026-10-28b — office expense bills (with a party) post to the Finance ledger
+-- as a PAYABLE, so they appear in Bill Payment and that party's Party Ledger
+-- exactly like a purchase / courier / duty bill. User's request: "office
+-- expense bill (party ke saath) ko party ledger / Bill Payment me payable ke
+-- roop me post karna, lekin party har baar new hoti hai or gst bhi nahi hota
+-- hai, kabhi kabhi uchanti kharcha hota hai".
+--
+-- How it works (no new table, no new column):
+--   • One internal_expenses bill group (entry_group_id) = ONE
+--     bill_pass_register row, written automatically when the bill is saved
+--     with a party:
+--         source        = 'office_expense'
+--         source_id     = the bill's entry_group_id
+--         invoice_type  = 'OFFICE EXPENSE'
+--         total_amt     = sum of the bill's line items (NO GST — an office
+--                         expense bill never carries GST in this system)
+--         party_id      = the vendor (created on the spot if the name is new)
+--   • The existing UNIQUE (source, source_id) index guarantees one ledger row
+--     per bill, so editing a bill updates its payable instead of double-booking.
+--   • No party ("uchanti kharcha" / misc expense) → nothing is posted to
+--     Finance at all; it stays a plain internal expense in the P&L, exactly
+--     as before.
+--   • Deleting a bill that already has payments recorded in Bill Payment is
+--     blocked (same rule purchase bills follow), so payment history is never
+--     silently lost.
+--
+-- This file only adds the enum value; the app falls back to 'Service' when it
+-- hasn't been run, so nothing breaks in the meantime.
+
+ALTER TYPE invoice_type ADD VALUE IF NOT EXISTS 'OFFICE EXPENSE';

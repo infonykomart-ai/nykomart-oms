@@ -84,6 +84,8 @@ const SOURCE_LABEL: Record<string, string> = {
   purchase_bill: "Purchase Bill",
   freight_bill: "Courier Bill (Freight)",
   duty_tax_bill: "Duty & Tax Bill",
+  // 2026-10-28b — office expense bill entered with a party (payable).
+  office_expense: "Office Expense Bill",
 };
 
 function sourceLabelFor(e: { source: string | null; invoice_type: string | null }): string {

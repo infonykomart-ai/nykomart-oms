@@ -2161,7 +2161,7 @@ export type Database = {
           company_id: string;
           invoice_no: string | null;
           vendor_invoice_no: string | null;
-          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           credit_note_id: string | null;
           invoice_date: string | null;
           invoice_recv_date: string | null;
@@ -2200,7 +2200,7 @@ export type Database = {
           company_id: string;
           invoice_no?: string | null;
           vendor_invoice_no?: string | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           credit_note_id?: string | null;
           invoice_date?: string | null;
           invoice_recv_date?: string | null;
@@ -2239,7 +2239,7 @@ export type Database = {
           company_id?: string;
           invoice_no?: string | null;
           vendor_invoice_no?: string | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           credit_note_id?: string | null;
           invoice_date?: string | null;
           invoice_recv_date?: string | null;
@@ -7664,7 +7664,7 @@ export type Database = {
           name: string;
           party_type: string | null;
           payment_type: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY" | null;
-          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           address: string | null;
           contact_no: string | null;
           email: string | null;
@@ -7681,7 +7681,7 @@ export type Database = {
           name: string;
           party_type?: string | null;
           payment_type?: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY" | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           address?: string | null;
           contact_no?: string | null;
           email?: string | null;
@@ -7698,7 +7698,7 @@ export type Database = {
           name?: string;
           party_type?: string | null;
           payment_type?: "ADVANCE" | "AGAINST BILL" | "CASH" | "NO BILL" | "SALARY" | null;
-          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type?: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           address?: string | null;
           contact_no?: string | null;
           email?: string | null;
@@ -9751,7 +9751,7 @@ export type Database = {
           company_id: string | null;
           party_id: string | null;
           vendor_invoice_no: string | null;
-          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | null;
+          invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE" | null;
           source: string | null;
           source_id: string | null;
           ledger_total_amt: number | null;
@@ -10181,7 +10181,7 @@ export type Database = {
       duty_tax_mode: "CSB-IV" | "CSB-V";
       employee_gender: "Male" | "Female";
       employee_marital_status: "Married" | "Unmarried";
-      invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance";
+      invoice_type: "DUTY TAX" | "Purchase" | "FREIGHT INVOICE" | "Printing" | "Washing" | "Disbursement FEE" | "Service" | "JOB WORK" | "Salary" | "Advance" | "OFFICE EXPENSE";
       leave_request_status: "Pending" | "Approved" | "Rejected";
       letter_type: "Joining Letter" | "Offer Letter" | "Promotion Letter" | "Increment Letter" | "Experience Letter" | "Relieving Letter" | "Warning Letter" | "Salary Slip" | "Termination Letter" | "Custom / Other Letter";
       marketplace_provider: "amazon" | "etsy" | "woocommerce" | "ebay" | "walmart";

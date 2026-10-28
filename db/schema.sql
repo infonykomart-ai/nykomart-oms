@@ -161,7 +161,11 @@ CREATE TYPE payment_type AS ENUM ('ADVANCE', 'AGAINST BILL', 'CASH', 'NO BILL', 
 -- ledger every vendor/courier bill already uses) — see
 -- db/2026-08-12-finance-salary-advance.sql for the full rationale.
 CREATE TYPE invoice_type AS ENUM
-  ('DUTY TAX', 'Purchase', 'FREIGHT INVOICE', 'Printing', 'Washing', 'Disbursement FEE', 'Service', 'JOB WORK', 'Salary', 'Advance');
+  -- 2026-10-28 — 'OFFICE EXPENSE': an office/service bill entered with a party
+  -- now posts to the Finance ledger as a payable (Bill Payment + Party
+  -- Ledger) like any other vendor bill. See
+  -- db/2026-10-28b-office-expense-finance.sql.
+  ('DUTY TAX', 'Purchase', 'FREIGHT INVOICE', 'Printing', 'Washing', 'Disbursement FEE', 'Service', 'JOB WORK', 'Salary', 'Advance', 'OFFICE EXPENSE');
 
 -- 2026-08-12 (round 11): new — the "Approvals (L1)"/"Approvals (L2)"
 -- dashboard tiles had no backing workflow anywhere (never built even in

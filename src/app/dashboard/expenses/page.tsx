@@ -96,6 +96,27 @@ export default async function ExpensesPage({
       list.push(r);
       byGroup.set(key, list);
     }
+    // 2026-10-28b — the Finance side of each bill (payable posted to
+    // bill_pass_register, source 'office_expense'). Read-only: the sheet and
+    // the card can never disagree with Bill Payment / the Party Ledger.
+    const groupIds = Array.from(byGroup.keys());
+    const financeByGroup = new Map<string, { billId: string; paid: number; balance: number }>();
+    if (groupIds.length) {
+      const { data: ledger } = await supabase
+        .from("bill_pass_register")
+        .select("id, source_id, total_paid, balance_due")
+        .eq("source", "office_expense")
+        .in("source_id", groupIds);
+      for (const l of ledger ?? []) {
+        if (!l.source_id) continue;
+        financeByGroup.set(l.source_id, {
+          billId: l.id,
+          paid: Number(l.total_paid ?? 0),
+          balance: Number(l.balance_due ?? 0),
+        });
+      }
+    }
+
     recentBills = Array.from(byGroup.entries())
       .map(([key, lines]) => {
         const first = lines[0];
@@ -118,6 +139,9 @@ export default async function ExpensesPage({
             amount: Number(l.amount_inr ?? 0),
           })),
           total: lines.reduce((s, l) => s + Number(l.amount_inr ?? 0), 0),
+          financeBillId: financeByGroup.get(key)?.billId ?? null,
+          paid: financeByGroup.get(key)?.paid ?? 0,
+          balanceDue: financeByGroup.get(key)?.balance ?? 0,
         } satisfies ExpenseBill;
       })
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))

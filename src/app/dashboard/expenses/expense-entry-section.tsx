@@ -40,6 +40,10 @@ export type ExpenseBill = {
   remark: string | null;
   items: ExpenseBillItem[];
   total: number;
+  /** 2026-10-28b — the bill_pass_register payable when a party is named. */
+  financeBillId?: string | null;
+  paid?: number;
+  balanceDue?: number;
 };
 
 type DraftItem = { key: string; id: string | null; category: string; description: string; amount: string };
@@ -170,12 +174,30 @@ function BillCard({
             </div>
           )}
           {bill.remark && <div className="mt-0.5 text-slate-500">{bill.remark}</div>}
+          {bill.financeBillId ? (
+            <div className="mt-0.5 text-emerald-700">
+              Finance: paid ₹{(bill.paid ?? 0).toFixed(2)} · balance ₹{(bill.balanceDue ?? 0).toFixed(2)}
+            </div>
+          ) : (
+            <div className="mt-0.5 text-slate-400">No party — internal expense only (not payable)</div>
+          )}
         </div>
         <div className="shrink-0 text-right font-semibold text-slate-800">₹{bill.total.toFixed(2)}</div>
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
         <p className="text-red-600">{deleteError}</p>
         <div className="flex shrink-0 gap-1.5">
+          {/* 2026-10-28b — "uski jo report summery niklti hai according to
+              bill puri nikalni chahiye jese purchase bill me hoti hai": the
+              bill's own A4 sheet (print / PDF), in its own tab. */}
+          <a
+            href={`/dashboard/expenses/${bill.key}/report`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📄 Sheet
+          </a>
           <button
             type="button"
             onClick={onPreview}
@@ -292,7 +314,7 @@ function ExpenseBillForm({
 
   const [companyId, setCompanyId] = useState(initial?.companyId ?? "");
   const [date, setDate] = useState(initial?.date ?? todayISO());
-  const [partyId, setPartyId] = useState(initial?.partyId ?? "");
+  const [partyName, setPartyName] = useState(initial?.partyName ?? "");
   const [invoiceNo, setInvoiceNo] = useState(initial?.invoiceNo ?? "");
   const [invoiceDate, setInvoiceDate] = useState(initial?.invoiceDate ?? "");
   const [paymentMode, setPaymentMode] = useState(initial?.paymentMode ?? "");
@@ -373,19 +395,30 @@ function ExpenseBillForm({
           />
         </div>
         <div>
+          {/* 2026-10-28b — "party har baar new hoti hai": free text with
+              suggestions. A name that isn't in Party Master yet is created on
+              save (no GST / bank details needed), so a new vendor never forces
+              a detour. Blank = misc/uchanti expense, which posts nothing to
+              Bill Payment. */}
           <label className={labelClass} htmlFor={`ee_party_${initial?.key ?? "new"}`}>Party / Vendor</label>
-          <select
+          <input
             id={`ee_party_${initial?.key ?? "new"}`}
-            name="party_id"
-            value={partyId}
-            onChange={(e) => setPartyId(e.target.value)}
+            name="party_name"
+            list={`ee_party_list_${initial?.key ?? "new"}`}
+            value={partyName}
+            onChange={(e) => setPartyName(e.target.value)}
+            placeholder="Type a name — new or existing"
             className={inputClass}
-          >
-            <option value="">— No party (internal expense) —</option>
+          />
+          <datalist id={`ee_party_list_${initial?.key ?? "new"}`}>
             {parties.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+              <option key={p.id} value={p.name} />
             ))}
-          </select>
+          </datalist>
+          <p className="mt-1 text-[10px] text-slate-400">
+            Party bhare to bill Bill Payment / Party Ledger me payable ban jayega. Khaali chhode = uchanti kharcha
+            (P&amp;L me hi rahega).
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>

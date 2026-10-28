@@ -1,3 +1,51 @@
+OFFICE EXPENSE BILL AB BILL PAYMENT / PARTY LEDGER ME PAYABLE (GST KE BINA) + BILL KI APNI A4 SHEET
+(2026-10-28b)
+======================================================================
+
+NAYA SQL — YE FILE CHALANI ZAROORI HAI (2026-10-28 wali ke BAAD, ek baar):
+  db/2026-10-28b-office-expense-finance.sql
+Agar nahi chalti: bill pehle jaisa save hota rahega aur Finance entry
+'Service' bucket me chali jayegi (naam badal ke) — kuch rukta nahi.
+
+
+1) PARTY KE SAATH BILL = PAYABLE
+---------------------------------
+Jis office expense bill me Party likhi ho, wo ab apne aap
+Bill Payment aur us party ke Party Ledger me **payable** banke aata hai:
+  • ek bill = ek Finance entry (source "office_expense"), total bill ke
+e  • **GST nahi** — office expense par GST lagta hi nahi, isliye bill ka
+total hi payable hai (koi 5%/18% apne aap nahi judta)
+  • company wahi jisme bill chadha hai, invoice no/date wahi jo bill me hai
+  • Bill me **Party ka naam type karke naya vendor** bana sakte hain (datalist
+me purane bhi dikhte hain) — pehle Party Master me jaane ki zaroorat nahi.
+Naye party me GST/bank detail kuch nahi maanga jaata.
+  • Party khaali chhodi (uchanti / misc kharcha) to Finance me kuch post
+NAHI hota — sirf P&L me kharcha rahega, jaisa pehle tha.
+
+2) EDIT / DELETE KA HISAB
+--------------------------
+  • Bill edit karne par wahi Finance entry update hoti hai (total, party,
+invoice no/date, company) — dobara post nahi hoti, isliye double payment
+nahi banta.
+  • Party hata di to Finance entry hat jaati hai — **lekin** agar us bill par
+Bill Payment me payment ho chuki hai to system rok deta hai (payment history
+kabhi chup-chaap delete nahi hoti).
+  • Bill delete karna bhi wahi rule follow karta hai.
+
+3) BILL KI APNI A4 SHEET
+------------------------
+Har bill ke card par **📄 Sheet** button hai — usi company ke letterhead par
+poori report (print / PDF):
+  • bill ki company (jisme chadha hai), party ka block, invoice no/date,
+expense date, payment mode
+  • har item alag line (category + description + date + mode + amount) aur
+TOTAL
+  • "GST is not applicable" saaf likha hua
+  • Finance position: Billed / Credit note-adj / Paid / **Balance due**
+  • Bill Payment aur Party Ledger me invoice number par click karne se bhi
+yahi sheet khulti hai.
+
+
 OFFICE EXPENSE BILL (PARTY + MULTI ITEM), LEDGER ME COMPANY, BILL KA DEBIT NOTE, CSB DATE FIX
 (2026-10-28)
 ======================================================================
