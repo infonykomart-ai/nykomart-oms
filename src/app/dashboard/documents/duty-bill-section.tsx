@@ -18,6 +18,7 @@ import {
   type RelatedNote,
 } from "./actions";
 import { SendToFinanceForm } from "./freight-bill-section";
+import { RoundOffField } from "./round-off-field";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { RelatedNotesBadge } from "./related-notes-badge";
 // 2026-09-15 — 📄 View opens this bill's read-only statement sheet (same
@@ -94,6 +95,14 @@ export function DutyBillSection({
 }) {
   const [state, formAction, pending] = useActionState(saveDutyBill, initialFormState);
   const partyGroups = groupPartyOptions(parties);
+  // 2026-10-28 — held in state so the round-off control can preview the
+  // payable: gross is duty (INR) + GST, and the save action fills GST at 18%
+  // when the box is left empty, so the preview follows the same rule.
+  const [dutyInr, setDutyInr] = useState("");
+  const [gstAmt, setGstAmt] = useState("");
+  const amountOr0 = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const preRoundPayable =
+    Math.round((amountOr0(dutyInr) + (gstAmt.trim() === "" ? Math.round(amountOr0(dutyInr) * 18) / 100 : amountOr0(gstAmt))) * 100) / 100;
 
   return (
     <div className="space-y-4">
@@ -134,11 +143,11 @@ export function DutyBillSection({
           </div>
           <div>
             <label className={labelClass} htmlFor="db_inr">Duty/Tax Amt (INR)</label>
-            <input id="db_inr" name="duty_tax_amt_inr" type="number" step="0.01" className={inputClass} />
+            <input id="db_inr" name="duty_tax_amt_inr" type="number" step="0.01" value={dutyInr} onChange={(e) => setDutyInr(e.target.value)} className={inputClass} />
           </div>
           <div>
             <label className={labelClass} htmlFor="db_gst">GST @18% Amt</label>
-            <input id="db_gst" name="gst_18pct_amt" type="number" step="0.01" className={inputClass} />
+            <input id="db_gst" name="gst_18pct_amt" type="number" step="0.01" value={gstAmt} onChange={(e) => setGstAmt(e.target.value)} className={inputClass} placeholder="auto 18% if empty" />
           </div>
         </div>
 
@@ -182,13 +191,9 @@ export function DutyBillSection({
               <input id="db_total" name="total_payable_amt" type="number" step="0.01" className={inputClass} placeholder="off the bill" />
             </div>
             {/* 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION ... DUTY": same
-                field as the Courier Bill form. */}
-            <div>
-              <label className={labelClass} htmlFor="db_round">
-                Round Off <span className="text-slate-400">(± to round the payable)</span>
-              </label>
-              <input id="db_round" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
-            </div>
+                control as the Courier Bill form.
+                2026-10-28 — now the shared +/− control. */}
+            <RoundOffField id="db_round_new" payable={preRoundPayable} />
           </div>
         </div>
 
@@ -391,7 +396,12 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
               <input name="disbursement_fee" type="number" step="0.01" defaultValue={bill.disbursement_fee} placeholder="Disbursement Fee" className={inputClass} />
               <input name="courier_duty_charges_adj" type="number" step="0.01" defaultValue={bill.courier_duty_charges_adj} placeholder="Duty Charges (adj.)" className={inputClass} />
               <input name="total_payable_amt" type="number" step="0.01" defaultValue={bill.total_payable_amt ?? ""} placeholder="Total Payable Amt" className={inputClass} />
-              <input name="round_off_amt" type="number" step="0.01" defaultValue={bill.round_off_amt ?? 0} placeholder="Round Off" className={inputClass} />
+              <RoundOffField
+                id={`db_round_${bill.id}`}
+                payable={Number(bill.gross_total_amt ?? Number(bill.duty_tax_amt_inr) + Number(bill.gst_18pct_amt))}
+                defaultValue={bill.round_off_amt ?? 0}
+                label="Round Off"
+              />
             </div>
           </div>
           {bill.sentToFinance && (

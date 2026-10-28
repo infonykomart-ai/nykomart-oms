@@ -9,7 +9,7 @@ import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
-import { RoundFigureButtons } from "./round-figure-buttons";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -91,16 +91,14 @@ export function PurchaseBillForm({
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
-  // 2026-10-24b — controlled so the round-figure buttons can fill it in.
-  const [roundOffInput, setRoundOffInput] = useState("0");
   // Payable BEFORE round-off, exactly as g_total_plus_gst computes it
   // (qty × sq_feet × rate + GST), so the offered round figures are the ones
-  // the vendor's invoice actually lands on.
+  // the vendor's invoice actually lands on. Passed to the shared round-off
+  // control, which owns the round_off_amt value itself.
   const preRoundAmount =
     (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0);
   const totalGstPct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
   const preRoundPayable = preRoundAmount + Math.round(preRoundAmount * totalGstPct) / 100;
-  const roundedPayable = preRoundPayable + (Number(roundOffInput) || 0);
 
   function handleFound(r: OrderLookup) {
     setOrderId(r.order?.id ?? "");
@@ -254,31 +252,10 @@ export function PurchaseBillForm({
               vendor invoice that itself rounds off by a few paise (e.g.
               AF/145: CGST 904.25 + SGST 904.25, then "Round Off (-)0.30"
               on the vendor's own bill) — see
-              db/2026-08-17-purchase-bills-round-off.sql. */}
-          <label className={labelClass} htmlFor="pb_round_off">Round Off <span className="text-slate-400">(± optional)</span></label>
-          <input
-            id="pb_round_off"
-            name="round_off_amt"
-            type="number"
-            step="0.01"
-            value={roundOffInput}
-            onChange={(e) => setRoundOffInput(e.target.value)}
-            className={inputClass}
-          />
-          {/* 2026-10-24b — "round figure se payment ... payable round + difference
-              round-off me": one click sets the payable to the round figure and
-              puts only the difference in round-off. */}
-          <RoundFigureButtons payable={preRoundPayable} onApply={(diff) => setRoundOffInput(diff.toFixed(2))} />
-          <p className="mt-0.5 text-[11px] text-slate-400">
-            {preRoundPayable > 0 ? (
-              <>
-                Payable before round-off ₹{preRoundPayable.toFixed(2)} → after ₹{roundedPayable.toFixed(2)} (round off {Number(roundOffInput) >= 0 ? "+" : ""}
-                {(Number(roundOffInput) || 0).toFixed(2)})
-              </>
-            ) : (
-              "e.g. −0.30 to match the vendor's exact invoice total."
-            )}
-          </p>
+              db/2026-08-17-purchase-bills-round-off.sql.
+              2026-10-24b / 2026-10-28: the shared +/− control with the
+              round-figure shortcuts, identical to every other bill form. */}
+          <RoundOffField id="pb_round_off" payable={preRoundPayable} />
         </div>
       </div>
 

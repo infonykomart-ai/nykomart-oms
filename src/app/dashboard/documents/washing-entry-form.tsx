@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { saveWashingEntry, type DocFormState, type OrderLookup } from "./actions";
 import { OrderLookupBox } from "./order-lookup-box";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -21,6 +22,14 @@ export function WashingEntryForm({
   const [state, formAction, pending] = useActionState(saveWashingEntry, initialState);
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
   const [orderId, setOrderId] = useState("");
+  // 2026-10-28 — "washing ... round off karne ke liye option ... + & -":
+  // the payable is the stored formula amount + debit charges, so the
+  // round-off control can show what it is rounding.
+  const [sqMtr, setSqMtr] = useState("");
+  const [rate, setRate] = useState("");
+  const [debit, setDebit] = useState("");
+  const amountOr0 = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const preRoundPayable = Math.round((amountOr0(sqMtr) * amountOr0(rate) + amountOr0(debit)) * 100) / 100;
 
   function handleFound(r: OrderLookup) {
     if (!r.order) return;
@@ -80,23 +89,21 @@ export function WashingEntryForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="we_sqmtr">Sq. Mtr / Ft</label>
-          <input id="we_sqmtr" name="sq_mtr_ft" type="number" step="0.01" className={inputClass} />
+          <input id="we_sqmtr" name="sq_mtr_ft" type="number" step="0.01" value={sqMtr} onChange={(e) => setSqMtr(e.target.value)} className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="we_rate">Rate</label>
-          <input id="we_rate" name="rate" type="number" step="0.01" className={inputClass} />
+          <input id="we_rate" name="rate" type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="we_debit">Debit Charges</label>
-          <input id="we_debit" name="debit_charges" type="number" step="0.01" className={inputClass} />
+          <input id="we_debit" name="debit_charges" type="number" step="0.01" value={debit} onChange={(e) => setDebit(e.target.value)} className={inputClass} />
         </div>
         {/* 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION ... WASHING": the
             difference goes in round-off so the payable lands on the round
-            figure while amount × rate stays exactly as computed. */}
-        <div>
-          <label className={labelClass} htmlFor="we_round">Round Off <span className="text-slate-400">(± to round the payable)</span></label>
-          <input id="we_round" name="round_off_amt" type="number" step="0.01" defaultValue={0} className={inputClass} />
-        </div>
+            figure while amount × rate stays exactly as computed.
+            2026-10-28 — now the shared +/− control. */}
+        <RoundOffField id="we_round_new" payable={preRoundPayable} />
       </div>
 
       <button

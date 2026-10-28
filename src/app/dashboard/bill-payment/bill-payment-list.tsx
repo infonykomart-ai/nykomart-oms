@@ -404,9 +404,13 @@ function GroupRow({
               bill row itself — no need to route through Party Master. */}
           {first.party_id && (
             <Link
-              href={`/dashboard/parties/${first.party_id}/ledger?allCompanies=1`}
+              // 2026-10-28 — the ledger now opens with every company as its
+              // own separate block, so the old ?allCompanies=1 merge flag is
+              // no longer needed (this bill's company block is listed among
+              // them).
+              href={`/dashboard/parties/${first.party_id}/ledger`}
               target="_blank"
-              title="Open this party's full ledger (bills, payments, credit/debit notes)"
+              title="Open this party's ledger (bills, payments, credit/debit notes — one block per company)"
               className="ml-1 text-[11px] text-teal-700 underline decoration-dotted hover:text-teal-900"
             >
               📒 ledger

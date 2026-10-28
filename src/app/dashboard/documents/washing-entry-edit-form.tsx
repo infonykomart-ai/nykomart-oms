@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { updateWashingEntry, type DocEditState } from "./actions";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -36,6 +37,12 @@ export function WashingEntryEditForm({
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updateWashingEntry, initialState);
+  // 2026-10-28 — same live round-off preview as the create form.
+  const [sqMtr, setSqMtr] = useState(entry.sq_mtr_ft != null ? String(entry.sq_mtr_ft) : "");
+  const [rate, setRate] = useState(entry.rate != null ? String(entry.rate) : "");
+  const [debit, setDebit] = useState(entry.debit_charges != null ? String(entry.debit_charges) : "");
+  const amountOr0 = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const preRoundPayable = Math.round((amountOr0(sqMtr) * amountOr0(rate) + amountOr0(debit)) * 100) / 100;
 
   useEffect(() => {
     if (state.success) onDone();
@@ -83,21 +90,18 @@ export function WashingEntryEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`we_sqmtr_${entry.id}`}>Sq. Mtr / Ft</label>
-          <input id={`we_sqmtr_${entry.id}`} name="sq_mtr_ft" type="number" step="0.01" defaultValue={entry.sq_mtr_ft ?? ""} className={inputClass} />
+          <input id={`we_sqmtr_${entry.id}`} name="sq_mtr_ft" type="number" step="0.01" value={sqMtr} onChange={(e) => setSqMtr(e.target.value)} className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor={`we_rate_${entry.id}`}>Rate</label>
-          <input id={`we_rate_${entry.id}`} name="rate" type="number" step="0.01" defaultValue={entry.rate ?? ""} className={inputClass} />
+          <input id={`we_rate_${entry.id}`} name="rate" type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor={`we_debit_${entry.id}`}>Debit Charges</label>
-          <input id={`we_debit_${entry.id}`} name="debit_charges" type="number" step="0.01" defaultValue={entry.debit_charges ?? ""} className={inputClass} />
+          <input id={`we_debit_${entry.id}`} name="debit_charges" type="number" step="0.01" value={debit} onChange={(e) => setDebit(e.target.value)} className={inputClass} />
         </div>
-        {/* 2026-10-24b — see washing-entry-form.tsx. */}
-        <div>
-          <label className={labelClass} htmlFor={`we_round_${entry.id}`}>Round Off</label>
-          <input id={`we_round_${entry.id}`} name="round_off_amt" type="number" step="0.01" defaultValue={entry.round_off_amt ?? 0} className={inputClass} />
-        </div>
+        {/* 2026-10-24b — see washing-entry-form.tsx; 2026-10-28 +/− control. */}
+        <RoundOffField id={`we_round_${entry.id}`} payable={preRoundPayable} defaultValue={entry.round_off_amt ?? 0} />
       </div>
 
       <button
