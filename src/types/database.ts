@@ -3950,6 +3950,8 @@ export type Database = {
           debit_note_date: string | null;
           debit_note_amt: number | null;
           remark: string | null;
+          /** 2026-10-28e — per-AWB round-off (see db/2026-10-28e-awb-round-off.sql). */
+          round_off_amt: number;
         };
         Insert: {
           id?: string;
@@ -3967,6 +3969,7 @@ export type Database = {
           debit_note_date?: string | null;
           debit_note_amt?: number | null;
           remark?: string | null;
+          round_off_amt?: number;
         };
         Update: {
           id?: string;
@@ -3984,6 +3987,7 @@ export type Database = {
           debit_note_date?: string | null;
           debit_note_amt?: number | null;
           remark?: string | null;
+          round_off_amt?: number;
         };
         Relationships: [
           {
@@ -5919,6 +5923,8 @@ export type Database = {
           billed_remote_amt: number | null;
           billed_other_amt: number | null;
           billed_gst_amt: number | null;
+          /** 2026-10-28e — per-AWB round-off (see db/2026-10-28e-awb-round-off.sql). */
+          round_off_amt: number;
         };
         Insert: {
           id?: string;
@@ -5941,6 +5947,7 @@ export type Database = {
           billed_remote_amt?: number | null;
           billed_other_amt?: number | null;
           billed_gst_amt?: number | null;
+          round_off_amt?: number;
         };
         Update: {
           id?: string;
@@ -5963,6 +5970,7 @@ export type Database = {
           billed_remote_amt?: number | null;
           billed_other_amt?: number | null;
           billed_gst_amt?: number | null;
+          round_off_amt?: number;
         };
         Relationships: [
           {

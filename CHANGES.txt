@@ -1,3 +1,48 @@
+ROUND OFF AB PER ORDER (COURIER / DUTY) + LEDGER ME TURANT UPDATE
+(2026-10-28e)
+======================================================================
+
+NAYA SQL — YE FILE EK BAAR CHALANI HAI:
+  db/2026-10-28e-awb-round-off.sql
+Bina chalaye: bill pehle jaisa save hoga, bas per-AWB round-off store nahi
+hoga (screen par dikhega nahi) — kuch rukta nahi. Status: Admin → Migrations.
+
+
+1) PER ORDER (PER AWB) ROUND OFF — ENTRY KE TIME HI
+---------------------------------------------------
+Courier / Duty bill me jab AWB assign karte hain (ya paste karke bulk me),
+ab wahi row par **Round Off** field hai — `[−] / [+]` ke saath, jaisa baaki
+bills me:
+  • + se us AWB ka payable badhta hai, − se ghatta hai
+  • AWB ki line par "AWB total" me round-off jud ke dikhta hai
+  • bill card ke summary me "Round off (AWB x + bill y)" aur Payable me
+    shamil
+  • "+ Note" form se baad me bhi badal sakte hain
+  • bulk paste me har row ke liye alag (blank = 0)
+Bill header ka apna round-off jaisa tha waisa hi rahega — dono jud jaate hain:
+  payable = sabhi AWB ka gross + har AWB ka round-off + bill ka round-off − CN
+
+2) REPORT ME BHI DIKHEGA
+------------------------
+  • Courier / Duty bill ki A4 sheet me naya **Round Off** column (per AWB)
+    aur "Net Payable" me jod diya
+  • Reports → Freight/Duty Bill Report me bhi Round Off column
+  • "Send to Finance" ka default amount ab per-AWB round-off ke saath aata hai
+
+3) LEDGER / BILL PAYMENT ME UPDATE NA HONE WALI PROBLEM
+-------------------------------------------------------
+Pehle bill ek baar Finance me jaane ke baad uske round-off / amount
+badalne par ledger purana hi rehta tha. Ab:
+  • bill header ka round-off ya amount badla → ledger total usi DELTA se
+    update (send ke waqt ka manual adjustment safe rahega)
+  • kisi AWB ka round-off daala/badala/hata diya (ya AWB remove kiya) →
+    ledger turant adjust
+  • Purchase bill pehle se theek tha (waha poora total re-sync hota hai)
+  • **purane bill jinka round-off pehle daala gaya tha** (fix se pehle):
+    bill card par naya button **↻ Re-sync Finance amount** — ek click me
+    aaj ka payable ledger me likh jaata hai
+
+
 CSB FILING REPORT — DATE RANGE + COLUMN PICKER + ORDER KI POORI DETAIL
 (2026-10-28d)
 ======================================================================

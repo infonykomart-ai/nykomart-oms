@@ -308,9 +308,11 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     dutyBillIds.length
       ? supabase
           .from("duty_bill_awb_assignments")
-          .select(
-            "id, duty_tax_bill_id, order_id, duty_tax_amt_usd, duty_tax_amt_inr, other_charge, gst_18pct, credit_note_no, credit_note_date, credit_note_amt, debit_note_no, debit_note_date, debit_note_amt, remark"
-          )
+          // 2026-10-28e — `*` for the same reason as the freight select above:
+          // round_off_amt only exists once db/2026-10-28e-awb-round-off.sql has
+          // been run, and naming a missing column rejects the whole query (all
+          // AWB rows would disappear from the Duty Bill cards).
+          .select("*")
           .in("duty_tax_bill_id", dutyBillIds)
       : Promise.resolve({ data: [] }),
     // 2026-08-12 (round 10): which of these bills already have a "Send to
@@ -609,6 +611,8 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
                   billed_remote_amt: a.billed_remote_amt != null ? Number(a.billed_remote_amt) : null,
                   billed_other_amt: a.billed_other_amt != null ? Number(a.billed_other_amt) : null,
                   billed_gst_amt: a.billed_gst_amt != null ? Number(a.billed_gst_amt) : null,
+                  // 2026-10-28e — per-AWB/order round-off.
+                  round_off_amt: a.round_off_amt != null ? Number(a.round_off_amt) : null,
                   booked_freight_amt: booked?.booked_freight_amt != null ? Number(booked.booked_freight_amt) : null,
                   booked_currency: booked?.booked_currency ?? null,
                   // booked_amount_source is a plain `text` column (no DB-level
@@ -648,6 +652,8 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
                 duty_tax_amt_inr: a.duty_tax_amt_inr != null ? Number(a.duty_tax_amt_inr) : null,
                 other_charge: a.other_charge != null ? Number(a.other_charge) : null,
                 gst_18pct: a.gst_18pct != null ? Number(a.gst_18pct) : null,
+                // 2026-10-28e — per-AWB/order round-off.
+                round_off_amt: a.round_off_amt != null ? Number(a.round_off_amt) : null,
                 credit_note_no: a.credit_note_no,
                 credit_note_date: a.credit_note_date,
                 credit_note_amt: a.credit_note_amt != null ? Number(a.credit_note_amt) : null,

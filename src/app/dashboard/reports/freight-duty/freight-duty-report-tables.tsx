@@ -41,6 +41,8 @@ export type FreightReportRow = {
   our_shipping_amt: number | null;
   gst_18pct: number | null;
   gross_shipping_amt: number | null;
+  /** 2026-10-28e — per-AWB round-off on the courier bill. */
+  round_off_amt: number | null;
   bill_weight_kg: number | null;
   dimensional_weight: number | null;
   difference_amt: number | null;
@@ -58,6 +60,8 @@ const FREIGHT_COLUMNS: ExportColumn<FreightReportRow>[] = [
   { key: "our_shipping_amt", label: "Our Shipping Amt", value: (r) => r.our_shipping_amt },
   { key: "gst_18pct", label: "GST 18%", value: (r) => r.gst_18pct },
   { key: "gross_shipping_amt", label: "Gross Shipping Amt", value: (r) => r.gross_shipping_amt },
+  // 2026-10-28e — this AWB/order's own round-off (db/2026-10-28e-awb-round-off.sql).
+  { key: "round_off_amt", label: "Round Off", value: (r) => r.round_off_amt },
   { key: "bill_weight_kg", label: "Bill Weight (kg)", value: (r) => r.bill_weight_kg },
   { key: "dimensional_weight", label: "Dimensional Weight (kg)", value: (r) => r.dimensional_weight },
   { key: "difference_amt", label: "Difference Amt", value: (r) => r.difference_amt },
@@ -144,6 +148,8 @@ export type DutyReportRow = {
   other_charge: number | null;
   gst_18pct: number | null;
   duty_gross_amt: number | null;
+  /** 2026-10-28e — per-AWB round-off on the duty bill. */
+  round_off_amt: number | null;
   shipping_amt: number | null;
   shipping_and_duty: number | null;
 };
@@ -162,6 +168,8 @@ const DUTY_COLUMNS: ExportColumn<DutyReportRow>[] = [
   { key: "other_charge", label: "Other Charge", value: (r) => r.other_charge },
   { key: "gst_18pct", label: "GST 18%", value: (r) => r.gst_18pct },
   { key: "duty_gross_amt", label: "Duty Gross Amt", value: (r) => r.duty_gross_amt },
+  // 2026-10-28e — this AWB/order's own round-off (db/2026-10-28e-awb-round-off.sql).
+  { key: "round_off_amt", label: "Round Off", value: (r) => r.round_off_amt },
   { key: "shipping_amt", label: "Shipping Amt", value: (r) => r.shipping_amt },
   { key: "shipping_and_duty", label: "Shipping + Duty", value: (r) => r.shipping_and_duty },
 ];
