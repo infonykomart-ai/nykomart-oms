@@ -345,6 +345,19 @@ export function BillStatementDocument({
                   </tr>
                 ))}
               </tbody>
+              {/* 2026-10-29j — the note rows must tie out with BILL SUMMARY's
+                  "CN/DN Adjustments" line; a total here makes a mismatch
+                  obvious instead of something you add up by hand. */}
+              <tfoot>
+                <tr className="border-t border-slate-800 font-semibold">
+                  <td className="py-1 pr-2" colSpan={4}>
+                    Total deducted by notes on this bill
+                  </td>
+                  <td className="py-1 pr-2 text-right">
+                    {inr(data.adjustments.reduce((s, a) => s + a.amount, 0))}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}

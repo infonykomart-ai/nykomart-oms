@@ -1,3 +1,43 @@
+NOTE REGISTERS: FY FILTER + SEARCH + EXCEL/CSV DOWNLOAD
+(2026-10-29j)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: Debit Note / Credit Note Register me sirf company ka filter tha.
+Kisi ek financial year ka register print karna ho (CA filing ke liye) ya ek
+note dhundhna ho ("wahi ₹2,000 ka note jiska invoice 8817 tha") to poora
+list scroll karna padta tha — aur print me bhi sab kuch aata tha. Download ka
+koi option hi nahi tha, sirf browser print.
+
+AB (dono registers me barabar):
+
+  1. FINANCIAL YEAR filter — "FY 2026-27 (current)" style dropdown, list
+     automatic FY se aati hai (koi hardcoded year nahi, lib/fy-date.ts).
+  2. SEARCH box — party / note no. / party ka CN no. / invoice no. / bill
+     no. / remark / AWB-orders par. Ek se zyada word likho to sab match
+     karne chahiye ("8817 freight" = invoice 8817 + remark me freight).
+  3. DOWNLOAD — CSV / Excel / Word / PDF (wahi Universal Export toolbar jo
+     baaki reports me hai). Jo rows screen par filter ke baad dikh rahi
+     hain, wahi file me jati hain.
+  4. PRINT — printed sheet ke top par selection likha aata hai
+     ("All my companies · FY 2026-27 · search \"8817\""), taki do print
+     kiye hue register ek jaise na lagein. Grand total / note count bhi
+     filter ke hisaab se aate hain (cN register par pehle note count hi
+     nahi tha).
+
+Plus: BILL STATEMENT ke CREDIT/DEBIT NOTE ADJUSTMENTS table me ab
+"Total deducted by notes on this bill" row — screen aur PDF dono me — taki
+note rows BILL SUMMARY ki "CN/DN Adjustments" line se tie out karein.
+
+Badlav (6 files + CHANGES): lib/notes/register-filter.ts (naya — FY +
+search helpers), components/note-register-export-bar.tsx (naya — CSV/Excel/
+Word/PDF), credit-notes-register/page.tsx, debit-notes-register/page.tsx,
+components/bill-statement-document.tsx, lib/bill-statement-pdf.tsx.
+
+VERIFICATION: in sabhi changed TS/TSX files ka tsc exit 0, eslint --quiet
+exit 0. Asli DB par screen nahi dekh paya (yahan Supabase creds nahi).
+
 BUILD FIX (round 2) + BILL STATEMENT ME NOTE KA PO/ORDER + PRINT KA RAASTA
 (2026-10-29i)
 ======================================================================

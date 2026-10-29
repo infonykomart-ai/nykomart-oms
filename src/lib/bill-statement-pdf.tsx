@@ -224,6 +224,13 @@ function StatementPdfDocument({ data }: { data: BillStatementData }) {
                 <Text style={{ ...styles.colNarrow, ...styles.right }}>{inr(a.amount)}</Text>
               </View>
             ))}
+            {/* Total, so the rows tie out with BILL SUMMARY's adjustment line. */}
+            <View style={styles.tableRow}>
+              <Text style={{ ...styles.col, flex: 4.5 }}>Total deducted by notes on this bill</Text>
+              <Text style={{ ...styles.colNarrow, ...styles.right }}>
+                {inr(data.adjustments.reduce((s, a) => s + a.amount, 0))}
+              </Text>
+            </View>
           </View>
         )}
 

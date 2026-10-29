@@ -5,7 +5,10 @@ import { cnKindLabel } from "../bill-payment/credit-note-kinds";
 import { CreditNoteRegisterActions } from "./register-actions-bar";
 import { DocStatementDialog } from "@/components/doc-statement-dialog";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { NoteRegisterExportBar } from "@/components/note-register-export-bar";
 import { formatISTShort } from "@/lib/format-ist";
+import { fyOptions, fyStartYear } from "@/lib/fy-date";
+import { inFy, matchesQuery, parseFyParam, selectionLabel } from "@/lib/notes/register-filter";
 import Link from "next/link";
 
 // Credit Note Register — 2026-09-13. "us se ye hoga ki apne ko pata chal
@@ -52,13 +55,55 @@ export default async function CreditNotesRegisterPage({
       ? employee.companyIds
       : [employee.currentCompanyId];
 
-  const [{ data: companies }, groups, backlog] = await Promise.all([
+  const [{ data: companies }, allGroups, backlog] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     listCreditNoteRegister(effectiveCompanyIds),
     findUnregisteredManualCreditNotes(effectiveCompanyIds),
   ]);
 
+  // 2026-10-29j — FY + search, the same two filters the Debit Note Register
+  // has. Applied to the loaded rows (a register is one company's notes, not a
+  // million-row table) so per-party totals, the grand total, the printed list
+  // and the downloads all describe exactly the same selection.
+  const fyParam = typeof sp.fy === "string" ? sp.fy : "";
+  const q = typeof sp.q === "string" ? sp.q : "";
+  const fy = parseFyParam(fyParam);
+  const groups = allGroups
+    .map((g) => ({
+      ...g,
+      notes: g.notes.filter(
+        (n) =>
+          inFy(n.credit_note_date, fy) &&
+          matchesQuery(
+            [n.cn_no, n.vendor_cn_no, n.invoice_no, n.remark, n.buyer_name, n.awb_orders.join(" "), g.party_name],
+            q
+          )
+      ),
+    }))
+    .filter((g) => g.notes.length > 0)
+    .map((g) => ({ ...g, total: g.notes.reduce((s, n) => s + n.refund_amount, 0) }));
+
   const grandTotal = groups.reduce((s, g) => s + g.total, 0);
+  const noteCount = groups.reduce((s, g) => s + g.notes.length, 0);
+  const earliestFy = allGroups
+    .flatMap((g) => g.notes.map((n) => fyStartYear(n.credit_note_date)))
+    .sort((a, b) => a - b)[0] ?? null;
+  const fyChoices = fyOptions(earliestFy);
+  const companyName =
+    companyParam && companies ? companies.find((c) => c.id === companyParam)?.name ?? null : null;
+  const selection = selectionLabel({ companyName, fy, q });
+  const exportRows = groups.flatMap((g) =>
+    g.notes.map((n) => ({
+      party: g.party_name,
+      note_no: n.cn_no ?? "",
+      kind: n.cn_kind === "buyer_refund" ? n.buyer_name || "Buyer refund" : cnKindLabel(n.cn_kind) ?? "",
+      date: n.credit_note_date,
+      invoice: n.invoice_no ?? "",
+      orders: n.awb_orders.join(", "),
+      remark: n.remark ?? "",
+      amount: n.refund_amount,
+    }))
+  );
 
   return (
     <div>
@@ -74,9 +119,15 @@ export default async function CreditNotesRegisterPage({
             </Link>
           </p>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+        <NoteRegisterExportBar
+          title={`Credit Note Register — ${selection}`}
+          filenameBase={`credit-notes-register${fy ? `-fy-${fy.label}` : ""}`}
+          rows={exportRows}
+          printAreaId="credit-notes-register-area"
+        />
         <PrintButton label="🖨 Print / PDF list" />
-        <form method="get" className="flex items-end gap-2">
+        <form method="get" className="flex flex-wrap items-end gap-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
             <select id="company" name="company" defaultValue={companyParamPresent ? companyParam : employee.currentCompanyId} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
@@ -86,16 +137,47 @@ export default async function CreditNotesRegisterPage({
               ))}
             </select>
           </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="fy">Financial year</label>
+            <select id="fy" name="fy" defaultValue={fy?.label ?? ""} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500">
+              <option value="">All</option>
+              {fyChoices.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="q">Search</label>
+            <input
+              id="q"
+              name="q"
+              defaultValue={q}
+              placeholder="party / CN no. / invoice / AWB"
+              className="w-52 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500"
+            />
+          </div>
           <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
             Filter
           </button>
+          {(fy || q) && (
+            <Link
+              href={`/dashboard/credit-notes-register?company=${companyParam}`}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Clear
+            </Link>
+          )}
         </form>
         </div>
       </div>
 
       <PrintArea id="credit-notes-register-area">
       <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-800">
-        Total credit received: ₹{grandTotal.toFixed(2)} across {groups.length} part{groups.length === 1 ? "y" : "ies"}
+        Total credit received: ₹{grandTotal.toFixed(2)} — {noteCount} note{noteCount === 1 ? "" : "s"} across {groups.length} part
+        {groups.length === 1 ? "y" : "ies"}
+        {/* The printed sheet must say WHICH selection it is (FY / search /
+            company) — otherwise two prints of the same register look identical. */}
+        <span className="mt-0.5 block text-[11px] font-normal text-teal-700">{selection}</span>
       </div>
 
       <div className="space-y-4">

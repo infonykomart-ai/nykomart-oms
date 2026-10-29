@@ -2,7 +2,10 @@ import Link from "next/link";
 import { requireAnyCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { NoteRegisterExportBar } from "@/components/note-register-export-bar";
 import { formatISTShort } from "@/lib/format-ist";
+import { fyOptions, fyStartYear } from "@/lib/fy-date";
+import { inFy, matchesQuery, parseFyParam, selectionLabel } from "@/lib/notes/register-filter";
 
 // Debit Note Register — 2026-10-29b.
 //
@@ -47,6 +50,32 @@ export default async function DebitNotesRegisterPage({
 
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
+  // 2026-10-29j — FY + search (mirrors the Credit Note Register). Everything
+  // below — groups, totals, print, downloads — reads `filteredNotes`, so one
+  // selection describes them all.
+  const fyParam = typeof sp.fy === "string" ? sp.fy : "";
+  const q = typeof sp.q === "string" ? sp.q : "";
+  const fy = parseFyParam(fyParam);
+  const filteredNotes = (notes ?? []).filter(
+    (n) =>
+      inFy(n.debit_note_date, fy) &&
+      matchesQuery(
+        [
+          n.debit_note_no,
+          n.against_invoice_bill_no,
+          n.bill_no,
+          n.remark,
+          n.party_id ? partyName.get(n.party_id) : null,
+        ],
+        q
+      )
+  );
+  const fyChoices = fyOptions(
+    (notes ?? []).map((n) => fyStartYear(n.debit_note_date)).sort((a, b) => a - b)[0] ?? null
+  );
+  const companyName = companyParam && companies ? companies.find((c) => c.id === companyParam)?.name ?? null : null;
+  const selection = selectionLabel({ companyName, fy, q });
+
   // Which finance-ledger invoice each note was raised against — the note table
   // only carries bill_pass_register_id, so the invoice number is one batched
   // lookup rather than a per-row query.
@@ -68,7 +97,7 @@ export default async function DebitNotesRegisterPage({
     created_at: string;
   };
   const groups = new Map<string, { partyId: string | null; partyName: string; notes: NoteRow[]; total: number }>();
-  for (const n of notes ?? []) {
+  for (const n of filteredNotes) {
     const key = n.party_id ?? "__none__";
     if (!groups.has(key)) {
       groups.set(key, {
@@ -96,6 +125,18 @@ export default async function DebitNotesRegisterPage({
   const groupList = Array.from(groups.values()).sort((a, b) => b.total - a.total);
   const grandTotal = groupList.reduce((s, g) => s + g.total, 0);
   const noteCount = groupList.reduce((s, g) => s + g.notes.length, 0);
+  const exportRows = groupList.flatMap((g) =>
+    g.notes.map((n) => ({
+      party: g.partyName,
+      note_no: n.debit_note_no ?? "",
+      kind: "Debit Note",
+      date: n.debit_note_date,
+      invoice: n.against_invoice_bill_no ?? n.bill_no ?? n.linkedInvoice ?? "",
+      orders: "",
+      remark: n.remark ?? "",
+      amount: n.total_amount,
+    }))
+  );
 
   return (
     <div>
@@ -109,9 +150,15 @@ export default async function DebitNotesRegisterPage({
             </Link>
           </p>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <NoteRegisterExportBar
+            title={`Debit Note Register — ${selection}`}
+            filenameBase={`debit-notes-register${fy ? `-fy-${fy.label}` : ""}`}
+            rows={exportRows}
+            printAreaId="debit-notes-register-area"
+          />
           <PrintButton label="🖨 Print / PDF list" />
-          <form method="get" className="flex items-end gap-2">
+          <form method="get" className="flex flex-wrap items-end gap-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">
                 Company
@@ -130,9 +177,47 @@ export default async function DebitNotesRegisterPage({
                 ))}
               </select>
             </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="fy">
+                Financial year
+              </label>
+              <select
+                id="fy"
+                name="fy"
+                defaultValue={fy?.label ?? ""}
+                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500"
+              >
+                <option value="">All</option>
+                {fyChoices.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="q">
+                Search
+              </label>
+              <input
+                id="q"
+                name="q"
+                defaultValue={q}
+                placeholder="party / DN no. / invoice"
+                className="w-48 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500"
+              />
+            </div>
             <button type="submit" className="rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
               Filter
             </button>
+            {(fy || q) && (
+              <Link
+                href={`/dashboard/debit-notes-register?company=${companyParam}`}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Clear
+              </Link>
+            )}
           </form>
         </div>
       </div>
@@ -141,6 +226,8 @@ export default async function DebitNotesRegisterPage({
         <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-900">
           Total debit raised: ₹{grandTotal.toFixed(2)} — {noteCount} note{noteCount === 1 ? "" : "s"} across {groupList.length} part
           {groupList.length === 1 ? "y" : "ies"}
+          {/* Which selection this printed sheet covers — FY / search / company. */}
+          <span className="mt-0.5 block text-[11px] font-normal text-rose-700">{selection}</span>
         </div>
 
         <div className="space-y-4">
