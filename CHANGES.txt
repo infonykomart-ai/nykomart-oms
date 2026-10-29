@@ -1,8 +1,25 @@
-BILL STATEMENT ME NOTE KA PO/ORDER, PRINT KA RAASTA, AUR BUILD FIX
-(2026-10-29g)
+BUILD FIX (round 2) + BILL STATEMENT ME NOTE KA PO/ORDER + PRINT KA RAASTA
+(2026-10-29i)
 ======================================================================
 
 KOI NAYA SQL NAHI. Sirf code.
+
+UPLOAD NOTE — pehle wale zip (29h) ke 60 files me se kuch GitHub upload me
+chhoot gaye the. Branch (44ac37d) par ye purane hi reh gaye, isliye Vercel
+par `round_off_amt` ke type errors aaye:
+
+      src/types/database.ts                     (round_off_amt columns)
+      src/app/dashboard/documents/duty-bill-section.tsx
+      src/app/dashboard/documents/freight-bill-section.tsx
+
+...aur 32 files jo abhi bhi purani hain (documents pages/forms,
+expenses, reports/freight-duty, csb-filings, bill-payment voucher, etc.).
+Is zip me SIRF wahi files hain jo aapki branch se abhi bhi alag hain
+(35 files: 32 code + 2 SQL + CHANGES). Extract karke repo root par
+overwrite karo — iske baad branch == is workspace ka code, aur
+`round_off_amt` errors khatam.
+
+VERIFICATION: in sabhi 32 changed TS/TSX files ka typecheck (tsc) exit 0.
 
 1. BUILD FIX (Vercel "Module not found: './duplicate-merge'")
    ledger/page.tsx naye file `parties/[id]/ledger/duplicate-merge.tsx` ko

@@ -210,15 +210,17 @@ function StatementPdfDocument({ data }: { data: BillStatementData }) {
             <Text style={styles.sectionTitle}>CREDIT / DEBIT NOTE ADJUSTMENTS ({data.adjustments.length})</Text>
             <View style={styles.tableHeader}>
               <Text style={styles.colNarrow}>Date</Text>
-              <Text style={{ ...styles.col, flex: 1.4 }}>Note</Text>
-              <Text style={styles.col}>Remark</Text>
+              <Text style={{ ...styles.col, flex: 1.2 }}>Note</Text>
+              <Text style={styles.col}>PO / Order No.</Text>
+              <Text style={{ ...styles.col, flex: 1.3 }}>Reason</Text>
               <Text style={{ ...styles.colNarrow, ...styles.right }}>Amount</Text>
             </View>
             {data.adjustments.map((a) => (
               <View key={a.id} style={styles.tableRow}>
                 <Text style={styles.colNarrow}>{a.createdDate}</Text>
-                <Text style={{ ...styles.col, flex: 1.4 }}>{a.label}</Text>
-                <Text style={styles.col}>{dash(a.remark)}</Text>
+                <Text style={{ ...styles.col, flex: 1.2 }}>{a.label}</Text>
+                <Text style={styles.col}>{a.poRefs.length > 0 ? a.poRefs.join(", ") : "-"}</Text>
+                <Text style={{ ...styles.col, flex: 1.3 }}>{dash(a.reason ?? a.remark)}</Text>
                 <Text style={{ ...styles.colNarrow, ...styles.right }}>{inr(a.amount)}</Text>
               </View>
             ))}
