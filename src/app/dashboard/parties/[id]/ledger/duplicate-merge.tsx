@@ -12,7 +12,8 @@
 // Same server action Bill Payment already uses (mergeDuplicateBills): payments,
 // credit/debit notes and adjustments move onto the keeper, the duplicate rows
 // are zeroed and tagged (never deleted), and the ledger then shows ONE entry.
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { mergeDuplicateBills, type MergeBillsState } from "@/app/dashboard/bill-payment/merge-actions";
 
 const initial: MergeBillsState = { error: null, success: null };
@@ -35,10 +36,82 @@ export type LedgerDuplicateGroup = {
 export function LedgerDuplicateMerge({ groups }: { groups: LedgerDuplicateGroup[] }) {
   if (groups.length === 0) return null;
   return (
-    <div className="mb-3 space-y-2">
+    <div className="mb-3 space-y-2"
+    >
+      {/* 2026-10-29d — real books have DOZENS of these legacy pairs (one per
+          courier bill raised before the Finance gate). Merging them one panel
+          at a time was the painful part, so the whole list can now be folded
+          in a single click; each invoice still goes through the exact same
+          mergeDuplicateBills action, one after another, so nothing about the
+          accounting changes — only the number of clicks. */}
+      <MergeAllBar groups={groups} />
       {groups.map((g) => (
         <DuplicateGroupRow key={g.key} group={g} />
       ))}
+    </div>
+  );
+}
+
+function MergeAllBar({ groups }: { groups: LedgerDuplicateGroup[] }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [progress, setProgress] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  if (done) {
+    return (
+      <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs font-medium text-teal-800">
+        ✓ All {groups.length} duplicate invoice{groups.length === 1 ? "" : "s"} merged into one entry each — refresh to see the single lines.
+      </p>
+    );
+  }
+
+  function mergeAll() {
+    setFailure(null);
+    startTransition(async () => {
+      let merged = 0;
+      for (const group of groups) {
+        const keeper = group.rows.find((r) => r.hasDocument) ?? group.rows[0];
+        const losers = group.rows.filter((r) => r.id !== keeper.id);
+        if (!keeper || losers.length === 0) continue;
+        setProgress(`${merged + 1} of ${groups.length} — invoice ${group.invoiceNo}`);
+        const fd = new FormData();
+        fd.set("bill_ids_json", JSON.stringify([keeper.id, ...losers.map((l) => l.id)]));
+        const result = await mergeDuplicateBills({ error: null, success: null }, fd);
+        if (result.error) {
+          setFailure(`Stopped at invoice ${group.invoiceNo}: ${result.error} ${merged > 0 ? `(${merged} already merged)` : ""}`);
+          setProgress(null);
+          router.refresh();
+          return;
+        }
+        merged++;
+      }
+      setProgress(null);
+      setDone(true);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold text-teal-900">
+          🔗 {groups.length} invoice{groups.length === 1 ? "" : "s"} in this ledger have more than one entry (same company, same invoice no.).
+        </span>
+        <button
+          type="button"
+          onClick={mergeAll}
+          disabled={pending}
+          className="rounded-lg bg-teal-700 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-40"
+        >
+          {pending ? progress ?? "Merging…" : `🔗 Merge all ${groups.length} into one entry each`}
+        </button>
+        <span className="text-[10px] text-teal-700">
+          Keeps the entry that carries the document/AWBs and folds the other into it — payments, credit/debit notes and adjustments move across, duplicate amounts are dropped.
+        </span>
+      </div>
+      {failure && <p className="mt-1 font-medium text-red-600">{failure}</p>}
     </div>
   );
 }

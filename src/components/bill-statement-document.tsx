@@ -4,6 +4,7 @@
 // component — all data comes from loadBillStatement() in
 // ../bill-statement.ts; actions live in bill-statement-actions.tsx.
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { PrintArea } from "@/components/print-view";
 import type { BillStatementData } from "@/lib/bill-statement";
 import { purchaseAreaSqFt } from "@/lib/length-units";
@@ -241,7 +242,21 @@ export function BillStatementDocument({
                     <td className="py-1 pr-2">{p.payment_date}</td>
                     <td className="py-1 pr-2">{p.payment_mode ?? "—"}</td>
                     <td className="py-1 pr-2 font-mono">{p.reference_no ?? "—"}</td>
-                    <td className="py-1 pr-2 text-right">{inr(p.amount)}</td>
+                    <td className="py-1 pr-2 text-right">
+                      {inr(p.amount)}
+                      {/* 2026-10-29d — every recorded payment now has its own
+                          printable PAYMENT VOUCHER (amount in words, company
+                          letterhead of the bill's own company). Screen-only:
+                          the statement itself is the printed document. */}
+                      <Link
+                        href={`/dashboard/bill-payment/voucher/${p.id}`}
+                        target="_blank"
+                        className="ml-2 whitespace-nowrap rounded border border-teal-300 px-1.5 py-0.5 text-[10px] font-medium text-teal-700 hover:bg-teal-50 print:hidden"
+                        title="Open the printable Payment Voucher for this payment"
+                      >
+                        🧾 Voucher
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>

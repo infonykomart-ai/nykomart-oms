@@ -1,3 +1,54 @@
+PAYMENT VOUCHER + SABHI DUPLICATE EK CLICK ME MERGE (2026-10-29d)
+======================================================================
+
+KOI NAYA SQL NAHI — dono cheezein maujooda tables par hain, koi figure
+nahi badla.
+
+
+1) NAYA: PAYMENT VOUCHER (PRINT / PDF)
+--------------------------------------
+Reference billing software me payment receipt/voucher ka workflow hota hai.
+Ab humare paas bhi hai — har record hue vendor payment ka apna A4 voucher:
+
+  • kaha se kholein:
+      – Party Ledger me payment ki line par "🧾 Voucher"
+      – Bill Statement (kisi bhi bill ka statement) ke PAYMENTS table me
+        har payment ke aage "🧾 Voucher"
+  • voucher me kya aata hai:
+      – voucher no. (PV-<date>-<id>) + payment date
+      – jis COMPANY ka bill hai usi company ka letterhead (logo, address,
+        GSTIN) — top-nav ki company nahi
+      – party ka naam / address / GSTIN / contact
+      – vendor invoice no., type, date, invoice total
+      – particular, payment mode, UTR/cheque no., remark
+      – amount figures me AUR words me (Indian cheque style)
+      – "total paid on this invoice", "credit/note adjustments" aur
+        "balance still due" — live bill ledger se, purane snapshot se nahi
+      – Prepared By / Checked By / For <company> Authorised Signatory
+  • "🖨 Download PDF" se print/PDF (A4), screen par sab clean
+
+Access: jis login ke paas Bill Payment ka access hai use hi khulta hai, aur
+sirf usi company ke bills jinki company uske paas hai.
+
+
+2) DUPLICATE INVOICE — AB SAB EK HI CLICK ME MERGE
+--------------------------------------------------
+Party Ledger ke duplicate panel me ab sabse upar ek bar aati hai:
+
+  🔗 12 invoices in this ledger have more than one entry …
+     [ 🔗 Merge all 12 into one entry each ]
+
+  • har invoice me default wahi entry keep hoti hai jisme asli document /
+    AWB hain, baaki usme fold ho jati hai
+  • progress dikhta hai ("3 of 12 — invoice 108100172691")
+  • koi ek invoice merge na ho paye to wahin ruk kar batata hai kaunsa
+    invoice hai aur kitne ho chuke — aadha-adhoora chupchap nahi chhodta
+  • har merge pehle wale hi action (mergeDuplicateBills) se hota hai, to
+    payments / credit-debit note / adjustments ka hisaab bilkul waisa hi
+    rehta hai, sirf clicks kam ho gaye
+  • single invoice ka alag panel bhi waise hi kaam karta hai
+
+
 DUPLICATE INVOICE — EK HI ENTRY ME MERGE (2026-10-29b)
 ======================================================================
 
