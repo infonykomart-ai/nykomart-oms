@@ -49,6 +49,66 @@ Party Ledger ke duplicate panel me ab sabse upar ek bar aati hai:
   • single invoice ka alag panel bhi waise hi kaam karta hai
 
 
+BILL STATEMENT SUMMARY FIX + BILL PASS ROUND-OFF + ENGLISH UI (2026-10-29e)
+======================================================================
+
+1) MARKED BUG — BILL SUMMARY ME POORI INVOICE NAHI AA RAHI THI
+-------------------------------------------------------------
+Case: invoice 83 (M/S. Prachi Rugs) — PO ENTRIES me 11 items aur total
+₹31,433.43, lekin BILL SUMMARY me Bill Amount / Net Payable / BALANCE DUE
+sirf ₹1,008.00, aur upar ka BALANCE button bhi ₹1,008.00.
+
+Cause: ek multi-item Purchase Bill store hota hai ONE ROW PER ITEM
+(bill_pass_register me 11 rows). Statement sirf US EK row ke financials
+padh raha tha jis row se statement khola gaya tha — jo item PO-A915
+(₹1,008.00) ka tha. PO lines pehle se invoice-wide the, paisa nahi.
+
+Ab (src/lib/bill-statement.ts):
+  • ek hi invoice ki saari rows (same company + party + vendor invoice no.,
+    sirf source = purchase_bill) uthayi jati hain — wahi key jo groupBills()
+    use karta hai
+  • Bill Amount / Credit Note / CN-DN Adjustments / Total Paid / Balance,
+    payments, adjustments aur wallet settlements sab invoice-wide
+  • toolbar ka BALANCE, "Copy summary" aur A4 PDF teeno isi figure ko
+    dikhate hain (ek hi loader)
+  • Courier / Duty / manual bills ki EK hi row hoti hai — unke liye
+    bilkul pehle jaisa
+  • Bill Summary me nayi row: "Round-off / reviewed adjustment vs line
+    items" — jab line-items ka total ledger ke total se alag ho (round-off
+    ya review me badla gaya payable), to farak dikhta hai, chhup-ta nahi
+
+2) BILL PASS (SEND TO FINANCE) PAR AB ROUND-OFF
+------------------------------------------------
+"ab jo koi bill entry ho gyi hai to usme kaha par kare — bill pass me
+roundoff ho jayega kya?" — haan, ab har jagah:
+
+  • Purchase / Printing  ➜ "Send to Finance" box me naya
+    Round Off control (+ / −, quick ₹1000 / ₹1005 / ₹1010 …, preview
+    "payable before → after")
+  • Courier aur Duty      ➜ same control unke "Confirm — Send to Finance"
+    form me (Amount ab "gross" hai; round-off uske upar lagta hai)
+  • Server action (teesro me) amount + round_off_amt ko jod ke hi ledger
+    row likhta hai — posted figure exact wahi hai jo approve hua
+  • entry-time round-off (per order / per AWB) pehle se tha aur wahi
+    rehta hai; ye uske UPAR ka final adjustment hai (default 0)
+  • Washing / Printing ke ENTRY form me round-off pehle se tha
+  • Office expense bill ka koi "Send to Finance" step nahi — save karte hi
+    Finance jaata hai, usme alag round-off ka column nahi hai
+
+3) UI TEXT AB POORI ENGLISH ME
+------------------------------
+Jaha bhi user ko dikhne wali Hindi/Hinglish text thi wo English kar di:
+  • Finance box: "... showing in Bill Payment / Party Ledger under this
+    same company."
+  • Office expense: "Fill in the party and this bill becomes a payable ..."
+  • CSB Filing report subtitle + "no matching order" note
+  • Credit Note panel: "Party's CN No." / "Courier's CN number"
+  • Telegram / WhatsApp sent toasts
+  • Received Chalan help line, round-off hover tips (tooltip text)
+Code comments me user ke original Hinglish requests waise hi rakhi gayi
+hin (wo request history hai, UI nahi).
+
+
 DUPLICATE INVOICE — EK HI ENTRY ME MERGE (2026-10-29b)
 ======================================================================
 

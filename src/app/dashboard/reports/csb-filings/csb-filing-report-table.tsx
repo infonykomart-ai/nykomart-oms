@@ -154,7 +154,7 @@ export function CsbFilingReportTable({
           {rows.length} CSB filings {rows.length === 1000 && "(showing up to 1000 — narrow the date range for full data)"}
           {unmatched > 0 && (
             <span className="ml-2 text-amber-700">
-              · {unmatched} ka koi order match nahi hua (HAWB/Invoice no order me nahi mila — sirf CSB columns bhare hain)
+              · {unmatched} with no matching order (HAWB / Invoice no. not found in Orders — only the CSB columns are filled)
             </span>
           )}
         </p>

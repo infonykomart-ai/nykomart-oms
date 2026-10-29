@@ -1558,8 +1558,14 @@ export async function sendPurchaseBillInvoiceToFinance(
 
   const companyId = str(formData, "company_id");
   if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: null };
-  const totalAmt = numOrZero(formData, "total_amt");
-  if (!(totalAmt > 0)) return { error: "Amount must be a positive number.", success: null };
+  // 2026-10-29e — round-off AT the Bill Pass step ("ab jo koi bill entry ho
+  // gyi hai to usme kaha par kare — bill pass me roundoff ho jayega kya?").
+  // The Amount field stays the bill's gross figure; the signed round-off the
+  // form now carries is added to it, so what reaches the Finance ledger is
+  // exactly the round figure the admin approved. Same table, same column —
+  // only the posted total changes, and only by the round-off.
+  const totalAmt = Math.round((numOrZero(formData, "total_amt") + numOrZero(formData, "round_off_amt")) * 100) / 100;
+  if (!(totalAmt > 0)) return { error: "Amount (with round-off) must be a positive number.", success: null };
   const remark = strOrNull(formData, "remark");
 
   type PbRow = {
@@ -3195,10 +3201,13 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
 
   const freightBillId = str(formData, "freight_bill_id");
   const companyId = str(formData, "company_id");
-  const totalAmt = numOrZero(formData, "total_amt");
+  // 2026-10-29e — round-off is applied HERE, at the Bill Pass hand-off, same
+  // as Purchase/Printing and Duty above/below: gross Amount + signed
+  // round-off = what the Finance ledger is posted with.
+  const totalAmt = Math.round((numOrZero(formData, "total_amt") + numOrZero(formData, "round_off_amt")) * 100) / 100;
   if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
   if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: false };
-  if (!totalAmt || totalAmt <= 0) return { error: "Amount must be a positive number.", success: false };
+  if (!totalAmt || totalAmt <= 0) return { error: "Amount (with round-off) must be a positive number.", success: false };
 
   const { data: existing } = await supabase
     .from("bill_pass_register")
@@ -3743,10 +3752,11 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
 
   const dutyTaxBillId = str(formData, "duty_tax_bill_id");
   const companyId = str(formData, "company_id");
-  const totalAmt = numOrZero(formData, "total_amt");
+  // 2026-10-29e — same round-off-at-Bill-Pass rule as freight above.
+  const totalAmt = Math.round((numOrZero(formData, "total_amt") + numOrZero(formData, "round_off_amt")) * 100) / 100;
   if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
   if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: false };
-  if (!totalAmt || totalAmt <= 0) return { error: "Amount must be a positive number.", success: false };
+  if (!totalAmt || totalAmt <= 0) return { error: "Amount (with round-off) must be a positive number.", success: false };
 
   const { data: existing } = await supabase
     .from("bill_pass_register")

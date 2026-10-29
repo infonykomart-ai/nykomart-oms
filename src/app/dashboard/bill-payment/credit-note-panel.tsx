@@ -207,7 +207,7 @@ export function CreditNotePanel({
                 slab table (courier/duty → 18% total, purchase → 5%
                 total; 12% option for kurti). Blank = no GST. */}
             <div>
-              <label className={labelClass}>Party ka CN No. (optional)</label>
+              <label className={labelClass}>Party&apos;s CN No. (optional)</label>
               <input name="vendor_cn_no" placeholder="Vendor&apos;s own number" className={inputClass} />
             </div>
             <div>
@@ -288,8 +288,8 @@ export function CreditNotePanel({
                 </select>
               </div>
               <div>
-                <label className={labelClass}>Party ka CN No.</label>
-                <input name="vendor_cn_no" placeholder="courier ka CN number" className={inputClass} />
+                <label className={labelClass}>Party&apos;s CN No.</label>
+                <input name="vendor_cn_no" placeholder="Courier&apos;s CN number" className={inputClass} />
               </div>
               <div>
                 <label className={labelClass}>AWB No(s).</label>

@@ -194,6 +194,19 @@ export function BillStatementDocument({
                 <td className="py-0.5">Bill Amount</td>
                 <td className="py-0.5 text-right">{inr(bill.total_amt)}</td>
               </tr>
+              {/* 2026-10-29e — round-off entered at Bill Pass (or a reviewed
+                  payable edited before sending) sits between the line items and
+                  what Finance was actually posted with. Without this row the
+                  summary total and the item table above simply disagreed with
+                  no way to see why. */}
+              {data.poLines.length > 0 && Math.abs(bill.total_amt - data.poSubtotal) > 0.005 && (
+                <tr>
+                  <td className="py-0.5">Round-off / reviewed adjustment vs line items</td>
+                  <td className="py-0.5 text-right">
+                    {bill.total_amt - data.poSubtotal >= 0 ? "+" : "−"} {inr(Math.abs(bill.total_amt - data.poSubtotal))}
+                  </td>
+                </tr>
+              )}
               {bill.credit_note_amt > 0 && (
                 <tr>
                   <td className="py-0.5">Credit Note</td>

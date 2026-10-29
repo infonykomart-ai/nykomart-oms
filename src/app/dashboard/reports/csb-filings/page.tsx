@@ -284,7 +284,7 @@ export default async function CsbFilingReportPage({
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🛃 CSB Filing Report</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Customs CSB-V filings with their order details — filing date se date tak, aur jitne column chahiye utne.
+            Customs CSB-V filings with their order details — pick the date range and only the columns you need.
           </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">

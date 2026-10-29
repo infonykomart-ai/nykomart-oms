@@ -559,6 +559,12 @@ export function SendToFinanceForm({
 }) {
   const action = kind === "freight" ? sendFreightBillToFinance : sendDutyBillToFinance;
   const [state, formAction, pending] = useActionState(action, initialSimple);
+  // 2026-10-29e — "bill pass me roundoff ho jayega kya?" YES: the Amount below
+  // stays the bill's gross and the Round Off control underneath it is added to
+  // it server-side, so the figure that lands in the Finance ledger is the round
+  // one the admin approved. Controlled (not defaultValue) so the Round Off
+  // preview always tracks what is actually typed.
+  const [amount, setAmount] = useState(defaultAmt.toFixed(2));
 
   useEffect(() => {
     if (state.success) onDone();
@@ -580,10 +586,23 @@ export function SendToFinanceForm({
           </select>
         </div>
         <div>
-          <label className={labelClass}>Amount</label>
-          <input name="total_amt" type="number" step="0.01" defaultValue={defaultAmt.toFixed(2)} className={inputClass} />
+          <label className={labelClass}>Amount (gross)</label>
+          <input
+            name="total_amt"
+            type="number"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className={inputClass}
+          />
         </div>
       </div>
+      <RoundOffField
+        id={`send_ro_${billId}`}
+        payable={Number(amount) || 0}
+        label="Round Off at Bill Pass"
+        hint="Applied to the amount posted to the Finance ledger — + rounds up, − rounds down."
+      />
       <div>
         <label className={labelClass}>Remark</label>
         <input name="remark" className={inputClass} placeholder="optional" />
@@ -928,7 +947,7 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
                 value={r.roundOffAmt}
                 onChange={(e) => updateRow(i, { roundOffAmt: e.target.value })}
                 placeholder="Round off ±₹"
-                title="Is AWB ka round-off: + se payable badhega, − se ghatayega"
+                title="This AWB's round-off: + increases the payable, − reduces it"
                 className={inputClass}
               />
             </div>
@@ -974,7 +993,7 @@ export function ResyncFinanceAmountButton({ billId, kind }: { billId: string; ki
             setMessage(r.error ?? "✓ Finance amount updated");
           })
         }
-        title="Bill ka aaj ka payable (gross + AWB round-off + bill round-off − CN) Finance ledger me likh do"
+        title="Post today's payable for this bill (gross + AWB round-off + bill round-off − CN) to the Finance ledger"
         className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
       >
         {pending ? "Updating..." : "↻ Re-sync Finance amount"}

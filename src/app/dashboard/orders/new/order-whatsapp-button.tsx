@@ -293,7 +293,7 @@ export function OrderWhatsAppButton({
         setError(json?.error || "Could not send to Telegram — please try again.");
         return;
       }
-      flashNotice("☁️ Telegram par bhej diya — photo aur caption ek hi message me chale gaye.");
+      flashNotice("☁️ Sent to Telegram — photo and caption went out in one message.");
       markSent();
     } catch {
       setError("Could not send to Telegram — check the internet connection and try again.");
@@ -324,7 +324,7 @@ export function OrderWhatsAppButton({
         setError(json?.error || "Could not send to WhatsApp (auto) — please try again.");
         return;
       }
-      flashNotice("🚀 WhatsApp group par bhej diya — photo aur caption ek hi message me chale gaye.");
+      flashNotice("🚀 Sent to the WhatsApp group — photo and caption went out in one message.");
       markSent();
     } catch {
       setError("Could not send to WhatsApp (auto) — check the internet connection and try again.");

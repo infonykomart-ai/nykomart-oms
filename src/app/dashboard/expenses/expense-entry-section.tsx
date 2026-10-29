@@ -416,8 +416,8 @@ function ExpenseBillForm({
             ))}
           </datalist>
           <p className="mt-1 text-[10px] text-slate-400">
-            Party bhare to bill Bill Payment / Party Ledger me payable ban jayega. Khaali chhode = uchanti kharcha
-            (P&amp;L me hi rahega).
+            Fill in the party and this bill becomes a payable in Bill Payment / Party Ledger. Leave it blank and it stays an
+            ad-hoc expense (P&amp;L only).
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3">

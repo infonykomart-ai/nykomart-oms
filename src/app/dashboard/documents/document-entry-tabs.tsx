@@ -377,8 +377,8 @@ export function DocumentEntryTabs({
           {tab === "received-chalan" && (
             <div>
               <p className="mb-3 text-xs text-slate-400">
-                &quot;Party se company&quot; maal aane ka proof — every Purchase Bill auto-generates one of these too. Use
-                this form for job-work returns (printing/washing wapas aana) that have no Purchase Bill of their own.
+                Proof of goods received from the party — every Purchase Bill auto-generates one of these too. Use
+                this form for job-work returns (printing/washing coming back) that have no Purchase Bill of their own.
                 Order/PO is optional here — a Delivery Chalan (Stock → Material OUT Chalan tab) needs one, this doesn&apos;t.
               </p>
               <ReceivedChalanForm companies={companies} parties={parties} />
