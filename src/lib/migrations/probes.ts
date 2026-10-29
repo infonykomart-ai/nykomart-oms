@@ -163,6 +163,18 @@ export async function probeMigrations(
         { name: "freight_bill_awb_assignments.round_off_amt", promise: hasColumn(client, "freight_bill_awb_assignments", "round_off_amt") },
         { name: "duty_bill_awb_assignments.round_off_amt", promise: hasColumn(client, "duty_bill_awb_assignments", "round_off_amt") },
       ]),
+
+    // 2026-10-29 — round-off on Credit Note / Debit Note / Internal Invoice /
+    // Journal Voucher. Until this file is run those four forms still save
+    // (round_off_amt simply stays 0), so their totals just can’t be rounded.
+    probe("db/2026-10-29-round-off-all-documents.sql", "Round off on Credit/Debit Note, Internal Invoice and Journal Voucher",
+      "Those four document forms can’t store a round-off — their totals always stay the exact calculated figure, with no round-figure adjustment line.",
+      [
+        { name: "credit_notes.round_off_amt", promise: hasColumn(client, "credit_notes", "round_off_amt") },
+        { name: "debit_notes.round_off_amt", promise: hasColumn(client, "debit_notes", "round_off_amt") },
+        { name: "internal_invoices.round_off_amt", promise: hasColumn(client, "internal_invoices", "round_off_amt") },
+        { name: "journal_vouchers.round_off_amt", promise: hasColumn(client, "journal_vouchers", "round_off_amt") },
+      ]),
   ]);
 }
 

@@ -127,6 +127,20 @@ export function creditNoteDoc(r: EditableCreditNote & { companyName: string }): 
       { label: "Billed Rate", value: r.billed_rate != null ? inr(r.billed_rate) : "—" },
       { label: "Invoice Value (USD)", value: r.invoice_value_usd != null ? `$${fmt(r.invoice_value_usd)}` : "—" },
       { label: "Invoice Value (INR)", value: r.invoice_value_inr != null ? inr(r.invoice_value_inr) : "—" },
+      // 2026-10-29 — the stored refund_amount is the rounded total; show the
+      // adjustment and the pre-round-off figure so the sheet explains itself.
+      ...(Number(r.round_off_amt ?? 0) !== 0
+        ? [
+            {
+              label: "Refund before Round Off",
+              value: inr(Number(r.refund_amount) - Number(r.round_off_amt ?? 0)),
+            },
+            {
+              label: "Round Off",
+              value: `${Number(r.round_off_amt) > 0 ? "+" : "−"} ${inr(Math.abs(Number(r.round_off_amt)))}`,
+            },
+          ]
+        : []),
     ],
     total: {
       label: "Refund Amount",
@@ -157,8 +171,23 @@ export function debitNoteDoc(
       { label: "Rate", value: r.rate != null ? inr(r.rate) : "—" },
       { label: "PO Rate", value: r.po_rate != null ? inr(r.po_rate) : "—" },
       { label: "Billed Rate", value: r.billed_rate != null ? inr(r.billed_rate) : "—" },
+      { label: "Debit Amount", value: inr(r.debit_amount) },
+      { label: "GST (CGST+SGST 5%)", value: inr(Math.round(Number(r.debit_amount) * 5) / 100) },
+      ...(Number(r.round_off_amt ?? 0) !== 0
+        ? [
+            {
+              label: "Round Off",
+              value: `${Number(r.round_off_amt) > 0 ? "+" : "−"} ${inr(Math.abs(Number(r.round_off_amt)))}`,
+            },
+          ]
+        : []),
     ],
-    total: { label: "Debit Amount", value: inr(r.debit_amount) },
+    // 2026-10-29 — same figure as the register / report total_amount
+    // (debit amount + 5% GST + round off), so every sheet agrees.
+    total: {
+      label: "Total Amount (incl. 5% GST)",
+      value: inr(Math.round(Number(r.debit_amount) * 1.05 * 100) / 100 + Number(r.round_off_amt ?? 0)),
+    },
     remark: r.remark,
   };
 }
@@ -216,6 +245,15 @@ export function internalInvoiceDoc(
       { label: "Description", value: r.description, full: true },
       { label: "Quantity", value: num(r.qty) },
       { label: "Rate", value: inr(r.rate) },
+      { label: "GST (18%)", value: inr(Math.round(Number(r.qty) * Number(r.rate) * 18) / 100) },
+      ...(Number(r.round_off_amt ?? 0) !== 0
+        ? [
+            {
+              label: "Round Off",
+              value: `${Number(r.round_off_amt) > 0 ? "+" : "−"} ${inr(Math.abs(Number(r.round_off_amt)))}`,
+            },
+          ]
+        : []),
       { label: "Remark", value: dash(r.remark), full: true },
     ],
     total: { label: "Total Amount", value: inr(Number(r.total_amount)) },

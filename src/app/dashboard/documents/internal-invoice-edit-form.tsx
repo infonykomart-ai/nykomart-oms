@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { updateInternalInvoice, type DocEditState } from "./actions";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -15,6 +16,8 @@ export type EditableInternalInvoice = {
   description: string;
   qty: number;
   rate: number;
+  /** 2026-10-29 — signed round-off on the invoice total (incl. 18% GST). */
+  round_off_amt: number;
   remark: string | null;
 };
 
@@ -30,6 +33,9 @@ export function InternalInvoiceEditForm({
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updateInternalInvoice, initialState);
+  const [qtyInput, setQtyInput] = useState(String(invoice.qty));
+  const [rateInput, setRateInput] = useState(String(invoice.rate));
+  const preRoundTotal = Math.round((Number(qtyInput) || 0) * (Number(rateInput) || 0) * 1.18 * 100) / 100;
 
   useEffect(() => {
     if (state.success) onDone();
@@ -52,11 +58,37 @@ export function InternalInvoiceEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`ii_qty_${invoice.id}`}>Qty *</label>
-          <input id={`ii_qty_${invoice.id}`} name="qty" type="number" step="0.01" required defaultValue={invoice.qty} className={inputClass} />
+          <input
+            id={`ii_qty_${invoice.id}`}
+            name="qty"
+            type="number"
+            step="0.01"
+            required
+            value={qtyInput}
+            onChange={(e) => setQtyInput(e.target.value)}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor={`ii_rate_${invoice.id}`}>Rate *</label>
-          <input id={`ii_rate_${invoice.id}`} name="rate" type="number" step="0.01" required defaultValue={invoice.rate} className={inputClass} />
+          <input
+            id={`ii_rate_${invoice.id}`}
+            name="rate"
+            type="number"
+            step="0.01"
+            required
+            value={rateInput}
+            onChange={(e) => setRateInput(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+        <div className="col-span-2">
+          <RoundOffField
+            id={`ii_round_off_${invoice.id}`}
+            payable={preRoundTotal}
+            defaultValue={invoice.round_off_amt}
+            label="Round Off (added to the invoice total incl. 18% GST)"
+          />
         </div>
       </div>
 

@@ -199,7 +199,7 @@ export function PurchaseBillEditForm({
           id={`pb_round_off_${bill.id}`}
           payable={
             (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) *
-            (1 + (gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2) / 100)
+            (1 + (gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2) / 100)
           }
           defaultValue={Number(bill.round_off_amt ?? 0)}
         />

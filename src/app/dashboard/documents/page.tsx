@@ -119,17 +119,23 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     // are standalone by design, see db/schema.sql — so they're unchanged.)
     supabase
       .from("credit_notes")
-      .select(
-        "id, cn_no, company_id, store_id, credit_note_date, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, remark, party_id, qty, po_rate, billed_rate"
-      )
+      // 2026-10-29 — '*' not a column list: round_off_amt arrives with
+      // db/2026-10-29-round-off-all-documents.sql, and naming one column a
+      // database hasn't got yet makes PostgREST reject the WHOLE query — which
+      // would silently empty this "Recent …" list on an un-migrated DB (same
+      // reasoning as the washing_entries query below).
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
     supabase
       .from("debit_notes")
-      .select(
-        "id, debit_note_no, debit_note_date, company_id, party_id, against_invoice_bill_no, particulars, bill_no, bill_date, sq_ft, qty, rate, po_rate, billed_rate, debit_amount, remark"
-      )
+      // 2026-10-29 — '*' not a column list: round_off_amt arrives with
+      // db/2026-10-29-round-off-all-documents.sql, and naming one column a
+      // database hasn't got yet makes PostgREST reject the WHOLE query — which
+      // would silently empty this "Recent …" list on an un-migrated DB (same
+      // reasoning as the washing_entries query below).
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
@@ -145,7 +151,12 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       .limit(8),
     supabase
       .from("internal_invoices")
-      .select("id, invoice_no, invoice_date, from_company_id, to_company_id, description, qty, rate, remark, total_amount")
+      // 2026-10-29 — '*' not a column list: round_off_amt arrives with
+      // db/2026-10-29-round-off-all-documents.sql, and naming one column a
+      // database hasn't got yet makes PostgREST reject the WHOLE query — which
+      // would silently empty this "Recent …" list on an un-migrated DB (same
+      // reasoning as the washing_entries query below).
+      .select("*")
       // company_id on this table is set to from_company_id by its own
       // insert trigger (db/schema.sql) — "invoices issued BY the currently
       // selected company", the natural match for a per-company Doc Entry
@@ -234,9 +245,12 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     // company, same as every other "Recent" list above.
     supabase
       .from("journal_vouchers")
-      .select(
-        "id, jv_no, jv_date, company_id, bill_pass_register_id, party_id, vendor_invoice_no, invoice_date, debit_amount, passed_amount, item_details, qty, qty_unit, qlty, particulars, remark"
-      )
+      // 2026-10-29 — '*' not a column list: round_off_amt arrives with
+      // db/2026-10-29-round-off-all-documents.sql, and naming one column a
+      // database hasn't got yet makes PostgREST reject the WHOLE query — which
+      // would silently empty this "Recent …" list on an un-migrated DB (same
+      // reasoning as the washing_entries query below).
+      .select("*")
       .eq("company_id", employee.currentCompanyId)
       .order("created_at", { ascending: false })
       .limit(8),
@@ -537,6 +551,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             invoice_value_usd: r.invoice_value_usd != null ? Number(r.invoice_value_usd) : null,
             invoice_value_inr: r.invoice_value_inr != null ? Number(r.invoice_value_inr) : null,
             refund_amount: Number(r.refund_amount),
+            round_off_amt: Number(r.round_off_amt ?? 0),
             refund_amt_usd: r.refund_amt_usd != null ? Number(r.refund_amt_usd) : null,
             refund_amt_inr: r.refund_amt_inr != null ? Number(r.refund_amt_inr) : null,
             // 2026-08-29 — Rate Difference Calculator reference fields
@@ -554,6 +569,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             po_rate: r.po_rate != null ? Number(r.po_rate) : null,
             billed_rate: r.billed_rate != null ? Number(r.billed_rate) : null,
             debit_amount: Number(r.debit_amount),
+            round_off_amt: Number(r.round_off_amt ?? 0),
             companyName: companyName.get(r.company_id) ?? "",
           })),
           washingEntries: (recentWashingEntries ?? []).map((r) => ({
@@ -570,6 +586,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             qty: Number(r.qty),
             rate: Number(r.rate),
             total_amount: Number(r.total_amount),
+            round_off_amt: Number(r.round_off_amt ?? 0),
             fromCompanyName: companyName.get(r.from_company_id) ?? "",
             toCompanyName: companyName.get(r.to_company_id) ?? "",
           })),
@@ -587,6 +604,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
           journalVouchers: (recentJournalVouchers ?? []).map((r) => ({
             ...r,
             debit_amount: Number(r.debit_amount),
+            round_off_amt: Number(r.round_off_amt ?? 0),
             passed_amount: r.passed_amount != null ? Number(r.passed_amount) : null,
             qty: r.qty != null ? Number(r.qty) : null,
             vendorName: r.party_id ? partyName.get(r.party_id) ?? "—" : "—",

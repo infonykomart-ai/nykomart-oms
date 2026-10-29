@@ -38,9 +38,8 @@ async function DebitNoteReportInner({ id }: { id: string }) {
 
   const { data: noteRaw } = await supabase
     .from("debit_notes")
-    .select(
-      "id, company_id, debit_note_no, debit_note_date, against_invoice_bill_no, party_id, order_id, bill_pass_register_id, particulars, bill_no, bill_date, sq_ft, qty, rate, po_rate, billed_rate, po_amount, debit_amount, cgst_2_5pct, sgst_2_5pct, total_amount, remark"
-    )
+    // "*" so a pending db/2026-10-29 round-off migration can never 404 this sheet.
+    .select("*")
     .eq("id", id)
     .maybeSingle();
   if (!noteRaw) notFound();
@@ -59,6 +58,9 @@ async function DebitNoteReportInner({ id }: { id: string }) {
     billed_rate: noteRaw.billed_rate != null ? Number(noteRaw.billed_rate) : null,
     po_amount: noteRaw.po_amount != null ? Number(noteRaw.po_amount) : null,
     debit_amount: Number(noteRaw.debit_amount),
+    // 2026-10-29 — signed round-off already included in the generated
+    // total_amount (db/2026-10-29-round-off-all-documents.sql).
+    round_off_amt: Number(noteRaw.round_off_amt ?? 0),
     cgst_2_5pct: Number(noteRaw.cgst_2_5pct),
     sgst_2_5pct: Number(noteRaw.sgst_2_5pct),
     total_amount: Number(noteRaw.total_amount),
@@ -194,6 +196,12 @@ async function DebitNoteReportInner({ id }: { id: string }) {
               </tr>
             </tbody>
           </table>
+
+          {note.round_off_amt !== 0 && (
+            <div className="mt-2 text-right text-xs text-slate-500">
+              Round Off: {note.round_off_amt > 0 ? "+" : "−"} ₹{Math.abs(note.round_off_amt).toFixed(2)}
+            </div>
+          )}
 
           {note.remark && (
             <div className="mt-4 text-xs">

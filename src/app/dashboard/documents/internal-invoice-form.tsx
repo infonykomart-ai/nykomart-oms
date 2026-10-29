@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { saveInternalInvoice, type DocFormState } from "./actions";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -14,6 +15,11 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 // server-side.
 export function InternalInvoiceForm({ companies }: { companies: { id: string; name: string }[] }) {
   const [state, formAction, pending] = useActionState(saveInternalInvoice, initialState);
+  // 2026-10-29 — qty × rate (18% GST is added by the stored total) so the
+  // round-off control rounds the actual invoice total.
+  const [qtyInput, setQtyInput] = useState("");
+  const [rateInput, setRateInput] = useState("");
+  const preRoundTotal = Math.round((Number(qtyInput) || 0) * (Number(rateInput) || 0) * 1.18 * 100) / 100;
 
   if (state.success) {
     return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Internal Invoice created — <strong>{state.success.docNo}</strong>.</p>;
@@ -48,11 +54,41 @@ export function InternalInvoiceForm({ companies }: { companies: { id: string; na
         </div>
         <div>
           <label className={labelClass} htmlFor="ii_qty">Qty *</label>
-          <input id="ii_qty" name="qty" type="number" step="0.01" required className={inputClass} />
+          <input
+            id="ii_qty"
+            name="qty"
+            type="number"
+            step="0.01"
+            required
+            value={qtyInput}
+            onChange={(e) => setQtyInput(e.target.value)}
+            className={inputClass}
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor="ii_rate">Rate *</label>
-          <input id="ii_rate" name="rate" type="number" step="0.01" required className={inputClass} />
+          <input
+            id="ii_rate"
+            name="rate"
+            type="number"
+            step="0.01"
+            required
+            value={rateInput}
+            onChange={(e) => setRateInput(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+        {/* 2026-10-29 — round-off on the invoice TOTAL (qty × rate + 18%
+            GST), stored as internal_invoices.round_off_amt and added to the
+            generated total_amount, so the list / A4 sheet / report all show
+            the rounded figure. */}
+        <div className="col-span-2">
+          <RoundOffField
+            id="ii_round_off"
+            payable={preRoundTotal}
+            label="Round Off (added to the invoice total incl. 18% GST)"
+            hint="Rounds the internal invoice total to an even figure."
+          />
         </div>
       </div>
 

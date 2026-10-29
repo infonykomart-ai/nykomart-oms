@@ -20,6 +20,7 @@ import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import type { PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
+import { RoundOffField } from "./round-off-field";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 
 const inputClass =
@@ -93,6 +94,17 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
   function removeItem(clientId: number) {
     setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.clientId !== clientId) : prev));
   }
+
+  // 2026-10-29 — live invoice total for the round-off control below. A null
+  // GST pick is "No GST" (saved as 0%), so the preview equals the stored total.
+  const invoiceGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+  const invoicePreRoundTotal = items.reduce((sum, it) => {
+    const amount =
+      (Number(it.qty) || 0) *
+      (it.sqFeetUnit === "PCS" ? 1 : Number(it.sqFeetInput) || 0) *
+      (Number(it.unitRateInput) || 0);
+    return sum + amount + Math.round(amount * invoiceGstPct) / 100;
+  }, 0);
 
   const itemsJson = JSON.stringify(
     items.map((it) => ({
@@ -239,6 +251,18 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
           <input type="hidden" name="gst_type" value={gstRatePct != null ? gstType : ""} />
         </div>
       </div>
+
+      {/* 2026-10-29 — same invoice-level round-off as the Multiple-Orders
+          form: one adjustment for the whole invoice, stored on its first
+          item row so every total that sums the invoice includes it once. */}
+      {invoicePreRoundTotal > 0 && (
+        <RoundOffField
+          id="pbmi_round_off"
+          payable={invoicePreRoundTotal}
+          label="Round Off (on the invoice total)"
+          hint="Rounds the WHOLE invoice once — e.g. +0.40 makes the payable an even figure."
+        />
+      )}
 
       <button
         type="submit"

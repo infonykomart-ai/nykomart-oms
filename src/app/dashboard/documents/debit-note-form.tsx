@@ -7,6 +7,7 @@ import { BillLookupSelect } from "./bill-lookup-select";
 import { PartyBillPicker } from "./party-bill-picker";
 import { DebitNoteBillPicker, type DebitNoteBillLine } from "./debit-note-bills";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -237,6 +238,18 @@ export function DebitNoteForm({
           {billLines.length > 0 && (
             <p className="mt-0.5 text-[10px] text-slate-500">Sum of the {billLines.length} invoice line(s) above — automatic.</p>
           )}
+        </div>
+        {/* 2026-10-29 — round-off against the note's TOTAL (debit amount +
+            5% GST), stored as debit_notes.round_off_amt and added to the
+            generated total_amount, so the register, report and printed sheet
+            all show the rounded figure. */}
+        <div className="col-span-2">
+          <RoundOffField
+            id="dn_round_off"
+            payable={Math.round((Number(debitAmountInput) || 0) * 1.05 * 100) / 100}
+            label="Round Off (added to the note total incl. 5% GST)"
+            hint="Rounds the debit note total to an even figure. GST is still charged on the debit amount, not on the rounding."
+          />
         </div>
       </div>
 

@@ -17,6 +17,8 @@ import { useActionState, useMemo, useState } from "react";
 import { saveJournalVoucher, type DocFormState } from "./actions";
 import { PartyBillPicker } from "./party-bill-picker";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { RoundOffField } from "./round-off-field";
+import { netWithRoundOff } from "@/lib/round-off";
 
 const initialState: DocFormState = { error: null, success: null };
 const inputClass =
@@ -37,9 +39,13 @@ export function JournalVoucherForm({ companies, parties }: { companies: { id: st
   const [debitAmount, setDebitAmount] = useState("");
   const [passedAmountManual, setPassedAmountManual] = useState("");
   const [passedAmountTouched, setPassedAmountTouched] = useState(false);
+  // 2026-10-29 — the round-off control's live value, so the Passed Amount
+  // (which defaults to the Debit Amount) also reflects the rounded figure.
+  const [roundOff, setRoundOff] = useState(0);
   const passedAmountInput = useMemo(
-    () => (passedAmountTouched ? passedAmountManual : debitAmount),
-    [passedAmountTouched, passedAmountManual, debitAmount]
+    () =>
+      passedAmountTouched ? passedAmountManual : debitAmount ? String(netWithRoundOff(Number(debitAmount) || 0, roundOff)) : "",
+    [passedAmountTouched, passedAmountManual, debitAmount, roundOff]
   );
 
   if (state.success) {
@@ -108,6 +114,19 @@ export function JournalVoucherForm({ companies, parties }: { companies: { id: st
             value={debitAmount}
             onChange={(e) => setDebitAmount(e.target.value)}
             className={inputClass}
+          />
+        </div>
+        {/* 2026-10-29 — "har section me ... round off ka option": the signed
+            round-off is folded into the saved debit_amount (and the Passed
+            Amount default), so the JV list and its printed report show the
+            rounded figure. */}
+        <div className="col-span-2">
+          <RoundOffField
+            id="jv_round_off"
+            payable={Number(debitAmount) || 0}
+            label="Round Off (added to Debit Amount)"
+            hint="Rounds this voucher to an even figure — e.g. +0.25 on ₹14,999.75 makes it ₹15,000.00."
+            onValueChange={setRoundOff}
           />
         </div>
         <div>

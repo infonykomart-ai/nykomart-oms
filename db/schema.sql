@@ -1776,7 +1776,12 @@ CREATE TABLE debit_notes (
   -- reference debit_amount directly instead.
   cgst_2_5pct                                 numeric(14,2) GENERATED ALWAYS AS (debit_amount * 0.025) STORED,
   sgst_2_5pct                                  numeric(14,2) GENERATED ALWAYS AS (debit_amount * 0.025) STORED,
-  total_amount                                  numeric(14,2) GENERATED ALWAYS AS (debit_amount * 1.05) STORED,
+  -- 2026-10-29: signed round-figure adjustment, added to the note's total
+  -- (see db/2026-10-29-round-off-all-documents.sql). debit_amount stays the
+  -- pre-GST agreed amount, so the 5% GST is not charged on the rounding.
+  round_off_amt                                numeric(8,2) NOT NULL DEFAULT 0
+                                                 CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
+  total_amount                                  numeric(14,2) GENERATED ALWAYS AS (debit_amount * 1.05 + round_off_amt) STORED,
   remark                                          text,
   created_at                                       timestamptz NOT NULL DEFAULT now()
 );
@@ -1814,6 +1819,13 @@ CREATE TABLE credit_notes (
   invoice_value_usd                              numeric(14,2),
   invoice_value_inr                               numeric(14,2),
   refund_amount                                     numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-10-29: signed round-figure adjustment ALREADY included in
+  -- refund_amount — pre-round-off refund = refund_amount - round_off_amt.
+  -- The app stores the rounded net so every reader of refund_amount (list,
+  -- register, A4 sheet, Bill Payment, ledger, statement) reflects it with no
+  -- extra arithmetic. See db/2026-10-29-round-off-all-documents.sql.
+  round_off_amt                                      numeric(8,2) NOT NULL DEFAULT 0
+                                                       CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   refund_amt_usd                                      numeric(14,2),
   refund_amt_inr                                        numeric(14,2),
   credit_note_status                                      text,     -- old "CREDIT NOTE" column (free text status)
@@ -1899,7 +1911,12 @@ CREATE TABLE internal_invoices (
   rate                                 numeric(14,2) NOT NULL,
   amount                                 numeric(14,2) GENERATED ALWAYS AS (qty * rate) STORED,
   gst_18pct                                numeric(14,2) GENERATED ALWAYS AS (qty * rate * 0.18) STORED,
-  total_amount                               numeric(14,2) GENERATED ALWAYS AS (qty * rate * 1.18) STORED,
+  -- 2026-10-29: signed round-figure adjustment, added to the invoice total
+  -- (see db/2026-10-29-round-off-all-documents.sql). GST still applies to
+  -- qty × rate only.
+  round_off_amt                             numeric(8,2) NOT NULL DEFAULT 0
+                                              CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
+  total_amount                               numeric(14,2) GENERATED ALWAYS AS (qty * rate * 1.18 + round_off_amt) STORED,
   prepared_by_employee_id                      uuid REFERENCES employees(id),
   remark                                         text,
   created_at                                       timestamptz NOT NULL DEFAULT now(),
@@ -2546,6 +2563,11 @@ CREATE TABLE journal_vouchers (
   vendor_invoice_no        text,
   invoice_date              date,
   debit_amount               numeric(14,2) NOT NULL DEFAULT 0,
+  -- 2026-10-29: signed round-figure adjustment ALREADY included in
+  -- debit_amount — pre-round-off debit = debit_amount - round_off_amt.
+  -- See db/2026-10-29-round-off-all-documents.sql.
+  round_off_amt               numeric(8,2) NOT NULL DEFAULT 0
+                                CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
   -- Manual/fallback Passed Amount — when bill_pass_register_id is set, the
   -- report page shows the LIVE bill_pass_register.to_be_pay instead (nets
   -- out any linked Debit/Credit Note); this column is what a manual/

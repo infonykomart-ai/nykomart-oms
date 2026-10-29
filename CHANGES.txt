@@ -1,3 +1,63 @@
+ROUND OFF — AB HAR INVOICE / BILL / NOTE / VOUCHER ME (SINGLE + MULTIPLE ENTRY)
+(2026-10-29n)
+======================================================================
+
+SQL: db/2026-10-29-round-off-all-documents.sql (idempotent) — schema.sql me
+bhi fold kar diya gaya hai.
+
+PROBLEM: "har section me jaha invoice payment bills jaha par bhi ho chahe
+multiple entry ho chahe single entry ho round off ka option ho or roundoff
+karne par sabhi jagh par reflect ho jaye." Purchase / Printing / Courier
+(Freight) / Duty & Tax / Washing me round off pehle se tha; baaki jagah
+nahi tha, aur purchase bill ke MULTIPLE entry wale dono forms (Multiple
+Orders, One Invoice / Multiple Items, One Invoice) me round-off control hi
+nahi tha.
+
+AB:
+
+  • MULTIPLE ENTRY — Purchase Bill ke dono multi forms me invoice-level
+    Round Off (+/−, quick ₹ round figures, "before → after" preview).
+    Figure poore invoice par EK baar lagta hai (pehli row par store hota
+    hai) — is liye Bill Payment / Party Ledger / reports me bhi ek hi baar
+    judta hai, per-PO/per-item nahi.
+  • CREDIT NOTE (create + edit) — Round Off, Refund Amount me jud kar
+    save hota hai; register / A4 sheet / printed report / Bill Payment /
+    ledger / statement sab rounded figure padhte hain.
+  • DEBIT NOTE (create + edit) — Round Off note ke total (Debit Amount +
+    5% GST) par; generated total_amount me jud jata hai, is liye register,
+    report, A4 sheet sab me same rounded total.
+  • INTERNAL INVOICE (create + edit) — Round Off invoice total (Qty × Rate
+    + 18% GST) par; generated total_amount me judta hai.
+  • JOURNAL VOUCHER (create + edit) — Round Off Debit Amount me judta hai;
+    Passed Amount (jo Debit Amount se default hota hai) bhi rounded figure
+    dikhata hai.
+  • Har jagah ek hi control: minus/plus toggle, 1/5/10/50/100 ke round
+    figures, clear, aur "payable before → after (round off +/−x)" preview.
+    Shared rules src/lib/round-off.ts me.
+  • Bonus fix (same forms): "No GST" pick par preview 5% dikha raha tha
+    jabki save 0% hota tha — ab preview wahi dikhata hai jo save hota hai.
+
+NAYA:
+  N src/lib/round-off.ts
+  N db/2026-10-29-round-off-all-documents.sql
+
+BADLA:
+  M src/app/dashboard/documents/actions.ts            (save/update: round_off_amt + multi invoice round-off)
+  M src/app/dashboard/documents/purchase-bill-multi-form.tsx
+  M src/app/dashboard/documents/purchase-bill-multi-items-form.tsx
+  M src/app/dashboard/documents/credit-note-form.tsx / credit-note-edit-form.tsx
+  M src/app/dashboard/documents/debit-note-form.tsx / debit-note-edit-form.tsx
+  M src/app/dashboard/documents/internal-invoice-form.tsx / internal-invoice-edit-form.tsx
+  M src/app/dashboard/documents/journal-voucher-form.tsx / journal-voucher-edit-form.tsx
+  M src/app/dashboard/documents/round-off-field.tsx   (onValueChange + shared rules)
+  M src/app/dashboard/documents/doc-entry-a4.tsx      (Round Off line + rounded totals)
+  M src/app/dashboard/documents/page.tsx              (naye columns select/map)
+  M src/app/dashboard/documents/credit-notes/[id]/report/page.tsx
+  M src/app/dashboard/documents/debit-notes/[id]/report/page.tsx
+  M src/app/dashboard/documents/internal-invoices/[id]/report/page.tsx
+  M src/types/database.ts                             (round_off_amt columns)
+  M db/schema.sql
+
 DEBIT / CREDIT NOTE — PO / ORDER NO. AB DIKHTA HAI + PO SE FILTER
 (2026-10-29m)
 ======================================================================

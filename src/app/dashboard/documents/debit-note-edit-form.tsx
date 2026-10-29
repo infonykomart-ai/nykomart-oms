@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { updateDebitNote, type DocEditState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { RoundOffField } from "./round-off-field";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -26,6 +27,8 @@ export type EditableDebitNote = {
   po_rate: number | null;
   billed_rate: number | null;
   debit_amount: number;
+  /** 2026-10-29 — signed round-off on the note total (incl. 5% GST). */
+  round_off_amt: number;
   remark: string | null;
 };
 
@@ -122,6 +125,14 @@ export function DebitNoteEditForm({
         <div>
           <label className={labelClass} htmlFor={`dn_amount_${note.id}`}>Debit Amount *</label>
           <input id={`dn_amount_${note.id}`} name="debit_amount" type="number" step="0.01" required defaultValue={note.debit_amount} className={inputClass} />
+        </div>
+        <div className="col-span-2">
+          <RoundOffField
+            id={`dn_round_off_${note.id}`}
+            payable={Math.round(note.debit_amount * 1.05 * 100) / 100}
+            defaultValue={note.round_off_amt}
+            label="Round Off (added to the note total incl. 5% GST)"
+          />
         </div>
       </div>
 

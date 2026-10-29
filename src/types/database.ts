@@ -3267,6 +3267,7 @@ export type Database = {
           invoice_value_usd: number | null;
           invoice_value_inr: number | null;
           refund_amount: number;
+          round_off_amt: number;
           refund_amt_usd: number | null;
           refund_amt_inr: number | null;
           credit_note_status: string | null;
@@ -3302,6 +3303,7 @@ export type Database = {
           invoice_value_usd?: number | null;
           invoice_value_inr?: number | null;
           refund_amount?: number;
+          round_off_amt?: number;
           refund_amt_usd?: number | null;
           refund_amt_inr?: number | null;
           credit_note_status?: string | null;
@@ -3337,6 +3339,7 @@ export type Database = {
           invoice_value_usd?: number | null;
           invoice_value_inr?: number | null;
           refund_amount?: number;
+          round_off_amt?: number;
           refund_amt_usd?: number | null;
           refund_amt_inr?: number | null;
           credit_note_status?: string | null;
@@ -3618,6 +3621,7 @@ export type Database = {
           po_rate: number | null;
           billed_rate: number | null;
           debit_amount: number;
+          round_off_amt: number;
           cgst_2_5pct: number | null;
           sgst_2_5pct: number | null;
           total_amount: number | null;
@@ -3643,6 +3647,7 @@ export type Database = {
           po_rate?: number | null;
           billed_rate?: number | null;
           debit_amount?: number;
+          round_off_amt?: number;
           cgst_2_5pct?: number | null;
           sgst_2_5pct?: number | null;
           total_amount?: number | null;
@@ -3668,6 +3673,7 @@ export type Database = {
           po_rate?: number | null;
           billed_rate?: number | null;
           debit_amount?: number;
+          round_off_amt?: number;
           cgst_2_5pct?: number | null;
           sgst_2_5pct?: number | null;
           total_amount?: number | null;
@@ -5698,6 +5704,7 @@ export type Database = {
           base_currency: string;
           quote_currency: string;
           rate: number;
+          round_off_amt: number;
           source: string;
           market_updated_at: string | null;
           fetched_at: string;
@@ -5714,6 +5721,7 @@ export type Database = {
           base_currency?: string;
           quote_currency?: string;
           rate?: number;
+          round_off_amt?: number;
           source?: string;
           market_updated_at?: string | null;
           fetched_at?: string;
@@ -6416,6 +6424,7 @@ export type Database = {
           description: string;
           qty: number;
           rate: number;
+          round_off_amt: number;
           amount: number | null;
           gst_18pct: number | null;
           total_amount: number | null;
@@ -6433,6 +6442,7 @@ export type Database = {
           description: string;
           qty: number;
           rate: number;
+          round_off_amt?: number;
           amount?: number | null;
           gst_18pct?: number | null;
           total_amount?: number | null;
@@ -6450,6 +6460,7 @@ export type Database = {
           description?: string;
           qty?: number;
           rate?: number;
+          round_off_amt?: number;
           amount?: number | null;
           gst_18pct?: number | null;
           total_amount?: number | null;
@@ -6521,6 +6532,7 @@ export type Database = {
           vendor_invoice_no: string | null;
           invoice_date: string | null;
           debit_amount: number;
+          round_off_amt: number;
           passed_amount: number | null;
           item_details: string | null;
           qty: number | null;
@@ -6541,6 +6553,7 @@ export type Database = {
           vendor_invoice_no?: string | null;
           invoice_date?: string | null;
           debit_amount?: number;
+          round_off_amt?: number;
           passed_amount?: number | null;
           item_details?: string | null;
           qty?: number | null;
@@ -6561,6 +6574,7 @@ export type Database = {
           vendor_invoice_no?: string | null;
           invoice_date?: string | null;
           debit_amount?: number;
+          round_off_amt?: number;
           passed_amount?: number | null;
           item_details?: string | null;
           qty?: number | null;

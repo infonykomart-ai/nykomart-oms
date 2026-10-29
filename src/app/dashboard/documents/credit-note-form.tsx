@@ -6,6 +6,7 @@ import { OrderLookupBox } from "./order-lookup-box";
 import { BillLookupSelect } from "./bill-lookup-select";
 import { PartyBillPicker } from "./party-bill-picker";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { RoundOffField } from "./round-off-field";
 // 2026-09-19 (audit fix, item C1) — same GST slab vocabulary the Bill
 // Payment panel's own CN dialog already uses (src/app/dashboard/bill-
 // payment/credit-note-kinds.ts), reused here so the Rate Difference
@@ -317,6 +318,18 @@ export function CreditNoteForm({
               setRefundAmountManual(e.target.value);
             }}
             className={inputClass}
+          />
+        </div>
+        {/* 2026-10-29 — "har section me ... round off ka option ho": the
+            signed round-off is stored beside the Refund Amount and the saved
+            refund_amount is the ROUNDED net, so every list, register, sheet,
+            ledger and report reads the rounded figure with no extra work. */}
+        <div className="col-span-2">
+          <RoundOffField
+            id="cn_round_off"
+            payable={Number(refundAmountInput) || 0}
+            label="Round Off (added to Refund Amount)"
+            hint="Rounds the credit note to an even figure — e.g. +0.40 on ₹1,999.60 makes it ₹2,000.00."
           />
         </div>
         <div>

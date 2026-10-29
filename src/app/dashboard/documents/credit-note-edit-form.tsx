@@ -2,6 +2,8 @@
 
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { updateCreditNote, type DocEditState } from "./actions";
+import { RoundOffField } from "./round-off-field";
+import { baseFromRounded } from "@/lib/round-off";
 
 const initialState: DocEditState = { error: null, success: false };
 const inputClass =
@@ -24,6 +26,8 @@ export type EditableCreditNote = {
   invoice_value_usd: number | null;
   invoice_value_inr: number | null;
   refund_amount: number;
+  /** 2026-10-29 — signed round-off already included in refund_amount. */
+  round_off_amt: number;
   refund_amt_usd: number | null;
   refund_amt_inr: number | null;
   credit_note_status: string | null;
@@ -140,7 +144,29 @@ export function CreditNoteEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`cn_refund_amount_${note.id}`}>Refund Amount *</label>
-          <input id={`cn_refund_amount_${note.id}`} name="refund_amount" type="number" step="0.01" required defaultValue={note.refund_amount} className={inputClass} />
+          <input
+            id={`cn_refund_amount_${note.id}`}
+            name="refund_amount"
+            type="number"
+            step="0.01"
+            required
+            defaultValue={baseFromRounded(note.refund_amount, note.round_off_amt)}
+            className={inputClass}
+          />
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            Saved refund total: ₹{note.refund_amount.toFixed(2)} (round off already included)
+          </p>
+        </div>
+        {/* 2026-10-29 — the stored refund_amount already includes this
+            round-off, so the field above is prefilled with the pre-round-off
+            amount and the control re-applies the same signed figure. */}
+        <div className="col-span-2">
+          <RoundOffField
+            id={`cn_round_off_${note.id}`}
+            payable={baseFromRounded(note.refund_amount, note.round_off_amt)}
+            defaultValue={note.round_off_amt}
+            label="Round Off (added to Refund Amount)"
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor={`cn_refund_usd_${note.id}`}>Refund Amt (USD)</label>

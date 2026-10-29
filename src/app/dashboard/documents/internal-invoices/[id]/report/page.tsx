@@ -32,9 +32,8 @@ async function InternalInvoiceReportInner({ id }: { id: string }) {
 
   const { data: invoiceRaw } = await supabase
     .from("internal_invoices")
-    .select(
-      "id, from_company_id, to_company_id, invoice_no, invoice_date, description, qty, rate, amount, gst_18pct, total_amount, prepared_by_employee_id, remark"
-    )
+    // "*" so a pending db/2026-10-29 round-off migration can never 404 this sheet.
+    .select("*")
     .eq("id", id)
     .maybeSingle();
   if (!invoiceRaw) notFound();
@@ -46,6 +45,8 @@ async function InternalInvoiceReportInner({ id }: { id: string }) {
     amount: Number(invoiceRaw.amount),
     gst_18pct: Number(invoiceRaw.gst_18pct),
     total_amount: Number(invoiceRaw.total_amount),
+    // 2026-10-29 — signed round-off already included in total_amount.
+    round_off_amt: Number(invoiceRaw.round_off_amt ?? 0),
   };
 
   const [{ data: fromCompany }, { data: profile }, { data: toCompany }, preparedByResult] = await Promise.all([

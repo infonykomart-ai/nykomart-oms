@@ -91,13 +91,14 @@ export function PurchaseBillForm({
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
-  // Payable BEFORE round-off, exactly as g_total_plus_gst computes it
+  // Payable BEFORE round-off, exactly as the saved total computes it
   // (qty × sq_feet × rate + GST), so the offered round figures are the ones
-  // the vendor's invoice actually lands on. Passed to the shared round-off
-  // control, which owns the round_off_amt value itself.
+  // the vendor's invoice actually lands on. A null pick is "No GST" and saves
+  // 0% (2026-10-20 rule) — the preview must not add the old 5% default.
+  // Passed to the shared round-off control, which owns round_off_amt itself.
   const preRoundAmount =
     (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0);
-  const totalGstPct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+  const totalGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
   const preRoundPayable = preRoundAmount + Math.round(preRoundAmount * totalGstPct) / 100;
 
   function handleFound(r: OrderLookup) {

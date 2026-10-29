@@ -38,6 +38,7 @@ import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
+import { round2 } from "@/lib/round-off";
 import { resolveOrderByReference, sanitizeSearchTerm } from "@/lib/orders/find-order";
 // 2026-10-21 — the field-by-field diff written to the audit chain (pure, so it
 // is testable outside this server-action module).
@@ -206,6 +207,8 @@ type CreditNoteParams = {
   invoiceValueUsd: number | null;
   invoiceValueInr: number | null;
   refundAmount: number;
+  /** 2026-10-29 — signed round-off, already folded into the stored refund_amount. */
+  roundOffAmt?: number;
   refundAmtUsd: number | null;
   refundAmtInr: number | null;
   creditNoteStatus: string | null;
@@ -282,9 +285,11 @@ async function saveCreditNoteCore(
     return { error: "GST rate must be one of 2.5, 3, 4, 6 or 9 (or leave blank for no GST).", id: null, docNo: null };
   }
 
-  const { data, error } = await supabase
-    .from("credit_notes")
-    .insert({
+  // 2026-10-29 — round_off_amt is a NEW column (db/2026-10-29-round-off-
+  // all-documents.sql). Same rule as every optional column in this app: if
+  // that file has not been run yet, the document must still save — the
+  // round-off is simply dropped, never the whole entry.
+  const payload = {
       company_id: p.companyId,
       store_id: p.storeId,
       credit_note_date: p.creditNoteDate,
@@ -297,7 +302,12 @@ async function saveCreditNoteCore(
       invoice_no: p.invoiceNo,
       invoice_value_usd: p.invoiceValueUsd,
       invoice_value_inr: p.invoiceValueInr,
-      refund_amount: p.refundAmount,
+      // 2026-10-29 — refund_amount stores the ROUNDED net (base + round-off)
+      // so every existing reader (register, A4 sheet, Bill Payment, ledger,
+      // statement, reports) reflects the round-off with no extra arithmetic;
+      // round_off_amt keeps the adjustment itself for display / edit.
+      refund_amount: round2(p.refundAmount + (p.roundOffAmt ?? 0)),
+      round_off_amt: p.roundOffAmt ?? 0,
       refund_amt_usd: p.refundAmtUsd,
       refund_amt_inr: p.refundAmtInr,
       credit_note_status: p.creditNoteStatus,
@@ -312,9 +322,10 @@ async function saveCreditNoteCore(
       cn_kind: (p.cnKind as "buyer_refund" | "supplier" | null) ?? null,
       created_by_employee_id: employee.id,
       remark: p.remark,
-    })
-    .select("id, cn_no")
-    .single();
+  };
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("credit_notes").insert(row).select("id, cn_no").single()
+  );
 
   if (error || !data) return { error: `Failed to save Credit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
 
@@ -358,6 +369,7 @@ export async function saveCreditNote(_prev: DocFormState, formData: FormData): P
     invoiceValueUsd: numOrNull(formData, "invoice_value_usd"),
     invoiceValueInr: numOrNull(formData, "invoice_value_inr"),
     refundAmount: numOrZero(formData, "refund_amount"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
     refundAmtUsd: numOrNull(formData, "refund_amt_usd"),
     refundAmtInr: numOrNull(formData, "refund_amt_inr"),
     creditNoteStatus: strOrNull(formData, "credit_note_status"),
@@ -721,6 +733,8 @@ type DebitNoteParams = {
   poRate: number | null;
   billedRate: number | null;
   debitAmount: number;
+  /** 2026-10-29 — signed round-off; total_amount = debit_amount * 1.05 + this. */
+  roundOffAmt?: number;
   remark: string | null;
   // 2026-08-27 — "kisi bill me agar credit debit adjust karna pade kisi
   // dusre invocie me to vo bhi hona chahiye": a note's amount can be
@@ -807,9 +821,11 @@ async function saveDebitNoteCore(
       : p.reason.trim()
     : p.particulars;
 
-  const { data, error } = await supabase
-    .from("debit_notes")
-    .insert({
+  // 2026-10-29 — round_off_amt is a NEW column (db/2026-10-29-round-off-
+  // all-documents.sql). Same rule as every optional column in this app: if
+  // that file has not been run yet, the document must still save — the
+  // round-off is simply dropped, never the whole entry.
+  const payload = {
       company_id: p.companyId,
       debit_note_date: p.debitNoteDate,
       against_invoice_bill_no: againstNo,
@@ -825,10 +841,12 @@ async function saveDebitNoteCore(
       po_rate: p.poRate,
       billed_rate: p.billedRate,
       debit_amount: debitAmount,
+      round_off_amt: p.roundOffAmt ?? 0,
       remark: p.remark,
-    })
-    .select("id, debit_note_no")
-    .single();
+  };
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("debit_notes").insert(row).select("id, debit_note_no").single()
+  );
 
   if (error || !data) return { error: `Failed to save Debit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
 
@@ -898,6 +916,7 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     poRate: numOrNull(formData, "po_rate"),
     billedRate: numOrNull(formData, "billed_rate"),
     debitAmount: numOrZero(formData, "debit_amount"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
     remark: strOrNull(formData, "remark"),
     adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
     adjustAmount: numOrNull(formData, "adjust_amount"),
@@ -1019,20 +1038,24 @@ export async function saveInternalInvoice(_prev: DocFormState, formData: FormDat
   if (!description) return initialFail("Description is required.");
   if (!qty || !rate) return initialFail("Qty and Rate are required.");
 
-  const { data, error } = await supabase
-    .from("internal_invoices")
-    .insert({
+  // 2026-10-29 — round_off_amt is a NEW column (db/2026-10-29-round-off-
+  // all-documents.sql). Same rule as every optional column in this app: if
+  // that file has not been run yet, the document must still save — the
+  // round-off is simply dropped, never the whole entry.
+  const payload = {
       from_company_id: fromCompanyId,
       to_company_id: toCompanyId,
       invoice_date: invoiceDate,
       description,
       qty,
       rate,
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       prepared_by_employee_id: employee.id,
       remark: strOrNull(formData, "remark"),
-    } as never)
-    .select("id, invoice_no")
-    .single();
+  };
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("internal_invoices").insert(row as never).select("id, invoice_no").single()
+  );
 
   if (error || !data) return initialFail(`Failed to save Internal Invoice: ${error?.message ?? "unknown error"}`);
   revalidatePath("/dashboard/documents");
@@ -1069,9 +1092,7 @@ export async function updateCreditNote(_prev: DocEditState, formData: FormData):
   const creditNoteDate = str(formData, "credit_note_date");
   if (!creditNoteDate) return { error: "Credit Note Date is required.", success: false };
 
-  const { error } = await supabase
-    .from("credit_notes")
-    .update({
+  const payload = {
       store_id: strOrNull(formData, "store_id"),
       credit_note_date: creditNoteDate,
       item_id: strOrNull(formData, "item_id"),
@@ -1082,7 +1103,10 @@ export async function updateCreditNote(_prev: DocEditState, formData: FormData):
       invoice_no: strOrNull(formData, "invoice_no"),
       invoice_value_usd: numOrNull(formData, "invoice_value_usd"),
       invoice_value_inr: numOrNull(formData, "invoice_value_inr"),
-      refund_amount: numOrZero(formData, "refund_amount"),
+      // Same rounded-net rule as the create path above — the form submits the
+      // pre-round-off amount, the stored refund_amount includes the round-off.
+      refund_amount: round2(numOrZero(formData, "refund_amount") + numOrZero(formData, "round_off_amt")),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       refund_amt_usd: numOrNull(formData, "refund_amt_usd"),
       refund_amt_inr: numOrNull(formData, "refund_amt_inr"),
       credit_note_status: strOrNull(formData, "credit_note_status"),
@@ -1095,8 +1119,10 @@ export async function updateCreditNote(_prev: DocEditState, formData: FormData):
       qty: numOrNull(formData, "qty"),
       po_rate: numOrNull(formData, "po_rate"),
       billed_rate: numOrNull(formData, "billed_rate"),
-    })
-    .eq("id", id);
+  };
+  const { error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("credit_notes").update(row).eq("id", id)
+  );
 
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
@@ -1141,9 +1167,7 @@ export async function updateDebitNote(_prev: DocEditState, formData: FormData): 
   if (!debitNoteDate) return { error: "Debit Note Date is required.", success: false };
   if (!partyId) return { error: "Select a party.", success: false };
 
-  const { error } = await supabase
-    .from("debit_notes")
-    .update({
+  const payload = {
       debit_note_date: debitNoteDate,
       against_invoice_bill_no: strOrNull(formData, "against_invoice_bill_no"),
       party_id: partyId,
@@ -1156,9 +1180,12 @@ export async function updateDebitNote(_prev: DocEditState, formData: FormData): 
       po_rate: numOrNull(formData, "po_rate"),
       billed_rate: numOrNull(formData, "billed_rate"),
       debit_amount: numOrZero(formData, "debit_amount"),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       remark: strOrNull(formData, "remark"),
-    })
-    .eq("id", id);
+  };
+  const { error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("debit_notes").update(row).eq("id", id)
+  );
 
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
@@ -1258,16 +1285,17 @@ export async function updateInternalInvoice(_prev: DocEditState, formData: FormD
   if (!description) return { error: "Description is required.", success: false };
   if (!qty || !rate) return { error: "Qty and Rate are required.", success: false };
 
-  const { error } = await supabase
-    .from("internal_invoices")
-    .update({
+  const payload = {
       invoice_date: invoiceDate,
       description,
       qty,
       rate,
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       remark: strOrNull(formData, "remark"),
-    } as never)
-    .eq("id", id);
+  };
+  const { error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("internal_invoices").update(row as never).eq("id", id)
+  );
 
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
@@ -2009,6 +2037,11 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
   const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
   const gstType = gstTypeUnion(strOrNull(formData, "gst_type"));
   const linesRaw = str(formData, "lines_json");
+  // 2026-10-29 — invoice-level round-off (the form offers it once, against the
+  // whole invoice total). It is stored on the FIRST row only: every screen
+  // sums the invoice group totals (lib/bill-grouping.ts), so the invoice is
+  // rounded exactly once instead of once per PO.
+  const invoiceRoundOff = numOrZero(formData, "round_off_amt");
 
   if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
   if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", results: null };
@@ -2023,7 +2056,8 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
   if (!Array.isArray(lines) || lines.length === 0) return { error: "Add at least one PO/RF/RG order.", results: null };
 
   const results: PurchaseBillMultiState["results"] = [];
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const result = await savePurchaseBillCore(employee, supabase, {
       vendorPartyId,
       vendorInvoiceNo,
@@ -2036,10 +2070,9 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
       orderId: line.orderId,
       gstRatePct,
       gstType,
-      // Round Off isn't offered on the multi-PO form — one shared invoice
-      // becomes several rows here, and a single round-off figure can't be
-      // unambiguously split across them (see PurchaseBillParams comment).
-      roundOffAmt: 0,
+      // 2026-10-29 — the one invoice-level round-off rides on the first row;
+      // the group total (what Bill Payment posts) then includes it once.
+      roundOffAmt: i === 0 ? invoiceRoundOff : 0,
     });
     results!.push({ orderId: line.orderId, ok: !result.error, docNo: result.docNo, error: result.error });
   }
@@ -2089,6 +2122,9 @@ export async function savePurchaseBillMultiItems(
   const gstRatePct = strOrNull(formData, "gst_rate_pct") ? Number(str(formData, "gst_rate_pct")) : null;
   const gstType = gstTypeUnion(strOrNull(formData, "gst_type"));
   const itemsRaw = str(formData, "items_json");
+  // 2026-10-29 — same invoice-level round-off as the multi-PO form above:
+  // stored once, on the first item row, because every total sums the group.
+  const invoiceRoundOff = numOrZero(formData, "round_off_amt");
 
   if (!vendorPartyId) return { error: "Select a vendor party.", results: null };
   if (!vendorInvoiceNo) return { error: "Vendor Invoice No. is required.", results: null };
@@ -2117,10 +2153,9 @@ export async function savePurchaseBillMultiItems(
       orderId: null,
       gstRatePct,
       gstType,
-      // Round Off isn't offered here, same reasoning as Multiple-Orders
-      // above — one shared invoice becomes several rows; a single
-      // round-off figure can't be unambiguously split across them.
-      roundOffAmt: 0,
+      // 2026-10-29 — same rule as Multiple-Orders: the invoice's round-off
+      // is stored on the first item row only.
+      roundOffAmt: i === 0 ? invoiceRoundOff : 0,
     });
     results!.push({
       index: i,
@@ -4107,6 +4142,8 @@ type JournalVoucherParams = {
   vendorInvoiceNo: string | null;
   invoiceDate: string | null;
   debitAmount: number;
+  /** 2026-10-29 — signed round-off, already folded into the stored debit_amount. */
+  roundOffAmt?: number;
   passedAmount: number | null;
   itemDetails: string | null;
   qty: number | null;
@@ -4126,16 +4163,21 @@ async function saveJournalVoucherCore(
   if (!p.partyId) return { error: "Select a party (vendor).", id: null, docNo: null };
   if (!p.jvDate) return { error: "JV Date is required.", id: null, docNo: null };
 
-  const { data, error } = await supabase
-    .from("journal_vouchers")
-    .insert({
+  // 2026-10-29 — round_off_amt is a NEW column (db/2026-10-29-round-off-
+  // all-documents.sql). Same rule as every optional column in this app: if
+  // that file has not been run yet, the document must still save — the
+  // round-off is simply dropped, never the whole entry.
+  const payload = {
       company_id: p.companyId,
       jv_date: p.jvDate,
       bill_pass_register_id: p.billPassRegisterId,
       party_id: p.partyId,
       vendor_invoice_no: p.vendorInvoiceNo,
       invoice_date: p.invoiceDate,
-      debit_amount: p.debitAmount,
+      // Same rounded-net rule as Credit Note: debit_amount stores the rounded
+      // figure, round_off_amt records the adjustment it includes.
+      debit_amount: round2(p.debitAmount + (p.roundOffAmt ?? 0)),
+      round_off_amt: p.roundOffAmt ?? 0,
       passed_amount: p.passedAmount,
       item_details: p.itemDetails,
       qty: p.qty,
@@ -4144,9 +4186,10 @@ async function saveJournalVoucherCore(
       particulars: p.particulars,
       remark: p.remark,
       created_by_employee_id: employee.id,
-    })
-    .select("id, jv_no")
-    .single();
+  };
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("journal_vouchers").insert(row).select("id, jv_no").single()
+  );
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key")
@@ -4169,6 +4212,7 @@ export async function saveJournalVoucher(_prev: DocFormState, formData: FormData
     vendorInvoiceNo: strOrNull(formData, "vendor_invoice_no"),
     invoiceDate: strOrNull(formData, "invoice_date"),
     debitAmount: numOrZero(formData, "debit_amount"),
+    roundOffAmt: numOrZero(formData, "round_off_amt"),
     passedAmount: numOrNull(formData, "passed_amount"),
     itemDetails: strOrNull(formData, "item_details"),
     qty: numOrNull(formData, "qty"),
@@ -4197,13 +4241,12 @@ export async function updateJournalVoucherDetails(_prev: EditJournalVoucherState
     return { error: "Journal Voucher not found or you don't have access to this company.", success: false };
   }
 
-  const { error } = await supabase
-    .from("journal_vouchers")
-    .update({
+  const payload = {
       party_id: str(formData, "party_id"),
       vendor_invoice_no: strOrNull(formData, "vendor_invoice_no"),
       invoice_date: strOrNull(formData, "invoice_date"),
-      debit_amount: numOrZero(formData, "debit_amount"),
+      debit_amount: round2(numOrZero(formData, "debit_amount") + numOrZero(formData, "round_off_amt")),
+      round_off_amt: numOrZero(formData, "round_off_amt"),
       passed_amount: numOrNull(formData, "passed_amount"),
       item_details: strOrNull(formData, "item_details"),
       qty: numOrNull(formData, "qty"),
@@ -4211,8 +4254,10 @@ export async function updateJournalVoucherDetails(_prev: EditJournalVoucherState
       qlty: strOrNull(formData, "qlty"),
       particulars: strOrNull(formData, "particulars"),
       remark: strOrNull(formData, "remark"),
-    })
-    .eq("id", id);
+  };
+  const { error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
+    supabase.from("journal_vouchers").update(row).eq("id", id)
+  );
   if (error) return { error: error.message, success: false };
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };

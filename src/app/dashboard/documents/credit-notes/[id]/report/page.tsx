@@ -35,9 +35,8 @@ async function CreditNoteReportInner({ id }: { id: string }) {
 
   const { data: noteRaw } = await supabase
     .from("credit_notes")
-    .select(
-      "id, company_id, store_id, cn_no, vendor_cn_no, credit_note_date, order_id, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, debit_note_id, party_id, qty, po_rate, billed_rate, gst_rate_pct, awb_no, remark"
-    )
+    // "*" so a pending db/2026-10-29 round-off migration can never 404 this sheet.
+    .select("*")
     .eq("id", id)
     .maybeSingle();
   if (!noteRaw) notFound();
@@ -48,6 +47,8 @@ async function CreditNoteReportInner({ id }: { id: string }) {
     invoice_value_usd: noteRaw.invoice_value_usd != null ? Number(noteRaw.invoice_value_usd) : null,
     invoice_value_inr: noteRaw.invoice_value_inr != null ? Number(noteRaw.invoice_value_inr) : null,
     refund_amount: Number(noteRaw.refund_amount),
+    // 2026-10-29 — signed round-off already included in refund_amount.
+    round_off_amt: Number(noteRaw.round_off_amt ?? 0),
     refund_amt_usd: noteRaw.refund_amt_usd != null ? Number(noteRaw.refund_amt_usd) : null,
     refund_amt_inr: noteRaw.refund_amt_inr != null ? Number(noteRaw.refund_amt_inr) : null,
     // 2026-08-29 — vendor-side (Party) Rate Difference Calculator reference
@@ -190,6 +191,12 @@ async function CreditNoteReportInner({ id }: { id: string }) {
           </table>
 
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
+            {note.round_off_amt !== 0 && (
+              <div>
+                Refund before round off: ₹{(note.refund_amount - note.round_off_amt).toFixed(2)} · Round Off {note.round_off_amt > 0 ? "+" : "−"} ₹
+                {Math.abs(note.round_off_amt).toFixed(2)}
+              </div>
+            )}
             {note.refund_amt_usd != null && <div>Refund (USD): ${note.refund_amt_usd.toFixed(2)}</div>}
             {note.refund_amt_inr != null && <div>Refund (INR): ₹{note.refund_amt_inr.toFixed(2)}</div>}
             {note.refund_type && <div>Refund Type: {note.refund_type}</div>}

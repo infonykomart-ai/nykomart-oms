@@ -35,6 +35,7 @@ import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import type { PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
+import { RoundOffField } from "./round-off-field";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -182,6 +183,15 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
     if (!bulkRate.trim()) return;
     setOrders((prev) => prev.map((o) => ({ ...o, unitRateInput: bulkRate })));
   }
+
+  // 2026-10-29 — live invoice total for the round-off control. A null GST
+  // pick is "No GST" (the action saves 0%), so this preview matches exactly
+  // what gets stored; the starred `pct` below uses the same rule.
+  const invoiceGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+  const invoicePreRoundTotal = orders.reduce((sum, o) => {
+    const amount = (o.qty || 0) * (isPcs ? 1 : Number(o.sqFeetDisplay) || 0) * (Number(o.unitRateInput) || 0);
+    return sum + amount + Math.round(amount * invoiceGstPct) / 100;
+  }, 0);
 
   const linesJson = JSON.stringify(
     orders.map((o) => ({
@@ -351,7 +361,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
                 const qty = o.qty || 0;
                 const size = isPcs ? 1 : Number(o.sqFeetDisplay) || 0;
                 const amount = qty * size * (Number(o.unitRateInput) || 0);
-                const pct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+                const pct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
                 const gst = Math.round(amount * pct) / 100;
                 if (amount <= 0) return null;
                 return (
@@ -404,7 +414,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
           the end ("PHIR LAST ME TOTAL AAYE"). */}
       {orders.length > 0 &&
         (() => {
-          const pct = gstRatePct == null ? 5 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+          const pct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
           const lines = orders.map((o) => {
             const amount = (o.qty || 0) * (isPcs ? 1 : Number(o.sqFeetDisplay) || 0) * (Number(o.unitRateInput) || 0);
             const gst = Math.round(amount * pct) / 100;
@@ -446,6 +456,20 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
             </div>
           );
         })()}
+
+      {/* 2026-10-29 — "chahe multiple entry ho chahe single entry ho":
+          ONE round-off for the whole multi-PO invoice, offered against the
+          invoice total above. The action stores it on the invoice's first
+          row, so the invoice total (and everything that reads it — Bill
+          Payment, Party Ledger, reports) is rounded exactly once. */}
+      {orders.length > 0 && (
+        <RoundOffField
+          id="pbm_round_off"
+          payable={invoicePreRoundTotal}
+          label="Round Off (on the invoice total)"
+          hint="Rounds the WHOLE invoice once — e.g. +0.40 makes the payable an even figure. Saved on the invoice, not per PO."
+        />
+      )}
 
       <button
         type="submit"

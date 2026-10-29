@@ -3,6 +3,8 @@
 import { useActionState, useEffect } from "react";
 import { updateJournalVoucherDetails, type EditJournalVoucherState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
+import { RoundOffField } from "./round-off-field";
+import { baseFromRounded } from "@/lib/round-off";
 
 const initialState: EditJournalVoucherState = { error: null, success: false };
 const inputClass =
@@ -18,6 +20,8 @@ export type EditableJournalVoucher = {
   vendor_invoice_no: string | null;
   invoice_date: string | null;
   debit_amount: number;
+  /** 2026-10-29 — signed round-off already included in debit_amount. */
+  round_off_amt: number;
   passed_amount: number | null;
   item_details: string | null;
   qty: number | null;
@@ -83,7 +87,24 @@ export function JournalVoucherEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`jv_debit_amount_${jv.id}`}>Debit Amount *</label>
-          <input id={`jv_debit_amount_${jv.id}`} name="debit_amount" type="number" step="0.01" required defaultValue={jv.debit_amount} className={inputClass} />
+          <input
+            id={`jv_debit_amount_${jv.id}`}
+            name="debit_amount"
+            type="number"
+            step="0.01"
+            required
+            defaultValue={baseFromRounded(jv.debit_amount, jv.round_off_amt)}
+            className={inputClass}
+          />
+          <p className="mt-0.5 text-[11px] text-slate-500">Saved debit total: ₹{jv.debit_amount.toFixed(2)} (round off already included)</p>
+        </div>
+        <div className="col-span-2">
+          <RoundOffField
+            id={`jv_round_off_${jv.id}`}
+            payable={baseFromRounded(jv.debit_amount, jv.round_off_amt)}
+            defaultValue={jv.round_off_amt}
+            label="Round Off (added to Debit Amount)"
+          />
         </div>
         <div>
           <label className={labelClass} htmlFor={`jv_passed_amount_${jv.id}`}>

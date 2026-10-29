@@ -20,7 +20,7 @@
 // is entered. `payable` is the bill's own pre-round-off payable, computed by
 // the form from the fields the user is typing into, so the preview can never
 // disagree with what will be saved.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -32,6 +32,7 @@ export function RoundOffField({
   label = "Round Off",
   className,
   hint,
+  onValueChange,
 }: {
   /** Unique id prefix — bill edit forms render one per row. */
   id: string;
@@ -43,6 +44,12 @@ export function RoundOffField({
   className?: string;
   /** Extra line under the control (form-specific wording). */
   hint?: string;
+  /**
+   * 2026-10-29 — optional live value for a form that derives ANOTHER field
+   * from it (e.g. the Journal Voucher's Passed Amount defaults to the
+   * rounded Debit Amount). Called only when the value actually changes.
+   */
+  onValueChange?: (value: number) => void;
 }) {
   const start = Number(defaultValue) || 0;
   const [sign, setSign] = useState<1 | -1>(start < 0 ? -1 : 1);
@@ -53,6 +60,14 @@ export function RoundOffField({
   const rounded = Math.round(value * 100) / 100;
   const before = Number.isFinite(payable) ? Number(payable) : null;
   const after = before == null ? null : Math.round((before + rounded) * 100) / 100;
+
+  // Notify the parent only when the signed value changes (never during
+  // render, and never on an unrelated re-render).
+  const notify = onValueChange;
+  useEffect(() => {
+    notify?.(rounded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rounded]);
 
   const steps = [1, 5, 10, 50, 100];
 
