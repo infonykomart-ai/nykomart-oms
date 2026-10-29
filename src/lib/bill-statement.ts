@@ -160,6 +160,55 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
     .maybeSingle();
   if (!partyRow) return { ok: false, status: 404, error: "Vendor not found." };
 
+  // 2026-10-29e — THE MARKED BUG: the statement listed all 11 PO entries of a
+  // grouped Purchase Bill (₹31,433.43) while BILL SUMMARY said ₹1,008.00 and
+  // the toolbar showed BALANCE ₹1,008.00. Cause: a multi-item Purchase Bill is
+  // stored as ONE bill_pass_register row PER ITEM, and this loader read the
+  // financials of only the ONE row that was opened. The PO lines above were
+  // already resolved invoice-wide; the money below now is too.
+  //
+  // Same grouping key groupBills() uses (lib/bill-grouping.ts): source =
+  // purchase_bill + same company + same party + same vendor invoice number —
+  // restricted to that one source so a freight/duty/manual row that happens to
+  // reuse an invoice number is never folded in. Every other bill type has
+  // exactly one row per document and comes out unchanged (the group is just
+  // its own single row).
+  let ledgerRows: { id: string; total_amt: number | null; credit_note_amt: number | null; adj_amt: number | null; total_paid: number | null; balance_due: number | null }[] = [bill];
+  if (bill.source === "purchase_bill" && bill.vendor_invoice_no) {
+    const { data: groupRows } = await supabase
+      .from("bill_pass_register")
+      .select("id, total_amt, credit_note_amt, adj_amt, total_paid, balance_due, source, merged_into_bill_id")
+      .eq("company_id", bill.company_id)
+      .eq("party_id", bill.party_id)
+      .eq("vendor_invoice_no", bill.vendor_invoice_no);
+    const siblings = (groupRows ?? []).filter(
+      (r) => r.source === "purchase_bill" && !r.merged_into_bill_id && r.id !== bill.id
+    );
+    if (siblings.length > 0) {
+      ledgerRows = [
+        {
+          id: bill.id,
+          total_amt: bill.total_amt,
+          credit_note_amt: bill.credit_note_amt,
+          adj_amt: bill.adj_amt,
+          total_paid: bill.total_paid,
+          balance_due: bill.balance_due,
+        },
+        ...siblings,
+      ];
+    }
+  }
+  const ledgerIds = ledgerRows.map((r) => r.id);
+  const sumOverGroup = (field: "total_amt" | "credit_note_amt" | "adj_amt" | "total_paid" | "balance_due") =>
+    Math.round(ledgerRows.reduce((s, r) => s + Number(r[field] ?? 0), 0) * 100) / 100;
+  const groupTotals = {
+    total_amt: sumOverGroup("total_amt"),
+    credit_note_amt: sumOverGroup("credit_note_amt"),
+    adj_amt: sumOverGroup("adj_amt"),
+    total_paid: sumOverGroup("total_paid"),
+    balance_due: sumOverGroup("balance_due"),
+  };
+
   const [companyRes, profileRes, paymentsRes, adjustmentsRes, walletRes, companiesRes] = await Promise.all([
     supabase.from("companies").select("id, name, logo_url").eq("id", bill.company_id).maybeSingle(),
     supabase
@@ -170,17 +219,17 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
     supabase
       .from("bill_pass_register_payments")
       .select("id, amount, payment_date, payment_mode, reference_no, remark")
-      .eq("bill_pass_register_id", bill.id)
+      .in("bill_pass_register_id", ledgerIds)
       .order("payment_date", { ascending: true }),
     supabase
       .from("bill_pass_register_adjustments")
       .select("id, amount, remark, created_at, debit_note_id, credit_note_id")
-      .eq("bill_pass_register_id", bill.id)
+      .in("bill_pass_register_id", ledgerIds)
       .order("created_at", { ascending: true }),
     supabase
       .from("party_wallet_txns")
       .select("id, txn_type, direction, amount, txn_date, payment_mode, reference_no, remark")
-      .eq("bill_pass_register_id", bill.id)
+      .in("bill_pass_register_id", ledgerIds)
       .eq("party_id", bill.party_id)
       .order("txn_date", { ascending: true }),
     supabase.from("companies").select("id, name"),
@@ -199,8 +248,10 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
   const walletPaid = walletTxns.filter((w) => w.txn_type === "consume").reduce((s, w) => s + Number(w.amount), 0);
   const bankPaid = payments.reduce((s, p) => s + p.amount, 0);
   const settledTotal = bankPaid + walletPaid;
-  const outstanding = Math.max(Number(bill.balance_due ?? 0), 0);
-  const fullyPaid = Number(bill.balance_due ?? 0) <= 0.005;
+  // Invoice-wide balance (group-aware — see groupTotals above): this is the
+  // figure the summary block, the BALANCE toolbar button and the PDF share.
+  const outstanding = Math.max(groupTotals.balance_due, 0);
+  const fullyPaid = groupTotals.balance_due <= 0.005;
 
   // Source-aware sections. Follow-up fetches are manual (no embedded
   // joins) — the generated types' Relationships array has gone stale
@@ -353,11 +404,11 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
         invoice_type: bill.invoice_type,
         invoice_date: bill.invoice_date,
         invoice_recv_date: bill.invoice_recv_date,
-        total_amt: Number(bill.total_amt ?? 0),
-        credit_note_amt: Number(bill.credit_note_amt ?? 0),
-        adj_amt: Number(bill.adj_amt ?? 0),
-        total_paid: Number(bill.total_paid ?? 0),
-        balance_due: Number(bill.balance_due ?? 0),
+        total_amt: groupTotals.total_amt,
+        credit_note_amt: groupTotals.credit_note_amt,
+        adj_amt: groupTotals.adj_amt,
+        total_paid: groupTotals.total_paid,
+        balance_due: groupTotals.balance_due,
         due_date: bill.due_date,
         approval_status: bill.approval_status,
         remark: bill.remark,

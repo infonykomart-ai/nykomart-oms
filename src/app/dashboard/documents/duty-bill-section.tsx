@@ -706,7 +706,7 @@ function BulkAssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
                 value={r.roundOffAmt}
                 onChange={(e) => updateRow(i, { roundOffAmt: e.target.value })}
                 placeholder="Round off ±₹"
-                title="Is AWB ka round-off: + se payable badhega, − se ghatayega"
+                title="This AWB's round-off: + increases the payable, − reduces it"
                 className={inputClass}
               />
               <input value={r.remark} onChange={(e) => updateRow(i, { remark: e.target.value })} placeholder="Remark" className={inputClass} />

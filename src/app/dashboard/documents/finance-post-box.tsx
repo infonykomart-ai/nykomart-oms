@@ -21,6 +21,7 @@ import {
   type FinancePostState,
   type SimpleResult,
 } from "./actions";
+import { RoundOffField } from "./round-off-field";
 
 const initialPost: FinancePostState = { error: null, success: null };
 const initialMove: SimpleResult = { error: null, success: false };
@@ -111,7 +112,7 @@ export function PurchaseFinanceBox({
       <div className="mt-1.5 rounded-lg border border-green-200 bg-green-50/60 px-2.5 py-1.5 text-[11px]">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-medium text-green-800">
-            ✓ In Finance ledger · {companyName(current)} — Bill Payment / Party Ledger me isi company me dikh raha hai.
+            ✓ In Finance ledger · {companyName(current)} — showing in Bill Payment / Party Ledger under this same company.
           </span>
           <button
             type="button"
@@ -216,6 +217,18 @@ export function PurchaseFinanceBox({
               {postPending ? "Sending…" : "Confirm — Send to Finance"}
             </button>
           </div>
+          {/* 2026-10-29e — round-off belongs to this same moment: "kaha par
+              kare — bill pass me roundoff ho jayega kya?" The Amount above is
+              the invoice's gross; this signed figure is ADDED to it server-side
+              before the ledger row is written, so Purchase / Printing reach
+              Finance at the round figure too — same control Courier and Duty
+              now use. */}
+          <RoundOffField
+            id={`post_ro_${billIds[0] ?? "x"}`}
+            payable={Number(amount) || 0}
+            label="Round Off at Bill Pass"
+            hint="Applied to the amount posted to the Finance ledger — + rounds up, − rounds down."
+          />
           <p className="text-[10px] text-slate-500">
             One ledger entry is created for this whole vendor invoice ({billIds.length} item{billIds.length === 1 ? "" : "s"}), in the
             company picked above.
