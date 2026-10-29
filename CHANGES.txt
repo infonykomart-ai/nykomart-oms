@@ -1,3 +1,47 @@
+DEBIT / CREDIT NOTE PRINT: ORDER, PO NO., ITEM, QTY, RATE, AMOUNT, GST
+(2026-10-29f)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: Debit/Credit Note ka print sheet sirf apna amount dikhata tha —
+kis ORDER/PO ka hai, kya ITEM tha, qty, rate, amount, GST — kuch nahi.
+Wajah: note khud ye detail store hi nahi karta. Wo invoice (`bill_pass_
+register`) par hoti hai jise note adjust karta hai, aur item detail usse
+bhi aage `purchase_bills` me. Isliye sheet blank lagta tha.
+
+AB: naya resolver `src/lib/notes/note-source-lines.ts` poora chain chalta
+hai — note → adjustment → invoice → purchase item → order — aur sheet par
+"❝This note is for❞" block aata hai:
+
+      • PO / Order No. (jitne bhi order ho, comma se)
+      • har invoice ki line par: Invoice No., Date, PO No., ITEM, QTY,
+        Unit, RATE, Amount, GST % (+ GST amount), aur us invoice par kitna
+        DEBIT/CREDIT laga
+      • niche total — kitni invoices par ye note split hai
+
+Ye teeno jagah lagta hai:
+      • Debit Note / Credit Note ke /report pages (browser print/PDF)
+      • Credit Note ka A4 dialog (register se jo sheet khulti hai)
+      • Credit Note ka "📄 PDF" button (server-side PDF, doc-statement-pdf.tsx)
+
+CREDIT NOTE sheet par ye bhi joda (pehle stored hone ke baawajood print
+nahi hota tha): Party's CN No., AWB No., aur GST slab + CGST/SGST amount.
+
+Agar note bilkul flat amount hai (koi invoice/PO attach nahi) to sheet
+saaf-saaf likhta hai: "entered as a flat amount — no invoice, PO or item
+line is linked" — khali jagah chhod kar confusion nahi deta.
+
+Badlav (7 files + CHANGES): note-source-lines.ts (naya), note-source-lines-
+box.tsx (naya), doc-statement-document.tsx, doc-statement.ts,
+doc-statement-pdf.tsx, debit-notes/[id]/report, credit-notes/[id]/report.
+
+Verification: focused tsc exit 0, eslint --quiet exit 0. Asli DB par print
+nahi dekh sakta (yahan Supabase creds nahi) — pehla check: Debt Note
+register se ek note kholo, "This debit note is for" me PO No. + item +
+qty/rate/GST dikhna chahiye.
+
+
 MERGE RULE FIX + UNDO MERGE + DN/CN FULL LETTERHEAD + DEBIT NOTE REGISTER
 (2026-10-29e)
 ======================================================================

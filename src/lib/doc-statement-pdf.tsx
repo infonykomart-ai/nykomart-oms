@@ -7,6 +7,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import type { DocStatementData } from "@/lib/doc-statement";
+import type { NoteSourceInfo } from "@/lib/notes/note-source-lines";
 import { renderPdfToBuffer } from "@/lib/pdf/render";
 
 const styles = StyleSheet.create({
@@ -25,6 +26,12 @@ const styles = StyleSheet.create({
   italic: { fontStyle: "italic", marginTop: 6 },
   fieldRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 1.5, borderBottomWidth: 0.5, borderBottomColor: "#e5e7eb" },
   fieldLabel: { color: "#6b7280" },
+  // 2026-10-29f — "what this note is for" table (order/PO + invoice item lines)
+  srcTableHead: { flexDirection: "row", borderBottomWidth: 0.75, borderBottomColor: "#9ca3af", paddingBottom: 2, marginTop: 3 },
+  srcTh: { fontSize: 6.8, fontWeight: 700, color: "#6b7280", textTransform: "uppercase" },
+  srcRow: { flexDirection: "row", borderBottomWidth: 0.4, borderBottomColor: "#e5e7eb", paddingVertical: 2 },
+  srcTotal: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#111827", paddingTop: 3, marginTop: 2, fontWeight: 700 },
+  srcHint: { fontSize: 7.5, color: "#4b5563", marginBottom: 8 },
 });
 
 const dash = (v: string | number | null | undefined) => (v != null && `${v}`.trim() ? `${v}` : "-");
@@ -75,6 +82,63 @@ function Footer({ remark }: { remark?: string | null }) {
   );
 }
 
+/**
+ * 2026-10-29f — the invoice/PO/item lines behind a note.
+ * Kept next to the body (not in the React component) because react-pdf has its
+ * own primitives — same data, same wording, so the printed sheet and the PDF
+ * can never say different things.
+ */
+function NoteSourceBlock({ info, label }: { info: NoteSourceInfo; label: string }) {
+  if (info.lines.length === 0) {
+    return (
+      <Text style={styles.srcHint}>
+        Order / item reference: entered as a flat amount - no invoice, PO or item line is linked to it.
+      </Text>
+    );
+  }
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text style={styles.sectionTitle}>{label.toUpperCase()}</Text>
+      {info.orderRefs.length > 0 && <Text style={{ marginBottom: 2 }}>PO / Order No.: {info.orderRefs.join(", ")}</Text>}
+      <View style={styles.srcTableHead}>
+        <Text style={[styles.srcTh, { flex: 2 }]}>Invoice</Text>
+        <Text style={[styles.srcTh, { flex: 1.2 }]}>Date</Text>
+        <Text style={[styles.srcTh, { flex: 1.2 }]}>PO No.</Text>
+        <Text style={[styles.srcTh, { flex: 2.6 }]}>Item</Text>
+        <Text style={[styles.srcTh, { flex: 0.8, textAlign: "right" }]}>Qty</Text>
+        <Text style={[styles.srcTh, { flex: 0.8 }]}>Unit</Text>
+        <Text style={[styles.srcTh, { flex: 1.1, textAlign: "right" }]}>Rate</Text>
+        <Text style={[styles.srcTh, { flex: 1.2, textAlign: "right" }]}>Amount</Text>
+        <Text style={[styles.srcTh, { flex: 1.1, textAlign: "right" }]}>GST</Text>
+        <Text style={[styles.srcTh, { flex: 1.3, textAlign: "right" }]}>This Note</Text>
+      </View>
+      {info.lines.map((l, i) => (
+        <View key={`${l.billId ?? "x"}-${i}`} style={styles.srcRow}>
+          <Text style={{ flex: 2 }}>{l.invoiceNo}</Text>
+          <Text style={{ flex: 1.2 }}>{dash(l.invoiceDate)}</Text>
+          <Text style={{ flex: 1.2 }}>{l.poRefs.length ? l.poRefs.join(", ") : "-"}</Text>
+          <Text style={{ flex: 2.6 }}>{dash(l.item)}</Text>
+          <Text style={{ flex: 0.8, textAlign: "right" }}>{l.qty == null ? "-" : l.qty}</Text>
+          <Text style={{ flex: 0.8 }}>{dash(l.unit)}</Text>
+          <Text style={{ flex: 1.1, textAlign: "right" }}>{money(l.rate)}</Text>
+          <Text style={{ flex: 1.2, textAlign: "right" }}>{money(l.amount)}</Text>
+          <Text style={{ flex: 1.1, textAlign: "right" }}>{l.gstPctTotal == null ? "-" : `${l.gstPctTotal}%`}</Text>
+          <Text style={{ flex: 1.3, textAlign: "right" }}>{l.applied == null ? "-" : money(l.applied)}</Text>
+        </View>
+      ))}
+      {info.appliedTotal > 0 && (
+        <View style={styles.srcTotal}>
+          <Text style={{ flex: 9 }}>
+            Total on this note ({info.lines.filter((l) => l.applied != null).length} invoice
+            {info.lines.filter((l) => l.applied != null).length === 1 ? "" : "s"})
+          </Text>
+          <Text style={{ flex: 1.3, textAlign: "right" }}>{money(info.appliedTotal)}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function CreditNoteBody({ data }: { data: Extract<DocStatementData, { kind: "credit_note" }> }) {
   return (
     <>
@@ -94,6 +158,7 @@ function CreditNoteBody({ data }: { data: Extract<DocStatementData, { kind: "cre
           <Text>Status: {dash(data.creditNoteStatus)}</Text>
         </View>
       </View>
+      <NoteSourceBlock info={data.sourceLines} label="This credit note is for" />
       <View style={{ marginBottom: 10 }}>
         <Text style={styles.sectionTitle}>AMOUNT</Text>
         <Field label="Against Invoice" value={data.invoiceNo} />

@@ -10,6 +10,7 @@
 // live in doc-statement-actions.tsx.
 import { PrintArea } from "@/components/print-view";
 import type { DocStatementData } from "@/lib/doc-statement";
+import { NoteSourceLinesBox } from "@/components/note-source-lines-box";
 
 const dash = (v: string | number | null | undefined) => (v != null && `${v}`.trim() ? `${v}` : "—");
 const money = (n: number | null | undefined, ccy = "") =>
@@ -45,6 +46,9 @@ function CreditNoteBody({ data }: { data: Extract<DocStatementData, { kind: "cre
           <div>Status: {dash(data.creditNoteStatus)}</div>
         </div>
       </div>
+      {/* 2026-10-29f — order/PO + invoice item lines (item, qty, rate, amount,
+          GST) behind this credit note. */}
+      <NoteSourceLinesBox info={data.sourceLines} label="This credit note is for" />
       <div className="mb-3 border-b border-slate-300 pb-3">
         <div className="mb-1 font-semibold">AMOUNT</div>
         <Field label="Against Invoice" value={data.invoiceNo} />

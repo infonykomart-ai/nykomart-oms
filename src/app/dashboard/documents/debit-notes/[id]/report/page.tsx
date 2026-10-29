@@ -4,6 +4,8 @@ import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { DocLetterhead, DocGeneratedFooter } from "@/components/doc-letterhead";
+import { NoteSourceLinesBox } from "@/components/note-source-lines-box";
+import { loadNoteSourceLines } from "@/lib/notes/note-source-lines";
 
 // 2026-08-29 — "debit note ka print kaha se milega": Debit Note (like
 // Credit Note and Internal Invoice) had no individual print/PDF at all —
@@ -37,7 +39,7 @@ async function DebitNoteReportInner({ id }: { id: string }) {
   const { data: noteRaw } = await supabase
     .from("debit_notes")
     .select(
-      "id, company_id, debit_note_no, debit_note_date, against_invoice_bill_no, party_id, order_id, particulars, bill_no, bill_date, sq_ft, qty, rate, po_rate, billed_rate, po_amount, debit_amount, cgst_2_5pct, sgst_2_5pct, total_amount, remark"
+      "id, company_id, debit_note_no, debit_note_date, against_invoice_bill_no, party_id, order_id, bill_pass_register_id, particulars, bill_no, bill_date, sq_ft, qty, rate, po_rate, billed_rate, po_amount, debit_amount, cgst_2_5pct, sgst_2_5pct, total_amount, remark"
     )
     .eq("id", id)
     .maybeSingle();
@@ -78,29 +80,18 @@ async function DebitNoteReportInner({ id }: { id: string }) {
 
   // 2026-10-29 — a Debit Note can cover SEVERAL invoices of the same party
   // ("4 PO 4 alag alag bill me hai lekin debit note ek hi banega"). The
-  // per-invoice amounts live in bill_pass_register_adjustments, so the
-  // printed note lists exactly which invoice carried how much debit — the
-  // note never leaves the reader guessing which bill it is against.
-  const { data: adjRows } = await supabase
-    .from("bill_pass_register_adjustments")
-    .select("amount, bill_pass_register_id")
-    .eq("debit_note_id", id)
-    .order("created_at", { ascending: true });
-  const adjIds = Array.from(new Set((adjRows ?? []).map((r) => r.bill_pass_register_id as string)));
-  const { data: adjBills } = adjIds.length
-    ? await supabase
-        .from("bill_pass_register")
-        .select("id, vendor_invoice_no, invoice_no, invoice_date")
-        .in("id", adjIds)
-    : { data: [] as { id: string; vendor_invoice_no: string | null; invoice_no: string | null; invoice_date: string | null }[] };
-  const adjBillById = new Map((adjBills ?? []).map((b) => [b.id, b]));
-  const invoiceLines = (adjRows ?? []).map((r) => {
-    const b = adjBillById.get(r.bill_pass_register_id as string);
-    return {
-      invoiceNo: b?.vendor_invoice_no ?? b?.invoice_no ?? "—",
-      invoiceDate: b?.invoice_date ?? null,
-      amount: Number(r.amount),
-    };
+  // per-invoice amounts live in bill_pass_register_adjustments.
+  //
+  // 2026-10-29f — the sheet used to stop at "invoice no + debit amount", so
+  // nobody could tell WHICH ORDER or WHICH ITEM was debited ("kya item tha,
+  // qty, rate, amount, GST, PO no sab dikha nahi raha"). The note itself only
+  // stores its own figures; the item/PO detail lives on the vendor bill behind
+  // each adjustment, so loadNoteSourceLines() walks note → adjustment →
+  // invoice → purchase item → order and the sheet prints that.
+  const sourceInfo = await loadNoteSourceLines(supabase, {
+    kind: "debit_note",
+    noteId: id,
+    fallbackBillIds: [note.bill_pass_register_id],
   });
 
   return (
@@ -156,31 +147,9 @@ async function DebitNoteReportInner({ id }: { id: string }) {
             </div>
           )}
 
-          {invoiceLines.length > 0 && (
-            <div className="mb-4 text-xs">
-              <div className="mb-1 font-semibold text-slate-700">
-                Against {invoiceLines.length === 1 ? "invoice" : `${invoiceLines.length} invoices`}
-              </div>
-              <table className="w-full border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-slate-300 uppercase text-slate-500">
-                    <th className="py-1 pr-2">Invoice No.</th>
-                    <th className="py-1 pr-2">Invoice Date</th>
-                    <th className="py-1 text-right">Debit Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoiceLines.map((l, i) => (
-                    <tr key={`${l.invoiceNo}-${i}`} className="border-b border-slate-100">
-                      <td className="py-1 pr-2 text-slate-800">{l.invoiceNo}</td>
-                      <td className="py-1 pr-2 text-slate-500">{l.invoiceDate ?? "—"}</td>
-                      <td className="py-1 text-right text-slate-800">₹{l.amount.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {/* 2026-10-29f — order/PO + the actual item lines (item, qty, unit,
+              rate, amount, GST) and how much of this note is on each invoice. */}
+          <NoteSourceLinesBox info={sourceInfo} label="This debit note is for" />
 
           {/* 2026-08-29 — "sahi bana hai kya": show the rate-difference math
               on the printed note itself, instead of a bare Debit Amount
