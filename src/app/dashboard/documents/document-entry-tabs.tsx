@@ -416,7 +416,31 @@ export function DocumentEntryTabs({
             document instead of a whole list, use the per-row "🖨 Print"
             link added 2026-08-29 — see DocList's printHref comment below —
             which goes to that one document's own dedicated report page.) */}
-        <div className="flex justify-end print:hidden">
+        {/* 2026-10-29g — "debit note or credit note kaha se print hote hai
+            mujhe to kahi dikh hi nahi raha". The register pages (which print
+            the whole list AND carry a per-note 🖨 Sheet) were only reachable by
+            an unrelated small link on Bill Payment. This row puts the register
+            link right next to the note lists, so the list-print and the
+            single-note print are both one click away. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+          <p className="text-xs text-slate-500">
+            {tab === "credit-note" && (
+              <>
+                Full list + per-note print:{" "}
+                <Link href="/dashboard/credit-notes-register" className="font-medium text-teal-700 underline hover:text-teal-800">
+                  🧾 Credit Note Register →
+                </Link>
+              </>
+            )}
+            {tab === "debit-note" && (
+              <>
+                Full list + per-note print:{" "}
+                <Link href="/dashboard/debit-notes-register" className="font-medium text-rose-700 underline hover:text-rose-800">
+                  📉 Debit Note Register →
+                </Link>
+              </>
+            )}
+          </p>
           <PrintButton label={`🖨 Print / Download "${TABS.find((t) => t.key === tab)?.label ?? tab}" list`} />
         </div>
         <PrintArea id="doc-lists-print-area">
@@ -432,6 +456,11 @@ export function DocumentEntryTabs({
             record: r,
             docStatement: { type: "credit_note", id: r.id },
             statementLabel: "🧾 Statement",
+            // 2026-10-29g — the A4 dialog sheet renders from the row alone
+            // (no PO / item lines). This opens the FULL letterhead sheet —
+            // PO No., items, qty / rate / GST and the invoices the note
+            // adjusts — in the A4 print dialog.
+            printHref: `/dashboard/documents/credit-notes/${r.id}/report`,
           }))}
           onDelete={deleteCreditNote}
           // 2026-10-16 — View + Print both open in the A4 dialog on THIS
@@ -453,6 +482,8 @@ export function DocumentEntryTabs({
             sub: `${r.companyName} · ${r.particulars ?? ""}`,
             amount: `₹${r.debit_amount}`,
             record: r,
+            // Same reason as Credit Notes above — full sheet with PO / items.
+            printHref: `/dashboard/documents/debit-notes/${r.id}/report`,
           }))}
           onDelete={deleteDebitNote}
           renderView={(r) => <DocEntryA4 spec={debitNoteDoc(r, parties.find((p) => p.id === r.party_id)?.name ?? "—")} />}

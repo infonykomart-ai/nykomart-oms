@@ -303,13 +303,22 @@ export function BillStatementDocument({
 
         {data.adjustments.length > 0 && (
           <div className="mb-3 border-b border-slate-300 pb-3">
+            {/* 2026-10-29g — "konse order ka hua hai vo bhi show hona chahiye".
+                The note used to print as a bare number + amount, so nobody could
+                tell which PO/invoice the money was deducted against. PO / Order
+                No. and Reason are resolved through the invoice the note was
+                applied on (lib/bill-statement.ts). */}
             <div className="mb-1 font-semibold">CREDIT / DEBIT NOTE ADJUSTMENTS ({data.adjustments.length})</div>
+            <div className="mb-1 text-[10px] text-slate-500">
+              Deducted from this bill — each row shows the note, the PO / order it was raised on and why.
+            </div>
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="border-b border-slate-300 text-[10px] uppercase text-slate-500">
                   <th className="py-1 pr-2">Date</th>
                   <th className="py-1 pr-2">Note</th>
-                  <th className="py-1 pr-2">Remark</th>
+                  <th className="py-1 pr-2">PO / Order No.</th>
+                  <th className="py-1 pr-2">Reason</th>
                   <th className="py-1 pr-2 text-right">Amount</th>
                 </tr>
               </thead>
@@ -317,8 +326,21 @@ export function BillStatementDocument({
                 {data.adjustments.map((a) => (
                   <tr key={a.id} className="border-b border-slate-100">
                     <td className="py-1 pr-2">{a.createdDate}</td>
-                    <td className="py-1 pr-2">{a.label}</td>
-                    <td className="py-1 pr-2">{a.remark ?? "—"}</td>
+                    <td className="py-1 pr-2">
+                      {a.label}
+                      {a.kind && a.noteId && (
+                        <Link
+                          href={`/dashboard/documents/${a.kind === "credit_note" ? "credit-notes" : "debit-notes"}/${a.noteId}/report`}
+                          target="_blank"
+                          className="ml-2 whitespace-nowrap rounded border border-slate-300 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 hover:bg-slate-50 print:hidden"
+                          title="Open the note's own printed sheet (letterhead + PO / items)"
+                        >
+                          🖨 Sheet
+                        </Link>
+                      )}
+                    </td>
+                    <td className="py-1 pr-2 font-mono">{a.poRefs.length > 0 ? a.poRefs.join(", ") : "—"}</td>
+                    <td className="py-1 pr-2">{a.reason ?? a.remark ?? "—"}</td>
                     <td className="py-1 pr-2 text-right">{inr(a.amount)}</td>
                   </tr>
                 ))}

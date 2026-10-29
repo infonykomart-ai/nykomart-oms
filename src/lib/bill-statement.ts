@@ -19,6 +19,7 @@
 // details when they exist.
 import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { loadNoteSourceLines } from "@/lib/notes/note-source-lines";
 
 export type BillStatementPoLine = {
   /** The purchase_bills row this line came from — the key per-entry Edit/Delete acts on. */
@@ -114,7 +115,28 @@ export type BillStatementData = {
   awbLines: BillStatementAwbLine[];
   payments: BillStatementPayment[];
   walletConsumes: { id: string; txn_date: string; payment_mode: string | null; reference_no: string | null; remark: string | null; amount: number }[];
-  adjustments: { id: string; amount: number; remark: string | null; createdDate: string; label: string }[];
+  /**
+   * 2026-10-29g — "purchase bill ki report me debit/credit note adjust hua hai to
+   * konse ORDER ka hua hai vo bhi show hona chahiye". An adjustment row used to
+   * carry only the note number and its own remark, so a ₹2,000 debit said
+   * nothing about which PO/invoice it was deducted against. Each row now also
+   * carries the note's PO/order refs (resolved through the invoice the note was
+   * applied on) and the note's own reason, plus the ids the sheet links with.
+   */
+  adjustments: {
+    id: string;
+    amount: number;
+    remark: string | null;
+    createdDate: string;
+    label: string;
+    /** PO / order refs of the invoice(s) THIS bill's adjustment sits on. */
+    poRefs: string[];
+    /** Why the note was raised (note particulars / remark), not the adjustment's own remark. */
+    reason: string | null;
+    /** Which note table it came from — drives the printable sheet link. */
+    kind: "credit_note" | "debit_note" | null;
+    noteId: string | null;
+  }[];
   walletPaid: number;
   settledTotal: number;
   outstanding: number;
@@ -223,7 +245,7 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
       .order("payment_date", { ascending: true }),
     supabase
       .from("bill_pass_register_adjustments")
-      .select("id, amount, remark, created_at, debit_note_id, credit_note_id")
+      .select("id, amount, remark, created_at, debit_note_id, credit_note_id, bill_pass_register_id")
       .in("bill_pass_register_id", ledgerIds)
       .order("created_at", { ascending: true }),
     supabase
@@ -364,24 +386,75 @@ export async function loadBillStatement(billId: string): Promise<BillStatementRe
     }));
   }
 
-  const noteIds = adjustmentsRaw.map((a) => a.credit_note_id ?? a.debit_note_id).filter((v): v is string => !!v);
-  const [cnRes, dnRes] = await Promise.all([
-    noteIds.length ? supabase.from("credit_notes").select("id, cn_no, vendor_cn_no").in("id", noteIds) : Promise.resolve({ data: [] }),
-    noteIds.length ? supabase.from("debit_notes").select("id, debit_note_no").in("id", noteIds) : Promise.resolve({ data: [] }),
-  ]);
+  const noteIds = Array.from(
+    new Set(adjustmentsRaw.map((a) => a.credit_note_id ?? a.debit_note_id).filter((v): v is string => !!v))
+  );
+  let cnRows: { id: string; cn_no: string | null; vendor_cn_no: string | null; remark: string | null; item_name: string | null; buyer_name: string | null }[] = [];
+  let dnRows: { id: string; debit_note_no: string | null; particulars: string | null; remark: string | null }[] = [];
+  if (noteIds.length > 0) {
+    const [cnRes, dnRes] = await Promise.all([
+      supabase.from("credit_notes").select("id, cn_no, vendor_cn_no, remark, item_name, buyer_name").in("id", noteIds),
+      supabase.from("debit_notes").select("id, debit_note_no, particulars, remark").in("id", noteIds),
+    ]);
+    cnRows = cnRes.data ?? [];
+    dnRows = dnRes.data ?? [];
+  }
   const noteLabel = new Map<string, string>();
-  for (const n of cnRes.data ?? []) {
+  for (const n of cnRows) {
     noteLabel.set(n.id, n.vendor_cn_no ? `${n.cn_no ?? "CN"} (party: ${n.vendor_cn_no})` : n.cn_no ?? "CN");
   }
-  for (const n of dnRes.data ?? []) noteLabel.set(n.id, n.debit_note_no ?? "DN");
+  for (const n of dnRows) noteLabel.set(n.id, n.debit_note_no ?? "DN");
+  const noteKind = new Map<string, "credit_note" | "debit_note">();
+  for (const n of cnRows) noteKind.set(n.id, "credit_note");
+  for (const n of dnRows) noteKind.set(n.id, "debit_note");
+  // Why the note was raised — the note's own text, not the adjustment remark
+  // (which is often just "Debit Note DN-12 against INV-88").
+  const noteReason = new Map<string, string | null>();
+  for (const n of cnRows) noteReason.set(n.id, n.remark?.trim() || n.item_name?.trim() || n.buyer_name?.trim() || null);
+  for (const n of dnRows) noteReason.set(n.id, n.particulars?.trim() || n.remark?.trim() || null);
 
-  const adjustments = adjustmentsRaw.map((a) => ({
-    id: a.id,
-    amount: Number(a.amount),
-    remark: a.remark,
-    createdDate: a.created_at.slice(0, 10),
-    label: `${a.credit_note_id ? "Credit Note" : "Debit Note"} ${noteLabel.get(a.credit_note_id ?? a.debit_note_id ?? "") ?? ""}`.trim(),
-  }));
+  // PO / order behind each note: note -> adjustments -> invoice -> purchase_bills
+  // -> orders (the same chain the note's own printed sheet walks, see
+  // lib/notes/note-source-lines.ts). Only refs belonging to the invoices ON THIS
+  // statement are kept, so a note split across two bills shows each bill's own
+  // PO instead of both.
+  const noteOrderRefs = new Map<string, string[]>();
+  const noteRefsByBill = new Map<string, Map<string, string[]>>();
+  await Promise.all(
+    noteIds.map(async (id) => {
+      try {
+        const info = await loadNoteSourceLines(supabase, { kind: noteKind.get(id) ?? "credit_note", noteId: id });
+        noteOrderRefs.set(id, info.orderRefs);
+        const perBill = new Map<string, string[]>();
+        for (const line of info.lines) {
+          if (!line.billId || !ledgerIds.includes(line.billId)) continue;
+          const refs = perBill.get(line.billId) ?? [];
+          for (const ref of line.poRefs) if (!refs.includes(ref)) refs.push(ref);
+          perBill.set(line.billId, refs);
+        }
+        noteRefsByBill.set(id, perBill);
+      } catch {
+        // A broken chain must never blank a statement — the row still prints.
+        noteOrderRefs.set(id, []);
+      }
+    })
+  );
+
+  const adjustments = adjustmentsRaw.map((a) => {
+    const noteId = a.credit_note_id ?? a.debit_note_id ?? null;
+    const onThisBill = noteId ? noteRefsByBill.get(noteId)?.get(a.bill_pass_register_id ?? "") ?? [] : [];
+    return {
+      id: a.id,
+      amount: Number(a.amount),
+      remark: a.remark,
+      createdDate: a.created_at.slice(0, 10),
+      label: `${a.credit_note_id ? "Credit Note" : "Debit Note"} ${noteId ? noteLabel.get(noteId) ?? "" : ""}`.trim(),
+      poRefs: onThisBill.length > 0 ? onThisBill : noteId ? noteOrderRefs.get(noteId) ?? [] : [],
+      reason: noteId ? noteReason.get(noteId) ?? null : null,
+      kind: noteId ? noteKind.get(noteId) ?? null : null,
+      noteId,
+    };
+  });
 
   const waPhoneRaw = (partyRow.contact_no ?? "").replace(/\D/g, "");
   const waPhone = waPhoneRaw.length === 10 ? `91${waPhoneRaw}` : waPhoneRaw;

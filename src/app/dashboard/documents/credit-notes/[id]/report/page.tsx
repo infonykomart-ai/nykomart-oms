@@ -4,6 +4,8 @@ import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { DocLetterhead, DocGeneratedFooter } from "@/components/doc-letterhead";
+import { NoteSourceLinesBox } from "@/components/note-source-lines-box";
+import { loadNoteSourceLines } from "@/lib/notes/note-source-lines";
 
 // 2026-08-29 — same round as the Debit Note and Internal Invoice report
 // pages (see debit-notes/[id]/report's header comment for the full "why"):
@@ -34,7 +36,7 @@ async function CreditNoteReportInner({ id }: { id: string }) {
   const { data: noteRaw } = await supabase
     .from("credit_notes")
     .select(
-      "id, company_id, store_id, cn_no, credit_note_date, order_id, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, debit_note_id, party_id, qty, po_rate, billed_rate, remark"
+      "id, company_id, store_id, cn_no, vendor_cn_no, credit_note_date, order_id, item_id, buyer_name, refund_date, item_name, item_price, invoice_no, invoice_value_usd, invoice_value_inr, refund_amount, refund_amt_usd, refund_amt_inr, credit_note_status, refund_type, debit_note_id, party_id, qty, po_rate, billed_rate, gst_rate_pct, awb_no, remark"
     )
     .eq("id", id)
     .maybeSingle();
@@ -82,6 +84,13 @@ async function CreditNoteReportInner({ id }: { id: string }) {
   const debitNote = debitNoteResult.data;
   const party = partyResult.data;
 
+  // 2026-10-29f — "kya item tha, qty, rate, amount, GST, PO no sab dikha nahi
+  // raha": a CN raised from Bill Payment stores only its own amount; the item
+  // and PO live on the invoice(s) it reduces. loadNoteSourceLines() walks
+  // note → adjustment → invoice → purchase item → order so the sheet can print
+  // what was actually credited against.
+  const sourceInfo = await loadNoteSourceLines(supabase, { kind: "credit_note", noteId: id });
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between print:hidden">
@@ -128,9 +137,19 @@ async function CreditNoteReportInner({ id }: { id: string }) {
             <div className="text-right">
               {order?.ref_no && <div className="text-slate-600">PO / Order No.: {order.ref_no}</div>}
               {note.invoice_no && <div className="text-slate-600">Invoice No.: {note.invoice_no}</div>}
+              {/* 2026-10-29f — a courier CN often covers several AWBs and
+                  carries the issuing party's own CN number; both used to be
+                  missing from the sheet even though they are stored. */}
+              {note.vendor_cn_no && <div className="text-slate-600">Party&apos;s CN No.: {note.vendor_cn_no}</div>}
+              {note.awb_no && <div className="text-slate-600">AWB No.: {note.awb_no}</div>}
               {debitNote?.debit_note_no && <div className="text-slate-600">Linked Debit Note: {debitNote.debit_note_no}</div>}
             </div>
           </div>
+
+          {/* 2026-10-29f — order/PO + the invoice item lines this CN reduces
+              (item, qty, rate, amount, GST), so the sheet says what the credit
+              is actually for. */}
+          <NoteSourceLinesBox info={sourceInfo} label="This credit note is for" />
 
           {/* 2026-08-29 — vendor-side rate-difference breakup, same
               reasoning as the Debit Note report's identical block. */}
@@ -175,6 +194,17 @@ async function CreditNoteReportInner({ id }: { id: string }) {
             {note.refund_amt_inr != null && <div>Refund (INR): ₹{note.refund_amt_inr.toFixed(2)}</div>}
             {note.refund_type && <div>Refund Type: {note.refund_type}</div>}
             {note.credit_note_status && <div>Status: {note.credit_note_status}</div>}
+            {/* 2026-10-29f — the GST slab was stored (credit_notes.
+                gst_rate_pct, the CGST/SGST INDIVIDUAL rate) but the printed
+                sheet never showed it, so a 18%-GST courier CN looked like a
+                plain amount. Total GST = double the stored rate, same
+                convention as every other sheet. */}
+            {note.gst_rate_pct != null && (
+              <div>
+                GST: {note.gst_rate_pct * 2}% (CGST ₹{((note.refund_amount * note.gst_rate_pct) / 100).toFixed(2)} + SGST ₹
+                {((note.refund_amount * note.gst_rate_pct) / 100).toFixed(2)})
+              </div>
+            )}
           </div>
 
           {note.remark && (

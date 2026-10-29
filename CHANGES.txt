@@ -1,3 +1,102 @@
+BILL STATEMENT ME NOTE KA PO/ORDER, PRINT KA RAASTA, AUR BUILD FIX
+(2026-10-29g)
+======================================================================
+
+KOI NAYA SQL NAHI. Sirf code.
+
+1. BUILD FIX (Vercel "Module not found: './duplicate-merge'")
+   ledger/page.tsx naye file `parties/[id]/ledger/duplicate-merge.tsx` ko
+   import karta tha, par wo file update zip me hi nahi gayi thi (wo is repo
+   ke main par pehle se committed thi, is liye `git status` me nahi dikhi).
+   Ab zip me hai. Is round me koi aur missing module nahi tha — har changed
+   file ka har local import aapki `order-shipment-sync-tracking` branch par
+   check kiya gaya.
+
+2. PURCHASE BILL REPORT ME "KONSE ORDER KA" ADJUSTMENT
+   Pehle CREDIT / DEBIT NOTE ADJUSTMENTS table sirf Date | Note | Remark |
+   Amount dikhati thi — kisi ko pata nahi chalta tha ye note kis PO/invoice
+   par laga hai. Ab har row me:
+
+      Date | Note (+ 🖨 Sheet link) | PO / Order No. | Reason | Amount
+
+   - PO / Order No. note ki invoice → purchase_bills → orders chain se aata
+     hai (wahi resolver jo note ke apne sheet par lagta hai), aur sirf usi
+     bill ke invoice ka PO dikhta hai — note do bills par split ho to har
+     bill par uska apna PO.
+   - Reason = note ka apna particulars/remark (adjustment ka remark nahi).
+   - Note ke saath "🖨 Sheet" link (screen par, print me nahi) — seedha
+     note ka full letterhead sheet.
+   - Yahi columns server-side PDF me bhi (bill-statement-pdf.tsx), taki
+     WhatsApp/email share ki PDF aur screen par kuch farq na ho.
+
+   Jahan ye dikhta hai: Party Ledger → kisi invoice ka 🧾 Statement (aur
+   uska PDF), Bill Payment ke invoice cells ka statement dialog, aur
+   Documents ke Purchase Bill rows ka Statement.
+
+3. DEBIT / CREDIT NOTE PRINT KAHAN SE — ab dikhta hai
+   - Documents page par Credit Note / Debit Note tab ke upar hi seedha link:
+     "🧾 Credit Note Register →" / "📉 Debit Note Register →".
+   - Har Credit Note / Debit Note row par ab "🖨 Print" button bhi hai (pehle
+     sirf 👁 View tha, jo row ke data se banta adhura sheet dikhata tha).
+     Ye note ka FULL sheet kholta hai — company letterhead, PO No., items,
+     qty/rate/GST, aur "THIS NOTE IS FOR" wali invoice table.
+   - Register pages (list print + per-note 🖨 Sheet) wahi hain:
+     /dashboard/debit-notes-register aur /dashboard/credit-notes-register.
+
+Badlav (5 files + CHANGES): lib/bill-statement.ts,
+components/bill-statement-document.tsx, lib/bill-statement-pdf.tsx,
+app/dashboard/documents/document-entry-tabs.tsx, aur zip me wapas
+parties/[id]/ledger/duplicate-merge.tsx.
+
+Verification: focused tsc exit 0. Asli DB par render nahi dekh paya (yahan
+Supabase creds nahi) — pehla check: kisi bill ka Statement kholo, note ke
+row me PO/Order No. aur Reason dikhna chahiye; Documents → Debit Note tab
+me "🖨 Print" se full sheet khulni chahiye.
+
+DEBIT / CREDIT NOTE PRINT: ORDER, PO NO., ITEM, QTY, RATE, AMOUNT, GST
+(2026-10-29f)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: Debit/Credit Note ka print sheet sirf apna amount dikhata tha —
+kis ORDER/PO ka hai, kya ITEM tha, qty, rate, amount, GST — kuch nahi.
+Wajah: note khud ye detail store hi nahi karta. Wo invoice (`bill_pass_
+register`) par hoti hai jise note adjust karta hai, aur item detail usse
+bhi aage `purchase_bills` me. Isliye sheet blank lagta tha.
+
+AB: naya resolver `src/lib/notes/note-source-lines.ts` poora chain chalta
+hai — note → adjustment → invoice → purchase item → order — aur sheet par
+"❝This note is for❞" block aata hai:
+
+      • PO / Order No. (jitne bhi order ho, comma se)
+      • har invoice ki line par: Invoice No., Date, PO No., ITEM, QTY,
+        Unit, RATE, Amount, GST % (+ GST amount), aur us invoice par kitna
+        DEBIT/CREDIT laga
+      • niche total — kitni invoices par ye note split hai
+
+Ye teeno jagah lagta hai:
+      • Debit Note / Credit Note ke /report pages (browser print/PDF)
+      • Credit Note ka A4 dialog (register se jo sheet khulti hai)
+      • Credit Note ka "📄 PDF" button (server-side PDF, doc-statement-pdf.tsx)
+
+CREDIT NOTE sheet par ye bhi joda (pehle stored hone ke baawajood print
+nahi hota tha): Party's CN No., AWB No., aur GST slab + CGST/SGST amount.
+
+Agar note bilkul flat amount hai (koi invoice/PO attach nahi) to sheet
+saaf-saaf likhta hai: "entered as a flat amount — no invoice, PO or item
+line is linked" — khali jagah chhod kar confusion nahi deta.
+
+Badlav (7 files + CHANGES): note-source-lines.ts (naya), note-source-lines-
+box.tsx (naya), doc-statement-document.tsx, doc-statement.ts,
+doc-statement-pdf.tsx, debit-notes/[id]/report, credit-notes/[id]/report.
+
+Verification: focused tsc exit 0, eslint --quiet exit 0. Asli DB par print
+nahi dekh sakta (yahan Supabase creds nahi) — pehla check: Debt Note
+register se ek note kholo, "This debit note is for" me PO No. + item +
+qty/rate/GST dikhna chahiye.
+
+
 MERGE RULE FIX + UNDO MERGE + DN/CN FULL LETTERHEAD + DEBIT NOTE REGISTER
 (2026-10-29e)
 ======================================================================

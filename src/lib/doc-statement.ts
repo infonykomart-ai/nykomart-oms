@@ -22,6 +22,7 @@
 //    Documents page / bulk-upload tab already allow.
 import { getAuthedEmployee, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { loadNoteSourceLines, type NoteSourceInfo } from "@/lib/notes/note-source-lines";
 
 export type DocType = "credit_note" | "csb_filing" | "refund" | "order_refund";
 
@@ -60,6 +61,12 @@ type DocStatementBase = {
 
 export type CreditNoteStatement = DocStatementBase & {
   kind: "credit_note";
+  /**
+   * 2026-10-29f — the invoice item lines behind this CN (order/PO, item, qty,
+   * rate, amount, GST). The note row itself only stores its own amount; the
+   * item detail lives on the invoice(s) it reduces (see note-source-lines.ts).
+   */
+  sourceLines: NoteSourceInfo;
   cnNo: string | null;
   vendorCnNo: string | null;
   cnKind: string | null;
@@ -187,6 +194,10 @@ async function loadCreditNoteStatement(id: string): Promise<DocStatementResult> 
   ]);
   const party = partyRes.data ?? null;
   const companyName = company?.name ?? "—";
+  // 2026-10-29f — "kya item tha, qty, rate, amount, GST, PO no sab dikha nahi
+  // raha": resolve the invoice lines this credit reduces, so the A4 sheet (the
+  // one the register prints) says what the credit is for, not just how much.
+  const sourceLines = await loadNoteSourceLines(supabase, { kind: "credit_note", noteId: note.id });
 
   return {
     ok: true,
@@ -194,6 +205,7 @@ async function loadCreditNoteStatement(id: string): Promise<DocStatementResult> 
       kind: "credit_note",
       id: note.id,
       docTitle: "CREDIT NOTE",
+      sourceLines,
       invoiceRef: note.cn_no ?? note.id,
       companyName,
       company,
