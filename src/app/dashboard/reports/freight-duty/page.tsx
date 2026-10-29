@@ -55,6 +55,7 @@ export default async function FreightDutyReportPage({
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const vendorName = new Map((vendors ?? []).map((v) => [v.id, v.name]));
 
+
   // ---- Freight ----
   let freightBillsQuery = supabase
     .from("freight_bills")
@@ -126,17 +127,41 @@ export default async function FreightDutyReportPage({
     : { data: [] as never[] };
   const orderById = new Map((orders ?? []).map((o) => [o.id, o]));
 
+  // 2026-10-29 — "chahe order alag alag company ke ho lekin jo report sheet
+  // banegi vo usi company ki bnegi jisme vo register hua hai matlb finance se
+  // aaya hai". A courier/duty invoice is ONE payable booked under ONE company
+  // in the Finance ledger, but its AWBs can point at orders from any company.
+  // So the row's company is the LEDGER's company (what was actually booked)
+  // and the order's company is only a fallback for a bill that has not been
+  // sent to Finance yet.
+  const freightLedgerCompany = new Map<string, string>();
+  const dutyLedgerCompany = new Map<string, string>();
+  {
+    const [freightLinks, dutyLinks] = await Promise.all([
+      freightBillIds.length
+        ? finSupabase.from("bill_pass_register").select("source_id, company_id").eq("source", "freight_bill").in("source_id", freightBillIds)
+        : Promise.resolve({ data: [] as { source_id: string | null; company_id: string }[] }),
+      dutyBillIds.length
+        ? finSupabase.from("bill_pass_register").select("source_id, company_id").eq("source", "duty_tax_bill").in("source_id", dutyBillIds)
+        : Promise.resolve({ data: [] as { source_id: string | null; company_id: string }[] }),
+    ]);
+    for (const l of freightLinks.data ?? []) if (l.source_id) freightLedgerCompany.set(l.source_id, l.company_id);
+    for (const l of dutyLinks.data ?? []) if (l.source_id) dutyLedgerCompany.set(l.source_id, l.company_id);
+  }
+
   const freightRows: FreightReportRow[] = (freightViewRows ?? [])
     .map((v): FreightReportRow | null => {
       const order = v.order_id ? orderById.get(v.order_id) : undefined;
       const bill = v.freight_bill_id ? freightBillById.get(v.freight_bill_id) : undefined;
-      if (!order || !scopedCompanyIds.includes(order.company_id)) return null;
+      if (!order) return null;
+      const bookedCompanyId = (v.freight_bill_id ? freightLedgerCompany.get(v.freight_bill_id) : null) ?? order.company_id;
+      if (!scopedCompanyIds.includes(bookedCompanyId)) return null;
       return {
         id: v.assignment_id ?? `${v.freight_bill_id}-${v.order_id}`,
         freight_invoice_no: bill?.invoice_no ?? v.freight_invoice_no ?? "—",
         invoice_date: bill?.invoice_date ?? null,
         vendor_name: bill?.vendor_party_id ? vendorName.get(bill.vendor_party_id) ?? "—" : "—",
-        company_name: companyName.get(order.company_id) ?? "—",
+        company_name: companyName.get(bookedCompanyId) ?? "—",
         po_no: v.po_no,
         order_date: order.order_date,
         awb_no: v.awb_no,
@@ -156,13 +181,15 @@ export default async function FreightDutyReportPage({
     .map((v): DutyReportRow | null => {
       const order = v.order_id ? orderById.get(v.order_id) : undefined;
       const bill = v.duty_tax_bill_id ? dutyBillById.get(v.duty_tax_bill_id) : undefined;
-      if (!order || !scopedCompanyIds.includes(order.company_id)) return null;
+      if (!order) return null;
+      const bookedCompanyId = (v.duty_tax_bill_id ? dutyLedgerCompany.get(v.duty_tax_bill_id) : null) ?? order.company_id;
+      if (!scopedCompanyIds.includes(bookedCompanyId)) return null;
       return {
         id: v.assignment_id ?? `${v.duty_tax_bill_id}-${v.order_id}`,
         duty_invoice_no: bill?.invoice_no ?? v.duty_invoice_no ?? "—",
         invoice_date: bill?.invoice_date ?? null,
         vendor_name: bill?.vendor_party_id ? vendorName.get(bill.vendor_party_id) ?? "—" : "—",
-        company_name: companyName.get(order.company_id) ?? "—",
+        company_name: companyName.get(bookedCompanyId) ?? "—",
         po_no: v.po_no,
         order_date: order.order_date,
         awb_no: v.awb_no,

@@ -24,6 +24,7 @@ import {
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { RelatedNotesBadge } from "./related-notes-badge";
 import { RoundOffField } from "./round-off-field";
+import { FinanceCompanyMover } from "./finance-post-box";
 // 2026-09-15 — 📄 View opens this bill's read-only statement sheet. The
 // bill_pass_register id comes from the first related note (present only
 // after Send to Finance); before that the bill has no Finance row yet and
@@ -85,6 +86,9 @@ export type FreightBillRow = {
   round_off_amt?: number;
   assignments: FreightBillAssignment[];
   sentToFinance: boolean;
+  /** 2026-10-29 — its Finance ledger row (for the company mover). */
+  financeBprId?: string | null;
+  financeCompanyId?: string | null;
   // 2026-08-17: which courier/vendor party issued this bill — optional
   // (existing bills + PDF/CSV imports won't have this), see actions.ts's
   // comment on FreightBillParams.vendorPartyId for why this was added.
@@ -299,6 +303,11 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             {bill.invoice_date ?? "—"} · {bill.assignments.length} AWB(s) assigned
             {bill.sentToFinance && <span className="ml-1 text-green-700">· ✓ in Bill Pass Register</span>}
           </div>
+          {/* 2026-10-29 — a posted courier bill can still be moved to the company
+              that actually books it, without deleting and re-posting it. */}
+          {bill.sentToFinance && (
+            <FinanceCompanyMover billPassRegisterId={bill.financeBprId ?? null} currentCompanyId={bill.financeCompanyId ?? null} companies={companies} />
+          )}
           <div className={bill.vendor_name ? "text-slate-500" : "text-amber-600"}>
             {bill.vendor_name ? `🚚 ${bill.vendor_name}` : "⚠ No vendor/courier party linked — won't appear in a Party Ledger"}
           </div>

@@ -71,6 +71,33 @@ async function DebitNoteReportInner({ id }: { id: string }) {
   ]);
   const order = orderResult.data;
 
+  // 2026-10-29 — a Debit Note can cover SEVERAL invoices of the same party
+  // ("4 PO 4 alag alag bill me hai lekin debit note ek hi banega"). The
+  // per-invoice amounts live in bill_pass_register_adjustments, so the
+  // printed note lists exactly which invoice carried how much debit — the
+  // note never leaves the reader guessing which bill it is against.
+  const { data: adjRows } = await supabase
+    .from("bill_pass_register_adjustments")
+    .select("amount, bill_pass_register_id")
+    .eq("debit_note_id", id)
+    .order("created_at", { ascending: true });
+  const adjIds = Array.from(new Set((adjRows ?? []).map((r) => r.bill_pass_register_id as string)));
+  const { data: adjBills } = adjIds.length
+    ? await supabase
+        .from("bill_pass_register")
+        .select("id, vendor_invoice_no, invoice_no, invoice_date")
+        .in("id", adjIds)
+    : { data: [] as { id: string; vendor_invoice_no: string | null; invoice_no: string | null; invoice_date: string | null }[] };
+  const adjBillById = new Map((adjBills ?? []).map((b) => [b.id, b]));
+  const invoiceLines = (adjRows ?? []).map((r) => {
+    const b = adjBillById.get(r.bill_pass_register_id as string);
+    return {
+      invoiceNo: b?.vendor_invoice_no ?? b?.invoice_no ?? "—",
+      invoiceDate: b?.invoice_date ?? null,
+      amount: Number(r.amount),
+    };
+  });
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between print:hidden">
@@ -130,6 +157,32 @@ async function DebitNoteReportInner({ id }: { id: string }) {
             <div className="mb-4 text-xs">
               <span className="font-semibold text-slate-700">Particulars: </span>
               <span className="text-slate-600">{note.particulars}</span>
+            </div>
+          )}
+
+          {invoiceLines.length > 0 && (
+            <div className="mb-4 text-xs">
+              <div className="mb-1 font-semibold text-slate-700">
+                Against {invoiceLines.length === 1 ? "invoice" : `${invoiceLines.length} invoices`}
+              </div>
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-slate-300 uppercase text-slate-500">
+                    <th className="py-1 pr-2">Invoice No.</th>
+                    <th className="py-1 pr-2">Invoice Date</th>
+                    <th className="py-1 text-right">Debit Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceLines.map((l, i) => (
+                    <tr key={`${l.invoiceNo}-${i}`} className="border-b border-slate-100">
+                      <td className="py-1 pr-2 text-slate-800">{l.invoiceNo}</td>
+                      <td className="py-1 pr-2 text-slate-500">{l.invoiceDate ?? "—"}</td>
+                      <td className="py-1 text-right text-slate-800">₹{l.amount.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 

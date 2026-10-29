@@ -325,16 +325,19 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
     freightBillIds.length || dutyBillIds.length
       ? supabase
           .from("bill_pass_register")
-          .select("id, source, source_id")
+          .select("id, source, source_id, company_id")
           .in("source", ["freight_bill", "duty_tax_bill"])
           .in("source_id", [...freightBillIds, ...dutyBillIds])
       : Promise.resolve({ data: [] }),
     purchaseBillIds.length
-      ? supabase.from("bill_pass_register").select("id, source_id").eq("source", "purchase_bill").in("source_id", purchaseBillIds)
+      ? supabase.from("bill_pass_register").select("id, source_id, company_id").eq("source", "purchase_bill").in("source_id", purchaseBillIds)
       : Promise.resolve({ data: [] }),
   ]);
   const sentFreightBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => f.source_id));
   const sentDutyBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => f.source_id));
+  // 2026-10-29 — the Finance entry's company, so a posted bill can be moved to
+  // the right company from the bill card itself (see FinanceCompanyMover).
+  const financeLinkBySourceId = new Map((financeLinks ?? []).map((f) => [`${f.source}:${f.source_id}`, f]));
 
   // 2026-09-01: booked_freight_amt for every freight-bill assignment's
   // order_shipment — the "recheck" comparison shown alongside
@@ -351,6 +354,9 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   const bprIdByFreightBillId = new Map((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => [f.source_id, f.id]));
   const bprIdByDutyBillId = new Map((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => [f.source_id, f.id]));
   const bprIdByPurchaseBillId = new Map((purchaseFinanceLinks ?? []).map((f) => [f.source_id, f.id]));
+  // 2026-10-29 — which company holds each sent invoice in the Finance ledger
+  // (the Send-to-Finance box shows it and offers to move it).
+  const bprCompanyByPurchaseBillId = new Map((purchaseFinanceLinks ?? []).map((f) => [f.source_id, f.company_id]));
   const allBprIds = [
     ...bprIdByFreightBillId.values(),
     ...bprIdByDutyBillId.values(),
@@ -472,6 +478,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       // First sent-to-Finance row drives the statement sheet; an invoice is
       // one bill_pass_register group there (see lib/bill-grouping.ts).
       finance_bpr_id: g.items.find((i) => i.finance_bpr_id)?.finance_bpr_id ?? null,
+      financeCompanyId: (() => {
+        const item = g.items.find((i) => i.finance_bpr_id);
+        return item ? bprCompanyByPurchaseBillId.get(item.id) ?? null : null;
+      })(),
       notes: g.items.flatMap((i) => i.related_notes),
     }))
     .slice(0, pbFiltered ? FILTERED_LIMIT : 8);
@@ -592,6 +602,8 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             gross_total_amt: b.gross_total_amt != null ? Number(b.gross_total_amt) : null,
             credit_note_amt: Number(b.credit_note_amt ?? 0),
             sentToFinance: sentFreightBillIds.has(b.id),
+            financeBprId: financeLinkBySourceId.get(`freight_bill:${b.id}`)?.id ?? null,
+            financeCompanyId: financeLinkBySourceId.get(`freight_bill:${b.id}`)?.company_id ?? null,
             vendor_party_id: b.vendor_party_id,
             vendor_name: b.vendor_party_id ? partyName.get(b.vendor_party_id) ?? null : null,
             related_notes: notesFor(bprIdByFreightBillId.get(b.id)),
@@ -640,6 +652,8 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             courier_duty_charges_adj: Number(b.courier_duty_charges_adj ?? 0),
             total_payable_amt: b.total_payable_amt != null ? Number(b.total_payable_amt) : null,
             sentToFinance: sentDutyBillIds.has(b.id),
+            financeBprId: financeLinkBySourceId.get(`duty_tax_bill:${b.id}`)?.id ?? null,
+            financeCompanyId: financeLinkBySourceId.get(`duty_tax_bill:${b.id}`)?.company_id ?? null,
             vendor_party_id: b.vendor_party_id,
             vendor_name: b.vendor_party_id ? partyName.get(b.vendor_party_id) ?? null : null,
             related_notes: notesFor(bprIdByDutyBillId.get(b.id)),

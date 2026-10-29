@@ -673,6 +673,18 @@ type DebitNoteParams = {
   adjustTargetBillPassRegisterId: string | null;
   adjustAmount: number | null;
   adjustRemark: string | null;
+  /** 2026-10-29 — why the note exists, in plain words (see the form's picker). */
+  reason?: string | null;
+  /**
+   * 2026-10-29 — multi-invoice Debit Note: one note against several of the
+   * party's invoices (e.g. 4 POs billed on 4 invoices, all over-billed by the
+   * same vendor). Each line carries the invoice's bill_pass_register row and
+   * the amount being debited on it. When present the note's debit_amount is
+   * the SUM of these lines (never a hand-typed total) and each line is posted
+   * as a bill_pass_register_adjustments row, so every listed invoice's payable
+   * drops by exactly its own amount.
+   */
+  billLines?: { billId: string; invoiceNo: string; amount: number }[];
 };
 
 async function saveDebitNoteCore(
@@ -694,16 +706,57 @@ async function saveDebitNoteCore(
     return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
   }
 
+  // 2026-10-29 — multi-invoice support. Validated against the REAL ledger rows
+  // (company + party must match) so a note can never be pointed at another
+  // party's or another company's invoice. Any line without a positive amount
+  // is ignored rather than silently adjusted by zero.
+  const lines = (p.billLines ?? [])
+    .filter((l) => l && typeof l.billId === "string" && l.billId.length > 0)
+    .map((l) => ({ ...l, amount: Math.round((Number(l.amount) || 0) * 100) / 100 }))
+    .filter((l) => l.amount > 0)
+    .slice(0, 40);
+  let againstNo = p.againstInvoiceBillNo;
+  let primaryBillId = p.billPassRegisterId;
+  let debitAmount = p.debitAmount;
+  let lineInvoiceNo = new Map<string, string>();
+  if (lines.length > 0) {
+    const ids = Array.from(new Set(lines.map((l) => l.billId)));
+    const { data: bills } = await supabase
+      .from("bill_pass_register")
+      .select("id, company_id, party_id, vendor_invoice_no, invoice_no")
+      .in("id", ids);
+    if (!bills || bills.length !== ids.length) {
+      return { error: "One of the selected invoices no longer exists — refresh and pick again.", id: null, docNo: null };
+    }
+    for (const b of bills) {
+      if (b.company_id !== p.companyId || b.party_id !== p.partyId) {
+        return { error: "All invoices on one Debit Note must belong to the selected company and party.", id: null, docNo: null };
+      }
+    }
+    lineInvoiceNo = new Map(bills.map((b) => [b.id, b.vendor_invoice_no ?? b.invoice_no ?? b.id]));
+    debitAmount = Math.round(lines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+    againstNo = lines.map((l) => lineInvoiceNo.get(l.billId) ?? l.invoiceNo).join(", ");
+    primaryBillId = lines[0].billId;
+  }
+
+  // "debit note kyu banaya ja raha hai" — the reason leads the Particulars so
+  // it is the first thing anyone reads on the note and its printed sheet.
+  const particulars = p.reason
+    ? p.particulars && p.particulars.trim() && p.particulars.trim() !== p.reason.trim()
+      ? `${p.reason.trim()} — ${p.particulars.trim()}`
+      : p.reason.trim()
+    : p.particulars;
+
   const { data, error } = await supabase
     .from("debit_notes")
     .insert({
       company_id: p.companyId,
       debit_note_date: p.debitNoteDate,
-      against_invoice_bill_no: p.againstInvoiceBillNo,
-      bill_pass_register_id: p.billPassRegisterId,
+      against_invoice_bill_no: againstNo,
+      bill_pass_register_id: primaryBillId,
       party_id: p.partyId,
       order_id: p.orderId,
-      particulars: p.particulars,
+      particulars,
       bill_no: p.billNo,
       bill_date: p.billDate,
       sq_ft: p.sqFt,
@@ -711,13 +764,35 @@ async function saveDebitNoteCore(
       rate: p.rate,
       po_rate: p.poRate,
       billed_rate: p.billedRate,
-      debit_amount: p.debitAmount,
+      debit_amount: debitAmount,
       remark: p.remark,
     })
     .select("id, debit_note_no")
     .single();
 
   if (error || !data) return { error: `Failed to save Debit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
+
+  // Multi-invoice note: one adjustment row per listed invoice (the table is
+  // built for exactly this — "one note can split across several target
+  // bills", see db/2026-08-27-note-linking-and-adjustments.sql).
+  if (lines.length > 0) {
+    const adjRows = lines.map((l) => ({
+      bill_pass_register_id: l.billId,
+      debit_note_id: data.id,
+      amount: l.amount,
+      remark: `Debit Note ${data.debit_note_no ?? ""} against ${lineInvoiceNo.get(l.billId) ?? l.invoiceNo}`,
+      created_by_employee_id: employee.id,
+    }));
+    const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert(adjRows);
+    if (adjError) {
+      return {
+        error: null,
+        id: data.id,
+        docNo: `${data.debit_note_no ?? ""} (saved, but the invoice adjustments failed: ${adjError.message} — apply them manually)`,
+      };
+    }
+    return { error: null, id: data.id, docNo: data.debit_note_no ?? "" };
+  }
 
   if (p.adjustTargetBillPassRegisterId && p.adjustAmount) {
     const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert({
@@ -767,6 +842,19 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
     adjustAmount: numOrNull(formData, "adjust_amount"),
     adjustRemark: strOrNull(formData, "adjust_remark"),
+    reason: strOrNull(formData, "reason"),
+    billLines: (() => {
+      try {
+        const parsed = JSON.parse(str(formData, "bill_lines") || "[]") as unknown;
+        return Array.isArray(parsed)
+          ? parsed
+              .map((v) => (v ?? {}) as { billId?: unknown; invoiceNo?: unknown; amount?: unknown })
+              .map((v) => ({ billId: String(v.billId ?? ""), invoiceNo: String(v.invoiceNo ?? ""), amount: Number(v.amount ?? 0) }))
+          : [];
+      } catch {
+        return [];
+      }
+    })(),
   });
 
   if (result.error) return initialFail(result.error);
@@ -1214,21 +1302,30 @@ type PurchaseBillParams = {
  * catches that at the moment it matters: before a second Finance entry
  * exists. Scoped to the target company; case/whitespace-insensitive.
  */
+// 2026-10-29 — the check is now CROSS-COMPANY (every company this login can
+// reach), not just the company being posted to. A courier/duty invoice is one
+// physical document: posting it a second time under a different company is the
+// exact duplicate the user kept seeing in the Party Ledger ("Courier Bill
+// (Freight)" and "FREIGHT INVOICE" for the same invoice number). Same-company
+// duplicates are a subset of this check, so nothing was weakened.
 async function findDuplicateFinanceEntry(
   supabase: ServiceClient,
-  companyId: string,
+  companyIds: string[],
   vendorInvoiceNo: string | null
-): Promise<{ id: string; invoice_type: string | null; company_id: string } | null> {
+): Promise<{ id: string; invoice_type: string | null; company_id: string; company_name: string | null } | null> {
   const inv = (vendorInvoiceNo ?? '').trim();
-  if (!inv) return null;
+  if (!inv || companyIds.length === 0) return null;
   const { data } = await supabase
     .from('bill_pass_register')
-    .select('id, invoice_type, company_id, vendor_invoice_no')
-    .eq('company_id', companyId)
+    .select('id, invoice_type, company_id, vendor_invoice_no, companies(name)')
+    .in('company_id', companyIds)
     .ilike('vendor_invoice_no', inv)
-    .limit(2);
+    .limit(5);
   const rows = (data ?? []).filter((r) => (r.vendor_invoice_no ?? '').trim().toLowerCase() === inv.toLowerCase());
-  return rows.length > 0 ? { id: rows[0].id, invoice_type: rows[0].invoice_type, company_id: rows[0].company_id } : null;
+  if (rows.length === 0) return null;
+  const rel = (rows[0] as { companies?: { name: string } | { name: string }[] | null }).companies;
+  const companyName = Array.isArray(rel) ? rel[0]?.name ?? null : rel?.name ?? null;
+  return { id: rows[0].id, invoice_type: rows[0].invoice_type, company_id: rows[0].company_id, company_name: companyName };
 }
 
 async function savePurchaseBillCore(
@@ -1334,47 +1431,16 @@ async function savePurchaseBillCore(
     return { error: `Failed to save Purchase Bill: ${msg ?? "unknown error"}`, id: null, docNo: null };
   }
 
-  // 2026-08-12 (round 10): auto-mirror into the Finance ledger, same as
-  // Salary/Advance — "koi pata nahi chal raha ki bill pass register mein
-  // ye chala gaya ya nahi" was a real gap (a stale comment elsewhere
-  // claimed Purchase Bill already did this; it never actually did).
-  // 2026-08-17: company_id now comes from the resolved value above (order's
-  // company, or the employee's current company for orderless general-stock
-  // purchases) rather than assuming an order always exists.
-  // 2026-08-18 fix — this used to mirror `total_amount` (the PRE-GST base,
-  // qty*sq_feet*unit_rate), which understates what's actually owed to the
-  // vendor by the entire GST amount whenever gst_rate_pct is set.
-  // `g_total_plus_gst` (base + GST + round_off_amt) is the real payable
-  // total and is what Bill Payment / Party Ledger should show as
-  // outstanding — see db/2026-08-18-bill-pass-register-purchase-sync-fix.sql
-  // for the one-time repair of rows already mirrored with the wrong value.
-  const { data: bprData, error: bprError } = await supabase
-    .from("bill_pass_register")
-    .insert({
-      company_id: companyId,
-      // 2026-10-24b — a printing bill posts to the ledger's own Printing
-      // bucket, which is exactly what the Printing register and the printing
-      // P&L line already read, so no other wiring was needed for it to show up
-      // in both.
-      invoice_type: p.billKind === "printing" ? "Printing" : "Purchase",
-      vendor_invoice_no: p.vendorInvoiceNo,
-      invoice_date: p.vendorInvoiceDate,
-      invoice_recv_date: p.vendorInvoiceDate,
-      total_amt: Number(data.g_total_plus_gst ?? data.total_amount ?? 0),
-      party_id: p.vendorPartyId,
-      party_type: "Purchase",
-      source: "purchase_bill",
-      source_id: data.id,
-    })
-    .select("id")
-    .single();
-  if (bprError) {
-    return {
-      error: null,
-      id: data.id,
-      docNo: `${data.vendor_invoice_no} (saved, but Finance ledger entry failed: ${bprError.message} — add it manually)`,
-    };
-  }
+  // 2026-10-29 — THE FINANCE GATE. This used to auto-mirror every saved
+  // Purchase/Printing Bill into bill_pass_register (2026-08-12 round 10).
+  // User: "bina finance ledger se gujre koi bhi bill ledger / bill pass
+  // register me reflect nahi hoga ... jab tak usko finance ledger se company
+  // se bheja nahi jaye". So a saved bill is now ONLY purchase_bills state —
+  // it reaches Bill Payment / Party Ledger / the company's books solely via
+  // sendPurchaseBillInvoiceToFinance (the explicit, reviewed hand-off below),
+  // exactly like Courier / Duty bills already worked. companyId resolved
+  // above is still what that hand-off pre-selects.
+  void companyId;
 
   // 2026-08-29 (evening) — "ek genral voutcher banega jo bhi bills honge
   // unke liye ... jab send to bill pass register me bhejte hai ... us par
@@ -1414,22 +1480,6 @@ async function savePurchaseBillCore(
     ),
   });
 
-  if (bprData) {
-    await createJournalVoucherForBill(supabase, bprData.id, {
-      itemDetails: p.workDescription,
-      qty: p.qty || 1,
-      qtyUnit: p.qtyUnit || "FT",
-    });
-    // 2026-08-29 (evening, follow-up round) — "Received Chalan": every
-    // Purchase Bill landing in the Finance ledger also gets a Received
-    // Chalan, same best-effort/non-blocking philosophy as the JV call just
-    // above (a failure here must never roll back or block the Purchase
-    // Bill, already fully saved by this point). See
-    // createReceivedChalanForBillGroup's own header comment for why this
-    // is a paperwork document only, never a stock_in mutation.
-    await createReceivedChalanForBillGroup(supabase, bprData.id);
-  }
-
   return { error: null, id: data.id, docNo: data.vendor_invoice_no };
 }
 
@@ -1457,6 +1507,285 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+// =============================================================================
+// PURCHASE / PRINTING BILL — "Send to Finance" (2026-10-29 finance gate).
+//
+// User: "dusra bill purchase ho, washing, printing, couriour duty sabhi finance
+// ladger ke throw company me add ho or ladger me uske baad hi reflect ho us se
+// pahle nahi" + "jab tak usko finance ladger se company se bheja nahi jaye ...
+// na kisi parkar ki duplicate entry hogi".
+//
+// A vendor invoice is stored as ONE purchase_bills row per item, so this action
+// takes the whole invoice (every item id) and posts the ledger ONCE for it:
+// one bill_pass_register row per item row (the existing per-item link that
+// edit / delete / Bill Payment already understand — the Party Ledger groups
+// them back into a single invoice line, see lib/bill-grouping.ts). The
+// reviewed total the user types is distributed across those rows so their sum
+// is exactly what was approved, never the raw pre-review figure.
+//
+// Non-negotiable rules baked in here:
+//  - already-sent invoice never posts twice (idempotent, same as Courier);
+//  - the same vendor invoice in the same company is refused (duplicate bill);
+//  - the company is chosen HERE, at the ledger hand-off, so the bill lands in
+//    the company that actually books it ("report sheet usi company ki bnegi
+//    jisme vo register hua hai");
+//  - the bill's own company_id is stamped to match, so the document's A4 sheet
+//    and the Purchase Bill report agree with the ledger instead of the order.
+// =============================================================================
+export type FinancePostState = { error: string | null; success: string | null };
+
+function purchaseInvoiceType(billKind: string | null | undefined): "Purchase" | "Printing" {
+  return billKind === "printing" ? "Printing" : "Purchase";
+}
+
+export async function sendPurchaseBillInvoiceToFinance(
+  _prev: FinancePostState,
+  formData: FormData
+): Promise<FinancePostState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  let billIds: string[];
+  try {
+    billIds = JSON.parse(str(formData, "purchase_bill_ids") || "[]");
+  } catch {
+    return { error: "Invalid invoice selection — refresh and retry.", success: null };
+  }
+  billIds = Array.from(new Set(billIds.filter((v): v is string => typeof v === "string" && v.length > 0))).slice(0, 60);
+  if (billIds.length === 0) return { error: "No items to send — refresh and retry.", success: null };
+
+  const companyId = str(formData, "company_id");
+  if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: null };
+  const totalAmt = numOrZero(formData, "total_amt");
+  if (!(totalAmt > 0)) return { error: "Amount must be a positive number.", success: null };
+  const remark = strOrNull(formData, "remark");
+
+  type PbRow = {
+    id: string;
+    vendor_party_id: string | null;
+    vendor_invoice_no: string | null;
+    vendor_invoice_date: string | null;
+    g_total_plus_gst: number | null;
+    total_amount: number | null;
+    bill_kind?: string | null;
+  };
+  const selectCols = "id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount, bill_kind";
+  const firstRead = await supabase.from("purchase_bills").select(selectCols).in("id", billIds);
+  const rows = (firstRead.error && /bill_kind/i.test(firstRead.error.message)
+    ? await supabase
+        .from("purchase_bills")
+        .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
+        .in("id", billIds)
+    : firstRead) as { data: PbRow[] | null; error: { message: string } | null };
+  if (rows.error || !rows.data || rows.data.length === 0) return { error: rows.error?.message ?? "Invoice not found.", success: null };
+  const billRows = rows.data;
+
+  const first = billRows[0];
+  const invoiceNo = (first.vendor_invoice_no ?? "").trim();
+  const partyId = first.vendor_party_id;
+  if (!invoiceNo || !partyId) return { error: "This invoice has no vendor / invoice number yet.", success: null };
+  if (billRows.some((r) => (r.vendor_invoice_no ?? "").trim().toLowerCase() !== invoiceNo.toLowerCase() || r.vendor_party_id !== partyId)) {
+    return { error: "Those rows are not one single vendor invoice — refresh the list.", success: null };
+  }
+
+  // Idempotency: nothing posts twice.
+  const { data: already } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "purchase_bill")
+    .in("source_id", billIds)
+    .limit(1);
+  if (already && already.length > 0) return { error: "This invoice is already in the Finance ledger.", success: null };
+
+  // Duplicate bill guard — same vendor invoice already booked in this company.
+  const { data: dupRows } = await supabase
+    .from("bill_pass_register")
+    .select("id, vendor_invoice_no")
+    .eq("company_id", companyId)
+    .eq("party_id", partyId)
+    .ilike("vendor_invoice_no", invoiceNo)
+    .limit(3);
+  if ((dupRows ?? []).some((d) => (d.vendor_invoice_no ?? "").trim().toLowerCase() === invoiceNo.toLowerCase())) {
+    return {
+      error: `Duplicate entry: invoice "${invoiceNo}" from this vendor is already in this company's Finance ledger. If this is a second bill on the same PO, raise a Debit Note against the earlier invoice instead of posting it again.`,
+      success: null,
+    };
+  }
+
+  // Distribute the reviewed total across the invoice's item rows — last row
+  // absorbs the paise so the sum is EXACTLY the approved figure.
+  const rowTotals = billRows.map((r) => Number(r.g_total_plus_gst ?? r.total_amount ?? 0));
+  const rawSum = Math.round(rowTotals.reduce((s, n) => s + n, 0) * 100) / 100;
+  const amounts = rowTotals.map((n) => (rawSum > 0 ? Math.round((n / rawSum) * totalAmt * 100) / 100 : 0));
+  const drift = Math.round((totalAmt - amounts.reduce((s, n) => s + n, 0)) * 100) / 100;
+  if (amounts.length > 0) amounts[amounts.length - 1] = Math.round((amounts[amounts.length - 1] + drift) * 100) / 100;
+
+  const invoiceType = purchaseInvoiceType((first as { bill_kind?: string | null }).bill_kind);
+  let firstBprId: string | null = null;
+  for (let i = 0; i < billRows.length; i++) {
+    const r = billRows[i];
+    const { data: inserted, error } = await supabase
+      .from("bill_pass_register")
+      .insert({
+        company_id: companyId,
+        invoice_type: invoiceType,
+        vendor_invoice_no: invoiceNo,
+        invoice_date: r.vendor_invoice_date,
+        invoice_recv_date: r.vendor_invoice_date,
+        total_amt: amounts[i],
+        party_id: partyId,
+        party_type: "Purchase",
+        source: "purchase_bill",
+        source_id: r.id,
+        remark,
+      })
+      .select("id")
+      .single();
+    if (error) {
+      const msg = error.message.includes("duplicate key")
+        ? "This invoice was already sent to the Finance ledger."
+        : error.message;
+      return { error: `Finance ledger entry failed: ${msg}`, success: null };
+    }
+    if (i === 0) firstBprId = inserted?.id ?? null;
+  }
+
+  // Stamp the bill's own company so the document sheet / report and the
+  // ledger can never disagree about which company books this invoice.
+  await supabase.from("purchase_bills").update({ company_id: companyId }).in("id", billIds);
+
+  if (firstBprId) {
+    await createJournalVoucherForBill(supabase, firstBprId);
+    await createReceivedChalanForBillGroup(supabase, firstBprId);
+  }
+
+  await logAudit(supabase, {
+    companyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "purchase_bill.sent_to_finance",
+    entityType: "purchase_bill",
+    entityId: billRows[0].id,
+    entityLabel: invoiceNo,
+    changes: { company_id: companyId, total_amt: totalAmt },
+  });
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
+  return { error: null, success: `Invoice ${invoiceNo} sent to the Finance ledger — ₹${totalAmt.toFixed(2)}.` };
+}
+
+/**
+ * 2026-10-29 — "baad me bhi finance ladger me bhejne ke baad bhi company change
+ * ki ja sake".
+ *
+ * A Finance entry's company is the one place a bill is "registered", so a
+ * wrong pick used to mean deleting the entry (losing its payments/notes) and
+ * re-posting it — which is exactly how duplicate-looking ledgers were born.
+ * This moves the SAME ledger row to another company instead:
+ *  - refuses when the same vendor invoice already exists in the target company
+ *    (that would be a duplicate);
+ *  - for a Purchase Bill it moves the whole vendor invoice (every item row and
+ *    its ledger row) and re-stamps purchase_bills.company_id, so the bill's A4
+ *    sheet, report and ledger all follow;
+ *  - payments, adjustments and notes hang off the ledger row id, so they travel
+ *    with it untouched.
+ */
+export async function moveBillFinanceCompany(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const billPassRegisterId = str(formData, "bill_pass_register_id");
+  const targetCompanyId = str(formData, "company_id");
+  if (!billPassRegisterId) return { error: "Missing Finance ledger entry.", success: false };
+  if (!targetCompanyId || !employee.companyIds.includes(targetCompanyId)) return { error: "Select a valid company.", success: false };
+
+  const { data: bill } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, source, source_id, party_id, vendor_invoice_no, invoice_type")
+    .eq("id", billPassRegisterId)
+    .maybeSingle();
+  if (!bill) return { error: "Finance ledger entry not found.", success: false };
+  if (!employee.companyIds.includes(bill.company_id)) return { error: "You don't have access to this entry's company.", success: false };
+  if (bill.company_id === targetCompanyId) return { error: null, success: true };
+
+  // Which ledger rows belong to this move? A Purchase Bill moves with its
+  // whole vendor invoice (one row per item); Courier / Duty are one row.
+  let bprIds = [bill.id];
+  let purchaseBillIds: string[] = [];
+  if (bill.source === "purchase_bill" && bill.source_id) {
+    const { data: pb } = await supabase
+      .from("purchase_bills")
+      .select("id, vendor_party_id, vendor_invoice_no, company_id")
+      .eq("id", bill.source_id)
+      .maybeSingle();
+    const pbInvoiceNo = pb?.vendor_invoice_no ?? null;
+    const pbPartyId = pb?.vendor_party_id ?? null;
+    const pbCompanyId = pb?.company_id ?? null;
+    if (pbInvoiceNo && pbPartyId && pbCompanyId) {
+      const { data: siblings } = await supabase
+        .from("purchase_bills")
+        .select("id")
+        .eq("vendor_party_id", pbPartyId)
+        .ilike("vendor_invoice_no", pbInvoiceNo)
+        .eq("company_id", pbCompanyId);
+      purchaseBillIds = (siblings ?? []).map((s) => s.id);
+      if (purchaseBillIds.length > 0) {
+        const { data: linked } = await supabase
+          .from("bill_pass_register")
+          .select("id")
+          .eq("source", "purchase_bill")
+          .in("source_id", purchaseBillIds);
+        if (linked && linked.length > 0) bprIds = linked.map((l) => l.id);
+      }
+    }
+  }
+
+  // Duplicate guard in the target company (ignore the rows being moved).
+  if (bill.vendor_invoice_no && bill.party_id) {
+    const { data: dupRows } = await supabase
+      .from("bill_pass_register")
+      .select("id, vendor_invoice_no")
+      .eq("company_id", targetCompanyId)
+      .eq("party_id", bill.party_id)
+      .ilike("vendor_invoice_no", bill.vendor_invoice_no)
+      .limit(5);
+    const clash = (dupRows ?? []).find(
+      (d) => !bprIds.includes(d.id) && (d.vendor_invoice_no ?? "").trim().toLowerCase() === bill.vendor_invoice_no!.trim().toLowerCase()
+    );
+    if (clash) {
+      return {
+        error: `Invoice "${bill.vendor_invoice_no}" is already in the target company's Finance ledger — a second entry would be a duplicate. Merge or delete that one first.`,
+        success: false,
+      };
+    }
+  }
+
+  const { error } = await supabase.from("bill_pass_register").update({ company_id: targetCompanyId }).in("id", bprIds);
+  if (error) return { error: error.message, success: false };
+  if (purchaseBillIds.length > 0) {
+    await supabase.from("purchase_bills").update({ company_id: targetCompanyId }).in("id", purchaseBillIds);
+  }
+
+  await logAudit(supabase, {
+    companyId: targetCompanyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "bill_pass_register.company_changed",
+    entityType: "bill_pass_register",
+    entityId: bill.id,
+    entityLabel: bill.vendor_invoice_no ?? bill.invoice_type,
+    changes: { from_company_id: bill.company_id, to_company_id: targetCompanyId },
+  });
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
+  revalidatePath("/dashboard/reports");
+  return { error: null, success: true };
 }
 
 // =============================================================================
@@ -2583,6 +2912,24 @@ export async function deleteFreightBill(id: string): Promise<SimpleResult> {
   return { error: null, success: true };
 }
 
+/**
+ * 2026-10-29 — which Courier Bill already carries this shipment (if any), so a
+ * refused double-assignment can say WHICH invoice to open rather than failing
+ * with a raw constraint error.
+ */
+async function existingFreightBillNoForShipment(supabase: ServiceClient, orderShipmentId: string): Promise<string | null> {
+  if (!orderShipmentId) return null;
+  const { data } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("freight_bills(invoice_no)")
+    .eq("order_shipment_id", orderShipmentId)
+    .limit(1)
+    .maybeSingle();
+  const rel = (data as { freight_bills?: { invoice_no: string | null } | { invoice_no: string | null }[] | null } | null)?.freight_bills;
+  const invoiceNo = Array.isArray(rel) ? rel[0]?.invoice_no ?? null : rel?.invoice_no ?? null;
+  return invoiceNo;
+}
+
 export async function assignFreightAwb(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
@@ -2628,9 +2975,17 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
   );
 
   if (error || !data) {
-    const msg = error?.message.includes("duplicate key")
-      ? "This order/AWB is already assigned to a Courier Bill (an AWB can only be billed once)."
-      : error?.message;
+    // 2026-10-29 — an AWB can only be billed once. Name the bill it is already
+    // on instead of a bare "duplicate key": the realistic mistake is billing
+    // the same shipment a second time (the "duplicate bill" the user kept
+    // seeing), and the fix is to add it to THAT bill or remove it there first.
+    let msg = error?.message;
+    if (error?.message.includes("duplicate key")) {
+      const alreadyOn = await existingFreightBillNoForShipment(supabase, orderShipmentId);
+      msg = alreadyOn
+        ? `This order/AWB is already billed on Courier Bill ${alreadyOn}. Open that bill to add more AWBs, or remove it there before billing it again — an AWB can only be billed once.`
+        : "This order/AWB is already assigned to a Courier Bill (an AWB can only be billed once).";
+    }
     return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
   }
   // Bill already in Finance? Then this AWB's round-off must reach its row.
@@ -2735,7 +3090,11 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       supabase.from("freight_bill_awb_assignments").insert(p)
     );
     if (error) {
-      const msg = error.message.includes("duplicate key") ? "Already assigned to a Courier Bill." : error.message;
+      let msg = error.message;
+      if (error.message.includes("duplicate key")) {
+        const alreadyOn = await existingFreightBillNoForShipment(supabase, lookup.orderShipmentId);
+        msg = alreadyOn ? `Already billed on Courier Bill ${alreadyOn}.` : "Already assigned to a Courier Bill.";
+      }
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
     } else {
       roundOffTotal += row.roundOffAmt ?? 0;
@@ -2859,9 +3218,13 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
   // 2026-09-13 — duplicate Finance entry guard (see
   // findDuplicateFinanceInvoiceEntry note / DB index comment).
   {
-    const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null);
     if (dup) {
-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
+      const where = dup.company_name ? ` in ${dup.company_name}` : "";
+      return {
+        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger${where}. The same invoice can only be entered once — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
+        success: false,
+      };
     }
   }
 
@@ -3402,9 +3765,13 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
 
   // 2026-09-13 — duplicate Finance entry guard (same as freight above).
   {
-    const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null);
     if (dup) {
-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
+      const where = dup.company_name ? ` in ${dup.company_name}` : "";
+      return {
+        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger${where}. The same invoice can only be entered once — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
+        success: false,
+      };
     }
   }
 
