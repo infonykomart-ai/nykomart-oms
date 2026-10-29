@@ -171,23 +171,32 @@ export function BillPaymentList({
   const mergeCandidates = useMemo(() => {
     const byInvoice = new Map<string, PayableBillRow[]>();
     for (const g of selectedGroups) {
-      if (g.isGroup) continue; // multi-item purchase-bill groups never merge cross-company
+      if (g.isGroup) continue; // multi-item purchase-bill groups are real separate items, never duplicates
       const first = g.bills[0];
-      if (!first.party_id || !first.vendor_invoice_no) continue;
-      const key = `${first.party_id}|${first.vendor_invoice_no.toLowerCase().trim()}|${first.invoice_type ?? ""}`;
+      const invNo = (first.vendor_invoice_no ?? first.invoice_no ?? "").toLowerCase().trim();
+      if (!first.party_id || !invNo) continue;
+      // 2026-10-29 — same party + same invoice number is a duplicate even
+      // inside ONE company (a courier invoice entered once as "Courier Bill
+      // (Freight)" and once as "FREIGHT INVOICE"). Type no longer splits the
+      // key, and 2+ companies are no longer required — that requirement is
+      // exactly why these two rows could never be merged.
+      const key = `${first.party_id}|${invNo}`;
       const list = byInvoice.get(key) ?? [];
       list.push(first);
       byInvoice.set(key, list);
     }
     for (const list of byInvoice.values()) {
-      const companies = new Set(list.map((b) => b.company_id));
-      if (list.length >= 2 && companies.size >= 2) return list;
+      if (list.length >= 2) return list;
     }
     return null;
   }, [selectedGroups]);
 
-  const [mergeCompany, setMergeCompany] = useState("");
-  const keeperRow = mergeCandidates?.find((b) => b.company_id === mergeCompany) ?? mergeCandidates?.[0];
+  const [mergeKeeperId, setMergeKeeperId] = useState("");
+  // Default keeper: the row that actually carries a document (its source bill,
+  // e.g. the Courier Bill with the 11 AWBs) — folding the loose/duplicate row
+  // into that one is what "jisme 11 AWB already add hai usme merge karo" means.
+  const defaultKeeper = mergeCandidates?.find((b) => b.source || b.doc_href) ?? mergeCandidates?.[0];
+  const keeperRow = mergeCandidates?.find((b) => b.id === mergeKeeperId) ?? defaultKeeper;
   const mergeLoserIds = (mergeCandidates ?? []).filter((b) => b.id !== keeperRow?.id).map((b) => b.id);
 
   return (
@@ -285,8 +294,8 @@ export function BillPaymentList({
           candidates={mergeCandidates}
           keeper={keeperRow}
           loserIds={mergeLoserIds}
-          mergeCompany={mergeCompany}
-          setMergeCompany={setMergeCompany}
+          mergeKeeperId={keeperRow.id}
+          setMergeKeeperId={setMergeKeeperId}
           onDone={() => setSelected(new Set())}
         />
       )}
@@ -755,15 +764,15 @@ function MergeBar({
   candidates,
   keeper,
   loserIds,
-  mergeCompany,
-  setMergeCompany,
+  mergeKeeperId,
+  setMergeKeeperId,
   onDone,
 }: {
   candidates: PayableBillRow[];
   keeper: PayableBillRow;
   loserIds: string[];
-  mergeCompany: string;
-  setMergeCompany: (v: string) => void;
+  mergeKeeperId: string;
+  setMergeKeeperId: (v: string) => void;
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(mergeDuplicateBills, initialMergeState);
@@ -777,7 +786,8 @@ function MergeBar({
 
   const combinedPaid = candidates.reduce((s, b) => s + b.total_paid, 0);
   const combinedBalance = candidates.reduce((s, b) => s + b.balance_due, 0);
-  const keeperName = (mergeCompany ? candidates.find((b) => b.company_id === mergeCompany) : keeper)?.company_name ?? keeper.company_name;
+  const sameCompany = new Set(candidates.map((b) => b.company_id)).size === 1;
+  const keeperName = keeper.company_name;
 
   return (
     <div className="sticky bottom-3 mt-3 rounded-xl border border-teal-300 bg-teal-50 p-3 shadow-lg">
@@ -789,24 +799,34 @@ function MergeBar({
         <form action={formAction} className="space-y-2">
           <input type="hidden" name="bill_ids_json" value={JSON.stringify([keeper.id, ...loserIds])} />
           <p className="text-sm font-semibold text-teal-900">
-            🔗 Same invoice in {new Set(candidates.map((b) => b.company_name)).size} companies — merge into one?
+            🔗 Duplicate invoice {candidates[0]?.invoice_no || candidates[0]?.vendor_invoice_no} — {candidates.length} entries
+            {sameCompany ? ` in ${keeperName}` : ` across ${new Set(candidates.map((b) => b.company_name)).size} companies`}. Merge into one?
           </p>
           <p className="text-xs text-teal-700">
-            {candidates.map((b) => `${b.company_name}: ${b.invoice_no || b.vendor_invoice_no} (₹${b.balance_due.toFixed(2)} due)`).join(" · ")} —
-            combined paid ₹{combinedPaid.toFixed(2)}, balance ₹{combinedBalance.toFixed(2)}.
+            {candidates
+              .map(
+                (b) =>
+                  `${b.company_name}: ${b.invoice_no || b.vendor_invoice_no} · ${b.source ?? b.invoice_type ?? "manual"} · ₹${b.total_amt.toFixed(2)}` +
+                  (b.credit_note_amt ? ` (CN ₹${b.credit_note_amt.toFixed(2)})` : "")
+              )
+              .join("  ·  ")}
+            {" "}— combined paid ₹{combinedPaid.toFixed(2)}, balance ₹{combinedBalance.toFixed(2)}. The duplicate rows&apos;
+            amounts are dropped; their payments, credit/debit notes and adjustments move onto the entry you keep.
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <div>
-              <label className="mb-0.5 block text-[11px] text-teal-700" htmlFor="merge-keeper">Keep in company</label>
+              <label className="mb-0.5 block text-[11px] text-teal-700" htmlFor="merge-keeper">Entry to keep</label>
               <select
                 id="merge-keeper"
-                value={mergeCompany || keeper.company_id}
-                onChange={(e) => setMergeCompany(e.target.value)}
+                value={mergeKeeperId}
+                onChange={(e) => setMergeKeeperId(e.target.value)}
                 className="rounded-lg border border-teal-300 bg-white px-2 py-1 text-sm text-slate-900"
               >
                 {candidates.map((b) => (
-                  <option key={b.id} value={b.company_id}>
-                    {b.company_name} — {b.invoice_no || b.vendor_invoice_no}
+                  <option key={b.id} value={b.id}>
+                    {b.company_name} — {b.invoice_no || b.vendor_invoice_no} · {b.source ?? b.invoice_type ?? "manual"} · ₹
+                    {b.total_amt.toFixed(2)}
+                    {b.credit_note_amt ? ` · CN ₹${b.credit_note_amt.toFixed(2)}` : ""}
                   </option>
                 ))}
               </select>

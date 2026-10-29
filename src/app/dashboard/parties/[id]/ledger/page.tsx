@@ -8,6 +8,7 @@ import { LedgerExportBar, type LedgerExportRow } from "./ledger-export-bar";
 import type { LedgerPdfInput } from "@/lib/ledger-pdf";
 import { LedgerBillAdminActions, LedgerPaymentAdminActions, LedgerPaymentBatchAdminActions } from "./admin-row-actions";
 import { BillDocLink } from "@/components/bill-doc-link";
+import { LedgerDuplicateMerge, type LedgerDuplicateGroup } from "./duplicate-merge";
 import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 import { buildWalletLedgerLines, walletSettlementNote, type WalletSettlement } from "@/lib/ledger/wallet-ledger-lines";
 import { fyOptions, fyStartYear, fyWindow } from "@/lib/fy-date";
@@ -167,7 +168,7 @@ async function PartyLedgerInner(
     supabase
       .from("bill_pass_register")
       .select(
-        "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at"
+        "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at, merged_into_bill_id"
       )
       .eq("party_id", id)
       .in("company_id", scopedCompanyIds)
@@ -183,7 +184,10 @@ async function PartyLedgerInner(
   // scoped to ONE company (no single logo would be correct across companies).
   const currentCompanyLogoUrl = (companies ?? []).find((c) => c.id === employee.currentCompanyId)?.logo_url ?? null;
 
-  const entries = entriesRaw ?? [];
+  // 2026-10-29 — a merged duplicate row is kept for audit but must not render
+  // as a second entry: after "merge into one" the ledger shows the single
+  // surviving entry only.
+  const entries = (entriesRaw ?? []).filter((e) => !e.merged_into_bill_id);
   // 2026-10-24 — the invoice cell of a bill row opens the bill's OWN document
   // sheet (Courier / Duty & Tax / Purchase Bill), exactly like Bill Payment
   // does. Same shared resolver, so the pages can never drift apart.
@@ -633,6 +637,45 @@ async function PartyLedgerInner(
     overdue: "oms-row-overdue",
   };
 
+  // 2026-10-29 — one invoice, more than one ledger entry for THIS party in
+  // THIS company: exactly the case the user hit (a Courier Bill carrying 11
+  // AWBs plus a second "FREIGHT INVOICE" row carrying a credit note). The
+  // rows are real rows in the Finance ledger, so they can be folded for real
+  // — not just hidden — by the same merge action Bill Payment uses.
+  const ledgerDuplicateGroups: LedgerDuplicateGroup[] = (() => {
+    const byInvoice = new Map<string, typeof entries>();
+    for (const e of entries) {
+      const inv = (e.vendor_invoice_no ?? e.invoice_no ?? "").trim();
+      if (!inv) continue;
+      const key = `${e.company_id}|${inv.toLowerCase()}`;
+      const list = byInvoice.get(key) ?? [];
+      list.push(e);
+      byInvoice.set(key, list);
+    }
+    const out: LedgerDuplicateGroup[] = [];
+    for (const [key, list] of byInvoice) {
+      if (list.length < 2) continue;
+      // Purchase bills are stored one row PER ITEM on the same invoice; those
+      // are not duplicates (the ledger already renders them as a single line),
+      // so a group made only of purchase-bill item rows is never offered.
+      if (list.every((e) => e.source === "purchase_bill")) continue;
+      const first = list[0];
+      out.push({
+        key,
+        invoiceNo: (first.vendor_invoice_no ?? first.invoice_no ?? "—") as string,
+        companyName: companyName.get(first.company_id) ?? "—",
+        rows: list.map((e) => ({
+          id: e.id,
+          label: sourceLabelFor(e),
+          total: Number(e.total_amt ?? 0),
+          creditNote: Number(e.credit_note_amt ?? 0),
+          hasDocument: Boolean(e.source_id),
+        })),
+      });
+    }
+    return out;
+  })();
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
@@ -701,6 +744,10 @@ async function PartyLedgerInner(
           against it always appear in the same company. Pick one company above to see it alone.
         </p>
       )}
+
+      <div className="print:hidden">
+        <LedgerDuplicateMerge groups={ledgerDuplicateGroups} />
+      </div>
 
       <PrintArea
         id="party-ledger-area"

@@ -1,3 +1,37 @@
+DUPLICATE INVOICE — EK HI ENTRY ME MERGE (2026-10-29b)
+======================================================================
+
+Aapka case: ek hi courier invoice (108110172691) do baar ledger me — ek row
+"Courier Bill (Freight)" jisme 11 AWB, doosri "FREIGHT INVOICE" jisme credit
+note. Ab dono ko ek entry me merge kiya ja sakta hai.
+
+1) PARTY LEDGER ME HI MERGE KA OPTION
+-------------------------------------
+Jo party ledger kholein, usme agar kisi invoice ki ek hi company me 2 ya
+zyada entry hain (invoice no. same) to table ke upar panel aata hai:
+  • dono entries dikhti hain: type, amount, credit note
+  • "Entry to keep" me default wahi rehti hai jisme asli document / AWB hain
+    (badalna ho to dropdown se badal lijiye)
+  • "🔗 Merge 2 entries into one" → payments, credit/debit note aur
+    adjustments sab keeper par aa jate hain, duplicate ki amount hat jati
+    hai, aur ledger me sirf ek entry dikhti hai (duplicate row delete nahi
+    hoti — zero hokar audit me rehti hai)
+
+2) BILL PAYMENT ME BHI AB SAME-COMPANY DUPLICATE MERGE HOTA HAI
+--------------------------------------------------------------
+Pehle merge bar sirf tab aata tha jab same invoice 2 alag COMPANIES me ho,
+aur invoice type bhi same ho. Ab:
+  • same company ke duplicate bhi merge ho jate hain
+  • invoice type (Courier Bill vs FREIGHT INVOICE) ab rasta nahi rokti —
+    same party + same vendor invoice no. = merge allowed
+  • keeper company ke bajay ab POORI ENTRY chuni ja sakti hai (jo 11 AWB
+    wali entry rakhni hai, wahi)
+  • credit_notes / debit_notes jo duplicate row se bandhi thi, wo bhi keeper
+    par shift ho jati hain (note gum nahi hota)
+
+Merged (zero) rows ab party ledger me dikhti hi nahi — sirf ek entry.
+
+
 FINANCE LEDGER GATE + KOI DUPLICATE BILL NAHI + MULTI-INVOICE DEBIT NOTE
 (2026-10-29)
 ======================================================================
