@@ -420,7 +420,7 @@ export async function searchBillsForNote(query: string): Promise<BillSearchHit[]
   const [{ data: byInvoice }, { data: parties }] = await Promise.all([
     supabase
       .from("bill_pass_register")
-      .select("id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, source, total_amt, balance_due")
+      .select("id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, source, total_amt, balance_due")
       .in("company_id", employee.companyIds)
       .or(`vendor_invoice_no.ilike.%${trimmed}%,invoice_no.ilike.%${trimmed}%`)
       .order("created_at", { ascending: false })

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { DocLetterhead, DocGeneratedFooter } from "@/components/doc-letterhead";
 
 // 2026-08-29 — "debit note ka print kaha se milega": Debit Note (like
 // Credit Note and Internal Invoice) had no individual print/PDF at all —
@@ -63,7 +64,11 @@ async function DebitNoteReportInner({ id }: { id: string }) {
 
   const [{ data: company }, { data: profile }, { data: party }, orderResult] = await Promise.all([
     supabase.from("companies").select("id, name, logo_url").eq("id", note.company_id).single(),
-    supabase.from("company_profiles").select("address, phone, email").eq("company_id", note.company_id).maybeSingle(),
+    supabase
+      .from("company_profiles")
+      .select("address, phone, whatsapp, email, gstin, bank_name, account_no, ifsc_code")
+      .eq("company_id", note.company_id)
+      .maybeSingle(),
     supabase.from("parties").select("name, address, gst, contact_no").eq("id", note.party_id).single(),
     note.order_id
       ? supabase.from("orders").select("ref_no").eq("id", note.order_id).maybeSingle()
@@ -115,21 +120,12 @@ async function DebitNoteReportInner({ id }: { id: string }) {
               taraf" — restructured from a single letterhead-left/title-right
               row into 3 stacked rows: full-width letterhead, then the
               document title block centered below it, then the existing
-              party/reference two-column row unchanged. Applied identically
-              across Debit Note, Credit Note, and Internal Invoice reports
-              per the user's "sabhi isi parkar se bane" instruction. */}
-          <div className="mb-4 flex items-center gap-3">
-            {company?.logo_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={company.logo_url} alt={company?.name ?? ""} className="h-14 w-14 object-contain" />
-            )}
-            <div>
-              <div className="text-lg font-bold">{company?.name ?? "—"}</div>
-              <div className="text-xs text-slate-500">
-                {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
-              </div>
-            </div>
-          </div>
+              party/reference two-column row unchanged.
+              2026-10-29b — the letterhead is now the FULL printed identity
+              (logo, name, address, phone/WhatsApp, email + GSTIN / Bank /
+              A/C / IFSC under a double rule), the same one the Purchase Bill
+              statement prints — it used to be just a logo and a name. */}
+          <DocLetterhead company={company} profile={profile} />
           <div className="mb-6 border-b border-slate-300 pb-4 text-center">
             <div className="text-xl font-bold tracking-wide text-slate-800">DEBIT NOTE</div>
             <div className="text-xs text-slate-500">
@@ -241,6 +237,8 @@ async function DebitNoteReportInner({ id }: { id: string }) {
             <div className="font-semibold text-slate-800">For {company?.name ?? "—"}</div>
             <div className="mt-8 text-slate-400">Authorized Signatory</div>
           </div>
+
+          <DocGeneratedFooter className="mt-6 border-t border-slate-300 pt-2" />
         </div>
       </PrintArea>
     </div>

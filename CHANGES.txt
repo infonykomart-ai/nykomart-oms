@@ -1,3 +1,89 @@
+MERGE RULE FIX + UNDO MERGE + DN/CN FULL LETTERHEAD + DEBIT NOTE REGISTER
+(2026-10-29e)
+======================================================================
+
+KOI NAYA SQL NAHI — sab kuch maujooda tables/columns par hai.
+
+
+1) BUG FIX: GALAT BILL MERGE (PARTY LEDGER ME GADBAD) — ROOT CAUSE
+------------------------------------------------------------------
+Symptom: ek hi invoice no. (jaise 82) do companies ke ledger me dikh
+raha tha, aur amounts/paid mix ho gaye the — jis company me bill register
+hua tha uske ledger me uska poora amount nahi aata tha.
+
+Wajah: merge duplicate bills ko sirf (party + invoice no.) par match karta
+tha. Invoice number akela duplicate nahi hota — same vendor 82 number
+dusre financial year me bhi use karta hai (82 dt 2026-10-19 vs 82 dt
+2026-08-02). Aise do ALAG bills fold ho gaye: doosre ka amount 0 ho gaya
+aur uske payments pehle bill par chale gaye.
+
+Ab merge ke liye CHAAR cheezein match karni zaroori hain:
+      party + vendor invoice no. + INVOICE DATE + AMOUNT
+Sirf tabhi "duplicate entry" mana jayega — warna dono bills alag rahenge.
+Invoice type ab bhi key me nahi hai (wahi courier invoice "Courier Bill
+(Freight)" aur "FREIGHT INVOICE" do roop me ho to wo duplicate hai).
+
+Wahi rule teen jagah lagaya gaya hai taaki kahin bhi drift na ho:
+  • Bill Payment ka "Merge entries" bar (candidates)
+  • server action mergeDuplicateBills (asli guard)
+  • ledger/approvals grouping (ek invoice ki kai item rows) — ab invoice
+    DATE bhi group key ka hissa hai, is liye same number dusri date ka
+    bill us invoice me nahi judega
+
+Rule + undo ka math src/lib/bill-merge-key.ts me hai, aur uske unit tests
+src/lib/bill-merge-key.test.ts me (11 tests).
+
+
+2) NAYA: "MERGED ENTRIES" PANEL + UNDO MERGE (ADMIN)
+---------------------------------------------------
+Pehle merge one-way tha — galti se merge ho gaya to wapas paane ka koi
+rasta nahi tha. Ab Bill Payment page par neeche "🔗 Merged entries" panel
+(Admin only) har merged duplicate dikhata hai: invoice, date, party, apni
+company, kis me merge hua, aur uska ORIGINAL amount. "↩ Undo merge" ek
+click me:
+  • us bill ka original amount wapas (merge ki audit line se padha jata
+    hai, hand-typed nahi)
+  • merge hua bill ke payments us amount ke hisab se wapas usi bill par
+  • CN/DN adjustment rows bhi wapas
+  • keeper ke credit_note_amt / adj_amt se us bill ka hissa minus
+  • dono bills ka total_paid unke apne ledger se dobara calculate
+Agar payment rows exactly match nahi hoti (koi combination nahi banta) to
+panel saaf-saaf bata deta hai ki kitna amount manually dobara enter karna
+hai — andaaza laga kar paisa idhar-udhar nahi karta.
+
+
+3) DEBIT NOTE / CREDIT NOTE PRINT — POORA LETTERHEAD
+----------------------------------------------------
+Dono /report pages par pehle sirf logo + company name aata tha. Ab wahi
+poora printed identity jata hai jo Purchase Bill statement par hota hai:
+  • baayein: logo + company name + address + phone/WhatsApp + email
+  • daayein: GSTIN / Bank / A/C No. / IFSC
+  • neeche double rule, aur sabse neeche
+    "computer-generated document … no signature required" footer
+Shared component: src/components/doc-letterhead.tsx
+
+
+4) NAYA: DEBIT NOTE REGISTER (POORI LIST + PRINT)
+-------------------------------------------------
+Debit Notes ki koi list hi nahi thi — sirf Document Entry me ek chhoti
+"Recent Debit Notes" list. Ab /dashboard/debit-notes-register:
+  • party-wise har debit note, har group ka apna total, upar grand total
+  • har DN ka apna sheet link (poora letterhead wala print)
+  • "🖨 Print / PDF list" — poori list A4 par, file karne layak
+  • company filter (top-nav ki company default)
+Credit Note Register par bhi print button + grand total jod diya, aur dono
+registers ek dusre se link ho gaye. Bill Payment page par dono ke link.
+
+Badlav kiye gaye files (20): bill-merge-key.ts + test, merge-actions.ts,
+merged-bills-panel.tsx, bill-payment page/list, ledger page, bill-grouping,
+approvals l1/l2 + approval-list, documents/actions.ts, doc-letterhead.tsx,
+debit/credit note report pages, debit-notes-register, credit-notes-register,
+landing-features.ts, CHANGES.txt.
+
+Verification: focused tsc (exit 0), eslint --quiet on changed files (exit 0),
+11/11 unit tests pass (`node --import tsx --test src/lib/bill-merge-key.test.ts`).
+
+
 PAYMENT VOUCHER + SABHI DUPLICATE EK CLICK ME MERGE (2026-10-29d)
 ======================================================================
 

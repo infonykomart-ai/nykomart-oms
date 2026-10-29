@@ -4,7 +4,9 @@ import { listCreditNoteRegister, findUnregisteredManualCreditNotes } from "@/app
 import { cnKindLabel } from "../bill-payment/credit-note-kinds";
 import { CreditNoteRegisterActions } from "./register-actions-bar";
 import { DocStatementDialog } from "@/components/doc-statement-dialog";
+import { PrintArea, PrintButton } from "@/components/print-view";
 import { formatISTShort } from "@/lib/format-ist";
+import Link from "next/link";
 
 // Credit Note Register — 2026-09-13. "us se ye hoga ki apne ko pata chal
 // jayega ki kis party se apne ko kitne ammonut ka credit mil gaya tha."
@@ -60,10 +62,20 @@ export default async function CreditNotesRegisterPage({
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4 print:hidden">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">🧾 Credit Note Register</h1>
+          {/* 2026-10-29b — the Debit Note side of the same story had no list at
+              all; the two registers now link to each other. */}
+          <p className="mt-1 text-sm text-slate-500">
+            Every credit note received, party by party.{" "}
+            <Link href="/dashboard/debit-notes-register" className="font-medium text-rose-700 underline hover:text-rose-800">
+              📉 Debit Note Register →
+            </Link>
+          </p>
         </div>
+        <div className="flex items-end gap-2">
+        <PrintButton label="🖨 Print / PDF list" />
         <form method="get" className="flex items-end gap-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
@@ -78,8 +90,10 @@ export default async function CreditNotesRegisterPage({
             Filter
           </button>
         </form>
+        </div>
       </div>
 
+      <PrintArea id="credit-notes-register-area">
       <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-800">
         Total credit received: ₹{grandTotal.toFixed(2)} across {groups.length} part{groups.length === 1 ? "y" : "ies"}
       </div>
@@ -91,7 +105,10 @@ export default async function CreditNotesRegisterPage({
           </div>
         )}
         {groups.map((g) => (
-          <details key={g.party_id ?? "__none__"} className="rounded-xl border border-slate-200 bg-white" open={groups.length <= 3}>
+          // 2026-10-29b — always open: a closed <details> prints nothing at
+          // all, so the new "Print / PDF list" action used to drop every
+          // group it hadn't opened. A register is a list you print whole.
+          <details key={g.party_id ?? "__none__"} className="rounded-xl border border-slate-200 bg-white" open>
             <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-3">
               <span className="text-sm font-semibold text-slate-800">
                 {g.party_name} <span className="ml-1 text-xs font-normal text-slate-400">({g.notes.length} note{g.notes.length === 1 ? "" : "s"})</span>
@@ -164,7 +181,15 @@ export default async function CreditNotesRegisterPage({
         ))}
       </div>
 
-      <div className="mt-8">
+      {groups.length > 0 && (
+        <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900">
+          <span>Grand total — {groups.reduce((s, g) => s + g.notes.length, 0)} credit note(s)</span>
+          <span>₹{grandTotal.toFixed(2)}</span>
+        </div>
+      )}
+      </PrintArea>
+
+      <div className="mt-8 print:hidden">
         <h2 className="mb-1 text-lg font-semibold text-slate-900">Backlog — manual credit-note amounts without a Credit Note document</h2>
         <p className="mb-3 text-sm text-slate-500">
           These bills already have a manual Credit Note Amt entered directly on the bill (Courier/Duty entry or the

@@ -179,6 +179,12 @@ export const MODULE_GROUPS: LandingGroup[] = [
         blurb: "Every credit note in one register, with totals and export.",
         href: "/dashboard/credit-notes-register",
       },
+      {
+        icon: "📉",
+        label: "Debit Notes Register",
+        blurb: "Every debit note we raised, party by party, printable as one list.",
+        href: "/dashboard/debit-notes-register",
+      },
     ],
   },
   {

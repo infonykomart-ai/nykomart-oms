@@ -160,27 +160,26 @@ export function BillPaymentList({
 
   // 2026-09-14 — "AGAR ESE KOI INVOICE AAYE TO USKO MERGE KARNE KA OPTION
   // BANANA HAI": among the SELECTED groups, detect the same invoice
-  // (party + vendor invoice no. + type) appearing under DIFFERENT
-  // companies — exactly the Nyko Mart/Rugara/CASA ARRA split. When ≥2
-  // companies hold one identical invoice, a merge bar offers to pick a
-  // KEEPER company and fold the other rows into it (payments + CN/DN
-  // adjustments move to the keeper; losers are zeroed and tagged, never
-  // deleted). Guarded against grouped invoices (one company's own
-  // multi-item group) — those already display as one row and must not
-  // fold into a different company's row.
+  // (party + vendor invoice no. + invoice date + amount) appearing under
+  // DIFFERENT companies — exactly the Nyko Mart/Rugara/CASA ARRA split. When
+  // the SAME document was entered twice, a merge bar offers to pick a KEEPER
+  // and fold the other rows into it (payments + CN/DN adjustments move to the
+  // keeper; losers are zeroed and tagged, never deleted). Guarded against
+  // grouped invoices (one company's own multi-item group) — those already
+  // display as one row and must not fold into a different company's row.
+  //
+  // 2026-10-29b — the date and the amount are now part of the key too. An
+  // invoice NUMBER alone is not a duplicate: 82 of 2026-10-19 is a different
+  // bill from 82 of 2026-08-02 (different FY, different amount), and folding
+  // those two together is what made the party ledger show the wrong money.
   const mergeCandidates = useMemo(() => {
     const byInvoice = new Map<string, PayableBillRow[]>();
     for (const g of selectedGroups) {
       if (g.isGroup) continue; // multi-item purchase-bill groups are real separate items, never duplicates
       const first = g.bills[0];
       const invNo = (first.vendor_invoice_no ?? first.invoice_no ?? "").toLowerCase().trim();
-      if (!first.party_id || !invNo) continue;
-      // 2026-10-29 — same party + same invoice number is a duplicate even
-      // inside ONE company (a courier invoice entered once as "Courier Bill
-      // (Freight)" and once as "FREIGHT INVOICE"). Type no longer splits the
-      // key, and 2+ companies are no longer required — that requirement is
-      // exactly why these two rows could never be merged.
-      const key = `${first.party_id}|${invNo}`;
+      if (!first.party_id || !invNo || !first.invoice_date) continue;
+      const key = `${first.party_id}|${invNo}|${first.invoice_date.slice(0, 10)}|${Number(first.total_amt ?? 0).toFixed(2)}`;
       const list = byInvoice.get(key) ?? [];
       list.push(first);
       byInvoice.set(key, list);

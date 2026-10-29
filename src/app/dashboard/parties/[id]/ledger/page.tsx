@@ -287,11 +287,16 @@ async function PartyLedgerInner(
       const order: string[] = [];
       for (const bg of baseGroups) {
         const first = bg.bills[0];
-        // Merge on the VENDOR's invoice number — that's the one real-world
-        // document, whatever split it into several of our rows.
+        // Merge on the VENDOR's invoice number + that invoice's DATE — one
+        // real-world document. 2026-10-29b: the date is part of the key
+        // because a vendor can reuse an invoice number in another financial
+        // year (82 of 2026-10-19 vs 82 of 2026-08-02); without it the two
+        // bills were summed into a single line and the ledger showed one
+        // amount where there were two bills.
         const vendorInv = (first.vendor_invoice_no ?? "").trim();
+        const invDate = (first.invoice_date ?? first.invoice_recv_date ?? "").slice(0, 10);
         const bucket = sourceLabelFor(first);
-        const key = vendorInv ? `m:${bucket}|${vendorInv}` : `s:${bg.key}`;
+        const key = vendorInv ? `m:${bucket}|${vendorInv}|${invDate}` : `s:${bg.key}`;
         const existing = byKey.get(key);
         if (existing) {
           existing.bills.push(...bg.bills);

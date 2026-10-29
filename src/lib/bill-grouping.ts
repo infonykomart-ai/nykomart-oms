@@ -28,6 +28,17 @@ export type GroupableBill = {
   party_id: string | null;
   vendor_invoice_no: string | null;
   source: string | null;
+  /**
+   * 2026-10-29b — part of the grouping key. Two bills can carry the SAME
+   * vendor invoice number and still be different bills (a vendor who reuses
+   * numbers across financial years, e.g. 82 of 2026-10-19 vs 82 of
+   * 2026-08-02). Grouping them into one line summed two unrelated amounts
+   * into one figure, which is exactly what the party ledger was showing.
+   * Optional so older callers that don't select the column still compile —
+   * when absent it simply can't distinguish dates, and each row stays its own
+   * singleton group only if it genuinely has no vendor invoice no.
+   */
+  invoice_date?: string | null;
 };
 
 export type BillGroup<T> = {
@@ -42,7 +53,11 @@ export function groupBills<T extends GroupableBill>(bills: T[]): BillGroup<T>[] 
 
   for (const bill of bills) {
     const isGroupable = bill.source === "purchase_bill" && !!bill.vendor_invoice_no;
-    const key = isGroupable ? `grp:${bill.company_id}|${bill.party_id ?? ""}|${bill.vendor_invoice_no}` : `single:${bill.id}`;
+    // 2026-10-29b — invoice DATE is part of the key: same number on two dates
+    // = two documents (and usually two financial years), never one invoice.
+    const key = isGroupable
+      ? `grp:${bill.company_id}|${bill.party_id ?? ""}|${bill.vendor_invoice_no}|${(bill.invoice_date ?? "").slice(0, 10)}`
+      : `single:${bill.id}`;
     if (!groups.has(key)) {
       groups.set(key, []);
       order.push(key);
