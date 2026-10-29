@@ -931,6 +931,20 @@ async function PartyLedgerInner(
                                 }}
                               />
                             )}
+                            {/* 2026-10-29d — the printable PAYMENT VOUCHER for a
+                                recorded payment (amount in words + company
+                                letterhead), reachable straight from the ledger
+                                line. Screen-only so the ledger print stays as-is. */}
+                            {t.paymentItems.length === 1 && (
+                              <Link
+                                href={`/dashboard/bill-payment/voucher/${t.paymentItems[0].id}`}
+                                target="_blank"
+                                className="ml-2 whitespace-nowrap rounded border border-teal-300 px-1.5 py-0.5 text-[10px] font-medium text-teal-700 hover:bg-teal-50 print:hidden"
+                                title="Open the printable Payment Voucher for this payment"
+                              >
+                                🧾 Voucher
+                              </Link>
+                            )}
                           </td>
                           <td className="py-1 pr-2">{t.paymentMode ?? ""}</td>
                           <td className="py-1 pr-2 font-mono text-[11px]">{t.referenceNo ?? ""}</td>
