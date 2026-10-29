@@ -1,3 +1,104 @@
+DUPLICATE INVOICE — EK HI ENTRY ME MERGE (2026-10-29b)
+======================================================================
+
+Aapka case: ek hi courier invoice (108110172691) do baar ledger me — ek row
+"Courier Bill (Freight)" jisme 11 AWB, doosri "FREIGHT INVOICE" jisme credit
+note. Ab dono ko ek entry me merge kiya ja sakta hai.
+
+1) PARTY LEDGER ME HI MERGE KA OPTION
+-------------------------------------
+Jo party ledger kholein, usme agar kisi invoice ki ek hi company me 2 ya
+zyada entry hain (invoice no. same) to table ke upar panel aata hai:
+  • dono entries dikhti hain: type, amount, credit note
+  • "Entry to keep" me default wahi rehti hai jisme asli document / AWB hain
+    (badalna ho to dropdown se badal lijiye)
+  • "🔗 Merge 2 entries into one" → payments, credit/debit note aur
+    adjustments sab keeper par aa jate hain, duplicate ki amount hat jati
+    hai, aur ledger me sirf ek entry dikhti hai (duplicate row delete nahi
+    hoti — zero hokar audit me rehti hai)
+
+2) BILL PAYMENT ME BHI AB SAME-COMPANY DUPLICATE MERGE HOTA HAI
+--------------------------------------------------------------
+Pehle merge bar sirf tab aata tha jab same invoice 2 alag COMPANIES me ho,
+aur invoice type bhi same ho. Ab:
+  • same company ke duplicate bhi merge ho jate hain
+  • invoice type (Courier Bill vs FREIGHT INVOICE) ab rasta nahi rokti —
+    same party + same vendor invoice no. = merge allowed
+  • keeper company ke bajay ab POORI ENTRY chuni ja sakti hai (jo 11 AWB
+    wali entry rakhni hai, wahi)
+  • credit_notes / debit_notes jo duplicate row se bandhi thi, wo bhi keeper
+    par shift ho jati hain (note gum nahi hota)
+
+Merged (zero) rows ab party ledger me dikhti hi nahi — sirf ek entry.
+
+
+FINANCE LEDGER GATE + KOI DUPLICATE BILL NAHI + MULTI-INVOICE DEBIT NOTE
+(2026-10-29)
+======================================================================
+
+KOI NAYA SQL NAHI — sabhi badlav maujooda tables par hain.
+
+
+1) PURCHASE / PRINTING BILL AB FINANCE SE GUZAR KE HI COMPANY ME JAYEGA
+-----------------------------------------------------------------------
+Pehle purchase/printing bill save karte hi chupchap Bill Pass Register me
+chala jata tha. Ab:
+  • save karne par bill sirf Document Entry me rehta hai
+  • har vendor invoice ke card par naya box: **➜ Send to Finance** —
+    company chuniye, payable confirm kijiye (default = invoice ka poora
+    total, badalna ho to badal dijiye), Send
+  • us click se pehle Bill Payment / Party Ledger / company ki books me
+    kuch nahi jata — "bina finance ledger se gujre koi bill reflect nahi"
+  • Send par hi JV aur Received Chalan bante hain
+  • ek hi vendor invoice dobara post nahi hogi (same company me duplicate
+    bilkul block; dubble bill ke liye Debit Note ka rasta dikhaya jata hai)
+
+2) COMPANY CHANGE — FINANCE ME BHEJNE KE BAAD BHI
+-------------------------------------------------
+  • Purchase / Printing card me "↔ Change company"
+  • Courier / Duty bill card me bhi "↔ Change company"
+  • naya entry nahi banta — wahi ledger row doosri company me jaati hai,
+    uske payments / notes / invoice no. sab saath (delete + re-post ki
+    zaroorat nahi, isi wajah se duplicate entries banti thi)
+  • target company me wahi invoice pehle se ho to block, saaf message ke saath
+
+3) DUPLICATE COURIER / DUTY INVOICE — KISI BHI COMPANY ME
+---------------------------------------------------------
+Send to Finance ka duplicate check ab sabhi accessible companies me dekhta
+hai (pehle sirf usi company me). Same courier invoice doosri company me
+post karte hi rok diya jata hai, aur bataya jata hai ki wo kis company me
+pehle se hai — Party Ledger me ek hi invoice do baar dikhne wali problem.
+AWB dobara bill karne par error me bill ka invoice no. bhi aata hai.
+
+4) DEBIT NOTE — EK NOTE, KAI INVOICE (MULTIPLE PO)
+---------------------------------------------------
+  • naya picker: party ke saare invoices list hote hain, jitne chahiye tick
+    kijiye aur har invoice ke saamne debit amount likhiye
+  • Debit Amount = in lines ka SUM (haath se total likhne ki zaroorat nahi,
+    isliye calculation mistake nahi hoti)
+  • note ka "Against Invoice/Bill No." me saare invoice no. aa jate hain
+  • har tick ki hui invoice ka payable uske apne amount se kam hota hai
+    (Bill Payment / Party Ledger me turant)
+  • naya **Reason** field (Duplicate bill / Rate difference / Excess qty /
+    GST mistake / Short supply / Other) — Particulars me sabse pehle print
+    hota hai, taaki note kyu bana hai ye saaf rahe
+  • Debit Note ki A4 sheet par "Against N invoices" table — kis invoice ka
+    kitna debit, date ke saath
+  • purchase bill card se 🧾 Debit Note shortcut pehle jaisa hi
+
+5) REPORT / SHEET USI COMPANY KI JISME BILL REGISTER HUA
+---------------------------------------------------------
+Freight / Duty report ab row ki company Finance ledger se leta hai (jis
+company me bill chadha). Order kisi bhi company ka ho, report aur A4 sheet
+usi company ke naam se banti hai. Jo bill Finance me nahi gaya, uske liye
+purana behaviour (order ki company) fallback raha.
+
+
+BAKI: aapne Free-GST-Billing-Software repo ka link diya tha — us repo ko
+is system me install karke merge karna alag project hai; is round me nahi
+kiya gaya (neeche jawab me detail).
+
+
 ROUND OFF AB PER ORDER (COURIER / DUTY) + LEDGER ME TURANT UPDATE
 (2026-10-28e)
 ======================================================================

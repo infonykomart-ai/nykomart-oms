@@ -19,6 +19,7 @@ import {
 } from "./actions";
 import { SendToFinanceForm, ResyncFinanceAmountButton } from "./freight-bill-section";
 import { RoundOffField } from "./round-off-field";
+import { FinanceCompanyMover } from "./finance-post-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { RelatedNotesBadge } from "./related-notes-badge";
 // 2026-09-15 — 📄 View opens this bill's read-only statement sheet (same
@@ -68,6 +69,9 @@ export type DutyBillRow = {
   round_off_amt?: number;
   assignments: DutyBillAssignment[];
   sentToFinance: boolean;
+  /** 2026-10-29 — its Finance ledger row (for the company mover). */
+  financeBprId?: string | null;
+  financeCompanyId?: string | null;
   // 2026-08-17: same optional vendor/party linkage as FreightBillRow — see
   // freight-bill-section.tsx's comment.
   vendor_party_id: string | null;
@@ -286,6 +290,11 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
             {bill.invoice_date ?? "—"} · {bill.assignments.length} AWB(s) assigned
             {bill.sentToFinance && <span className="ml-1 text-green-700">· ✓ in Bill Pass Register</span>}
           </div>
+          {/* 2026-10-29 — move an already-posted duty bill to the correct
+              company without deleting / re-posting it. */}
+          {bill.sentToFinance && (
+            <FinanceCompanyMover billPassRegisterId={bill.financeBprId ?? null} currentCompanyId={bill.financeCompanyId ?? null} companies={companies} />
+          )}
           <div className={bill.vendor_name ? "text-slate-500" : "text-amber-600"}>
             {bill.vendor_name ? `🚚 ${bill.vendor_name}` : "⚠ No vendor/courier party linked — won't appear in a Party Ledger"}
           </div>

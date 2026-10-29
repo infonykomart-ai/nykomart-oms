@@ -60,6 +60,7 @@ import { DocStatementDialog } from "@/components/doc-statement-dialog";
 import type { DocType } from "@/lib/doc-statement";
 import type { PurchaseBillInvoiceGroup } from "@/lib/bill-grouping";
 import { formatAuditStamp, purchaseBillAmountLabel, purchaseHasGst } from "@/lib/purchase-bill-money";
+import { PurchaseFinanceBox } from "./finance-post-box";
 
 type Company = { id: string; name: string };
 type Party = PartyOption;
@@ -108,6 +109,8 @@ type PurchaseBillInvoiceRow = PurchaseBillInvoiceGroup<PurchaseBillItem> & {
   taxableTotal: number;
   grandTotal: number;
   finance_bpr_id: string | null;
+  /** 2026-10-29 — the company that actually holds this invoice in the Finance ledger. */
+  financeCompanyId: string | null;
   notes: RelatedNote[];
 };
 
@@ -791,6 +794,21 @@ function PurchaseBillInvoiceList({
                   <div className="text-slate-400">{inv.vendor_invoice_date ?? "—"}</div>
                 </div>
               </div>
+
+              {/* 2026-10-29 — the Finance gate: nothing reaches Bill Payment /
+                  Party Ledger until this invoice is sent from here, and its
+                  company can be changed afterwards without deleting it. */}
+              <PurchaseFinanceBox
+                billIds={inv.items.map((i) => i.id)}
+                companies={companies}
+                defaultCompanyId={inv.companyId}
+                total={inv.grandTotal}
+                sent={
+                  inv.finance_bpr_id
+                    ? { billPassRegisterId: inv.finance_bpr_id, companyId: inv.financeCompanyId ?? inv.companyId ?? "" }
+                    : null
+                }
+              />
 
               <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-1.5">
                 <p className="text-red-600">{deleteError[inv.key]}</p>

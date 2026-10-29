@@ -76,10 +76,15 @@ export async function mergeDuplicateBills(_prev: MergeBillsState, formData: Form
     }
   }
 
-  // Same-invoice sanity: keeper must share party + vendor invoice no. +
-  // type with every loser (that's the definition of the merge — otherwise
-  // payments would move onto an unrelated bill).
-  const key = (r: (typeof rows)[number]) => `${r.party_id ?? ""}|${(r.vendor_invoice_no ?? "").toLowerCase().trim()}|${r.invoice_type ?? ""}`;
+  // Same-invoice sanity: keeper must share party + vendor invoice no. with
+  // every loser (that's the definition of the merge — otherwise payments
+  // would move onto an unrelated bill).
+  //
+  // 2026-10-29 — invoice_type is NO LONGER part of the key. A courier invoice
+  // recorded once as "Courier Bill (Freight)" (source-linked) and once as a
+  // plain "FREIGHT INVOICE" row (legacy/manual) is the SAME invoice, and that
+  // type mismatch was exactly what stopped those two entries from merging.
+  const key = (r: (typeof rows)[number]) => `${r.party_id ?? ""}|${(r.vendor_invoice_no ?? r.invoice_no ?? "").toLowerCase().trim()}`;
   const keeperKey = key(keeper);
   const mismatched = losers.filter((r) => key(r) !== keeperKey);
   if (!keeper.party_id || !keeper.vendor_invoice_no) {
@@ -87,7 +92,7 @@ export async function mergeDuplicateBills(_prev: MergeBillsState, formData: Form
   }
   if (mismatched.length) {
     return {
-      error: `These bills don't share the same Party + Vendor Invoice No. + Type (${mismatched.map((r) => `${r.invoice_no ?? r.vendor_invoice_no} — ${r.companies?.name ?? ""}`).join("; ")}). Only same-invoice entries can merge.`,
+      error: `These bills don't share the same Party + Vendor Invoice No. (${mismatched.map((r) => `${r.invoice_no ?? r.vendor_invoice_no} — ${r.companies?.name ?? ""}`).join("; ")}). Only same-invoice entries can merge.`,
       success: null,
     };
   }
@@ -121,6 +126,14 @@ export async function mergeDuplicateBills(_prev: MergeBillsState, formData: Form
     movedAdjustments += movedAdj?.length ?? 0;
     cnSum += Number(loser.credit_note_amt ?? 0);
     adjSum += Number(loser.adj_amt ?? 0);
+
+    // 2026-10-29 — the loser can also be the row a real Credit / Debit Note
+    // was raised against (debit_notes/credit_notes.bill_pass_register_id).
+    // Re-point those documents at the keeper too, otherwise the note would
+    // keep hanging off a zeroed duplicate row and disappear from the bill
+    // that survived ("ek me credit note to" — it must travel with the merge).
+    await supabase.from("credit_notes").update({ bill_pass_register_id: keeperId }).eq("bill_pass_register_id", loser.id);
+    await supabase.from("debit_notes").update({ bill_pass_register_id: keeperId }).eq("bill_pass_register_id", loser.id);
 
     // 3. Zero + tag the loser (never delete). total_amt = 0 zeroes the
     // GENERATED to_be_pay/balance_due; original amount kept in the remark.

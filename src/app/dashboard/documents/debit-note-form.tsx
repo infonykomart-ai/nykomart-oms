@@ -5,6 +5,7 @@ import { saveDebitNote, type DocFormState, type OrderLookup, type BillSearchHit 
 import { OrderLookupBox } from "./order-lookup-box";
 import { BillLookupSelect } from "./bill-lookup-select";
 import { PartyBillPicker } from "./party-bill-picker";
+import { DebitNoteBillPicker, type DebitNoteBillLine } from "./debit-note-bills";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 
 const initialState: DocFormState = { error: null, success: null };
@@ -44,6 +45,16 @@ export function DebitNoteForm({
   // No." field stays too, for a bill that doesn't exist in the system yet
   // — it's supplementary now, not the link.
   const [raisedAgainstBillId, setRaisedAgainstBillId] = useState(defaults?.billId ?? "");
+  // 2026-10-29 — "multiple po order ka debit note ... 4 po 4 alag alag bill me
+  // hai lekin debit note ek hi banega": one note can list several invoices of
+  // this party, each with the amount debited against it. When any line is
+  // selected the amount below is their SUM and is no longer typed by hand.
+  const [billLines, setBillLines] = useState<DebitNoteBillLine[]>([]);
+  const linesTotal = useMemo(
+    () => Math.round(billLines.reduce((s, l) => s + (Number(l.amount) || 0), 0) * 100) / 100,
+    [billLines]
+  );
+  const [reason, setReason] = useState(defaults?.billId ? "Duplicate bill — same PO/AWB charged twice" : "");
 
   // "kisi bill me agar credit debit adjust karna pade kisi dusre invocie me
   // to vo bhi hona chahiye" — optional: apply this note's amount to REDUCE
@@ -92,7 +103,14 @@ export function DebitNoteForm({
   // an effect: the calculator's suggestion drives it right up until the
   // user types into the field themselves, after which their own entry
   // always wins (never silently overwrite a manual value).
-  const debitAmountInput = debitAmountTouched ? debitAmountManual : rateDiffAmount != null ? rateDiffAmount.toFixed(2) : "";
+  const debitAmountInput =
+    billLines.length > 0
+      ? linesTotal.toFixed(2)
+      : debitAmountTouched
+        ? debitAmountManual
+        : rateDiffAmount != null
+          ? rateDiffAmount.toFixed(2)
+          : "";
 
   function handleFound(r: OrderLookup) {
     if (!r.order) return;
@@ -109,6 +127,7 @@ export function DebitNoteForm({
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{state.error}</p>}
       <input type="hidden" name="order_id" value={orderId} />
       <input type="hidden" name="bill_pass_register_id" value={raisedAgainstBillId} />
+      <input type="hidden" name="bill_lines" value={JSON.stringify(billLines)} />
       <input type="hidden" name="adjust_target_bill_pass_register_id" value={applyAdjustment ? adjustTargetBill?.primaryBillId ?? "" : ""} />
       <input type="hidden" name="adjust_amount" value={applyAdjustment ? adjustAmount : ""} />
 
@@ -142,12 +161,28 @@ export function DebitNoteForm({
           are picked above, no typing needed; shows item-by-item on a
           multi-item invoice so this note attaches to the specific item. */}
       <PartyBillPicker
-        label="Raised against bill/invoice (optional)"
+        label="Raised against bill/invoice (optional — single invoice)"
         companyId={companyId}
         partyId={partyId}
         selectedBillId={raisedAgainstBillId}
         onSelect={setRaisedAgainstBillId}
       />
+
+      {/* 2026-10-29 — one note across several invoices / POs. */}
+      <DebitNoteBillPicker companyId={companyId} partyId={partyId} lines={billLines} onChange={setBillLines} />
+
+      <div>
+        <label className={labelClass} htmlFor="dn_reason">Reason for this Debit Note *</label>
+        <select id="dn_reason" name="reason" required value={reason} onChange={(e) => setReason(e.target.value)} className={inputClass}>
+          <option value="" disabled>Select the reason — it is printed on the note</option>
+          <option value="Duplicate bill — same PO/AWB charged twice">Duplicate bill — same PO/AWB charged twice</option>
+          <option value="Rate difference — vendor billed higher than agreed">Rate difference — vendor billed higher than agreed</option>
+          <option value="Excess quantity / weight billed">Excess quantity / weight billed</option>
+          <option value="GST / calculation mistake in vendor bill">GST / calculation mistake in vendor bill</option>
+          <option value="Short supply / damaged material">Short supply / damaged material</option>
+          <option value="Other reason">Other reason</option>
+        </select>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -191,13 +226,17 @@ export function DebitNoteForm({
             type="number"
             step="0.01"
             required
+            readOnly={billLines.length > 0}
             value={debitAmountInput}
             onChange={(e) => {
               setDebitAmountTouched(true);
               setDebitAmountManual(e.target.value);
             }}
-            className={inputClass}
+            className={`${inputClass} ${billLines.length > 0 ? "bg-slate-100 text-slate-600" : ""}`}
           />
+          {billLines.length > 0 && (
+            <p className="mt-0.5 text-[10px] text-slate-500">Sum of the {billLines.length} invoice line(s) above — automatic.</p>
+          )}
         </div>
       </div>
 
