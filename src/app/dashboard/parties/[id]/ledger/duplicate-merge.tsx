@@ -59,10 +59,21 @@ function MergeAllBar({ groups }: { groups: LedgerDuplicateGroup[] }) {
   const [failure, setFailure] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
+  // 2026-10-29l — only groups whose entries actually carry the SAME invoice
+  // value are merged in bulk; a group whose amounts differ is not a duplicate
+  // (the server rejects it too), so it is skipped and reported instead of
+  // stopping the whole run halfway.
+  const eligible = groups.filter((g) => {
+    const keeper = g.rows.find((r) => r.hasDocument) ?? g.rows[0];
+    return g.rows.filter((r) => r.id !== keeper.id).every((r) => Math.abs(r.total - keeper.total) <= 0.005);
+  });
+  const skipped = groups.length - eligible.length;
+
   if (done) {
     return (
       <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs font-medium text-teal-800">
-        ✓ All {groups.length} duplicate invoice{groups.length === 1 ? "" : "s"} merged into one entry each — refresh to see the single lines.
+        ✓ {eligible.length} duplicate invoice{eligible.length === 1 ? "" : "s"} merged into one entry each — refresh to see the single lines.
+        {skipped > 0 && ` ${skipped} skipped because their invoice values differ (aage alag se dekh lo).`}
       </p>
     );
   }
@@ -71,11 +82,11 @@ function MergeAllBar({ groups }: { groups: LedgerDuplicateGroup[] }) {
     setFailure(null);
     startTransition(async () => {
       let merged = 0;
-      for (const group of groups) {
+      for (const group of eligible) {
         const keeper = group.rows.find((r) => r.hasDocument) ?? group.rows[0];
         const losers = group.rows.filter((r) => r.id !== keeper.id);
         if (!keeper || losers.length === 0) continue;
-        setProgress(`${merged + 1} of ${groups.length} — invoice ${group.invoiceNo}`);
+        setProgress(`${merged + 1} of ${eligible.length} — invoice ${group.invoiceNo}`);
         const fd = new FormData();
         fd.set("bill_ids_json", JSON.stringify([keeper.id, ...losers.map((l) => l.id)]));
         const result = await mergeDuplicateBills({ error: null, success: null }, fd);
@@ -102,11 +113,17 @@ function MergeAllBar({ groups }: { groups: LedgerDuplicateGroup[] }) {
         <button
           type="button"
           onClick={mergeAll}
-          disabled={pending}
+          disabled={pending || eligible.length === 0}
+          title={eligible.length === 0 ? "Har group me invoice value alag hai — duplicate nahi." : undefined}
           className="rounded-lg bg-teal-700 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-40"
         >
-          {pending ? progress ?? "Merging…" : `🔗 Merge all ${groups.length} into one entry each`}
+          {pending ? progress ?? "Merging…" : `🔗 Merge all ${eligible.length} into one entry each`}
         </button>
+        {skipped > 0 && (
+          <span className="text-[10px] font-medium text-amber-700">
+            {skipped} group{skipped === 1 ? "" : "s"} skipped — invoice value alag hai
+          </span>
+        )}
         <span className="text-[10px] text-teal-700">
           Keeps the entry that carries the document/AWBs and folds the other into it — payments, credit/debit notes and adjustments move across, duplicate amounts are dropped.
         </span>
@@ -141,6 +158,11 @@ function DuplicateGroupRow({ group }: { group: LedgerDuplicateGroup }) {
 
   const losers = group.rows.filter((r) => r.id !== keeperId);
   const keeper = group.rows.find((r) => r.id === keeperId) ?? group.rows[0];
+  // 2026-10-29l — "jis bill ke sath merge ho raha uska check bhi kare ki invoice
+  // value kitna hai": the kept entry's invoice value is stated explicitly and
+  // every other entry is compared against it. A merge is only a duplicate when
+  // the value matches (the server also requires the invoice date to match).
+  const valueMismatch = losers.some((l) => Math.abs(l.total - keeper.total) > 0.005);
 
   return (
     <form action={action} className="rounded-lg border border-teal-300 bg-teal-50 px-3 py-2 text-xs">
@@ -152,6 +174,22 @@ function DuplicateGroupRow({ group }: { group: LedgerDuplicateGroup }) {
         <span className="text-teal-700">
           {group.rows.map((r) => `${r.label} ₹${r.total.toFixed(2)}${r.creditNote ? ` (CN ₹${r.creditNote.toFixed(2)})` : ""}`).join("  ·  ")}
         </span>
+      </div>
+      <div className="mt-1 rounded border border-teal-200 bg-white px-2 py-1 text-[11px] text-slate-700">
+        <span className="font-semibold text-teal-900">Kept entry invoice value: ₹{keeper.total.toFixed(2)}</span>
+        {losers.map((l) => {
+          const same = Math.abs(l.total - keeper.total) <= 0.005;
+          return (
+            <span key={l.id} className="ml-2">
+              {same ? "✓" : "✗"} {l.label} ₹{l.total.toFixed(2)}
+            </span>
+          );
+        })}
+        {valueMismatch && (
+          <p className="mt-0.5 font-semibold text-red-600">
+            Value alag hai — ye duplicate nahi, merge server par reject hoga.
+          </p>
+        )}
       </div>
       <div className="mt-1.5 flex flex-wrap items-end gap-2">
         <div>
@@ -175,7 +213,8 @@ function DuplicateGroupRow({ group }: { group: LedgerDuplicateGroup }) {
         </div>
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || valueMismatch}
+          title={valueMismatch ? "Invoice value must agree — these are different bills." : undefined}
           className="rounded-lg bg-teal-700 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-40"
         >
           {pending ? "Merging…" : `🔗 Merge ${group.rows.length} entries into one`}

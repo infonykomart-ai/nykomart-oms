@@ -787,13 +787,21 @@ function MergeBar({
   const combinedBalance = candidates.reduce((s, b) => s + b.balance_due, 0);
   const sameCompany = new Set(candidates.map((b) => b.company_id)).size === 1;
   const keeperName = keeper.company_name;
+  // 2026-10-29l — "jis bill ke sath merge ho raha uska check bhi kare ki invoice
+  // value kitna hai": the keeper's OWN invoice value is now compared against
+  // every entry being folded in (value + invoice date — the same two fields
+  // merge-actions.ts refuses to merge across), so a wrong merge is visible
+  // before the click instead of coming back as a server error.
+  const others = candidates.filter((b) => b.id !== keeper.id);
+  const differs = (b: PayableBillRow) =>
+    Math.abs(b.total_amt - keeper.total_amt) > 0.005 || (b.invoice_date ?? "") !== (keeper.invoice_date ?? "");
+  const valueMismatch = others.some(differs);
 
   return (
     <div className="sticky bottom-3 mt-3 rounded-xl border border-teal-300 bg-teal-50 p-3 shadow-lg">
-      {state.success ? (
-        <p className="text-sm font-semibold text-teal-800">
-          ✅ Merged {state.success.mergedCount} entr{state.success.mergedCount === 1 ? "y" : "ies"} into {state.success.keeperInvoiceNo} ({state.success.keeperCompany}) — {state.success.movedPayments} payment{state.success.movedPayments === 1 ? "" : "s"} and {state.success.movedAdjustments} note adjustment{state.success.movedAdjustments === 1 ? "" : "s"} moved. Refreshing…
-        </p>
+      {state.success ? (          <p className="text-sm font-semibold text-teal-800">
+            ✅ Merged {state.success.mergedCount} entr{state.success.mergedCount === 1 ? "y" : "ies"} into {state.success.keeperInvoiceNo} ({state.success.keeperCompany}, invoice value ₹{keeper.total_amt.toFixed(2)}) — {state.success.movedPayments} payment{state.success.movedPayments === 1 ? "" : "s"} and {state.success.movedAdjustments} note adjustment{state.success.movedAdjustments === 1 ? "" : "s"} moved. Refreshing…
+          </p>
       ) : (
         <form action={formAction} className="space-y-2">
           <input type="hidden" name="bill_ids_json" value={JSON.stringify([keeper.id, ...loserIds])} />
@@ -812,6 +820,30 @@ function MergeBar({
             {" "}— combined paid ₹{combinedPaid.toFixed(2)}, balance ₹{combinedBalance.toFixed(2)}. The duplicate rows&apos;
             amounts are dropped; their payments, credit/debit notes and adjustments move onto the entry you keep.
           </p>
+          {/* Invoice value check — keeper vs every entry being folded in. */}
+          <div className="rounded-lg border border-teal-200 bg-white px-2.5 py-2 text-[11px] text-slate-700">
+            <div className="font-semibold text-teal-900">
+              Invoice value of the entry being kept — {keeper.company_name}:{" "}
+              {keeper.invoice_no || keeper.vendor_invoice_no} · {keeper.invoice_date ?? "no invoice date"} · ₹
+              {keeper.total_amt.toFixed(2)}
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {others.map((b) => {
+                const same = !differs(b);
+                return (
+                  <li key={b.id}>
+                    {same ? "✓" : "✗"} {b.company_name}: ₹{b.total_amt.toFixed(2)} · {b.invoice_date ?? "no invoice date"}{" "}
+                    {same ? "— same value and date, safe to merge" : "— value/date differs, this is a different bill"}
+                  </li>
+                );
+              })}
+            </ul>
+            {valueMismatch && (
+              <p className="mt-1 font-semibold text-red-600">
+                Ye entries duplicate nahi lag rahi (invoice value ya date alag hai) — merge nahi hoga.
+              </p>
+            )}
+          </div>
           <div className="flex flex-wrap items-end gap-2">
             <div>
               <label className="mb-0.5 block text-[11px] text-teal-700" htmlFor="merge-keeper">Entry to keep</label>
@@ -832,7 +864,8 @@ function MergeBar({
             </div>
             <button
               type="submit"
-              disabled={pending || loserIds.length === 0}
+              disabled={pending || loserIds.length === 0 || valueMismatch}
+              title={valueMismatch ? "Invoice value / date must agree — these are different bills." : undefined}
               className="rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-teal-800 disabled:opacity-40"
             >
               {pending ? "Merging…" : `🔗 Merge ${loserIds.length + 1} entries into ${keeperName}`}

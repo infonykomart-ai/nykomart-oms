@@ -1,3 +1,74 @@
+MERGE ME INVOICE VALUE KA CHECK (KEEPER vs LOSSER)
+(2026-10-29l)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: merge offer me har entry ka ₹ amount to tha, par JIS BILL ME MERGE
+HO RAHA HAI (keeper) uski invoice value alag se kahin nahi likhi thi —
+`<select>` ke andar chhupi rehti thi. Iska natija: 55 galat merges ho gaye,
+kyunki merge karte waqt kisi ne ye compare hi nahi kiya ki keeper ki value
+kitni hai.
+
+AB (dono jagah — Bill Payment ka merge bar aur Party Ledger ka duplicate
+panel):
+
+  • "Invoice value of the entry being kept — <company>: <invoice> · <date> ·
+    ₹X" ek alag line par.
+  • Har entry jo fold ho rahi hai, uski value + date keeper ke saamne:
+    ✓ (same — safe to merge) ya ✗ (value/date differ — different bill).
+  • Agar koi bhi entry differ karti hai to MERGE BUTTON DISABLE + saaf
+    warning ("Ye entries duplicate nahi lag rahi"). Server bhi yahi rule
+    lagata hai (party + invoice no. + date + amount — merge-actions.ts),
+    is liye click se pehle hi pata chal jata hai, error aake nahi.
+  • Party Ledger ka "Merge all" ab sirf un groups ko bulk-merge karta hai
+    jinki values match karti hain; jo groups alag hain wo skip hote hain
+    aur "N groups skipped — invoice value alag hai" bataya jata hai
+    (pehle beech me fail ho kar poora run ruk jata tha).
+  • Merge success line me bhi kept invoice ki value print hoti hai.
+
+Badlav (2 files + CHANGES): app/dashboard/bill-payment/bill-payment-list.tsx
+(MergeBar), app/dashboard/parties/[id]/ledger/duplicate-merge.tsx.
+
+VERIFICATION: changed TS/TSX ka tsc exit 0, eslint --quiet exit 0. Asli DB
+par merge flow nahi chala paya (yahan Supabase creds nahi).
+
+MERGED ENTRIES: EK CLICK ME SAB UNMERGE
+(2026-10-29k)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: Bill Payment ke "Merged entries" panel me har row ka apna
+"Undo merge" button tha. 55 merged rows ka matlab 55 clicks, har click
+alag round trip — jab merge key galat lagi thi (same invoice no., par
+alag date/amount) to ye poora undo karna torture tha.
+
+AB: panel ke header me ek button — "↩ Undo all N merges".
+
+  • Ek confirm dialog poochhta hai, phir sabhi merged bills par WAHI
+    per-bill undo chalta hai (unmergeBill ka poora body ab shared
+    `unmergeOne` step hai — bulk aur single dono bilkul same kaam karte
+    hain, koi dusra shortcut nahi).
+  • Har bill ka original amount, uske payments aur CN/DN adjustment rows
+    wapas usi par aate hain (merge note se amount, ledger se payments).
+  • Ek bill fail ho jaye (merge note me original amount na mile, ya
+    payment ka exact match na bane) to baaki rukte nahi — summary me
+    "N undone · M could not be undone" aur har failure ki wajah alag se
+    dikhti hai, saath me warnings (jo payment wapas na aa payi, etc.).
+  • Safety cap: ek baar me 500 merged rows tak (runaway request na bane).
+  • Admin-only, single undo ki tarah — Finance ka posted paisa rewrite
+    hota hai.
+
+Badlav (2 files + CHANGES): app/dashboard/bill-payment/merge-actions.ts
+(unmergeOne refactor + unmergeAllBills), merged-bills-panel.tsx (button +
+summary block).
+
+VERIFICATION: changed TS/TSX ka tsc exit 0, eslint --quiet exit 0. Asli DB
+par bulk undo nahi chala paya (yahan Supabase creds nahi) — pehla check:
+Bill Payment → Merged entries → "Undo all" dabao, summary me undo count aur
+restored total aana chahiye, aur list khaali ho jani chahiye.
+
 NOTE REGISTERS: FY FILTER + SEARCH + EXCEL/CSV DOWNLOAD
 (2026-10-29j)
 ======================================================================

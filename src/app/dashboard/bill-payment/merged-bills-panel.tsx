@@ -13,9 +13,10 @@
 // unmergeBill (see merge-actions.ts) to restore the bill, its payments and its
 // adjustment rows. Admin-only, because it rewrites money Finance has posted.
 import { useActionState } from "react";
-import { unmergeBill, type UnmergeState } from "./merge-actions";
+import { unmergeAllBills, unmergeBill, type UnmergeAllState, type UnmergeState } from "./merge-actions";
 
 const initialUnmergeState: UnmergeState = { error: null, success: null };
+const initialUnmergeAllState: UnmergeAllState = { error: null, summary: null };
 
 export type MergedBillRow = {
   id: string;
@@ -32,20 +33,74 @@ export type MergedBillRow = {
 
 export function MergedBillsPanel({ rows }: { rows: MergedBillRow[] }) {
   const [state, formAction, pending] = useActionState(unmergeBill, initialUnmergeState);
+  // 2026-10-29k — "single single unmerge karni pad rahi hai, ek sath karo":
+  // one click for the whole list. Same server step as the per-row button.
+  const [allState, allAction, allPending] = useActionState(unmergeAllBills, initialUnmergeAllState);
 
   if (rows.length === 0) return null;
 
   return (
     <section className="mt-6 rounded-xl border border-amber-200 bg-amber-50/60">
-      <div className="border-b border-amber-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-amber-900">🔗 Merged entries ({rows.length})</h2>
-        <p className="mt-1 text-[11px] text-amber-800">
-          Each row below is a bill that was folded into another one by a merge — its own amount is hidden (0) and its
-          payments/notes now sit on the keeper. Undo restores the bill with its original amount and moves its payments
-          and CN/DN adjustments back. Only a true duplicate should ever be merged.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-amber-200 px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-amber-900">🔗 Merged entries ({rows.length})</h2>
+          <p className="mt-1 text-[11px] text-amber-800">
+            Each row below is a bill that was folded into another one by a merge — its own amount is hidden (0) and its
+            payments/notes now sit on the keeper. Undo restores the bill with its original amount and moves its payments
+            and CN/DN adjustments back. Only a true duplicate should ever be merged.
+          </p>
+        </div>
+        <form
+          action={allAction}
+          onSubmit={(e) => {
+            if (
+              !window.confirm(
+                `Undo all ${rows.length} merges?\n\nEvery merged entry gets its own original amount back and its payments / CN-DN adjustments are moved back to it.`
+              )
+            ) {
+              e.preventDefault();
+            }
+          }}
+        >
+          <button
+            type="submit"
+            disabled={allPending || pending}
+            className="whitespace-nowrap rounded-lg border border-amber-500 bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {allPending ? "Undoing all…" : `↩ Undo all ${rows.length} merges`}
+          </button>
+        </form>
       </div>
 
+      {allState.error && (
+        <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{allState.error}</div>
+      )}
+      {allState.summary && (
+        <div className="mx-4 mt-3 space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          <div className="font-semibold">
+            ✅ {allState.summary.undone} merge{allState.summary.undone === 1 ? "" : "s"} undone — ₹
+            {allState.summary.restoredTotal.toFixed(2)} restored
+            {allState.summary.failed > 0 && ` · ${allState.summary.failed} could not be undone`}
+          </div>
+          {allState.summary.failures.length > 0 && (
+            <ul className="list-disc pl-4 text-red-700">
+              {allState.summary.failures.slice(0, 20).map((f) => (
+                <li key={`${f.invoiceNo}-${f.error}`}>
+                  {f.invoiceNo}: {f.error}
+                </li>
+              ))}
+            </ul>
+          )}
+          {allState.summary.warnings.length > 0 && (
+            <ul className="list-disc pl-4 text-amber-800">
+              {allState.summary.warnings.slice(0, 20).map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          )}
+          <div className="text-[10px] text-emerald-700">Refresh (or reopen the page) to see the restored bills in the list.</div>
+        </div>
+      )}
       {state.error && (
         <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{state.error}</div>
       )}

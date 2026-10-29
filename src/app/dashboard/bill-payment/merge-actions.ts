@@ -27,7 +27,7 @@
 // re-points the ledger rows atomically in the same pass; no hand-typed
 // totals are trusted anywhere.
 
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { billMergeKey, pickRowsSummingTo, parseMergeOriginalTotal, MERGE_TAG } from "@/lib/bill-merge-key";
 import { revalidatePath } from "next/cache";
@@ -228,9 +228,21 @@ export type UnmergeState = {
 
 export async function unmergeBill(_prev: UnmergeState, formData: FormData): Promise<UnmergeState> {
   const employee = await requireCapability("employee_admin");
-  const supabase = createServiceRoleClient();
   const loserId = str(formData, "bill_id");
   if (!loserId) return { error: "No bill selected.", success: null };
+  return unmergeOne(createServiceRoleClient(), employee, loserId);
+}
+
+/**
+ * 2026-10-29k — the per-bill undo, as a reusable step. `unmergeBill` and the new
+ * `unmergeAllBills` MUST do exactly the same thing to a bill, so the whole body
+ * lives here once and both entry points call it.
+ */
+async function unmergeOne(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  employee: AuthedEmployee,
+  loserId: string
+): Promise<UnmergeState> {
 
   const { data: loser, error: loadError } = await supabase
     .from("bill_pass_register")
@@ -359,5 +371,74 @@ export async function unmergeBill(_prev: UnmergeState, formData: FormData): Prom
       movedAdjustments,
       warning: warnings.length ? warnings.join(" ") : null,
     },
+  };
+}
+
+// =============================================================================
+// UNDO *ALL* MERGES (2026-10-29k)
+//
+// "single single unmearg karni pad rahi hai ek sath unmearg karne ka option do
+// na" — with a loose merge key there were 55 merged rows, i.e. 55 clicks, each
+// one its own round trip. This runs the SAME unmergeOne over every merged row
+// in the caller's companies, in one action, and reports per-bill failures
+// instead of stopping at the first one (a single unreadable merge note must not
+// block the other 54).
+//
+// Admin-only, exactly like the single undo — it rewrites money Finance posted.
+
+export type UnmergeAllState = {
+  error: string | null;
+  summary: {
+    undone: number;
+    failed: number;
+    restoredTotal: number;
+    failures: { invoiceNo: string; error: string }[];
+    warnings: string[];
+  } | null;
+};
+
+/** Safety cap — a runaway list should never hold a request open for minutes. */
+const UNMERGE_ALL_LIMIT = 500;
+
+export async function unmergeAllBills(_prev: UnmergeAllState, _formData: FormData): Promise<UnmergeAllState> {
+  const employee = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+
+  const { data: merged, error } = await supabase
+    .from("bill_pass_register")
+    .select("id, invoice_no, vendor_invoice_no, invoice_date")
+    .not("merged_into_bill_id", "is", null)
+    .in("company_id", employee.companyIds)
+    .order("invoice_date", { ascending: true })
+    .limit(UNMERGE_ALL_LIMIT);
+  if (error) return { error: `Could not load the merged entries: ${error.message}`, summary: null };
+
+  const rows = merged ?? [];
+  if (rows.length === 0) {
+    return { error: null, summary: { undone: 0, failed: 0, restoredTotal: 0, failures: [], warnings: [] } };
+  }
+
+  const failures: { invoiceNo: string; error: string }[] = [];
+  const warnings: string[] = [];
+  let undone = 0;
+  let restoredTotal = 0;
+
+  for (const r of rows) {
+    const label = r.invoice_no ?? r.vendor_invoice_no ?? r.id;
+    const out = await unmergeOne(supabase, employee, r.id);
+    if (out.error || !out.success) {
+      failures.push({ invoiceNo: label, error: out.error ?? "Unknown error" });
+      continue;
+    }
+    undone += 1;
+    restoredTotal = Math.round((restoredTotal + out.success.restoredTotal) * 100) / 100;
+    if (out.success.warning) warnings.push(`${out.success.invoiceNo}: ${out.success.warning}`);
+  }
+
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
+  return {
+    error: null,
+    summary: { undone, failed: failures.length, restoredTotal, failures, warnings },
   };
 }
