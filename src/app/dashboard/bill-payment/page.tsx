@@ -2,6 +2,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
+import { MergedBillsPanel, type MergedBillRow } from "./merged-bills-panel";
 import { listRelatedNotesForBills } from "../documents/actions";
 import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 // 2026-09-15 — courier prepaid wallets ("shipment bhejne se PEHLE wallet
@@ -254,6 +255,44 @@ export default async function BillPaymentPage({
     })),
   }));
 
+  // 2026-10-29b — merged duplicates, so a wrong merge can be undone from the
+  // UI instead of living forever ("vapas vahi par pahuchao"). Admin only: an
+  // undo rewrites payments Finance has already posted. The list is its OWN
+  // query because merged rows have balance_due <= 0 and the bills query above
+  // filters those out by default.
+  let mergedRows: MergedBillRow[] = [];
+  if (employee.capabilities.includes("employee_admin") || employee.capabilities.includes("permissions_admin")) {
+    const { data: mergedRaw } = await supabase
+      .from("bill_pass_register")
+      .select("id, company_id, invoice_no, vendor_invoice_no, invoice_date, party_id, merged_into_bill_id, remark")
+      .in("company_id", effectiveCompanyIds)
+      .not("merged_into_bill_id", "is", null)
+      .order("invoice_date", { ascending: false, nullsFirst: false })
+      .limit(300);
+    const keeperIds = Array.from(new Set((mergedRaw ?? []).map((m) => m.merged_into_bill_id as string)));
+    const { data: keepers } = keeperIds.length
+      ? await supabase.from("bill_pass_register").select("id, invoice_no, vendor_invoice_no, company_id").in("id", keeperIds)
+      : { data: [] as { id: string; invoice_no: string | null; vendor_invoice_no: string | null; company_id: string }[] };
+    const keeperById = new Map((keepers ?? []).map((k) => [k.id, k]));
+    // The merge wrote "[merged into <inv> — <company>; original total N]" into
+    // the loser's remark — that N is the amount the bill carried before.
+    const mergeTag = /original total ([\d.]+)/i;
+    mergedRows = (mergedRaw ?? []).map((m) => {
+      const keeper = keeperById.get(m.merged_into_bill_id as string);
+      return {
+        id: m.id,
+        invoiceNo: m.invoice_no ?? m.vendor_invoice_no ?? "—",
+        invoiceDate: m.invoice_date,
+        partyName: m.party_id ? partyName.get(m.party_id) ?? null : null,
+        companyName: companyName.get(m.company_id) ?? "—",
+        keeperInvoiceNo: keeper?.invoice_no ?? keeper?.vendor_invoice_no ?? "—",
+        keeperCompany: keeper ? companyName.get(keeper.company_id) ?? "—" : "—",
+        originalTotal: Number(mergeTag.exec(m.remark ?? "")?.[1] ?? 0),
+        remark: m.remark,
+      };
+    });
+  }
+
   // 2026-09-15 — wallet overview (loaded in the parallel wave above).
   // Client-side show/hide toggle (useState) instead of a route param so
   // opening the panel never loses the bill filters.
@@ -271,6 +310,11 @@ export default async function BillPaymentPage({
         <p className="mt-1 text-sm">
           <Link href="/dashboard/credit-notes-register" className="font-medium text-teal-700 underline hover:text-teal-800">
             🧾 Credit Note Register — credit received per party
+          </Link>
+          {"  ·  "}
+          {/* 2026-10-29b — Debit Notes had no list/print page at all. */}
+          <Link href="/dashboard/debit-notes-register" className="font-medium text-rose-700 underline hover:text-rose-800">
+            📉 Debit Note Register — debit raised per party
           </Link>
         </p>
         {/* 2026-09-15 — prepaid courier wallets: recharge / refund / history,
@@ -335,6 +379,8 @@ export default async function BillPaymentPage({
         isPaidLockedViewer={!employee.capabilities.includes("permissions_admin")}
         partyWalletBalances={partyWalletBalances}
       />
+
+      <MergedBillsPanel rows={mergedRows} />
     </div>
   );
 }

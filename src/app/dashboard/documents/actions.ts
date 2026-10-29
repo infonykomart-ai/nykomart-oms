@@ -47,7 +47,55 @@ import { validateDateFields } from "@/lib/fy-date";
 import { parseDateCell } from "@/lib/attendance/punch-import";
 import { saveOrderRefundCore } from "../orders/actions";
 import { autoSettleWalletBills } from "@/lib/wallet/auto-settle";
+import { isMissingSchemaPiece, tolerateMissingColumn } from "@/lib/db/missing-column";
 import { revalidatePath } from "next/cache";
+
+// =============================================================================
+// 2026-10-28e — ROUND-OFF REACHES THE FINANCE LEDGER.
+//
+// "jo roundoff value entry ke time hi per order honi chahiye or abhi mene ki
+// hai to vo report me ledger me kahi update nhi hori". Two things were true:
+//
+//  1. `round_off_amt` only existed on the bill HEADER — one adjustment for a
+//     whole courier invoice that covers many orders/AWBs. It is now also
+//     stored per AWB (`round_off_amt` on freight_bill_awb_assignments /
+//     duty_bill_awb_assignments, see db/2026-10-28e-awb-round-off.sql) and
+//     entered at assignment time.
+//
+//  2. Once a bill had been handed to Finance, editing its round-off changed
+//     nothing on the ledger: sendFreightBillToFinance/sendDutyBillToFinance
+//     freeze bill_pass_register.total_amt at the reviewed figure and the edit
+//     actions only re-synced the credit note. So the very round-off the user
+//     entered afterwards never appeared in Bill Payment / the Party Ledger.
+//
+// Same rule as the 2026-09-30 credit-note fix: only the CHANGE travels, never
+// an overwrite, so a manual review adjustment made at send time survives.
+// Every caller below passes a signed delta — + raises the payable, − lowers
+// it — and a bill that is not in Finance yet produces no mirror row and is
+// therefore simply a no-op (its amount is picked up at send time anyway).
+// =============================================================================
+async function applyBillLedgerDelta(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  source: "freight_bill" | "duty_tax_bill",
+  sourceId: string,
+  delta: number
+): Promise<string | null> {
+  if (!delta || !Number.isFinite(delta)) return null;
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id, total_amt")
+    .eq("source", source)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  if (!mirror) return null;
+  const next = Math.round((Number(mirror.total_amt) + delta) * 100) / 100;
+  const { error } = await supabase.from("bill_pass_register").update({ total_amt: next }).eq("id", mirror.id);
+  if (!error) {
+    revalidatePath("/dashboard/bill-payment");
+    revalidatePath("/dashboard/parties");
+  }
+  return error?.message ?? null;
+}
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -372,7 +420,7 @@ export async function searchBillsForNote(query: string): Promise<BillSearchHit[]
   const [{ data: byInvoice }, { data: parties }] = await Promise.all([
     supabase
       .from("bill_pass_register")
-      .select("id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, source, total_amt, balance_due")
+      .select("id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, source, total_amt, balance_due")
       .in("company_id", employee.companyIds)
       .or(`vendor_invoice_no.ilike.%${trimmed}%,invoice_no.ilike.%${trimmed}%`)
       .order("created_at", { ascending: false })
@@ -625,6 +673,18 @@ type DebitNoteParams = {
   adjustTargetBillPassRegisterId: string | null;
   adjustAmount: number | null;
   adjustRemark: string | null;
+  /** 2026-10-29 — why the note exists, in plain words (see the form's picker). */
+  reason?: string | null;
+  /**
+   * 2026-10-29 — multi-invoice Debit Note: one note against several of the
+   * party's invoices (e.g. 4 POs billed on 4 invoices, all over-billed by the
+   * same vendor). Each line carries the invoice's bill_pass_register row and
+   * the amount being debited on it. When present the note's debit_amount is
+   * the SUM of these lines (never a hand-typed total) and each line is posted
+   * as a bill_pass_register_adjustments row, so every listed invoice's payable
+   * drops by exactly its own amount.
+   */
+  billLines?: { billId: string; invoiceNo: string; amount: number }[];
 };
 
 async function saveDebitNoteCore(
@@ -646,16 +706,57 @@ async function saveDebitNoteCore(
     return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
   }
 
+  // 2026-10-29 — multi-invoice support. Validated against the REAL ledger rows
+  // (company + party must match) so a note can never be pointed at another
+  // party's or another company's invoice. Any line without a positive amount
+  // is ignored rather than silently adjusted by zero.
+  const lines = (p.billLines ?? [])
+    .filter((l) => l && typeof l.billId === "string" && l.billId.length > 0)
+    .map((l) => ({ ...l, amount: Math.round((Number(l.amount) || 0) * 100) / 100 }))
+    .filter((l) => l.amount > 0)
+    .slice(0, 40);
+  let againstNo = p.againstInvoiceBillNo;
+  let primaryBillId = p.billPassRegisterId;
+  let debitAmount = p.debitAmount;
+  let lineInvoiceNo = new Map<string, string>();
+  if (lines.length > 0) {
+    const ids = Array.from(new Set(lines.map((l) => l.billId)));
+    const { data: bills } = await supabase
+      .from("bill_pass_register")
+      .select("id, company_id, party_id, vendor_invoice_no, invoice_no")
+      .in("id", ids);
+    if (!bills || bills.length !== ids.length) {
+      return { error: "One of the selected invoices no longer exists — refresh and pick again.", id: null, docNo: null };
+    }
+    for (const b of bills) {
+      if (b.company_id !== p.companyId || b.party_id !== p.partyId) {
+        return { error: "All invoices on one Debit Note must belong to the selected company and party.", id: null, docNo: null };
+      }
+    }
+    lineInvoiceNo = new Map(bills.map((b) => [b.id, b.vendor_invoice_no ?? b.invoice_no ?? b.id]));
+    debitAmount = Math.round(lines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+    againstNo = lines.map((l) => lineInvoiceNo.get(l.billId) ?? l.invoiceNo).join(", ");
+    primaryBillId = lines[0].billId;
+  }
+
+  // "debit note kyu banaya ja raha hai" — the reason leads the Particulars so
+  // it is the first thing anyone reads on the note and its printed sheet.
+  const particulars = p.reason
+    ? p.particulars && p.particulars.trim() && p.particulars.trim() !== p.reason.trim()
+      ? `${p.reason.trim()} — ${p.particulars.trim()}`
+      : p.reason.trim()
+    : p.particulars;
+
   const { data, error } = await supabase
     .from("debit_notes")
     .insert({
       company_id: p.companyId,
       debit_note_date: p.debitNoteDate,
-      against_invoice_bill_no: p.againstInvoiceBillNo,
-      bill_pass_register_id: p.billPassRegisterId,
+      against_invoice_bill_no: againstNo,
+      bill_pass_register_id: primaryBillId,
       party_id: p.partyId,
       order_id: p.orderId,
-      particulars: p.particulars,
+      particulars,
       bill_no: p.billNo,
       bill_date: p.billDate,
       sq_ft: p.sqFt,
@@ -663,13 +764,35 @@ async function saveDebitNoteCore(
       rate: p.rate,
       po_rate: p.poRate,
       billed_rate: p.billedRate,
-      debit_amount: p.debitAmount,
+      debit_amount: debitAmount,
       remark: p.remark,
     })
     .select("id, debit_note_no")
     .single();
 
   if (error || !data) return { error: `Failed to save Debit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
+
+  // Multi-invoice note: one adjustment row per listed invoice (the table is
+  // built for exactly this — "one note can split across several target
+  // bills", see db/2026-08-27-note-linking-and-adjustments.sql).
+  if (lines.length > 0) {
+    const adjRows = lines.map((l) => ({
+      bill_pass_register_id: l.billId,
+      debit_note_id: data.id,
+      amount: l.amount,
+      remark: `Debit Note ${data.debit_note_no ?? ""} against ${lineInvoiceNo.get(l.billId) ?? l.invoiceNo}`,
+      created_by_employee_id: employee.id,
+    }));
+    const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert(adjRows);
+    if (adjError) {
+      return {
+        error: null,
+        id: data.id,
+        docNo: `${data.debit_note_no ?? ""} (saved, but the invoice adjustments failed: ${adjError.message} — apply them manually)`,
+      };
+    }
+    return { error: null, id: data.id, docNo: data.debit_note_no ?? "" };
+  }
 
   if (p.adjustTargetBillPassRegisterId && p.adjustAmount) {
     const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert({
@@ -719,6 +842,19 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
     adjustTargetBillPassRegisterId: strOrNull(formData, "adjust_target_bill_pass_register_id"),
     adjustAmount: numOrNull(formData, "adjust_amount"),
     adjustRemark: strOrNull(formData, "adjust_remark"),
+    reason: strOrNull(formData, "reason"),
+    billLines: (() => {
+      try {
+        const parsed = JSON.parse(str(formData, "bill_lines") || "[]") as unknown;
+        return Array.isArray(parsed)
+          ? parsed
+              .map((v) => (v ?? {}) as { billId?: unknown; invoiceNo?: unknown; amount?: unknown })
+              .map((v) => ({ billId: String(v.billId ?? ""), invoiceNo: String(v.invoiceNo ?? ""), amount: Number(v.amount ?? 0) }))
+          : [];
+      } catch {
+        return [];
+      }
+    })(),
   });
 
   if (result.error) return initialFail(result.error);
@@ -1166,21 +1302,30 @@ type PurchaseBillParams = {
  * catches that at the moment it matters: before a second Finance entry
  * exists. Scoped to the target company; case/whitespace-insensitive.
  */
+// 2026-10-29 — the check is now CROSS-COMPANY (every company this login can
+// reach), not just the company being posted to. A courier/duty invoice is one
+// physical document: posting it a second time under a different company is the
+// exact duplicate the user kept seeing in the Party Ledger ("Courier Bill
+// (Freight)" and "FREIGHT INVOICE" for the same invoice number). Same-company
+// duplicates are a subset of this check, so nothing was weakened.
 async function findDuplicateFinanceEntry(
   supabase: ServiceClient,
-  companyId: string,
+  companyIds: string[],
   vendorInvoiceNo: string | null
-): Promise<{ id: string; invoice_type: string | null; company_id: string } | null> {
+): Promise<{ id: string; invoice_type: string | null; company_id: string; company_name: string | null } | null> {
   const inv = (vendorInvoiceNo ?? '').trim();
-  if (!inv) return null;
+  if (!inv || companyIds.length === 0) return null;
   const { data } = await supabase
     .from('bill_pass_register')
-    .select('id, invoice_type, company_id, vendor_invoice_no')
-    .eq('company_id', companyId)
+    .select('id, invoice_type, company_id, vendor_invoice_no, companies(name)')
+    .in('company_id', companyIds)
     .ilike('vendor_invoice_no', inv)
-    .limit(2);
+    .limit(5);
   const rows = (data ?? []).filter((r) => (r.vendor_invoice_no ?? '').trim().toLowerCase() === inv.toLowerCase());
-  return rows.length > 0 ? { id: rows[0].id, invoice_type: rows[0].invoice_type, company_id: rows[0].company_id } : null;
+  if (rows.length === 0) return null;
+  const rel = (rows[0] as { companies?: { name: string } | { name: string }[] | null }).companies;
+  const companyName = Array.isArray(rel) ? rel[0]?.name ?? null : rel?.name ?? null;
+  return { id: rows[0].id, invoice_type: rows[0].invoice_type, company_id: rows[0].company_id, company_name: companyName };
 }
 
 async function savePurchaseBillCore(
@@ -1286,47 +1431,16 @@ async function savePurchaseBillCore(
     return { error: `Failed to save Purchase Bill: ${msg ?? "unknown error"}`, id: null, docNo: null };
   }
 
-  // 2026-08-12 (round 10): auto-mirror into the Finance ledger, same as
-  // Salary/Advance — "koi pata nahi chal raha ki bill pass register mein
-  // ye chala gaya ya nahi" was a real gap (a stale comment elsewhere
-  // claimed Purchase Bill already did this; it never actually did).
-  // 2026-08-17: company_id now comes from the resolved value above (order's
-  // company, or the employee's current company for orderless general-stock
-  // purchases) rather than assuming an order always exists.
-  // 2026-08-18 fix — this used to mirror `total_amount` (the PRE-GST base,
-  // qty*sq_feet*unit_rate), which understates what's actually owed to the
-  // vendor by the entire GST amount whenever gst_rate_pct is set.
-  // `g_total_plus_gst` (base + GST + round_off_amt) is the real payable
-  // total and is what Bill Payment / Party Ledger should show as
-  // outstanding — see db/2026-08-18-bill-pass-register-purchase-sync-fix.sql
-  // for the one-time repair of rows already mirrored with the wrong value.
-  const { data: bprData, error: bprError } = await supabase
-    .from("bill_pass_register")
-    .insert({
-      company_id: companyId,
-      // 2026-10-24b — a printing bill posts to the ledger's own Printing
-      // bucket, which is exactly what the Printing register and the printing
-      // P&L line already read, so no other wiring was needed for it to show up
-      // in both.
-      invoice_type: p.billKind === "printing" ? "Printing" : "Purchase",
-      vendor_invoice_no: p.vendorInvoiceNo,
-      invoice_date: p.vendorInvoiceDate,
-      invoice_recv_date: p.vendorInvoiceDate,
-      total_amt: Number(data.g_total_plus_gst ?? data.total_amount ?? 0),
-      party_id: p.vendorPartyId,
-      party_type: "Purchase",
-      source: "purchase_bill",
-      source_id: data.id,
-    })
-    .select("id")
-    .single();
-  if (bprError) {
-    return {
-      error: null,
-      id: data.id,
-      docNo: `${data.vendor_invoice_no} (saved, but Finance ledger entry failed: ${bprError.message} — add it manually)`,
-    };
-  }
+  // 2026-10-29 — THE FINANCE GATE. This used to auto-mirror every saved
+  // Purchase/Printing Bill into bill_pass_register (2026-08-12 round 10).
+  // User: "bina finance ledger se gujre koi bhi bill ledger / bill pass
+  // register me reflect nahi hoga ... jab tak usko finance ledger se company
+  // se bheja nahi jaye". So a saved bill is now ONLY purchase_bills state —
+  // it reaches Bill Payment / Party Ledger / the company's books solely via
+  // sendPurchaseBillInvoiceToFinance (the explicit, reviewed hand-off below),
+  // exactly like Courier / Duty bills already worked. companyId resolved
+  // above is still what that hand-off pre-selects.
+  void companyId;
 
   // 2026-08-29 (evening) — "ek genral voutcher banega jo bhi bills honge
   // unke liye ... jab send to bill pass register me bhejte hai ... us par
@@ -1366,22 +1480,6 @@ async function savePurchaseBillCore(
     ),
   });
 
-  if (bprData) {
-    await createJournalVoucherForBill(supabase, bprData.id, {
-      itemDetails: p.workDescription,
-      qty: p.qty || 1,
-      qtyUnit: p.qtyUnit || "FT",
-    });
-    // 2026-08-29 (evening, follow-up round) — "Received Chalan": every
-    // Purchase Bill landing in the Finance ledger also gets a Received
-    // Chalan, same best-effort/non-blocking philosophy as the JV call just
-    // above (a failure here must never roll back or block the Purchase
-    // Bill, already fully saved by this point). See
-    // createReceivedChalanForBillGroup's own header comment for why this
-    // is a paperwork document only, never a stock_in mutation.
-    await createReceivedChalanForBillGroup(supabase, bprData.id);
-  }
-
   return { error: null, id: data.id, docNo: data.vendor_invoice_no };
 }
 
@@ -1409,6 +1507,291 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
   if (result.error) return initialFail(result.error);
   revalidatePath("/dashboard/documents");
   return { error: null, success: { id: result.id!, docNo: result.docNo ?? "" } };
+}
+
+// =============================================================================
+// PURCHASE / PRINTING BILL — "Send to Finance" (2026-10-29 finance gate).
+//
+// User: "dusra bill purchase ho, washing, printing, couriour duty sabhi finance
+// ladger ke throw company me add ho or ladger me uske baad hi reflect ho us se
+// pahle nahi" + "jab tak usko finance ladger se company se bheja nahi jaye ...
+// na kisi parkar ki duplicate entry hogi".
+//
+// A vendor invoice is stored as ONE purchase_bills row per item, so this action
+// takes the whole invoice (every item id) and posts the ledger ONCE for it:
+// one bill_pass_register row per item row (the existing per-item link that
+// edit / delete / Bill Payment already understand — the Party Ledger groups
+// them back into a single invoice line, see lib/bill-grouping.ts). The
+// reviewed total the user types is distributed across those rows so their sum
+// is exactly what was approved, never the raw pre-review figure.
+//
+// Non-negotiable rules baked in here:
+//  - already-sent invoice never posts twice (idempotent, same as Courier);
+//  - the same vendor invoice in the same company is refused (duplicate bill);
+//  - the company is chosen HERE, at the ledger hand-off, so the bill lands in
+//    the company that actually books it ("report sheet usi company ki bnegi
+//    jisme vo register hua hai");
+//  - the bill's own company_id is stamped to match, so the document's A4 sheet
+//    and the Purchase Bill report agree with the ledger instead of the order.
+// =============================================================================
+export type FinancePostState = { error: string | null; success: string | null };
+
+function purchaseInvoiceType(billKind: string | null | undefined): "Purchase" | "Printing" {
+  return billKind === "printing" ? "Printing" : "Purchase";
+}
+
+export async function sendPurchaseBillInvoiceToFinance(
+  _prev: FinancePostState,
+  formData: FormData
+): Promise<FinancePostState> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  let billIds: string[];
+  try {
+    billIds = JSON.parse(str(formData, "purchase_bill_ids") || "[]");
+  } catch {
+    return { error: "Invalid invoice selection — refresh and retry.", success: null };
+  }
+  billIds = Array.from(new Set(billIds.filter((v): v is string => typeof v === "string" && v.length > 0))).slice(0, 60);
+  if (billIds.length === 0) return { error: "No items to send — refresh and retry.", success: null };
+
+  const companyId = str(formData, "company_id");
+  if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: null };
+  // 2026-10-29e — round-off AT the Bill Pass step ("ab jo koi bill entry ho
+  // gyi hai to usme kaha par kare — bill pass me roundoff ho jayega kya?").
+  // The Amount field stays the bill's gross figure; the signed round-off the
+  // form now carries is added to it, so what reaches the Finance ledger is
+  // exactly the round figure the admin approved. Same table, same column —
+  // only the posted total changes, and only by the round-off.
+  const totalAmt = Math.round((numOrZero(formData, "total_amt") + numOrZero(formData, "round_off_amt")) * 100) / 100;
+  if (!(totalAmt > 0)) return { error: "Amount (with round-off) must be a positive number.", success: null };
+  const remark = strOrNull(formData, "remark");
+
+  type PbRow = {
+    id: string;
+    vendor_party_id: string | null;
+    vendor_invoice_no: string | null;
+    vendor_invoice_date: string | null;
+    g_total_plus_gst: number | null;
+    total_amount: number | null;
+    bill_kind?: string | null;
+  };
+  const selectCols = "id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount, bill_kind";
+  const firstRead = await supabase.from("purchase_bills").select(selectCols).in("id", billIds);
+  const rows = (firstRead.error && /bill_kind/i.test(firstRead.error.message)
+    ? await supabase
+        .from("purchase_bills")
+        .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
+        .in("id", billIds)
+    : firstRead) as { data: PbRow[] | null; error: { message: string } | null };
+  if (rows.error || !rows.data || rows.data.length === 0) return { error: rows.error?.message ?? "Invoice not found.", success: null };
+  const billRows = rows.data;
+
+  const first = billRows[0];
+  const invoiceNo = (first.vendor_invoice_no ?? "").trim();
+  const partyId = first.vendor_party_id;
+  if (!invoiceNo || !partyId) return { error: "This invoice has no vendor / invoice number yet.", success: null };
+  if (billRows.some((r) => (r.vendor_invoice_no ?? "").trim().toLowerCase() !== invoiceNo.toLowerCase() || r.vendor_party_id !== partyId)) {
+    return { error: "Those rows are not one single vendor invoice — refresh the list.", success: null };
+  }
+
+  // Idempotency: nothing posts twice.
+  const { data: already } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "purchase_bill")
+    .in("source_id", billIds)
+    .limit(1);
+  if (already && already.length > 0) return { error: "This invoice is already in the Finance ledger.", success: null };
+
+  // Duplicate bill guard — same vendor invoice already booked in this company.
+  const { data: dupRows } = await supabase
+    .from("bill_pass_register")
+    .select("id, vendor_invoice_no")
+    .eq("company_id", companyId)
+    .eq("party_id", partyId)
+    .ilike("vendor_invoice_no", invoiceNo)
+    .limit(3);
+  if ((dupRows ?? []).some((d) => (d.vendor_invoice_no ?? "").trim().toLowerCase() === invoiceNo.toLowerCase())) {
+    return {
+      error: `Duplicate entry: invoice "${invoiceNo}" from this vendor is already in this company's Finance ledger. If this is a second bill on the same PO, raise a Debit Note against the earlier invoice instead of posting it again.`,
+      success: null,
+    };
+  }
+
+  // Distribute the reviewed total across the invoice's item rows — last row
+  // absorbs the paise so the sum is EXACTLY the approved figure.
+  const rowTotals = billRows.map((r) => Number(r.g_total_plus_gst ?? r.total_amount ?? 0));
+  const rawSum = Math.round(rowTotals.reduce((s, n) => s + n, 0) * 100) / 100;
+  const amounts = rowTotals.map((n) => (rawSum > 0 ? Math.round((n / rawSum) * totalAmt * 100) / 100 : 0));
+  const drift = Math.round((totalAmt - amounts.reduce((s, n) => s + n, 0)) * 100) / 100;
+  if (amounts.length > 0) amounts[amounts.length - 1] = Math.round((amounts[amounts.length - 1] + drift) * 100) / 100;
+
+  const invoiceType = purchaseInvoiceType((first as { bill_kind?: string | null }).bill_kind);
+  let firstBprId: string | null = null;
+  for (let i = 0; i < billRows.length; i++) {
+    const r = billRows[i];
+    const { data: inserted, error } = await supabase
+      .from("bill_pass_register")
+      .insert({
+        company_id: companyId,
+        invoice_type: invoiceType,
+        vendor_invoice_no: invoiceNo,
+        invoice_date: r.vendor_invoice_date,
+        invoice_recv_date: r.vendor_invoice_date,
+        total_amt: amounts[i],
+        party_id: partyId,
+        party_type: "Purchase",
+        source: "purchase_bill",
+        source_id: r.id,
+        remark,
+      })
+      .select("id")
+      .single();
+    if (error) {
+      const msg = error.message.includes("duplicate key")
+        ? "This invoice was already sent to the Finance ledger."
+        : error.message;
+      return { error: `Finance ledger entry failed: ${msg}`, success: null };
+    }
+    if (i === 0) firstBprId = inserted?.id ?? null;
+  }
+
+  // Stamp the bill's own company so the document sheet / report and the
+  // ledger can never disagree about which company books this invoice.
+  await supabase.from("purchase_bills").update({ company_id: companyId }).in("id", billIds);
+
+  if (firstBprId) {
+    await createJournalVoucherForBill(supabase, firstBprId);
+    await createReceivedChalanForBillGroup(supabase, firstBprId);
+  }
+
+  await logAudit(supabase, {
+    companyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "purchase_bill.sent_to_finance",
+    entityType: "purchase_bill",
+    entityId: billRows[0].id,
+    entityLabel: invoiceNo,
+    changes: { company_id: companyId, total_amt: totalAmt },
+  });
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
+  return { error: null, success: `Invoice ${invoiceNo} sent to the Finance ledger — ₹${totalAmt.toFixed(2)}.` };
+}
+
+/**
+ * 2026-10-29 — "baad me bhi finance ladger me bhejne ke baad bhi company change
+ * ki ja sake".
+ *
+ * A Finance entry's company is the one place a bill is "registered", so a
+ * wrong pick used to mean deleting the entry (losing its payments/notes) and
+ * re-posting it — which is exactly how duplicate-looking ledgers were born.
+ * This moves the SAME ledger row to another company instead:
+ *  - refuses when the same vendor invoice already exists in the target company
+ *    (that would be a duplicate);
+ *  - for a Purchase Bill it moves the whole vendor invoice (every item row and
+ *    its ledger row) and re-stamps purchase_bills.company_id, so the bill's A4
+ *    sheet, report and ledger all follow;
+ *  - payments, adjustments and notes hang off the ledger row id, so they travel
+ *    with it untouched.
+ */
+export async function moveBillFinanceCompany(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
+  const employee = await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+
+  const billPassRegisterId = str(formData, "bill_pass_register_id");
+  const targetCompanyId = str(formData, "company_id");
+  if (!billPassRegisterId) return { error: "Missing Finance ledger entry.", success: false };
+  if (!targetCompanyId || !employee.companyIds.includes(targetCompanyId)) return { error: "Select a valid company.", success: false };
+
+  const { data: bill } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, source, source_id, party_id, vendor_invoice_no, invoice_type")
+    .eq("id", billPassRegisterId)
+    .maybeSingle();
+  if (!bill) return { error: "Finance ledger entry not found.", success: false };
+  if (!employee.companyIds.includes(bill.company_id)) return { error: "You don't have access to this entry's company.", success: false };
+  if (bill.company_id === targetCompanyId) return { error: null, success: true };
+
+  // Which ledger rows belong to this move? A Purchase Bill moves with its
+  // whole vendor invoice (one row per item); Courier / Duty are one row.
+  let bprIds = [bill.id];
+  let purchaseBillIds: string[] = [];
+  if (bill.source === "purchase_bill" && bill.source_id) {
+    const { data: pb } = await supabase
+      .from("purchase_bills")
+      .select("id, vendor_party_id, vendor_invoice_no, company_id")
+      .eq("id", bill.source_id)
+      .maybeSingle();
+    const pbInvoiceNo = pb?.vendor_invoice_no ?? null;
+    const pbPartyId = pb?.vendor_party_id ?? null;
+    const pbCompanyId = pb?.company_id ?? null;
+    if (pbInvoiceNo && pbPartyId && pbCompanyId) {
+      const { data: siblings } = await supabase
+        .from("purchase_bills")
+        .select("id")
+        .eq("vendor_party_id", pbPartyId)
+        .ilike("vendor_invoice_no", pbInvoiceNo)
+        .eq("company_id", pbCompanyId);
+      purchaseBillIds = (siblings ?? []).map((s) => s.id);
+      if (purchaseBillIds.length > 0) {
+        const { data: linked } = await supabase
+          .from("bill_pass_register")
+          .select("id")
+          .eq("source", "purchase_bill")
+          .in("source_id", purchaseBillIds);
+        if (linked && linked.length > 0) bprIds = linked.map((l) => l.id);
+      }
+    }
+  }
+
+  // Duplicate guard in the target company (ignore the rows being moved).
+  if (bill.vendor_invoice_no && bill.party_id) {
+    const { data: dupRows } = await supabase
+      .from("bill_pass_register")
+      .select("id, vendor_invoice_no")
+      .eq("company_id", targetCompanyId)
+      .eq("party_id", bill.party_id)
+      .ilike("vendor_invoice_no", bill.vendor_invoice_no)
+      .limit(5);
+    const clash = (dupRows ?? []).find(
+      (d) => !bprIds.includes(d.id) && (d.vendor_invoice_no ?? "").trim().toLowerCase() === bill.vendor_invoice_no!.trim().toLowerCase()
+    );
+    if (clash) {
+      return {
+        error: `Invoice "${bill.vendor_invoice_no}" is already in the target company's Finance ledger — a second entry would be a duplicate. Merge or delete that one first.`,
+        success: false,
+      };
+    }
+  }
+
+  const { error } = await supabase.from("bill_pass_register").update({ company_id: targetCompanyId }).in("id", bprIds);
+  if (error) return { error: error.message, success: false };
+  if (purchaseBillIds.length > 0) {
+    await supabase.from("purchase_bills").update({ company_id: targetCompanyId }).in("id", purchaseBillIds);
+  }
+
+  await logAudit(supabase, {
+    companyId: targetCompanyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "bill_pass_register.company_changed",
+    entityType: "bill_pass_register",
+    entityId: bill.id,
+    entityLabel: bill.vendor_invoice_no ?? bill.invoice_type,
+    changes: { from_company_id: bill.company_id, to_company_id: targetCompanyId },
+  });
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
+  revalidatePath("/dashboard/reports");
+  return { error: null, success: true };
 }
 
 // =============================================================================
@@ -2392,13 +2775,22 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
   const invoiceDate = strOrNull(formData, "invoice_date");
   const vendorPartyId = strOrNull(formData, "vendor_party_id");
   const newCnAmt = numOrZero(formData, "credit_note_amt");
+  const newFreightAmt = numOrZero(formData, "freight_amt");
+  const newFuelAmt = numOrZero(formData, "fuel_amt");
+  const newOtherCharges = numOrZero(formData, "other_charges");
+  const newRoundOffAmt = numOrZero(formData, "round_off_amt");
 
   const { data: prevBill } = await supabase
     .from("freight_bills")
-    .select("credit_note_amt")
+    .select("credit_note_amt, round_off_amt, freight_amt, fuel_amt, other_charges")
     .eq("id", freightBillId)
     .maybeSingle();
   const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
+  const prevRoundOffAmt = Number(prevBill?.round_off_amt ?? 0);
+  // gross_total_amt is a GENERATED column ((freight + fuel + other) × 1.18),
+  // so the same formula gives the before/after figure to diff against.
+  const prevGross = (Number(prevBill?.freight_amt ?? 0) + Number(prevBill?.fuel_amt ?? 0) + Number(prevBill?.other_charges ?? 0)) * 1.18;
+  const newGross = (newFreightAmt + newFuelAmt + newOtherCharges) * 1.18;
 
   const { error } = await supabase
     .from("freight_bills")
@@ -2406,13 +2798,13 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
       invoice_no: invoiceNo,
       invoice_date: invoiceDate,
       bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
-      freight_amt: numOrZero(formData, "freight_amt"),
-      fuel_amt: numOrZero(formData, "fuel_amt"),
-      other_charges: numOrZero(formData, "other_charges"),
+      freight_amt: newFreightAmt,
+      fuel_amt: newFuelAmt,
+      other_charges: newOtherCharges,
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: numOrZero(formData, "credit_note_amt"),
-      round_off_amt: numOrZero(formData, "round_off_amt"),
+      credit_note_amt: newCnAmt,
+      round_off_amt: newRoundOffAmt,
       vendor_party_id: vendorPartyId,
     })
     .eq("id", freightBillId);
@@ -2433,22 +2825,70 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
     .eq("source", "freight_bill")
     .eq("source_id", freightBillId);
 
-  // 2026-09-30 — CN delta → ledger total (see the header comment above):
-  // the mirror's total_amt is the REVIEWED net figure, so the credit
-  // note's change must travel to it or the payable never moves. Delta,
-  // not overwrite — a manual review adjustment from send-time survives.
-  // (bpr.credit_note_amt stays untouched: the ledger total already nets
-  // the CN, writing it there too would double-reduce balance_due.)
-  if (mirror && prevCnAmt !== newCnAmt) {
-    const newLedgerTotal = Math.round((Number(mirror.total_amt) + (prevCnAmt - newCnAmt)) * 100) / 100;
-    const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+  // 2026-09-30 — CN delta → ledger total; 2026-10-28e — the same delta rule
+  // now also carries the bill's gross change and its round-off change, which
+  // is what the user reported as "round off ledger me update nahi ho rahi".
+  // All three are signed deltas on the reviewed total, never an overwrite.
+  // (bpr.credit_note_amt stays untouched: the ledger total already nets the
+  // CN, writing it there too would double-reduce balance_due.)
+  if (mirror) {
+    const delta = Math.round((((newGross - prevGross) + (newRoundOffAmt - prevRoundOffAmt)) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, delta);
     if (syncError) {
-      return { error: `Bill saved, but the Finance ledger could not be updated with the credit note change: ${syncError.message}`, success: false };
+      return { error: `Bill saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/bill-payment");
+  return { error: null, success: true };
+}
+
+/**
+ * 2026-10-28e — "abhi mene ki hai to vo report me ledger me kahi update nhi
+ * hori": bills that were sent to Finance BEFORE this round have a ledger
+ * total that was frozen without their (later) round-off, and a delta-based
+ * sync can't repair that on its own (editing the same round-off again is a
+ * zero delta). This recomputes the bill's CURRENT payable and writes it to
+ * the existing ledger row — an explicit, user-clicked re-sync, never an
+ * automatic overwrite of a reviewed amount.
+ */
+export async function resyncFreightBillFinanceAmount(freightBillId: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
+
+  const { data: bill } = await supabase
+    .from("freight_bills")
+    .select("freight_amt, fuel_amt, other_charges, round_off_amt, credit_note_amt")
+    .eq("id", freightBillId)
+    .maybeSingle();
+  if (!bill) return { error: "Courier Bill not found.", success: false };
+
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "freight_bill")
+    .eq("source_id", freightBillId)
+    .maybeSingle();
+  if (!mirror) return { error: "This Courier Bill is not in the Finance ledger yet.", success: false };
+
+  const { data: roundRows, error: roundError } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("freight_bill_id", freightBillId);
+  const awbRoundOff = isMissingSchemaPiece(roundError)
+    ? 0
+    : (roundRows ?? []).reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
+
+  const gross = (Number(bill.freight_amt ?? 0) + Number(bill.fuel_amt ?? 0) + Number(bill.other_charges ?? 0)) * 1.18;
+  const payable = Math.round((gross + Number(bill.round_off_amt ?? 0) + awbRoundOff - Number(bill.credit_note_amt ?? 0)) * 100) / 100;
+  const { error } = await supabase.from("bill_pass_register").update({ total_amt: payable }).eq("id", mirror.id);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
   return { error: null, success: true };
 }
 
@@ -2478,6 +2918,24 @@ export async function deleteFreightBill(id: string): Promise<SimpleResult> {
   return { error: null, success: true };
 }
 
+/**
+ * 2026-10-29 — which Courier Bill already carries this shipment (if any), so a
+ * refused double-assignment can say WHICH invoice to open rather than failing
+ * with a raw constraint error.
+ */
+async function existingFreightBillNoForShipment(supabase: ServiceClient, orderShipmentId: string): Promise<string | null> {
+  if (!orderShipmentId) return null;
+  const { data } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("freight_bills(invoice_no)")
+    .eq("order_shipment_id", orderShipmentId)
+    .limit(1)
+    .maybeSingle();
+  const rel = (data as { freight_bills?: { invoice_no: string | null } | { invoice_no: string | null }[] | null } | null)?.freight_bills;
+  const invoiceNo = Array.isArray(rel) ? rel[0]?.invoice_no ?? null : rel?.invoice_no ?? null;
+  return invoiceNo;
+}
+
 export async function assignFreightAwb(_prev: DocFormState, formData: FormData): Promise<DocFormState> {
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
@@ -2493,37 +2951,53 @@ export async function assignFreightAwb(_prev: DocFormState, formData: FormData):
     return initialFail("That order is not accessible — look it up again.");
   }
 
-  const { data, error } = await supabase
-    .from("freight_bill_awb_assignments")
-    .insert({
-      freight_bill_id: freightBillId,
-      order_id: orderId,
-      order_shipment_id: orderShipmentId,
-      bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
-      dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
-      difference_amt: numOrNull(formData, "difference_amt"),
-      // 2026-09-01: booking-cost-vs-billed-cost recheck — see
-      // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
-      billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
-      // 2026-09-21: per-AWB charge breakup — see
-      // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
-      billed_base_amt: numOrNull(formData, "billed_base_amt"),
-      billed_fuel_amt: numOrNull(formData, "billed_fuel_amt"),
-      billed_remote_amt: numOrNull(formData, "billed_remote_amt"),
-      billed_other_amt: numOrNull(formData, "billed_other_amt"),
-      billed_gst_amt: numOrNull(formData, "billed_gst_amt"),
-      remark: strOrNull(formData, "remark"),
-    })
-    .select("id")
-    .single();
+  // 2026-10-28e — this AWB/order's own round-off, entered at assignment time
+  // ("roundoff value entry ke time hi per order honi chahiye").
+  const roundOffAmt = numOrNull(formData, "round_off_amt") ?? 0;
+  const payload = {
+    freight_bill_id: freightBillId,
+    order_id: orderId,
+    order_shipment_id: orderShipmentId,
+    bill_weight_kg: numOrNull(formData, "bill_weight_kg"),
+    dimensional_weight_kg: numOrNull(formData, "dimensional_weight_kg"),
+    difference_amt: numOrNull(formData, "difference_amt"),
+    // 2026-09-01: booking-cost-vs-billed-cost recheck — see
+    // db/2026-09-01-multi-courier-booking-and-freight-recon.sql.
+    billed_freight_amt: numOrNull(formData, "billed_freight_amt"),
+    // 2026-09-21: per-AWB charge breakup — see
+    // db/2026-09-21-freight-awb-billed-charge-breakup.sql.
+    billed_base_amt: numOrNull(formData, "billed_base_amt"),
+    billed_fuel_amt: numOrNull(formData, "billed_fuel_amt"),
+    billed_remote_amt: numOrNull(formData, "billed_remote_amt"),
+    billed_other_amt: numOrNull(formData, "billed_other_amt"),
+    billed_gst_amt: numOrNull(formData, "billed_gst_amt"),
+    round_off_amt: roundOffAmt,
+    remark: strOrNull(formData, "remark"),
+  };
+  // db/2026-10-28e-awb-round-off.sql may not have been run yet — the write
+  // still goes through without the column (see src/lib/db/missing-column.ts).
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+    supabase.from("freight_bill_awb_assignments").insert(p).select("id").single()
+  );
 
   if (error || !data) {
-    const msg = error?.message.includes("duplicate key")
-      ? "This order/AWB is already assigned to a Courier Bill (an AWB can only be billed once)."
-      : error?.message;
+    // 2026-10-29 — an AWB can only be billed once. Name the bill it is already
+    // on instead of a bare "duplicate key": the realistic mistake is billing
+    // the same shipment a second time (the "duplicate bill" the user kept
+    // seeing), and the fix is to add it to THAT bill or remove it there first.
+    let msg = error?.message;
+    if (error?.message.includes("duplicate key")) {
+      const alreadyOn = await existingFreightBillNoForShipment(supabase, orderShipmentId);
+      msg = alreadyOn
+        ? `This order/AWB is already billed on Courier Bill ${alreadyOn}. Open that bill to add more AWBs, or remove it there before billing it again — an AWB can only be billed once.`
+        : "This order/AWB is already assigned to a Courier Bill (an AWB can only be billed once).";
+    }
     return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
   }
+  // Bill already in Finance? Then this AWB's round-off must reach its row.
+  const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, roundOffAmt);
   revalidatePath("/dashboard/documents");
+  if (syncError) return initialFail(`AWB assigned, but the Finance ledger could not be updated: ${syncError}`);
   return { error: null, success: { id: data.id, docNo: "" } };
 }
 
@@ -2533,14 +3007,23 @@ export async function deleteFreightAwbAssignment(id: string): Promise<SimpleResu
   // 2026-08-12 (round 11 security review): same assignment->order->company
   // check updateFreightAwbAssignmentNotes already does below — this delete
   // previously skipped it.
-  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: assignment } = await supabase.from("freight_bill_awb_assignments").select("id, order_id, freight_bill_id").eq("id", id).maybeSingle();
   if (!assignment) return { error: "Assignment not found.", success: false };
   const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "You don't have access to this assignment's company.", success: false };
   }
+  // 2026-10-28e — removing an AWB removes its round-off from the bill too, so
+  // a bill already in Finance takes the same delta back off.
+  const { data: roundRow, error: roundReadError } = await supabase
+    .from("freight_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const roundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
   const { error } = await supabase.from("freight_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+  await applyBillLedgerDelta(supabase, "freight_bill", assignment.freight_bill_id, -roundOffAmt);
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -2569,6 +3052,8 @@ export type BulkAwbRow = {
   billedFuelAmt: number | null;
   billedRemoteAmt: number | null;
   billedGstAmt: number | null;
+  /** 2026-10-28e — this row's own round-off (see db/2026-10-28e-awb-round-off.sql). */
+  roundOffAmt: number | null;
 };
 export type BulkAwbResult = { query: string; ok: boolean; refNo: string | null; error: string | null };
 
@@ -2578,6 +3063,7 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
   if (!freightBillId) return { error: "Missing Courier Bill.", results: [] };
 
   const results: BulkAwbResult[] = [];
+  let roundOffTotal = 0;
   for (const row of rows) {
     const lookup = await lookupOrderForReconciliation(row.query, "freight");
     if (lookup.error || !lookup.order || !lookup.orderShipmentId) {
@@ -2588,7 +3074,7 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: "Not accessible." });
       continue;
     }
-    const { error } = await supabase.from("freight_bill_awb_assignments").insert({
+    const payload = {
       freight_bill_id: freightBillId,
       order_id: lookup.order.id,
       order_shipment_id: lookup.orderShipmentId,
@@ -2602,17 +3088,29 @@ export async function bulkAssignFreightAwbs(freightBillId: string, rows: BulkAwb
       billed_fuel_amt: row.billedFuelAmt,
       billed_remote_amt: row.billedRemoteAmt,
       billed_gst_amt: row.billedGstAmt,
+      // 2026-10-28e — per-row round-off.
+      round_off_amt: row.roundOffAmt ?? 0,
       remark: row.remark,
-    });
+    };
+    const { error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+      supabase.from("freight_bill_awb_assignments").insert(p)
+    );
     if (error) {
-      const msg = error.message.includes("duplicate key") ? "Already assigned to a Courier Bill." : error.message;
+      let msg = error.message;
+      if (error.message.includes("duplicate key")) {
+        const alreadyOn = await existingFreightBillNoForShipment(supabase, lookup.orderShipmentId);
+        msg = alreadyOn ? `Already billed on Courier Bill ${alreadyOn}.` : "Already assigned to a Courier Bill.";
+      }
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
     } else {
+      roundOffTotal += row.roundOffAmt ?? 0;
       results.push({ query: row.query, ok: true, refNo: lookup.order.ref_no, error: null });
     }
   }
+  // One ledger touch for the whole batch rather than per row.
+  const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, roundOffTotal);
   revalidatePath("/dashboard/documents");
-  return { error: null, results };
+  return { error: syncError ? `Assigned, but the Finance ledger could not be updated: ${syncError}` : null, results };
 }
 
 /** Attach a credit/debit note to one already-assigned AWB — "TRACKING NUMBER KE AGAINST ME AAYEGA", entered whenever the note actually arrives, not necessarily at assignment time. */
@@ -2650,33 +3148,37 @@ export async function updateFreightAwbAssignmentNotes(_prev: SimpleResult, formD
   const deltaCn = Math.round(((newCnAmt ?? 0) - Number(assignment.credit_note_amt ?? 0)) * 100) / 100;
   const deltaDn = Math.round(((newDnAmt ?? 0) - Number(assignment.debit_note_amt ?? 0)) * 100) / 100;
 
-  const { error } = await supabase
+  // 2026-10-28e — this AWB's round-off is editable here too (same "+"/"−"
+  // rule as at assignment time). Read the stored value first so only the
+  // CHANGE reaches the bill's Finance row; the column may not exist yet.
+  const { data: roundRow, error: roundReadError } = await supabase
     .from("freight_bill_awb_assignments")
-    .update({
-      credit_note_no: strOrNull(formData, "credit_note_no"),
-      credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: newCnAmt,
-      debit_note_no: strOrNull(formData, "debit_note_no"),
-      debit_note_date: strOrNull(formData, "debit_note_date"),
-      debit_note_amt: newDnAmt,
-    })
-    .eq("id", id);
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const prevRoundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
+  const submittedRound = formData.get("round_off_amt");
+  const newRoundOffAmt = submittedRound == null || submittedRound === "" ? prevRoundOffAmt : numOrZero(formData, "round_off_amt");
+  const deltaRoundOff = Math.round((newRoundOffAmt - prevRoundOffAmt) * 100) / 100;
+
+  const updatePayload = {
+    credit_note_no: strOrNull(formData, "credit_note_no"),
+    credit_note_date: strOrNull(formData, "credit_note_date"),
+    credit_note_amt: newCnAmt,
+    debit_note_no: strOrNull(formData, "debit_note_no"),
+    debit_note_date: strOrNull(formData, "debit_note_date"),
+    debit_note_amt: newDnAmt,
+    round_off_amt: newRoundOffAmt,
+  };
+  const { error } = await tolerateMissingColumn(updatePayload, "round_off_amt", (p) =>
+    supabase.from("freight_bill_awb_assignments").update(p).eq("id", id)
+  );
   if (error) return { error: error.message, success: false };
 
-  if (deltaCn !== 0 || deltaDn !== 0) {
-    const { data: mirror } = await supabase
-      .from("bill_pass_register")
-      .select("id, total_amt")
-      .eq("source", "freight_bill")
-      .eq("source_id", assignment.freight_bill_id)
-      .maybeSingle();
-    if (mirror) {
-      const newLedgerTotal = Math.round((Number(mirror.total_amt) - deltaCn + deltaDn) * 100) / 100;
-      const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
-      if (syncError) {
-        return { error: `Note saved, but the Finance ledger could not be updated: ${syncError.message}`, success: false };
-      }
-      revalidatePath("/dashboard/bill-payment");
+  if (deltaCn !== 0 || deltaDn !== 0 || deltaRoundOff !== 0) {
+    const syncError = await applyBillLedgerDelta(supabase, "freight_bill", assignment.freight_bill_id, -deltaCn + deltaDn + deltaRoundOff);
+    if (syncError) {
+      return { error: `Note saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
@@ -2699,10 +3201,13 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
 
   const freightBillId = str(formData, "freight_bill_id");
   const companyId = str(formData, "company_id");
-  const totalAmt = numOrZero(formData, "total_amt");
+  // 2026-10-29e — round-off is applied HERE, at the Bill Pass hand-off, same
+  // as Purchase/Printing and Duty above/below: gross Amount + signed
+  // round-off = what the Finance ledger is posted with.
+  const totalAmt = Math.round((numOrZero(formData, "total_amt") + numOrZero(formData, "round_off_amt")) * 100) / 100;
   if (!freightBillId) return { error: "Missing Courier Bill.", success: false };
   if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: false };
-  if (!totalAmt || totalAmt <= 0) return { error: "Amount must be a positive number.", success: false };
+  if (!totalAmt || totalAmt <= 0) return { error: "Amount (with round-off) must be a positive number.", success: false };
 
   const { data: existing } = await supabase
     .from("bill_pass_register")
@@ -2722,9 +3227,13 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
   // 2026-09-13 — duplicate Finance entry guard (see
   // findDuplicateFinanceInvoiceEntry note / DB index comment).
   {
-    const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null);
     if (dup) {
-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
+      const where = dup.company_name ? ` in ${dup.company_name}` : "";
+      return {
+        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger${where}. The same invoice can only be entered once — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
+        success: false,
+      };
     }
   }
 
@@ -2902,13 +3411,24 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
   const invoiceDate = strOrNull(formData, "invoice_date");
   const vendorPartyId = strOrNull(formData, "vendor_party_id");
   const newCnAmt = numOrZero(formData, "credit_note_amt");
+  const newDutyInr = numOrZero(formData, "duty_tax_amt_inr");
+  const newGstAmt = numOrZero(formData, "gst_18pct_amt");
+  const newTotalPayable = numOrNull(formData, "total_payable_amt");
+  const newRoundOffAmt = numOrZero(formData, "round_off_amt");
 
   const { data: prevBill } = await supabase
     .from("duty_tax_bills")
-    .select("credit_note_amt")
+    .select("credit_note_amt, round_off_amt, duty_tax_amt_inr, gst_18pct_amt, total_payable_amt")
     .eq("id", dutyTaxBillId)
     .maybeSingle();
   const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
+  const prevRoundOffAmt = Number(prevBill?.round_off_amt ?? 0);
+  // The amount "Send to Finance" starts from (see the send form's default):
+  // the manually cleared Total Payable when present, else the generated gross.
+  const prevBase = Number(
+    prevBill?.total_payable_amt ?? (Number(prevBill?.duty_tax_amt_inr ?? 0) + Number(prevBill?.gst_18pct_amt ?? 0))
+  );
+  const newBase = newTotalPayable ?? newDutyInr + newGstAmt;
 
   const { error } = await supabase
     .from("duty_tax_bills")
@@ -2916,15 +3436,15 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
       invoice_no: invoiceNo,
       invoice_date: invoiceDate,
       duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
-      duty_tax_amt_inr: numOrZero(formData, "duty_tax_amt_inr"),
-      gst_18pct_amt: numOrZero(formData, "gst_18pct_amt"),
+      duty_tax_amt_inr: newDutyInr,
+      gst_18pct_amt: newGstAmt,
       credit_note_no: strOrNull(formData, "credit_note_no"),
       credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: numOrZero(formData, "credit_note_amt"),
+      credit_note_amt: newCnAmt,
       disbursement_fee: numOrZero(formData, "disbursement_fee"),
       courier_duty_charges_adj: numOrZero(formData, "courier_duty_charges_adj"),
-      total_payable_amt: numOrNull(formData, "total_payable_amt"),
-      round_off_amt: numOrZero(formData, "round_off_amt"),
+      total_payable_amt: newTotalPayable,
+      round_off_amt: newRoundOffAmt,
       vendor_party_id: vendorPartyId,
     })
     .eq("id", dutyTaxBillId);
@@ -2945,22 +3465,60 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
     .eq("source", "duty_tax_bill")
     .eq("source_id", dutyTaxBillId);
 
-  // 2026-09-30 — same credit-note delta sync as updateFreightBillDetails:
-  // the Finance ledger row's total_amt is the reviewed net-of-CN figure,
-  // so a later CN change must adjust it by the DELTA or the Party
-  // Ledger/Bill Payment never see the note. (bpr.credit_note_amt stays
-  // untouched — the ledger total already nets the CN; writing it there
-  // too would double-reduce balance_due.)
-  if (mirror && prevCnAmt !== newCnAmt) {
-    const newLedgerTotal = Math.round((Number(mirror.total_amt) + (prevCnAmt - newCnAmt)) * 100) / 100;
-    const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
+  // 2026-09-30 — same credit-note delta sync as updateFreightBillDetails;
+  // 2026-10-28e — the bill's base amount and round-off change now travel the
+  // same way, so a round-off entered after "Send to Finance" is no longer
+  // invisible to Bill Payment / the Party Ledger.
+  if (mirror) {
+    const delta = Math.round((((newBase - prevBase) + (newRoundOffAmt - prevRoundOffAmt)) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, delta);
     if (syncError) {
-      return { error: `Bill saved, but the Finance ledger could not be updated with the credit note change: ${syncError.message}`, success: false };
+      return { error: `Bill saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/bill-payment");
+  return { error: null, success: true };
+}
+
+/** 2026-10-28e — Duty & Tax twin of resyncFreightBillFinanceAmount above. */
+export async function resyncDutyBillFinanceAmount(dutyTaxBillId: string): Promise<SimpleResult> {
+  await requireCapability("doc_entry");
+  const supabase = createServiceRoleClient();
+  if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
+
+  const { data: bill } = await supabase
+    .from("duty_tax_bills")
+    .select("duty_tax_amt_inr, gst_18pct_amt, total_payable_amt, round_off_amt, credit_note_amt")
+    .eq("id", dutyTaxBillId)
+    .maybeSingle();
+  if (!bill) return { error: "Duty & Tax Bill not found.", success: false };
+
+  const { data: mirror } = await supabase
+    .from("bill_pass_register")
+    .select("id")
+    .eq("source", "duty_tax_bill")
+    .eq("source_id", dutyTaxBillId)
+    .maybeSingle();
+  if (!mirror) return { error: "This Duty & Tax Bill is not in the Finance ledger yet.", success: false };
+
+  const { data: roundRows, error: roundError } = await supabase
+    .from("duty_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("duty_tax_bill_id", dutyTaxBillId);
+  const awbRoundOff = isMissingSchemaPiece(roundError)
+    ? 0
+    : (roundRows ?? []).reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
+
+  const base = Number(bill.total_payable_amt ?? Number(bill.duty_tax_amt_inr ?? 0) + Number(bill.gst_18pct_amt ?? 0));
+  const payable = Math.round((base + Number(bill.round_off_amt ?? 0) + awbRoundOff - Number(bill.credit_note_amt ?? 0)) * 100) / 100;
+  const { error } = await supabase.from("bill_pass_register").update({ total_amt: payable }).eq("id", mirror.id);
+  if (error) return { error: error.message, success: false };
+
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
   return { error: null, success: true };
 }
 
@@ -3011,20 +3569,22 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
   // figure. Saved value is now 18% of that AWB's duty when not entered.
   const dutyInr = numOrNull(formData, "duty_tax_amt_inr");
   const gstEntered = numOrNull(formData, "gst_18pct");
-  const { data, error } = await supabase
-    .from("duty_bill_awb_assignments")
-    .insert({
-      duty_tax_bill_id: dutyTaxBillId,
-      order_id: orderId,
-      order_shipment_id: orderShipmentId,
-      duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
-      duty_tax_amt_inr: dutyInr,
-      other_charge: numOrNull(formData, "other_charge"),
-      gst_18pct: gstEntered ?? (dutyInr != null ? Math.round(dutyInr * 18) / 100 : null),
-      remark: strOrNull(formData, "remark"),
-    })
-    .select("id")
-    .single();
+  // 2026-10-28e — per-AWB/order round-off, entered at assignment time.
+  const roundOffAmt = numOrNull(formData, "round_off_amt") ?? 0;
+  const payload = {
+    duty_tax_bill_id: dutyTaxBillId,
+    order_id: orderId,
+    order_shipment_id: orderShipmentId,
+    duty_tax_amt_usd: numOrNull(formData, "duty_tax_amt_usd"),
+    duty_tax_amt_inr: dutyInr,
+    other_charge: numOrNull(formData, "other_charge"),
+    gst_18pct: gstEntered ?? (dutyInr != null ? Math.round(dutyInr * 18) / 100 : null),
+    round_off_amt: roundOffAmt,
+    remark: strOrNull(formData, "remark"),
+  };
+  const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+    supabase.from("duty_bill_awb_assignments").insert(p).select("id").single()
+  );
 
   if (error || !data) {
     const msg = error?.message.includes("duplicate key")
@@ -3032,7 +3592,9 @@ export async function assignDutyAwb(_prev: DocFormState, formData: FormData): Pr
       : error?.message;
     return initialFail(`Failed to assign AWB: ${msg ?? "unknown error"}`);
   }
+  const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, roundOffAmt);
   revalidatePath("/dashboard/documents");
+  if (syncError) return initialFail(`AWB assigned, but the Finance ledger could not be updated: ${syncError}`);
   return { error: null, success: { id: data.id, docNo: "" } };
 }
 
@@ -3040,14 +3602,22 @@ export async function deleteDutyAwbAssignment(id: string): Promise<SimpleResult>
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
   // 2026-08-12 (round 11 security review): same as deleteFreightAwbAssignment above.
-  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id").eq("id", id).maybeSingle();
+  const { data: assignment } = await supabase.from("duty_bill_awb_assignments").select("id, order_id, duty_tax_bill_id").eq("id", id).maybeSingle();
   if (!assignment) return { error: "Assignment not found.", success: false };
   const { data: order } = await supabase.from("orders").select("company_id").eq("id", assignment.order_id).maybeSingle();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "You don't have access to this assignment's company.", success: false };
   }
+  // 2026-10-28e — same round-off take-back as the freight delete above.
+  const { data: roundRow, error: roundReadError } = await supabase
+    .from("duty_bill_awb_assignments")
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const roundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
   const { error } = await supabase.from("duty_bill_awb_assignments").delete().eq("id", id);
   if (error) return { error: error.message, success: false };
+  await applyBillLedgerDelta(supabase, "duty_tax_bill", assignment.duty_tax_bill_id, -roundOffAmt);
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }
@@ -3064,6 +3634,8 @@ export type BulkDutyAwbRow = {
   otherCharge: number | null;
   gst18pct: number | null;
   remark: string | null;
+  /** 2026-10-28e — this row's own round-off (see db/2026-10-28e-awb-round-off.sql). */
+  roundOffAmt: number | null;
 };
 
 export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAwbRow[]): Promise<{ error: string | null; results: BulkAwbResult[] }> {
@@ -3072,6 +3644,7 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
   if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", results: [] };
 
   const results: BulkAwbResult[] = [];
+  let roundOffTotal = 0;
   for (const row of rows) {
     const lookup = await lookupOrderForReconciliation(row.query, "duty");
     if (lookup.error || !lookup.order || !lookup.orderShipmentId) {
@@ -3082,7 +3655,7 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: "Not accessible." });
       continue;
     }
-    const { error } = await supabase.from("duty_bill_awb_assignments").insert({
+    const payload = {
       duty_tax_bill_id: dutyTaxBillId,
       order_id: lookup.order.id,
       order_shipment_id: lookup.orderShipmentId,
@@ -3091,17 +3664,23 @@ export async function bulkAssignDutyAwbs(dutyTaxBillId: string, rows: BulkDutyAw
       other_charge: row.otherCharge,
       // Same blank-means-18% rule as assignDutyAwb above.
       gst_18pct: row.gst18pct ?? (row.dutyTaxAmtInr != null ? Math.round(row.dutyTaxAmtInr * 18) / 100 : null),
+      round_off_amt: row.roundOffAmt ?? 0,
       remark: row.remark,
-    });
+    };
+    const { error } = await tolerateMissingColumn(payload, "round_off_amt", (p) =>
+      supabase.from("duty_bill_awb_assignments").insert(p)
+    );
     if (error) {
       const msg = error.message.includes("duplicate key") ? "Already assigned to a Duty & Tax Bill." : error.message;
       results.push({ query: row.query, ok: false, refNo: lookup.order.ref_no, error: msg });
     } else {
+      roundOffTotal += row.roundOffAmt ?? 0;
       results.push({ query: row.query, ok: true, refNo: lookup.order.ref_no, error: null });
     }
   }
+  const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, roundOffTotal);
   revalidatePath("/dashboard/documents");
-  return { error: null, results };
+  return { error: syncError ? `Assigned, but the Finance ledger could not be updated: ${syncError}` : null, results };
 }
 
 export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {
@@ -3131,33 +3710,35 @@ export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData
   const deltaCn = Math.round(((newCnAmt ?? 0) - Number(assignment.credit_note_amt ?? 0)) * 100) / 100;
   const deltaDn = Math.round(((newDnAmt ?? 0) - Number(assignment.debit_note_amt ?? 0)) * 100) / 100;
 
-  const { error } = await supabase
+  // 2026-10-28e — same per-AWB round-off edit as the freight AWB form.
+  const { data: roundRow, error: roundReadError } = await supabase
     .from("duty_bill_awb_assignments")
-    .update({
-      credit_note_no: strOrNull(formData, "credit_note_no"),
-      credit_note_date: strOrNull(formData, "credit_note_date"),
-      credit_note_amt: newCnAmt,
-      debit_note_no: strOrNull(formData, "debit_note_no"),
-      debit_note_date: strOrNull(formData, "debit_note_date"),
-      debit_note_amt: newDnAmt,
-    })
-    .eq("id", id);
+    .select("round_off_amt")
+    .eq("id", id)
+    .maybeSingle();
+  const prevRoundOffAmt = isMissingSchemaPiece(roundReadError) ? 0 : Number(roundRow?.round_off_amt ?? 0);
+  const submittedRound = formData.get("round_off_amt");
+  const newRoundOffAmt = submittedRound == null || submittedRound === "" ? prevRoundOffAmt : numOrZero(formData, "round_off_amt");
+  const deltaRoundOff = Math.round((newRoundOffAmt - prevRoundOffAmt) * 100) / 100;
+
+  const updatePayload = {
+    credit_note_no: strOrNull(formData, "credit_note_no"),
+    credit_note_date: strOrNull(formData, "credit_note_date"),
+    credit_note_amt: newCnAmt,
+    debit_note_no: strOrNull(formData, "debit_note_no"),
+    debit_note_date: strOrNull(formData, "debit_note_date"),
+    debit_note_amt: newDnAmt,
+    round_off_amt: newRoundOffAmt,
+  };
+  const { error } = await tolerateMissingColumn(updatePayload, "round_off_amt", (p) =>
+    supabase.from("duty_bill_awb_assignments").update(p).eq("id", id)
+  );
   if (error) return { error: error.message, success: false };
 
-  if (deltaCn !== 0 || deltaDn !== 0) {
-    const { data: mirror } = await supabase
-      .from("bill_pass_register")
-      .select("id, total_amt")
-      .eq("source", "duty_tax_bill")
-      .eq("source_id", assignment.duty_tax_bill_id)
-      .maybeSingle();
-    if (mirror) {
-      const newLedgerTotal = Math.round((Number(mirror.total_amt) - deltaCn + deltaDn) * 100) / 100;
-      const { error: syncError } = await supabase.from("bill_pass_register").update({ total_amt: newLedgerTotal }).eq("id", mirror.id);
-      if (syncError) {
-        return { error: `Note saved, but the Finance ledger could not be updated: ${syncError.message}`, success: false };
-      }
-      revalidatePath("/dashboard/bill-payment");
+  if (deltaCn !== 0 || deltaDn !== 0 || deltaRoundOff !== 0) {
+    const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", assignment.duty_tax_bill_id, -deltaCn + deltaDn + deltaRoundOff);
+    if (syncError) {
+      return { error: `Note saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
     }
   }
 
@@ -3171,10 +3752,11 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
 
   const dutyTaxBillId = str(formData, "duty_tax_bill_id");
   const companyId = str(formData, "company_id");
-  const totalAmt = numOrZero(formData, "total_amt");
+  // 2026-10-29e — same round-off-at-Bill-Pass rule as freight above.
+  const totalAmt = Math.round((numOrZero(formData, "total_amt") + numOrZero(formData, "round_off_amt")) * 100) / 100;
   if (!dutyTaxBillId) return { error: "Missing Duty & Tax Bill.", success: false };
   if (!companyId || !employee.companyIds.includes(companyId)) return { error: "Select a valid company.", success: false };
-  if (!totalAmt || totalAmt <= 0) return { error: "Amount must be a positive number.", success: false };
+  if (!totalAmt || totalAmt <= 0) return { error: "Amount (with round-off) must be a positive number.", success: false };
 
   const { data: existing } = await supabase
     .from("bill_pass_register")
@@ -3193,9 +3775,13 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
 
   // 2026-09-13 — duplicate Finance entry guard (same as freight above).
   {
-    const dup = await findDuplicateFinanceEntry(supabase, companyId, bill?.invoice_no ?? null);
+    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null);
     if (dup) {
-      return { error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger. The same invoice can only be entered once — if the amount is different, edit the existing entry instead.`, success: false };
+      const where = dup.company_name ? ` in ${dup.company_name}` : "";
+      return {
+        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger${where}. The same invoice can only be entered once — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
+        success: false,
+      };
     }
   }
 

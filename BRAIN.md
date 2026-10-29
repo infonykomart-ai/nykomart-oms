@@ -183,6 +183,15 @@ in `db/schema.sql`). The merge feature folds those rows into ONE keeper for disp
   companies must be within the caller's access, and `merged_into_bill_id` must be NULL on every
   participant. Party Ledger and every other consumer of `bill_pass_register` show the combined
   figures automatically because everything reads the same tables.
+- **2026-10-29b — MERGE KEY IS NOW `party + vendor invoice no. + invoice DATE + AMOUNT`**
+  (`billMergeKey()` in `src/lib/bill-merge-key.ts`, unit-tested). Keyed on the invoice NUMBER alone it
+  folded two genuinely different bills (82 of 2026-10-19 vs 82 of 2026-08-02 — different FY, different
+  amount), zeroed one and moved its payments onto the other, which is what corrupted the party
+  ledger. `groupBills()`/the ledger's invoice grouping also include `invoice_date` now, so same-number
+  rows on two dates never sum into one line. **Undo exists**: Bill Payment → "🔗 Merged entries"
+  (Admin) restores the loser's amount from the merge's own audit remark, moves its payment and CN/DN
+  adjustment rows back by exact subset-sum, and recomputes both bills' `total_paid` — no hand-typed
+  figures, and it reports (instead of guessing) when an exact match isn't possible.
 
 ## 5c. FedEx per-company credentials + "Test connection" (2026-09-17)
 

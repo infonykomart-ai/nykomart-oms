@@ -13,6 +13,8 @@ export type ApprovalBillRow = {
   invoice_no: string | null;
   vendor_invoice_no: string | null;
   invoice_type: string | null;
+  /** 2026-10-29b — part of the invoice-grouping key (see lib/bill-grouping). */
+  invoice_date: string | null;
   party_id: string | null;
   party_name: string | null;
   source: string | null;

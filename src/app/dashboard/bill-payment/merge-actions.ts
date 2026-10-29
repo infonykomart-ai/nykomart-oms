@@ -29,6 +29,7 @@
 
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { billMergeKey, pickRowsSummingTo, parseMergeOriginalTotal, MERGE_TAG } from "@/lib/bill-merge-key";
 import { revalidatePath } from "next/cache";
 
 export type MergeBillsState = {
@@ -76,18 +77,39 @@ export async function mergeDuplicateBills(_prev: MergeBillsState, formData: Form
     }
   }
 
-  // Same-invoice sanity: keeper must share party + vendor invoice no. +
-  // type with every loser (that's the definition of the merge — otherwise
-  // payments would move onto an unrelated bill).
-  const key = (r: (typeof rows)[number]) => `${r.party_id ?? ""}|${(r.vendor_invoice_no ?? "").toLowerCase().trim()}|${r.invoice_type ?? ""}`;
-  const keeperKey = key(keeper);
-  const mismatched = losers.filter((r) => key(r) !== keeperKey);
+  // 2026-10-29b — THE MERGE KEY IS NOW PARTY + INVOICE NO. + INVOICE DATE +
+  // AMOUNT. It used to be party + invoice no. only, and that was wrong: a
+  // vendor invoice NUMBER is not unique across financial years (or across two
+  // genuinely different bills that happen to reuse a number). Folding 2026-27
+  // invoice 82 into 2025-26 invoice 82 zeroed the second bill's amount and
+  // moved its payments onto the first — after which the party ledger showed
+  // one company's bill with another company's money. A merge is only a
+  // DUPLICATE ENTRY when the invoice number, the invoice date AND the bill
+  // amount all agree; anything else is a different bill and must stay
+  // separate.
+  //
+  // invoice_type is deliberately still NOT part of the key: a courier invoice
+  // recorded once as "Courier Bill (Freight)" and once as a plain "FREIGHT
+  // INVOICE" row is the same document.
+  // The rule itself lives in src/lib/bill-merge-key.ts (pure + unit-tested).
+  const keeperKey = billMergeKey(keeper);
+  const mismatched = losers.filter((r) => billMergeKey(r) !== keeperKey);
   if (!keeper.party_id || !keeper.vendor_invoice_no) {
     return { error: "The bill to keep must have both a Party and a Vendor Invoice No. before others can merge into it.", success: null };
   }
+  if (!keeper.invoice_date || !(Number(keeper.total_amt ?? 0) > 0)) {
+    return { error: "The bill to keep must have an Invoice Date and a non-zero amount before others can merge into it.", success: null };
+  }
   if (mismatched.length) {
     return {
-      error: `These bills don't share the same Party + Vendor Invoice No. + Type (${mismatched.map((r) => `${r.invoice_no ?? r.vendor_invoice_no} — ${r.companies?.name ?? ""}`).join("; ")}). Only same-invoice entries can merge.`,
+      error: `Only a true duplicate can merge — same Party, same Invoice No., same Invoice Date AND same amount. These differ: ${mismatched
+        .map(
+          (r) =>
+            `${r.invoice_no ?? r.vendor_invoice_no} — ${r.companies?.name ?? ""} (${r.invoice_date ?? "no date"}, ₹${Number(r.total_amt ?? 0).toFixed(2)})`
+        )
+        .join("; ")} vs kept ${keeper.invoice_no ?? keeper.vendor_invoice_no} (${keeper.invoice_date}, ₹${Number(
+        keeper.total_amt ?? 0
+      ).toFixed(2)}).`,
       success: null,
     };
   }
@@ -121,6 +143,14 @@ export async function mergeDuplicateBills(_prev: MergeBillsState, formData: Form
     movedAdjustments += movedAdj?.length ?? 0;
     cnSum += Number(loser.credit_note_amt ?? 0);
     adjSum += Number(loser.adj_amt ?? 0);
+
+    // 2026-10-29 — the loser can also be the row a real Credit / Debit Note
+    // was raised against (debit_notes/credit_notes.bill_pass_register_id).
+    // Re-point those documents at the keeper too, otherwise the note would
+    // keep hanging off a zeroed duplicate row and disappear from the bill
+    // that survived ("ek me credit note to" — it must travel with the merge).
+    await supabase.from("credit_notes").update({ bill_pass_register_id: keeperId }).eq("bill_pass_register_id", loser.id);
+    await supabase.from("debit_notes").update({ bill_pass_register_id: keeperId }).eq("bill_pass_register_id", loser.id);
 
     // 3. Zero + tag the loser (never delete). total_amt = 0 zeroes the
     // GENERATED to_be_pay/balance_due; original amount kept in the remark.
@@ -163,6 +193,171 @@ export async function mergeDuplicateBills(_prev: MergeBillsState, formData: Form
       movedPayments,
       movedAdjustments,
       mergedCount: losers.length,
+    },
+  };
+}
+
+// =============================================================================
+// UNDO A MERGE (2026-10-29b)
+//
+// "PURCHASE PARTY KE BILL MEARG HO GAYE THE ... VAPAS VAHI PAR PAHUCHAHO" — a
+// merge used to be one-way: the loser was zeroed and tagged, and there was no
+// way back. That is unacceptable when the merge key was too loose (see the
+// 2026-10-29b note on the key above) and two DIFFERENT bills got folded.
+//
+// What an undo restores:
+//   1. the loser's original total_amt — read back from the audit line the
+//      merge wrote into its remark ("original total N"), so nothing is typed
+//      by hand and the amount is exactly what was there before;
+//   2. the loser's payments — merged rows were re-pointed at the keeper, and
+//      bill_pass_register.total_paid still holds the loser's original paid
+//      figure, so the exact set of payment rows summing to that figure is
+//      moved back (exact-subset search; a partial/missing match is reported
+//      instead of guessing);
+//   3. the loser's CN/DN adjustment rows — same idea, using adj_amt;
+//   4. the keeper's credit_note_amt / adj_amt are decremented by the loser's
+//      own (never-zeroed) values, and both bills' total_paid are recomputed
+//      from their own ledger afterwards.
+//
+// Only an admin can undo: this rewrites money that Finance already posted.
+
+export type UnmergeState = {
+  error: string | null;
+  success: { invoiceNo: string; restoredTotal: number; movedPayments: number; movedAdjustments: number; warning: string | null } | null;
+};
+
+export async function unmergeBill(_prev: UnmergeState, formData: FormData): Promise<UnmergeState> {
+  const employee = await requireCapability("employee_admin");
+  const supabase = createServiceRoleClient();
+  const loserId = str(formData, "bill_id");
+  if (!loserId) return { error: "No bill selected.", success: null };
+
+  const { data: loser, error: loadError } = await supabase
+    .from("bill_pass_register")
+    .select("id, company_id, invoice_no, vendor_invoice_no, invoice_date, total_amt, total_paid, credit_note_amt, adj_amt, merged_into_bill_id, remark")
+    .eq("id", loserId)
+    .maybeSingle();
+  if (loadError || !loser) return { error: loadError?.message ?? "Bill not found — refresh and retry.", success: null };
+  if (!loser.merged_into_bill_id) return { error: "This bill is not merged into anything.", success: null };
+  if (!employee.companyIds.includes(loser.company_id)) {
+    return { error: "You don't have access to this bill's company.", success: null };
+  }
+
+  const originalTotal = parseMergeOriginalTotal(loser.remark);
+  if (!(originalTotal > 0)) {
+    return {
+      error: "Could not find the original amount in this bill's merge note, so the undo can't be done safely. Fix the bill manually.",
+      success: null,
+    };
+  }
+
+  const keeperId = loser.merged_into_bill_id;
+  const { data: keeper } = await supabase
+    .from("bill_pass_register")
+    .select("id, credit_note_amt, adj_amt")
+    .eq("id", keeperId)
+    .maybeSingle();
+  if (!keeper) return { error: "The bill this was merged into no longer exists.", success: null };
+
+  const warnings: string[] = [];
+
+  // 1. Payments — the loser's own total_paid still says how much money belongs
+  //    to it (the merge never zeroed that column), so move exactly that much
+  //    back off the keeper's ledger.
+  const { data: keeperPayments } = await supabase
+    .from("bill_pass_register_payments")
+    .select("id, amount")
+    .eq("bill_pass_register_id", keeperId)
+    .order("payment_date", { ascending: false });
+  const paymentRows = (keeperPayments ?? []).map((p) => ({ id: p.id, amount: Number(p.amount) }));
+  const wantedPaid = Number(loser.total_paid ?? 0);
+  let movedPayments = 0;
+  if (wantedPaid > 0.005) {
+    const picked = pickRowsSummingTo(paymentRows, wantedPaid);
+    if (picked && picked.length > 0) {
+      const { error } = await supabase
+        .from("bill_pass_register_payments")
+        .update({ bill_pass_register_id: loserId })
+        .in("id", picked.map((p) => p.id));
+      if (error) return { error: error.message, success: null };
+      movedPayments = picked.length;
+    } else {
+      warnings.push(
+        `Payments: ₹${wantedPaid.toFixed(2)} of payment couldn't be matched back to this bill (no exact combination on the merged bill) — record it again from Bill Payment.`
+      );
+    }
+  }
+
+  // 2. CN/DN adjustment rows — same exact-subset restore, using adj_amt.
+  const { data: keeperAdjs } = await supabase
+    .from("bill_pass_register_adjustments")
+    .select("id, amount")
+    .eq("bill_pass_register_id", keeperId)
+    .order("created_at", { ascending: false });
+  const adjRows = (keeperAdjs ?? []).map((a) => ({ id: a.id, amount: Number(a.amount) }));
+  const wantedAdj = Number(loser.adj_amt ?? 0);
+  let movedAdjustments = 0;
+  if (wantedAdj > 0.005) {
+    const picked = pickRowsSummingTo(adjRows, wantedAdj);
+    if (picked && picked.length > 0) {
+      const { error } = await supabase
+        .from("bill_pass_register_adjustments")
+        .update({ bill_pass_register_id: loserId })
+        .in("id", picked.map((a) => a.id));
+      if (error) return { error: error.message, success: null };
+      movedAdjustments = picked.length;
+    } else {
+      warnings.push(
+        `Note adjustments: ₹${wantedAdj.toFixed(2)} of CN/DN adjustment stayed on the merged bill — re-apply it here if needed.`
+      );
+    }
+  }
+
+  // 3. Keeper — give back the loser's CN/DN amounts it had absorbed, and
+  //    recompute its paid figure from its (now smaller) ledger.
+  const { data: keeperPayLeft } = await supabase
+    .from("bill_pass_register_payments")
+    .select("amount")
+    .eq("bill_pass_register_id", keeperId);
+  const keeperPaidLeft = (keeperPayLeft ?? []).reduce((s, p) => s + Number(p.amount), 0);
+  const { error: keeperError } = await supabase
+    .from("bill_pass_register")
+    .update({
+      total_paid: keeperPaidLeft,
+      credit_note_amt: Math.max(0, Number(keeper.credit_note_amt ?? 0) - Number(loser.credit_note_amt ?? 0)),
+      adj_amt: Math.max(0, Number(keeper.adj_amt ?? 0) - wantedAdj),
+    })
+    .eq("id", keeperId);
+  if (keeperError) return { error: keeperError.message, success: null };
+
+  // 4. Loser — amount back, tag cleared, paid recomputed from its own ledger.
+  const { data: loserPayLeft } = await supabase
+    .from("bill_pass_register_payments")
+    .select("amount")
+    .eq("bill_pass_register_id", loserId);
+  const loserPaidLeft = (loserPayLeft ?? []).reduce((s, p) => s + Number(p.amount), 0);
+  const cleanedRemark = (loser.remark ?? "").replace(MERGE_TAG, "").trim();
+  const { error: loserError } = await supabase
+    .from("bill_pass_register")
+    .update({
+      total_amt: originalTotal,
+      total_paid: loserPaidLeft,
+      merged_into_bill_id: null,
+      remark: `${cleanedRemark ? cleanedRemark + " | " : ""}[merge undone — ₹${originalTotal.toFixed(2)} restored]`,
+    })
+    .eq("id", loserId);
+  if (loserError) return { error: loserError.message, success: null };
+
+  revalidatePath("/dashboard/bill-payment");
+  revalidatePath("/dashboard/parties");
+  return {
+    error: null,
+    success: {
+      invoiceNo: loser.invoice_no ?? loser.vendor_invoice_no ?? loserId,
+      restoredTotal: originalTotal,
+      movedPayments,
+      movedAdjustments,
+      warning: warnings.length ? warnings.join(" ") : null,
     },
   };
 }

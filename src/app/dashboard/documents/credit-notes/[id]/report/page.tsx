@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
+import { DocLetterhead, DocGeneratedFooter } from "@/components/doc-letterhead";
 
 // 2026-08-29 — same round as the Debit Note and Internal Invoice report
 // pages (see debit-notes/[id]/report's header comment for the full "why"):
@@ -59,7 +60,11 @@ async function CreditNoteReportInner({ id }: { id: string }) {
 
   const [{ data: company }, { data: profile }, storeResult, orderResult, debitNoteResult, partyResult] = await Promise.all([
     supabase.from("companies").select("id, name, logo_url").eq("id", note.company_id).single(),
-    supabase.from("company_profiles").select("address, phone, email").eq("company_id", note.company_id).maybeSingle(),
+    supabase
+      .from("company_profiles")
+      .select("address, phone, whatsapp, email, gstin, bank_name, account_no, ifsc_code")
+      .eq("company_id", note.company_id)
+      .maybeSingle(),
     note.store_id ? supabase.from("stores").select("name").eq("id", note.store_id).maybeSingle() : Promise.resolve({ data: null }),
     note.order_id ? supabase.from("orders").select("ref_no").eq("id", note.order_id).maybeSingle() : Promise.resolve({ data: null }),
     note.debit_note_id
@@ -92,19 +97,11 @@ async function CreditNoteReportInner({ id }: { id: string }) {
               header comment for the full "why": restructured to full-width
               letterhead, then centered title block, then the unchanged
               party/reference two-column row — applied identically across
-              all 3 report pages. */}
-          <div className="mb-4 flex items-center gap-3">
-            {company?.logo_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={company.logo_url} alt={company?.name ?? ""} className="h-14 w-14 object-contain" />
-            )}
-            <div>
-              <div className="text-lg font-bold">{company?.name ?? "—"}</div>
-              <div className="text-xs text-slate-500">
-                {[profile?.address, profile?.phone, profile?.email].filter(Boolean).join(" | ")}
-              </div>
-            </div>
-          </div>
+              all 3 report pages.
+              2026-10-29b — full printed identity (logo/name/address/contact +
+              GSTIN / Bank / A/C / IFSC under a double rule), same as the
+              Purchase Bill statement; it used to print a logo and a name. */}
+          <DocLetterhead company={company} profile={profile} />
           <div className="mb-6 border-b border-slate-300 pb-4 text-center">
             <div className="text-xl font-bold tracking-wide text-slate-800">CREDIT NOTE</div>
             <div className="text-xs text-slate-500">
@@ -191,6 +188,8 @@ async function CreditNoteReportInner({ id }: { id: string }) {
             <div className="font-semibold text-slate-800">For {company?.name ?? "—"}</div>
             <div className="mt-8 text-slate-400">Authorized Signatory</div>
           </div>
+
+          <DocGeneratedFooter className="mt-6 border-t border-slate-300 pt-2" />
         </div>
       </PrintArea>
     </div>

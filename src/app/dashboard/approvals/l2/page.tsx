@@ -19,7 +19,7 @@ export default async function ApprovalsL2Page() {
     supabase
       .from("bill_pass_register")
       .select(
-        "id, company_id, invoice_no, vendor_invoice_no, invoice_type, party_id, total_amt, to_be_pay, prepared_by_employee_id, approved_l1_by, approved_l1_at, created_at, source, source_id"
+        "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, party_id, total_amt, to_be_pay, prepared_by_employee_id, approved_l1_by, approved_l1_at, created_at, source, source_id"
       )
       .eq("company_id", employee.currentCompanyId)
       .eq("approval_status", "Approved L1")
@@ -54,6 +54,7 @@ export default async function ApprovalsL2Page() {
       invoice_no: b.invoice_no,
       vendor_invoice_no: b.vendor_invoice_no,
       invoice_type: b.invoice_type,
+      invoice_date: b.invoice_date,
       party_id: b.party_id,
       party_name: b.party_id ? partyName.get(b.party_id) ?? null : null,
       source: b.source,

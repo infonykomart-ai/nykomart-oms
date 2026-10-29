@@ -1,3 +1,472 @@
+MERGE RULE FIX + UNDO MERGE + DN/CN FULL LETTERHEAD + DEBIT NOTE REGISTER
+(2026-10-29e)
+======================================================================
+
+KOI NAYA SQL NAHI — sab kuch maujooda tables/columns par hai.
+
+
+1) BUG FIX: GALAT BILL MERGE (PARTY LEDGER ME GADBAD) — ROOT CAUSE
+------------------------------------------------------------------
+Symptom: ek hi invoice no. (jaise 82) do companies ke ledger me dikh
+raha tha, aur amounts/paid mix ho gaye the — jis company me bill register
+hua tha uske ledger me uska poora amount nahi aata tha.
+
+Wajah: merge duplicate bills ko sirf (party + invoice no.) par match karta
+tha. Invoice number akela duplicate nahi hota — same vendor 82 number
+dusre financial year me bhi use karta hai (82 dt 2026-10-19 vs 82 dt
+2026-08-02). Aise do ALAG bills fold ho gaye: doosre ka amount 0 ho gaya
+aur uske payments pehle bill par chale gaye.
+
+Ab merge ke liye CHAAR cheezein match karni zaroori hain:
+      party + vendor invoice no. + INVOICE DATE + AMOUNT
+Sirf tabhi "duplicate entry" mana jayega — warna dono bills alag rahenge.
+Invoice type ab bhi key me nahi hai (wahi courier invoice "Courier Bill
+(Freight)" aur "FREIGHT INVOICE" do roop me ho to wo duplicate hai).
+
+Wahi rule teen jagah lagaya gaya hai taaki kahin bhi drift na ho:
+  • Bill Payment ka "Merge entries" bar (candidates)
+  • server action mergeDuplicateBills (asli guard)
+  • ledger/approvals grouping (ek invoice ki kai item rows) — ab invoice
+    DATE bhi group key ka hissa hai, is liye same number dusri date ka
+    bill us invoice me nahi judega
+
+Rule + undo ka math src/lib/bill-merge-key.ts me hai, aur uske unit tests
+src/lib/bill-merge-key.test.ts me (11 tests).
+
+
+2) NAYA: "MERGED ENTRIES" PANEL + UNDO MERGE (ADMIN)
+---------------------------------------------------
+Pehle merge one-way tha — galti se merge ho gaya to wapas paane ka koi
+rasta nahi tha. Ab Bill Payment page par neeche "🔗 Merged entries" panel
+(Admin only) har merged duplicate dikhata hai: invoice, date, party, apni
+company, kis me merge hua, aur uska ORIGINAL amount. "↩ Undo merge" ek
+click me:
+  • us bill ka original amount wapas (merge ki audit line se padha jata
+    hai, hand-typed nahi)
+  • merge hua bill ke payments us amount ke hisab se wapas usi bill par
+  • CN/DN adjustment rows bhi wapas
+  • keeper ke credit_note_amt / adj_amt se us bill ka hissa minus
+  • dono bills ka total_paid unke apne ledger se dobara calculate
+Agar payment rows exactly match nahi hoti (koi combination nahi banta) to
+panel saaf-saaf bata deta hai ki kitna amount manually dobara enter karna
+hai — andaaza laga kar paisa idhar-udhar nahi karta.
+
+
+3) DEBIT NOTE / CREDIT NOTE PRINT — POORA LETTERHEAD
+----------------------------------------------------
+Dono /report pages par pehle sirf logo + company name aata tha. Ab wahi
+poora printed identity jata hai jo Purchase Bill statement par hota hai:
+  • baayein: logo + company name + address + phone/WhatsApp + email
+  • daayein: GSTIN / Bank / A/C No. / IFSC
+  • neeche double rule, aur sabse neeche
+    "computer-generated document … no signature required" footer
+Shared component: src/components/doc-letterhead.tsx
+
+
+4) NAYA: DEBIT NOTE REGISTER (POORI LIST + PRINT)
+-------------------------------------------------
+Debit Notes ki koi list hi nahi thi — sirf Document Entry me ek chhoti
+"Recent Debit Notes" list. Ab /dashboard/debit-notes-register:
+  • party-wise har debit note, har group ka apna total, upar grand total
+  • har DN ka apna sheet link (poora letterhead wala print)
+  • "🖨 Print / PDF list" — poori list A4 par, file karne layak
+  • company filter (top-nav ki company default)
+Credit Note Register par bhi print button + grand total jod diya, aur dono
+registers ek dusre se link ho gaye. Bill Payment page par dono ke link.
+
+Badlav kiye gaye files (20): bill-merge-key.ts + test, merge-actions.ts,
+merged-bills-panel.tsx, bill-payment page/list, ledger page, bill-grouping,
+approvals l1/l2 + approval-list, documents/actions.ts, doc-letterhead.tsx,
+debit/credit note report pages, debit-notes-register, credit-notes-register,
+landing-features.ts, CHANGES.txt.
+
+Verification: focused tsc (exit 0), eslint --quiet on changed files (exit 0),
+11/11 unit tests pass (`node --import tsx --test src/lib/bill-merge-key.test.ts`).
+
+
+PAYMENT VOUCHER + SABHI DUPLICATE EK CLICK ME MERGE (2026-10-29d)
+======================================================================
+
+KOI NAYA SQL NAHI — dono cheezein maujooda tables par hain, koi figure
+nahi badla.
+
+
+1) NAYA: PAYMENT VOUCHER (PRINT / PDF)
+--------------------------------------
+Reference billing software me payment receipt/voucher ka workflow hota hai.
+Ab humare paas bhi hai — har record hue vendor payment ka apna A4 voucher:
+
+  • kaha se kholein:
+      – Party Ledger me payment ki line par "🧾 Voucher"
+      – Bill Statement (kisi bhi bill ka statement) ke PAYMENTS table me
+        har payment ke aage "🧾 Voucher"
+  • voucher me kya aata hai:
+      – voucher no. (PV-<date>-<id>) + payment date
+      – jis COMPANY ka bill hai usi company ka letterhead (logo, address,
+        GSTIN) — top-nav ki company nahi
+      – party ka naam / address / GSTIN / contact
+      – vendor invoice no., type, date, invoice total
+      – particular, payment mode, UTR/cheque no., remark
+      – amount figures me AUR words me (Indian cheque style)
+      – "total paid on this invoice", "credit/note adjustments" aur
+        "balance still due" — live bill ledger se, purane snapshot se nahi
+      – Prepared By / Checked By / For <company> Authorised Signatory
+  • "🖨 Download PDF" se print/PDF (A4), screen par sab clean
+
+Access: jis login ke paas Bill Payment ka access hai use hi khulta hai, aur
+sirf usi company ke bills jinki company uske paas hai.
+
+
+2) DUPLICATE INVOICE — AB SAB EK HI CLICK ME MERGE
+--------------------------------------------------
+Party Ledger ke duplicate panel me ab sabse upar ek bar aati hai:
+
+  🔗 12 invoices in this ledger have more than one entry …
+     [ 🔗 Merge all 12 into one entry each ]
+
+  • har invoice me default wahi entry keep hoti hai jisme asli document /
+    AWB hain, baaki usme fold ho jati hai
+  • progress dikhta hai ("3 of 12 — invoice 108100172691")
+  • koi ek invoice merge na ho paye to wahin ruk kar batata hai kaunsa
+    invoice hai aur kitne ho chuke — aadha-adhoora chupchap nahi chhodta
+  • har merge pehle wale hi action (mergeDuplicateBills) se hota hai, to
+    payments / credit-debit note / adjustments ka hisaab bilkul waisa hi
+    rehta hai, sirf clicks kam ho gaye
+  • single invoice ka alag panel bhi waise hi kaam karta hai
+
+
+BILL STATEMENT SUMMARY FIX + BILL PASS ROUND-OFF + ENGLISH UI (2026-10-29e)
+======================================================================
+
+1) MARKED BUG — BILL SUMMARY ME POORI INVOICE NAHI AA RAHI THI
+-------------------------------------------------------------
+Case: invoice 83 (M/S. Prachi Rugs) — PO ENTRIES me 11 items aur total
+₹31,433.43, lekin BILL SUMMARY me Bill Amount / Net Payable / BALANCE DUE
+sirf ₹1,008.00, aur upar ka BALANCE button bhi ₹1,008.00.
+
+Cause: ek multi-item Purchase Bill store hota hai ONE ROW PER ITEM
+(bill_pass_register me 11 rows). Statement sirf US EK row ke financials
+padh raha tha jis row se statement khola gaya tha — jo item PO-A915
+(₹1,008.00) ka tha. PO lines pehle se invoice-wide the, paisa nahi.
+
+Ab (src/lib/bill-statement.ts):
+  • ek hi invoice ki saari rows (same company + party + vendor invoice no.,
+    sirf source = purchase_bill) uthayi jati hain — wahi key jo groupBills()
+    use karta hai
+  • Bill Amount / Credit Note / CN-DN Adjustments / Total Paid / Balance,
+    payments, adjustments aur wallet settlements sab invoice-wide
+  • toolbar ka BALANCE, "Copy summary" aur A4 PDF teeno isi figure ko
+    dikhate hain (ek hi loader)
+  • Courier / Duty / manual bills ki EK hi row hoti hai — unke liye
+    bilkul pehle jaisa
+  • Bill Summary me nayi row: "Round-off / reviewed adjustment vs line
+    items" — jab line-items ka total ledger ke total se alag ho (round-off
+    ya review me badla gaya payable), to farak dikhta hai, chhup-ta nahi
+
+2) BILL PASS (SEND TO FINANCE) PAR AB ROUND-OFF
+------------------------------------------------
+"ab jo koi bill entry ho gyi hai to usme kaha par kare — bill pass me
+roundoff ho jayega kya?" — haan, ab har jagah:
+
+  • Purchase / Printing  ➜ "Send to Finance" box me naya
+    Round Off control (+ / −, quick ₹1000 / ₹1005 / ₹1010 …, preview
+    "payable before → after")
+  • Courier aur Duty      ➜ same control unke "Confirm — Send to Finance"
+    form me (Amount ab "gross" hai; round-off uske upar lagta hai)
+  • Server action (teesro me) amount + round_off_amt ko jod ke hi ledger
+    row likhta hai — posted figure exact wahi hai jo approve hua
+  • entry-time round-off (per order / per AWB) pehle se tha aur wahi
+    rehta hai; ye uske UPAR ka final adjustment hai (default 0)
+  • Washing / Printing ke ENTRY form me round-off pehle se tha
+  • Office expense bill ka koi "Send to Finance" step nahi — save karte hi
+    Finance jaata hai, usme alag round-off ka column nahi hai
+
+3) UI TEXT AB POORI ENGLISH ME
+------------------------------
+Jaha bhi user ko dikhne wali Hindi/Hinglish text thi wo English kar di:
+  • Finance box: "... showing in Bill Payment / Party Ledger under this
+    same company."
+  • Office expense: "Fill in the party and this bill becomes a payable ..."
+  • CSB Filing report subtitle + "no matching order" note
+  • Credit Note panel: "Party's CN No." / "Courier's CN number"
+  • Telegram / WhatsApp sent toasts
+  • Received Chalan help line, round-off hover tips (tooltip text)
+Code comments me user ke original Hinglish requests waise hi rakhi gayi
+hin (wo request history hai, UI nahi).
+
+
+DUPLICATE INVOICE — EK HI ENTRY ME MERGE (2026-10-29b)
+======================================================================
+
+Aapka case: ek hi courier invoice (108110172691) do baar ledger me — ek row
+"Courier Bill (Freight)" jisme 11 AWB, doosri "FREIGHT INVOICE" jisme credit
+note. Ab dono ko ek entry me merge kiya ja sakta hai.
+
+1) PARTY LEDGER ME HI MERGE KA OPTION
+-------------------------------------
+Jo party ledger kholein, usme agar kisi invoice ki ek hi company me 2 ya
+zyada entry hain (invoice no. same) to table ke upar panel aata hai:
+  • dono entries dikhti hain: type, amount, credit note
+  • "Entry to keep" me default wahi rehti hai jisme asli document / AWB hain
+    (badalna ho to dropdown se badal lijiye)
+  • "🔗 Merge 2 entries into one" → payments, credit/debit note aur
+    adjustments sab keeper par aa jate hain, duplicate ki amount hat jati
+    hai, aur ledger me sirf ek entry dikhti hai (duplicate row delete nahi
+    hoti — zero hokar audit me rehti hai)
+
+2) BILL PAYMENT ME BHI AB SAME-COMPANY DUPLICATE MERGE HOTA HAI
+--------------------------------------------------------------
+Pehle merge bar sirf tab aata tha jab same invoice 2 alag COMPANIES me ho,
+aur invoice type bhi same ho. Ab:
+  • same company ke duplicate bhi merge ho jate hain
+  • invoice type (Courier Bill vs FREIGHT INVOICE) ab rasta nahi rokti —
+    same party + same vendor invoice no. = merge allowed
+  • keeper company ke bajay ab POORI ENTRY chuni ja sakti hai (jo 11 AWB
+    wali entry rakhni hai, wahi)
+  • credit_notes / debit_notes jo duplicate row se bandhi thi, wo bhi keeper
+    par shift ho jati hain (note gum nahi hota)
+
+Merged (zero) rows ab party ledger me dikhti hi nahi — sirf ek entry.
+
+
+FINANCE LEDGER GATE + KOI DUPLICATE BILL NAHI + MULTI-INVOICE DEBIT NOTE
+(2026-10-29)
+======================================================================
+
+KOI NAYA SQL NAHI — sabhi badlav maujooda tables par hain.
+
+
+1) PURCHASE / PRINTING BILL AB FINANCE SE GUZAR KE HI COMPANY ME JAYEGA
+-----------------------------------------------------------------------
+Pehle purchase/printing bill save karte hi chupchap Bill Pass Register me
+chala jata tha. Ab:
+  • save karne par bill sirf Document Entry me rehta hai
+  • har vendor invoice ke card par naya box: **➜ Send to Finance** —
+    company chuniye, payable confirm kijiye (default = invoice ka poora
+    total, badalna ho to badal dijiye), Send
+  • us click se pehle Bill Payment / Party Ledger / company ki books me
+    kuch nahi jata — "bina finance ledger se gujre koi bill reflect nahi"
+  • Send par hi JV aur Received Chalan bante hain
+  • ek hi vendor invoice dobara post nahi hogi (same company me duplicate
+    bilkul block; dubble bill ke liye Debit Note ka rasta dikhaya jata hai)
+
+2) COMPANY CHANGE — FINANCE ME BHEJNE KE BAAD BHI
+-------------------------------------------------
+  • Purchase / Printing card me "↔ Change company"
+  • Courier / Duty bill card me bhi "↔ Change company"
+  • naya entry nahi banta — wahi ledger row doosri company me jaati hai,
+    uske payments / notes / invoice no. sab saath (delete + re-post ki
+    zaroorat nahi, isi wajah se duplicate entries banti thi)
+  • target company me wahi invoice pehle se ho to block, saaf message ke saath
+
+3) DUPLICATE COURIER / DUTY INVOICE — KISI BHI COMPANY ME
+---------------------------------------------------------
+Send to Finance ka duplicate check ab sabhi accessible companies me dekhta
+hai (pehle sirf usi company me). Same courier invoice doosri company me
+post karte hi rok diya jata hai, aur bataya jata hai ki wo kis company me
+pehle se hai — Party Ledger me ek hi invoice do baar dikhne wali problem.
+AWB dobara bill karne par error me bill ka invoice no. bhi aata hai.
+
+4) DEBIT NOTE — EK NOTE, KAI INVOICE (MULTIPLE PO)
+---------------------------------------------------
+  • naya picker: party ke saare invoices list hote hain, jitne chahiye tick
+    kijiye aur har invoice ke saamne debit amount likhiye
+  • Debit Amount = in lines ka SUM (haath se total likhne ki zaroorat nahi,
+    isliye calculation mistake nahi hoti)
+  • note ka "Against Invoice/Bill No." me saare invoice no. aa jate hain
+  • har tick ki hui invoice ka payable uske apne amount se kam hota hai
+    (Bill Payment / Party Ledger me turant)
+  • naya **Reason** field (Duplicate bill / Rate difference / Excess qty /
+    GST mistake / Short supply / Other) — Particulars me sabse pehle print
+    hota hai, taaki note kyu bana hai ye saaf rahe
+  • Debit Note ki A4 sheet par "Against N invoices" table — kis invoice ka
+    kitna debit, date ke saath
+  • purchase bill card se 🧾 Debit Note shortcut pehle jaisa hi
+
+5) REPORT / SHEET USI COMPANY KI JISME BILL REGISTER HUA
+---------------------------------------------------------
+Freight / Duty report ab row ki company Finance ledger se leta hai (jis
+company me bill chadha). Order kisi bhi company ka ho, report aur A4 sheet
+usi company ke naam se banti hai. Jo bill Finance me nahi gaya, uske liye
+purana behaviour (order ki company) fallback raha.
+
+
+BAKI: aapne Free-GST-Billing-Software repo ka link diya tha — us repo ko
+is system me install karke merge karna alag project hai; is round me nahi
+kiya gaya (neeche jawab me detail).
+
+
+ROUND OFF AB PER ORDER (COURIER / DUTY) + LEDGER ME TURANT UPDATE
+(2026-10-28e)
+======================================================================
+
+NAYA SQL — YE FILE EK BAAR CHALANI HAI:
+  db/2026-10-28e-awb-round-off.sql
+Bina chalaye: bill pehle jaisa save hoga, bas per-AWB round-off store nahi
+hoga (screen par dikhega nahi) — kuch rukta nahi. Status: Admin → Migrations.
+
+
+1) PER ORDER (PER AWB) ROUND OFF — ENTRY KE TIME HI
+---------------------------------------------------
+Courier / Duty bill me jab AWB assign karte hain (ya paste karke bulk me),
+ab wahi row par **Round Off** field hai — `[−] / [+]` ke saath, jaisa baaki
+bills me:
+  • + se us AWB ka payable badhta hai, − se ghatta hai
+  • AWB ki line par "AWB total" me round-off jud ke dikhta hai
+  • bill card ke summary me "Round off (AWB x + bill y)" aur Payable me
+    shamil
+  • "+ Note" form se baad me bhi badal sakte hain
+  • bulk paste me har row ke liye alag (blank = 0)
+Bill header ka apna round-off jaisa tha waisa hi rahega — dono jud jaate hain:
+  payable = sabhi AWB ka gross + har AWB ka round-off + bill ka round-off − CN
+
+2) REPORT ME BHI DIKHEGA
+------------------------
+  • Courier / Duty bill ki A4 sheet me naya **Round Off** column (per AWB)
+    aur "Net Payable" me jod diya
+  • Reports → Freight/Duty Bill Report me bhi Round Off column
+  • "Send to Finance" ka default amount ab per-AWB round-off ke saath aata hai
+
+3) LEDGER / BILL PAYMENT ME UPDATE NA HONE WALI PROBLEM
+-------------------------------------------------------
+Pehle bill ek baar Finance me jaane ke baad uske round-off / amount
+badalne par ledger purana hi rehta tha. Ab:
+  • bill header ka round-off ya amount badla → ledger total usi DELTA se
+    update (send ke waqt ka manual adjustment safe rahega)
+  • kisi AWB ka round-off daala/badala/hata diya (ya AWB remove kiya) →
+    ledger turant adjust
+  • Purchase bill pehle se theek tha (waha poora total re-sync hota hai)
+  • **purane bill jinka round-off pehle daala gaya tha** (fix se pehle):
+    bill card par naya button **↻ Re-sync Finance amount** — ek click me
+    aaj ka payable ledger me likh jaata hai
+
+
+CSB FILING REPORT — DATE RANGE + COLUMN PICKER + ORDER KI POORI DETAIL
+(2026-10-28d)
+======================================================================
+
+KOI NAYA SQL NAHI. Naya page: **Reports → 🛃 CSB Filing Report**
+(`/dashboard/reports/csb-filings`), aur Document Entry ke CSB Filing tab me
+bhi **📊 Report** link.
+
+1) KAB SE KAB TAK
+-----------------
+  • Filing date — From / To (customs ne jis din file kiya)
+  • Company filter (filing ke match hue order ki company se — csb_filings
+    me apna company column nahi hai)
+
+2) KONKONSE COLUMN
+------------------
+Columns button se jitne chahiye utne tick/untick — screen, print/PDF,
+CSV, Excel, Word, WhatsApp/Email sab me wahi columns jate hain. Kuch
+nishan bhi add hue: PO/RF/RG No., Company, Store, Order/PO/Delivery/
+Dispatch date, Order status, Marketplace order no., Buyer name & address,
+Buyer country / city / state / postcode, Contact, Email, Qty, SKU, Size,
+Item category, HSN, Courier, AWB, Forwarding no., Delivered status/date,
+Booked freight, Invoice value INR/USD, Remark, Orders matched.
+
+3) ORDER SE LINK KAISE
+----------------------
+  • HAWB number → order_shipments.awb_no
+  • Invoice no. → dispatch_invoices.invoice_no
+  • ek filing me kai order ho to PO numbers " / " se jude, Qty total,
+    buyer/courier pehle match se — "Orders Matched" column me ginti
+  • jo filing kisi order se match nahi hui, wo bhi list me rehti hai (sirf
+    CSB columns ke saath) aur upar warning me ginti dikh jati hai
+
+
+HAR BILL ME + / − ROUND OFF, AUR PARTY LEDGER HAR COMPANY KI ALAG-ALAG
+(2026-10-28c)
+======================================================================
+
+KOI NAYA SQL NAHI — dono cheezein pehle se maujood columns par kaam karti
+hain (round_off_amt har bill table me hai, payments bill ke apne row se aate
+hain).
+
+
+1) ROUND OFF AB + / − ME (PURCHASE · PRINTING · COURIER · DUTY · WASHING)
+-----------------------------------------------------------------------
+Bill ke aakhir me, invoice save karne wale button ke upar, ek hi tarah ka
+control har bill me:
+  • [−] / [+] button — minus se payable GHATTA hai, plus se BADHTA hai
+    (pehle sirf khaali number box tha, usme minus likhna padta tha)
+  • kitna round karna hai wo amount, aur 'Clear'
+  • neeche saaf line: "Payable before round-off ₹X → after ₹Y" — jo
+    screen par dikhta hai wahi save hota hai
+  • ₹1 / ₹5 / ₹10 / ₹50 / ₹100 ke round figure shortcuts — ek click me
+    payable exactly round figure par aa jaata hai, difference sirf
+    round-off me jaata hai
+Purchase / Printing bill me pehle se round-off tha; ab Courier, Duty aur
+Washing bills (create + edit, dono) me bhi yahi control hai.
+
+2) PARTY LEDGER: HAR COMPANY KI ALAG LEDGER
+-------------------------------------------
+Pehle ledger sirf top-nav wali EK company dikhata tha; doosri company ke
+bill/payment dekhne ke liye "merge same invoice across companies" tick
+karna padta tha (aur sab ek hi balance me jud jaata tha).
+Ab:
+  • ledger khulte hi party ki SABHI companies dikhti hain — **har company
+    ka apna block**, apna Debit/Credit, apna running balance aur apna
+    closing
+  • jis company me invoice chadha hai, uske payment/credit note bhi usi
+    block me dikhte hain (payment bill ke hi row se juda hota hai, isliye
+    idhar-udhar nahi ja sakta)
+  • upar combined total sirf cross-check ke liye; neeche "All companies —
+    combined" line
+  • filter bar me Company chunne par sirf wahi company (purana default)
+  • ek chhota bug bhi theek: table me column ka order header se ulta tha
+    (Invoice No. ki jagah Company aur Company ki jagah Invoice No. dikh
+    raha tha)
+
+
+OFFICE EXPENSE BILL AB BILL PAYMENT / PARTY LEDGER ME PAYABLE (GST KE BINA) + BILL KI APNI A4 SHEET
+(2026-10-28b)
+======================================================================
+
+NAYA SQL — YE FILE CHALANI ZAROORI HAI (2026-10-28 wali ke BAAD, ek baar):
+  db/2026-10-28b-office-expense-finance.sql
+Agar nahi chalti: bill pehle jaisa save hota rahega aur Finance entry
+'Service' bucket me chali jayegi (naam badal ke) — kuch rukta nahi.
+
+
+1) PARTY KE SAATH BILL = PAYABLE
+---------------------------------
+Jis office expense bill me Party likhi ho, wo ab apne aap
+Bill Payment aur us party ke Party Ledger me **payable** banke aata hai:
+  • ek bill = ek Finance entry (source "office_expense"), total bill ke
+e  • **GST nahi** — office expense par GST lagta hi nahi, isliye bill ka
+total hi payable hai (koi 5%/18% apne aap nahi judta)
+  • company wahi jisme bill chadha hai, invoice no/date wahi jo bill me hai
+  • Bill me **Party ka naam type karke naya vendor** bana sakte hain (datalist
+me purane bhi dikhte hain) — pehle Party Master me jaane ki zaroorat nahi.
+Naye party me GST/bank detail kuch nahi maanga jaata.
+  • Party khaali chhodi (uchanti / misc kharcha) to Finance me kuch post
+NAHI hota — sirf P&L me kharcha rahega, jaisa pehle tha.
+
+2) EDIT / DELETE KA HISAB
+--------------------------
+  • Bill edit karne par wahi Finance entry update hoti hai (total, party,
+invoice no/date, company) — dobara post nahi hoti, isliye double payment
+nahi banta.
+  • Party hata di to Finance entry hat jaati hai — **lekin** agar us bill par
+Bill Payment me payment ho chuki hai to system rok deta hai (payment history
+kabhi chup-chaap delete nahi hoti).
+  • Bill delete karna bhi wahi rule follow karta hai.
+
+3) BILL KI APNI A4 SHEET
+------------------------
+Har bill ke card par **📄 Sheet** button hai — usi company ke letterhead par
+poori report (print / PDF):
+  • bill ki company (jisme chadha hai), party ka block, invoice no/date,
+expense date, payment mode
+  • har item alag line (category + description + date + mode + amount) aur
+TOTAL
+  • "GST is not applicable" saaf likha hua
+  • Finance position: Billed / Credit note-adj / Paid / **Balance due**
+  • Bill Payment aur Party Ledger me invoice number par click karne se bhi
+yahi sheet khulti hai.
+
+
 OFFICE EXPENSE BILL (PARTY + MULTI ITEM), LEDGER ME COMPANY, BILL KA DEBIT NOTE, CSB DATE FIX
 (2026-10-28)
 ======================================================================
