@@ -465,6 +465,12 @@ export type PartyBillItem = {
   unitRate: number | null;
   amount: number;
   balanceDue: number;
+  /** 2026-10-29 — the PO/RF/RG no. of the order this item's bill line came
+   *  from (purchase_bills.order_id, or an AWB assignment's order_id for a
+   *  Courier/Duty bill). "PO NUMBER TO KAHI SELECT KARNE KA OPTION NAHI HAI
+   *  OR NA ISME KAHI LIKHA HAI KI YE IS PO ORDER KA HAI" — it is now shown
+   *  on every row and filterable, so a note can be traced back to its PO. */
+  poNo: string | null;
 };
 
 export type PartyBillOption = {
@@ -474,6 +480,9 @@ export type PartyBillOption = {
   balanceDue: number;
   isGroup: boolean;
   items: PartyBillItem[];
+  /** Every distinct PO/RF/RG no. billed on this invoice (a multi-PO bill
+   *  carries one per item). Empty when the bill has no linked order. */
+  poNos: string[];
 };
 
 export async function listBillsForParty(companyId: string, partyId: string): Promise<PartyBillOption[]> {
@@ -490,39 +499,90 @@ export async function listBillsForParty(companyId: string, partyId: string): Pro
     .order("created_at", { ascending: false })
     .limit(200);
 
-  const purchaseBillIds = (bills ?? []).filter((b) => b.source === "purchase_bill" && b.source_id).map((b) => b.source_id as string);
-  const itemDetail = new Map<string, { work_description: string | null; qty: number; qty_unit: string; unit_rate: number }>();
-  if (purchaseBillIds.length > 0) {
-    const { data: purchaseBills } = await supabase
-      .from("purchase_bills")
-      .select("id, work_description, qty, qty_unit, unit_rate")
-      .in("id", purchaseBillIds);
-    for (const pb of purchaseBills ?? []) {
-      itemDetail.set(pb.id, { work_description: pb.work_description, qty: pb.qty, qty_unit: pb.qty_unit, unit_rate: Number(pb.unit_rate) });
-    }
+  const allBills = bills ?? [];
+  const purchaseBillIds = allBills.filter((b) => b.source === "purchase_bill" && b.source_id).map((b) => b.source_id as string);
+  const freightBillIds = allBills.filter((b) => b.source === "freight_bill" && b.source_id).map((b) => b.source_id as string);
+  const dutyBillIds = allBills.filter((b) => b.source === "duty_tax_bill" && b.source_id).map((b) => b.source_id as string);
+  const itemDetail = new Map<string, { work_description: string | null; qty: number; qty_unit: string; unit_rate: number; order_id: string | null }>();
+
+  // 2026-10-29 — which ORDER (PO/RF/RG no.) each bill row was billed against.
+  // A Purchase Bill line points straight at its order; a Courier/Duty bill
+  // covers many AWBs, so its order list comes from the AWB assignments of
+  // that bill. Keyed by `${source}:${source_id}` so both lookups share one map.
+  const orderIdsBySource = new Map<string, string[]>();
+  function addOrder(source: string, sourceId: string, orderId: string | null | undefined) {
+    if (!orderId) return;
+    const key = `${source}:${sourceId}`;
+    const list = orderIdsBySource.get(key) ?? [];
+    if (!list.includes(orderId)) list.push(orderId);
+    orderIdsBySource.set(key, list);
   }
 
-  return groupBills(bills ?? []).map((g) => {
+  const [purchaseRes, freightAwbRes, dutyAwbRes] = await Promise.all([
+    purchaseBillIds.length > 0
+      ? supabase.from("purchase_bills").select("id, work_description, qty, qty_unit, unit_rate, order_id").in("id", purchaseBillIds)
+      : Promise.resolve({ data: [] as { id: string; work_description: string | null; qty: number; qty_unit: string; unit_rate: number; order_id: string | null }[] }),
+    freightBillIds.length > 0
+      ? supabase.from("freight_bill_awb_assignments").select("freight_bill_id, order_id").in("freight_bill_id", freightBillIds)
+      : Promise.resolve({ data: [] as { freight_bill_id: string; order_id: string }[] }),
+    dutyBillIds.length > 0
+      ? supabase.from("duty_bill_awb_assignments").select("duty_tax_bill_id, order_id").in("duty_tax_bill_id", dutyBillIds)
+      : Promise.resolve({ data: [] as { duty_tax_bill_id: string; order_id: string }[] }),
+  ]);
+
+  for (const pb of purchaseRes.data ?? []) {
+    itemDetail.set(pb.id, {
+      work_description: pb.work_description,
+      qty: pb.qty,
+      qty_unit: pb.qty_unit,
+      unit_rate: Number(pb.unit_rate),
+      order_id: pb.order_id,
+    });
+    addOrder("purchase_bill", pb.id, pb.order_id);
+  }
+  for (const a of freightAwbRes.data ?? []) addOrder("freight_bill", a.freight_bill_id, a.order_id);
+  for (const a of dutyAwbRes.data ?? []) addOrder("duty_tax_bill", a.duty_tax_bill_id, a.order_id);
+
+  const orderIds = Array.from(new Set(Array.from(orderIdsBySource.values()).flat()));
+  const orderRefById = new Map<string, string>();
+  if (orderIds.length > 0) {
+    const { data: orders } = await supabase.from("orders").select("id, ref_no").in("id", orderIds);
+    for (const o of orders ?? []) {
+      if (o.ref_no) orderRefById.set(o.id, o.ref_no);
+    }
+  }
+  function poNosFor(source: string | null, sourceId: string | null): string[] {
+    if (!source || !sourceId) return [];
+    return (orderIdsBySource.get(`${source}:${sourceId}`) ?? [])
+      .map((oid) => orderRefById.get(oid))
+      .filter((ref): ref is string => Boolean(ref));
+  }
+
+  return groupBills(allBills).map((g) => {
     const first = g.bills[0];
     const ref = first.vendor_invoice_no ?? first.invoice_no ?? "—";
+    const items = g.bills.map((b) => {
+      const detail = b.source === "purchase_bill" && b.source_id ? itemDetail.get(b.source_id) : undefined;
+      return {
+        billPassRegisterId: b.id,
+        description: detail?.work_description || ref,
+        qty: detail?.qty ?? null,
+        qtyUnit: detail?.qty_unit ?? null,
+        unitRate: detail?.unit_rate ?? null,
+        amount: Number(b.total_amt),
+        balanceDue: Number(b.balance_due ?? 0),
+        poNo: poNosFor(b.source, b.source_id)[0] ?? null,
+      };
+    });
+    const poNos = Array.from(new Set(items.flatMap((it) => (it.poNo ? [it.poNo] : []))));
     return {
       key: g.key,
       label: `${ref}${first.invoice_date ? ` · ${first.invoice_date}` : ""}${g.isGroup ? ` (${g.bills.length} items)` : ""} — ${first.invoice_type ?? ""}`.trim(),
       totalAmt: g.bills.reduce((sum, b) => sum + Number(b.total_amt), 0),
       balanceDue: g.bills.reduce((sum, b) => sum + Number(b.balance_due ?? 0), 0),
       isGroup: g.isGroup,
-      items: g.bills.map((b) => {
-        const detail = b.source === "purchase_bill" && b.source_id ? itemDetail.get(b.source_id) : undefined;
-        return {
-          billPassRegisterId: b.id,
-          description: detail?.work_description || ref,
-          qty: detail?.qty ?? null,
-          qtyUnit: detail?.qty_unit ?? null,
-          unitRate: detail?.unit_rate ?? null,
-          amount: Number(b.total_amt),
-          balanceDue: Number(b.balance_due ?? 0),
-        };
-      }),
+      items,
+      poNos,
     };
   });
 }

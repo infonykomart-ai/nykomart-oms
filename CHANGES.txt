@@ -1,3 +1,56 @@
+DEBIT / CREDIT NOTE — PO / ORDER NO. AB DIKHTA HAI + PO SE FILTER
+(2026-10-29m)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: "PO NUMBER TO KAHI SELECT KARNE KA OPTION NAHI HAI OR NA ISME
+KAHI LIKHA HAI KI YE IS PO ORDER KA HAI JISSE EASY SELECT KAR SAKE" —
+Debit/Credit Note me party select karne par invoice ki list aati thi,
+jisme sirf invoice no., date, item count aur balance tha. Kis PO/order ka
+bill hai ye kahin nahi likha tha, aur ek hi invoice (9 items) me 9 alag
+PO hote hain — to note lagate waqt andaza lagana padta tha ki kaunsa
+item kis PO ka hai.
+
+AB (Debit Note aur Credit Note dono me):
+
+  • Invoice dropdown me har bill ke saamne uska PO/RF/RG no. —
+    "PO PO-A881, PO-A882 · 82 · 2026-10-19 (9 items) — Purchase —
+    Balance ₹18418.05". 3 se zyada PO ho to "+N" (poore PO item list me
+    dikhte hain).
+  • "Which item is this against?" me har item ke saamne uska apna PO no. —
+    isi se pata chalta hai ki ye item kis PO order ka hai.
+  • Debit Note ke multi-invoice list me har row par PO badge
+    (PO-A881  82 · 2026-10-19 (9 items) — Purchase · Handmade Jute Rug
+    balance ₹1575.00).
+  • Naya "PO / Order No." filter box — PO ka thoda part likho (A88) to
+    list usi PO ke bill(s)/item(s) par simat jati hai; invoice no. bhi
+    isi box se dhoondha ja sakta hai. Filter se sirf ek item bache to wo
+    khud select ho jata hai (dobara pick nahi karna padta).
+  • PO kahan se aata hai: purchase bill -> purchase_bills.order_id,
+    courier/duty bill -> us bill ke AWB assignments ka order_id, phir
+    orders.ref_no. Jis bill par koi order linked nahi, us par PO khali
+    rehta hai — galat PO kabhi nahi dikhaya jata.
+  • listBillsForParty ek hi round me teen parallel queries karta hai
+    (purchase_bills / freight AWB / duty AWB) + ek orders lookup — 200
+    bill tak bhi koi N+1 query nahi.
+
+Badlav:
+M  src/app/dashboard/documents/actions.ts             (PartyBillOption.poNos,
+   PartyBillItem.poNo + order/PO resolution in listBillsForParty)
+M  src/app/dashboard/documents/party-bill-picker.tsx  (PO label, PO filter,
+   item-wise PO)
+M  src/app/dashboard/documents/debit-note-bills.tsx   (PO badge + PO filter)
+M  CHANGES.txt
+
+VERIFICATION: focused tsc (debit-note-form, credit-note-form,
+party-bill-picker, debit-note-bills, journal-voucher-form, actions.ts) →
+exit 0; eslint un badli hui files par → exit 0. Live Supabase is workspace
+me nahi hai, is liye asli party ke multi-PO bills par render test nahi hua —
+pehla check: Documents -> Debit Note -> party chuno, dropdown aur list me
+PO no. dikhna chahiye aur PO filter se list simatni chahiye.
+
+
 MERGE ME INVOICE VALUE KA CHECK (KEEPER vs LOSSER)
 (2026-10-29l)
 ======================================================================
