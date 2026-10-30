@@ -1,3 +1,28 @@
+AWB / ORDER LEVEL ROUND OFF — AB CALCULATION BHI DIKHTI HAI
+(2026-10-31b)
+======================================================================
+
+PROBLEM: bill-level round off par to working dikhne lagi, lekin Freight /
+Duty & Tax ke AWB (per-order) round-off par abhi bhi koi number nahi
+dikhta tha — na payable, na GST, na AWB total. User ko andaza lagana padta
+tha ki +/− kis figure par lag raha hai.
+
+AB:
+
+  • FREIGHT → AWB assign form: Base + Fuel + Remote/Other (charges bhare
+    to wahi, warna Billed Amt) → GST (bhara to wahi, blank = 18% auto) →
+    Total with GST → Round off → AWB total. Yeh charge inputs ab
+    controlled hain, is liye type karte hi calculation badalti hai.
+  • DUTY & TAX → AWB assign form: Duty (INR) + Other Charge (without GST)
+    → GST (blank = 18% auto) → Total with GST → Round off → AWB total.
+  • Dono jagah EDIT / note form me bhi wahi breakdown, saved row ke
+    figures se (billed charges, GST auto ya billed, duty + other charge).
+  • Sahi wahi formula jo row ke "AWB total" aur saved row me pehle se
+    lagta tha, is liye preview aur actual total kabhi alag nahi honge —
+    sirf dikhne wala hisaab add hua, koi calculation badli nahi.
+
+----------------------------------------------------------------------
+
 ROUND OFF — AUTO CALCULATION (WITHOUT GST → WITH GST → ROUND OFF → NET)
 (2026-10-31)
 ======================================================================

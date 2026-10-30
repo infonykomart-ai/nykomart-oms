@@ -638,6 +638,21 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
   const [query, setQuery] = useState("");
   const [lookup, setLookup] = useState<ReconciliationLookup | null>(null);
   const [isLooking, startLookup] = useTransition();
+  // 2026-10-31 — controlled so this AWB's own round-off can show the same
+  // auto calculation as the bill forms: Base + Fuel + Remote/Other (without
+  // GST) → GST → total → round off → AWB total. Mirrors AssignmentRow, where
+  // the charge breakup wins and Billed Amt is the fallback, and GST is the
+  // billed figure when entered, else 18% of the pre-tax charges.
+  const [billedAmtInput, setBilledAmtInput] = useState("");
+  const [baseChargeInput, setBaseChargeInput] = useState("");
+  const [fuelChargeInput, setFuelChargeInput] = useState("");
+  const [remoteChargeInput, setRemoteChargeInput] = useState("");
+  const [gstChargeInput, setGstChargeInput] = useState("");
+  const awbCharges =
+    (Number(baseChargeInput) || 0) + (Number(fuelChargeInput) || 0) + (Number(remoteChargeInput) || 0);
+  const awbBase = Math.round((awbCharges > 0 ? awbCharges : Number(billedAmtInput) || 0) * 100) / 100;
+  const awbGst =
+    gstChargeInput.trim() === "" ? Math.round(awbBase * 18) / 100 : Math.round((Number(gstChargeInput) || 0) * 100) / 100;
 
   useEffect(() => {
     if (state.success) {
@@ -746,7 +761,14 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
                 see the "Booked freight" line above once a shipment with a
                 captured booking cost is found. */}
             <label className={labelClass}>Billed Amt (this AWB)</label>
-            <input name="billed_freight_amt" type="number" step="0.01" className={inputClass} />
+            <input
+              name="billed_freight_amt"
+              type="number"
+              step="0.01"
+              value={billedAmtInput}
+              onChange={(e) => setBilledAmtInput(e.target.value)}
+              className={inputClass}
+            />
           </div>
           {/* 2026-09-21: per-AWB charge breakup off the courier bill —
               "total shipping amt = per awb charges jisme fuel+remote+other
@@ -755,26 +777,61 @@ function AssignAwbForm({ freightBillId }: { freightBillId: string }) {
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div>
               <label className={labelClass}>Base Charge</label>
-              <input name="billed_base_amt" type="number" step="0.01" className={inputClass} />
+              <input
+                name="billed_base_amt"
+                type="number"
+                step="0.01"
+                value={baseChargeInput}
+                onChange={(e) => setBaseChargeInput(e.target.value)}
+                className={inputClass}
+              />
             </div>
             <div>
               <label className={labelClass}>Fuel Charge</label>
-              <input name="billed_fuel_amt" type="number" step="0.01" className={inputClass} />
+              <input
+                name="billed_fuel_amt"
+                type="number"
+                step="0.01"
+                value={fuelChargeInput}
+                onChange={(e) => setFuelChargeInput(e.target.value)}
+                className={inputClass}
+              />
             </div>
             <div>
               <label className={labelClass}>Remote / Other</label>
-              <input name="billed_remote_amt" type="number" step="0.01" className={inputClass} />
+              <input
+                name="billed_remote_amt"
+                type="number"
+                step="0.01"
+                value={remoteChargeInput}
+                onChange={(e) => setRemoteChargeInput(e.target.value)}
+                className={inputClass}
+              />
             </div>
             <div>
               <label className={labelClass}>GST on this AWB</label>
-              <input name="billed_gst_amt" type="number" step="0.01" className={inputClass} />
+              <input
+                name="billed_gst_amt"
+                type="number"
+                step="0.01"
+                value={gstChargeInput}
+                onChange={(e) => setGstChargeInput(e.target.value)}
+                placeholder="blank = 18%"
+                className={inputClass}
+              />
             </div>
           </div>
           {/* 2026-10-28e — "roundoff value entry ke time hi per order honi
               chahiye": this AWB/order gets its own round-off, with the same
               +/− control every other amount uses. It adds to / deducts from
               the bill's payable and reaches the Finance ledger. */}
-          <RoundOffField id={`fb_awb_round_${freightBillId}`} label="Round Off (this AWB/order)" />
+          <RoundOffField
+            id={`fb_awb_round_${freightBillId}`}
+            label="Round Off (this AWB/order)"
+            baseAmount={awbBase}
+            gstAmount={awbGst}
+            gstLabel={gstChargeInput.trim() === "" ? "GST 18% (auto)" : "GST (as billed)"}
+          />
           <div>
             <label className={labelClass}>Remark</label>
             <input name="remark" className={inputClass} />
@@ -1135,6 +1192,24 @@ function AssignmentRow({ assignment }: { assignment: FreightBillAssignment }) {
           <RoundOffField
             id={`fb_awb_round_edit_${assignment.id}`}
             label="Round Off (this AWB/order)"
+            baseAmount={(() => {
+              const breakup =
+                Number(assignment.billed_base_amt ?? 0) +
+                Number(assignment.billed_fuel_amt ?? 0) +
+                Number(assignment.billed_remote_amt ?? 0) +
+                Number(assignment.billed_other_amt ?? 0);
+              return breakup > 0 ? breakup : Number(assignment.billed_freight_amt ?? 0);
+            })()}
+            gstAmount={(() => {
+              const breakup =
+                Number(assignment.billed_base_amt ?? 0) +
+                Number(assignment.billed_fuel_amt ?? 0) +
+                Number(assignment.billed_remote_amt ?? 0) +
+                Number(assignment.billed_other_amt ?? 0);
+              const preTax = breakup > 0 ? breakup : Number(assignment.billed_freight_amt ?? 0);
+              return assignment.billed_gst_amt == null ? Math.round(preTax * 18) / 100 : Number(assignment.billed_gst_amt);
+            })()}
+            gstLabel={assignment.billed_gst_amt == null ? "GST 18% (auto)" : "GST (as billed)"}
             defaultValue={Number(assignment.round_off_amt ?? 0)}
           />
           <button type="submit" disabled={notePending} className="rounded bg-purple-600 px-2 py-1 font-semibold text-white hover:bg-purple-700 disabled:opacity-50">

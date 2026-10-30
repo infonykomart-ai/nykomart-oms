@@ -539,6 +539,16 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
   const [query, setQuery] = useState("");
   const [lookup, setLookup] = useState<ReconciliationLookup | null>(null);
   const [isLooking, startLookup] = useTransition();
+  // 2026-10-31 — controlled so this AWB's own round-off can show the same
+  // auto calculation as the bill forms: Duty + Other (without GST) → GST →
+  // total → round off → AWB total. Same numbers as AssignmentRow's total and
+  // the saved row (gst blank = auto 18% of the duty amount, as the action does).
+  const [dutyInrInput, setDutyInrInput] = useState("");
+  const [otherChargeInput, setOtherChargeInput] = useState("");
+  const [gstInput, setGstInput] = useState("");
+  const awbDutyInr = Number(dutyInrInput) || 0;
+  const awbBase = Math.round((awbDutyInr + (Number(otherChargeInput) || 0)) * 100) / 100;
+  const awbGst = gstInput.trim() === "" ? Math.round(awbDutyInr * 18) / 100 : Math.round((Number(gstInput) || 0) * 100) / 100;
 
   useEffect(() => {
     if (state.success) {
@@ -608,19 +618,46 @@ function AssignAwbForm({ dutyTaxBillId }: { dutyTaxBillId: string }) {
             </div>
             <div>
               <label className={labelClass}>Duty/Tax Amt (INR)</label>
-              <input name="duty_tax_amt_inr" type="number" step="0.01" className={inputClass} />
+              <input
+                name="duty_tax_amt_inr"
+                type="number"
+                step="0.01"
+                value={dutyInrInput}
+                onChange={(e) => setDutyInrInput(e.target.value)}
+                className={inputClass}
+              />
             </div>
             <div>
               <label className={labelClass}>Other Charge</label>
-              <input name="other_charge" type="number" step="0.01" className={inputClass} />
+              <input
+                name="other_charge"
+                type="number"
+                step="0.01"
+                value={otherChargeInput}
+                onChange={(e) => setOtherChargeInput(e.target.value)}
+                className={inputClass}
+              />
             </div>
             <div>
               <label className={labelClass}>GST @18% <span className="text-slate-400">(blank = auto)</span></label>
-              <input name="gst_18pct" type="number" step="0.01" className={inputClass} />
+              <input
+                name="gst_18pct"
+                type="number"
+                step="0.01"
+                value={gstInput}
+                onChange={(e) => setGstInput(e.target.value)}
+                className={inputClass}
+              />
             </div>
           </div>
           {/* 2026-10-28e — per-order round-off at entry time (same +/− control). */}
-          <RoundOffField id={`db_awb_round_${dutyTaxBillId}`} label="Round Off (this AWB/order)" />
+          <RoundOffField
+            id={`db_awb_round_${dutyTaxBillId}`}
+            label="Round Off (this AWB/order)"
+            baseAmount={awbBase}
+            gstAmount={awbGst}
+            gstLabel={gstInput.trim() === "" ? "GST 18% (auto)" : "GST (as entered)"}
+          />
           <div>
             <label className={labelClass}>Remark</label>
             <input name="remark" className={inputClass} />
@@ -821,6 +858,11 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
           <RoundOffField
             id={`db_awb_round_edit_${assignment.id}`}
             label="Round Off (this AWB/order)"
+            baseAmount={Number(assignment.duty_tax_amt_inr ?? 0) + Number(assignment.other_charge ?? 0)}
+            gstAmount={Number(
+              assignment.gst_18pct ?? Math.round(Number(assignment.duty_tax_amt_inr ?? 0) * 18) / 100
+            )}
+            gstLabel={assignment.gst_18pct == null ? "GST 18% (auto)" : "GST (as entered)"}
             defaultValue={Number(assignment.round_off_amt ?? 0)}
           />
           <button type="submit" disabled={notePending} className="rounded bg-purple-600 px-2 py-1 font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
