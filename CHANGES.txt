@@ -28,6 +28,13 @@ Shikayat (screenshot ke saath):
    • PURANA DATA: db/2026-10-31e-purchase-invoice-company-attribution.sql ek
      baar chalayein (Ageing / Outstanding / Party Summary / registers ke
      totals uske baad apne aap sahi ho jate hain).
+     NOTE: ye file ab ek hi DO block hai. Pehla version BEGIN; + temp tables
+     par tha aur Supabase jaisi console me
+     "ERROR: 42P01: relation _pb_invoice_rows does not exist" deta tha (console
+     har statement ke baad commit karti hai, is liye ON COMMIT DROP temp table
+     turant gira deta tha). DO block me sab kuch ek transaction me chalta hai —
+     fail hone par kuch bhi move nahi hota, aur end me NOTICE batata hai ki
+     kitne rows/documents move hue.
 
 ----------------------------------------------------------------------
 

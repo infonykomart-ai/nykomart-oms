@@ -10,7 +10,7 @@
 --   ke hai to 4 ka total nyko me dikha raha, baki rugara me or bill register hua
 --   nyko me. total jud ke aana chahiye nyko ke ledger me."
 --
--- WHAT THIS DOES (single transaction, idempotent — safe to re-run)
+-- WHAT THIS DOES (one statement = one transaction, idempotent — safe to re-run)
 --   For every Purchase/Printing invoice (same party + vendor invoice no. +
 --   invoice date) whose ledger rows currently sit in more than one company, the
 --   WHOLE invoice is moved to the company it is registered in:
@@ -36,6 +36,22 @@
 --   • Rows with no party or no vendor invoice number (they can never be
 --     proven to be the same document).
 --
+-- HOW TO RUN
+--   Paste this whole file, comments included, and run it in one go.
+--   It is deliberately ONE statement (a DO block), because some SQL consoles
+--   (Supabase's SQL Editor among them) commit after every statement. The first
+--   version used BEGIN; … CREATE TEMP TABLE … ON COMMIT DROP … COMMIT; and
+--   failed there with
+--       ERROR: 42P01: relation "_pb_invoice_rows" does not exist
+--   — the console had already committed the CREATE, so ON COMMIT DROP wiped the
+--   temp table before the next statement could read it. Inside a DO block the
+--   temp tables live for the whole block, so the read always finds them, and
+--   the block is still all-or-nothing: if anything fails, nothing is moved.
+--
+--   A notice at the end reports how many rows/documents actually moved
+--   ("moved 7 ledger rows and 2 bill documents"); moved 0 / 0 on a re-run means
+--   the data is already clean.
+--
 -- PREVIEW FIRST (optional, read-only):
 --   SELECT b.party_id, b.vendor_invoice_no, b.invoice_date,
 --          array_agg(DISTINCT b.company_id) AS companies
@@ -44,76 +60,85 @@
 --    GROUP BY 1,2,3
 --   HAVING count(DISTINCT b.company_id) > 1;
 
-BEGIN;
+DO $pb_repair$
+DECLARE
+  moved_rows  integer;
+  moved_bills integer;
+BEGIN
+  -- Every Purchase/Printing ledger row with its invoice identity and the
+  -- company its own document (purchase_bills row) is registered in.
+  DROP TABLE IF EXISTS _pb_invoice_rows, _pb_doc_company, _pb_owner;
 
--- Every Purchase/Printing ledger row with its invoice identity and the company
--- its own document (purchase_bills row) is registered in.
-CREATE TEMP TABLE _pb_invoice_rows ON COMMIT DROP AS
-SELECT b.id  AS bpr_id,
-       b.party_id,
-       b.company_id AS row_company,
-       b.total_amt,
-       b.created_at,
-       lower(btrim(b.vendor_invoice_no)) AS inv,
-       COALESCE(b.invoice_date, b.invoice_recv_date, date '1900-01-01') AS inv_date,
-       pb.id AS pb_id,
-       pb.company_id AS doc_company
-  FROM bill_pass_register b
-  LEFT JOIN purchase_bills pb ON pb.id = b.source_id
- WHERE b.source = 'purchase_bill'
-   AND b.merged_into_bill_id IS NULL
-   AND b.party_id IS NOT NULL
-   AND btrim(COALESCE(b.vendor_invoice_no, '')) <> '';
+  CREATE TEMP TABLE _pb_invoice_rows ON COMMIT DROP AS
+  SELECT b.id  AS bpr_id,
+         b.party_id,
+         b.company_id AS row_company,
+         b.total_amt,
+         b.created_at,
+         lower(btrim(b.vendor_invoice_no)) AS inv,
+         COALESCE(b.invoice_date, b.invoice_recv_date, date '1900-01-01') AS inv_date,
+         pb.id AS pb_id,
+         pb.company_id AS doc_company
+    FROM bill_pass_register b
+    LEFT JOIN purchase_bills pb ON pb.id = b.source_id
+   WHERE b.source = 'purchase_bill'
+     AND b.merged_into_bill_id IS NULL
+     AND b.party_id IS NOT NULL
+     AND btrim(COALESCE(b.vendor_invoice_no, '')) <> '';
 
--- Rule 1 — the invoice's own company, when every item row agrees on it.
-CREATE TEMP TABLE _pb_doc_company ON COMMIT DROP AS
-SELECT party_id, inv, inv_date,
-       min(doc_company::text)::uuid AS doc_company
-  FROM _pb_invoice_rows
- GROUP BY party_id, inv, inv_date
-HAVING count(DISTINCT doc_company) = 1
-   AND count(doc_company) > 0;
-
--- Rule 2 — otherwise the biggest share. Rule 1 always wins when available
--- (COALESCE + "doc answer first" in the ORDER BY).
-CREATE TEMP TABLE _pb_owner ON COMMIT DROP AS
-WITH share AS (
-  SELECT party_id, inv, inv_date, row_company,
-         sum(abs(total_amt)) AS amount,
-         min(created_at)     AS first_at
+  -- Rule 1 — the invoice's own company, when every item row agrees on it.
+  CREATE TEMP TABLE _pb_doc_company ON COMMIT DROP AS
+  SELECT party_id, inv, inv_date,
+         min(doc_company::text)::uuid AS doc_company
     FROM _pb_invoice_rows
-   GROUP BY party_id, inv, inv_date, row_company
-)
-SELECT DISTINCT ON (s.party_id, s.inv, s.inv_date)
-       s.party_id, s.inv, s.inv_date,
-       COALESCE(d.doc_company, s.row_company) AS owner_company
-  FROM share s
-  LEFT JOIN _pb_doc_company d USING (party_id, inv, inv_date)
- ORDER BY s.party_id, s.inv, s.inv_date,
-          (d.doc_company IS NOT NULL) DESC,
-          s.amount DESC,
-          s.first_at ASC;
+   GROUP BY party_id, inv, inv_date
+  HAVING count(DISTINCT doc_company) = 1
+     AND count(doc_company) > 0;
 
--- The ledger rows follow the invoice.
-UPDATE bill_pass_register b
-   SET company_id = o.owner_company
-  FROM _pb_invoice_rows r
-  JOIN _pb_owner o
-    ON o.party_id = r.party_id
-   AND o.inv      = r.inv
-   AND o.inv_date = r.inv_date
- WHERE b.id = r.bpr_id
-   AND b.company_id <> o.owner_company;
+  -- Rule 2 — otherwise the biggest share. Rule 1 always wins when available
+  -- (COALESCE + "doc answer first" in the ORDER BY).
+  CREATE TEMP TABLE _pb_owner ON COMMIT DROP AS
+  WITH share AS (
+    SELECT party_id, inv, inv_date, row_company,
+           sum(abs(total_amt)) AS amount,
+           min(created_at)     AS first_at
+      FROM _pb_invoice_rows
+     GROUP BY party_id, inv, inv_date, row_company
+  )
+  SELECT DISTINCT ON (s.party_id, s.inv, s.inv_date)
+         s.party_id, s.inv, s.inv_date,
+         COALESCE(d.doc_company, s.row_company) AS owner_company
+    FROM share s
+    LEFT JOIN _pb_doc_company d USING (party_id, inv, inv_date)
+   ORDER BY s.party_id, s.inv, s.inv_date,
+            (d.doc_company IS NOT NULL) DESC,
+            s.amount DESC,
+            s.first_at ASC;
 
--- ...and so does the bill document itself (A4 sheet / Document Entry list).
-UPDATE purchase_bills pb
-   SET company_id = o.owner_company
-  FROM _pb_invoice_rows r
-  JOIN _pb_owner o
-    ON o.party_id = r.party_id
-   AND o.inv      = r.inv
-   AND o.inv_date = r.inv_date
- WHERE pb.id = r.pb_id
-   AND pb.company_id IS DISTINCT FROM o.owner_company;
+  -- The ledger rows follow the invoice.
+  UPDATE bill_pass_register b
+     SET company_id = o.owner_company
+    FROM _pb_invoice_rows r
+    JOIN _pb_owner o
+      ON o.party_id = r.party_id
+     AND o.inv      = r.inv
+     AND o.inv_date = r.inv_date
+   WHERE b.id = r.bpr_id
+     AND b.company_id <> o.owner_company;
+  GET DIAGNOSTICS moved_rows = ROW_COUNT;
 
-COMMIT;
+  -- ...and so does the bill document itself (A4 sheet / Document Entry list).
+  UPDATE purchase_bills pb
+     SET company_id = o.owner_company
+    FROM _pb_invoice_rows r
+    JOIN _pb_owner o
+      ON o.party_id = r.party_id
+     AND o.inv      = r.inv
+     AND o.inv_date = r.inv_date
+   WHERE pb.id = r.pb_id
+     AND pb.company_id IS DISTINCT FROM o.owner_company;
+  GET DIAGNOSTICS moved_bills = ROW_COUNT;
+
+  RAISE NOTICE 'moved % ledger rows and % bill documents', moved_rows, moved_bills;
+END
+$pb_repair$;
