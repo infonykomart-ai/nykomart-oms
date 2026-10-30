@@ -84,6 +84,8 @@ export function PurchaseFinanceBox({
   defaultCompanyId,
   total,
   sent,
+  postedCount = 0,
+  postedTotal = 0,
 }: {
   billIds: string[];
   companies: { id: string; name: string }[];
@@ -93,22 +95,37 @@ export function PurchaseFinanceBox({
   total: number;
   /** Existing Finance entry for this invoice, if any. */
   sent: { billPassRegisterId: string; companyId: string } | null;
+  /** How many of this invoice's item rows already have a ledger row. */
+  postedCount?: number;
+  /** What those already-posted rows add up to. */
+  postedTotal?: number;
 }) {
   const [postState, postAction, postPending] = useActionState(sendPurchaseBillInvoiceToFinance, initialPost);
   const [moveState, moveAction, movePending] = useActionState(moveBillFinanceCompany, initialMove);
-  const [open, setOpen] = useState(false);
-  const [companyId, setCompanyId] = useState(defaultCompanyId || companies[0]?.id || "");
-  const [amount, setAmount] = useState(total.toFixed(2));
+  // 2026-11-01 — an invoice can be HALF booked ("ledger me 11,482.80 dikha
+  // raha, aana 18,460 chahiye"): some item rows have a ledger row, the rest
+  // never reached Finance. Only a fully booked invoice counts as sent; the
+  // remaining amount is what its box offers to post, so the ledger can be
+  // completed to the real bill total instead of staying short for ever.
+  const fullyPosted = postedCount >= billIds.length;
+  const partiallyPosted = postedCount > 0 && !fullyPosted;
+  const remaining = Math.max(0, Math.round((total - postedTotal) * 100) / 100);
+  const amountToPost = partiallyPosted ? remaining : total;
 
-  // Keep the amount in step with the invoice until the user edits it.
+  const [open, setOpen] = useState(false);
+  const [companyId, setCompanyId] = useState(sent?.companyId || defaultCompanyId || companies[0]?.id || "");
+  const [amount, setAmount] = useState(amountToPost.toFixed(2));
+
+  // Keep the amount in step with the invoice (or with what is still unbooked)
+  // until the server data changes — after a post the figure updates itself.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAmount((prev) => (prev === total.toFixed(2) ? prev : prev === "" ? total.toFixed(2) : prev));
-  }, [total]);
+    setAmount(amountToPost.toFixed(2));
+  }, [amountToPost]);
 
   const companyName = (id: string) => companies.find((c) => c.id === id)?.name ?? "—";
 
-  if (sent) {
+  if (sent && fullyPosted) {
     const current = sent.companyId;
     const moved = moveState.success;
     return (
@@ -165,7 +182,16 @@ export function PurchaseFinanceBox({
     <div className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-[11px]">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-amber-900">
-          ⚠ Not in the Finance ledger yet — it will <strong>not</strong> appear in Bill Payment / Party Ledger until you send it.
+          {partiallyPosted ? (
+            <>
+              ⚠ <strong>Partly</strong> in the Finance ledger — ₹{postedTotal.toFixed(2)} of ₹{total.toFixed(2)} is booked
+              ({postedCount} of {billIds.length} items), so the ledger is short by ₹{remaining.toFixed(2)}.
+            </>
+          ) : (
+            <>
+              ⚠ Not in the Finance ledger yet — it will <strong>not</strong> appear in Bill Payment / Party Ledger until you send it.
+            </>
+          )}
         </span>
         <button
           type="button"
@@ -199,7 +225,7 @@ export function PurchaseFinanceBox({
             </div>
             <div>
               <label className="mb-0.5 block text-[10px] font-medium text-slate-500" htmlFor={`post_amt_${billIds[0] ?? "x"}`}>
-                Amount payable
+                Amount payable{partiallyPosted ? " (still unbooked)" : ""}
               </label>
               <input
                 id={`post_amt_${billIds[0] ?? "x"}`}

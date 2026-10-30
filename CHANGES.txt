@@ -1,3 +1,69 @@
+ADHURA BILL FINANCE ME PURA CHADHTA HAI (11,482.80 vs 18,460.00)
+(2026-11-01c)
+======================================================================
+
+KOI NAYA SQL NAHI.
+
+PROBLEM: Purchase Bill Sheet par GROSS TOTAL ₹18,460.00 tha, par usi sheet
+par BILLED (finance) ₹11,482.80 aur Party Ledger / Bill Payment me bhi
+₹11,482.80 hi dikh raha tha. Bill me 11 items hain (Nyko Mart 6 = ₹11,482.80,
+Rugara 5 = ₹6,977.20) — Finance ledger me sirf 6 items pahunche the, 5 kabhi
+pahunche hi nahi, is liye ledger ka amount hamesha kam reh gaya.
+
+KYU HUA: "Send to Finance" ek hi invoice ke har item ki alag bill_pass_register
+row banata hai, par uska check tha "agar koi bhi item pehle se ledger me hai to
+poora invoice already sent maan lo" — error: "This invoice is already in the
+Finance ledger." Baki 5 items dobara bhejne par yahi error aata tha (aur pehle
+number-only duplicate guard bhi rok deta tha). Document Entry ka card bhi
+kisi ek item ko posted dekh kar poore invoice ko "✓ In Finance ledger"
+dikha deta tha — is liye pata bhi nahi chalta tha ki 5 items bache hue hain.
+
+AB:
+  • "Send to Finance" sirf WAHI items post karta hai jiniki ledger row nahi
+    hai, aur amount = approved total − jo pehle se book hai. Poora invoice ek
+    hi baar me pura hota hai, kabhi do baar nahi.
+  • Card ab sach batata hai: "⚠ Partly in the Finance ledger — ₹11,482.80 of
+    ₹18,460.00 is booked (6 of 11 items), so the ledger is short by
+    ₹6,977.20", aur Amount payable me wahi bacha hua figure pre-filled aata
+    hai. Ek click me ledger 18,460.00 ho jata hai.
+  • Invoice kabhi do companies me na bate — jis company me uska koi hissa
+    pehle se book hai, wahi company poori invoice book karti hai (bache hue
+    rows usi company me jate hain), aur bill/purchase_bills bhi usi company
+    par stamp ho jate hain (ek invoice = ek document = ek company).
+  • MERGED duplicate rows ab "booked" nahi ginte. Galat merge hua ho (5 items
+    kisi doosri company ke rows me merge ho kar amount 0 ho gaya) to bhi card
+    ab "Partly in the Finance ledger" dikhayega aur bacha hua ₹6,977.20 post
+    kiya ja sakta hai — ledger wapas 18,460.00. Merge ki history rows par
+    waise hi rehti hai (Bill Payment → Merged bills se undo bhi ho sakta hai).
+  • Selection adhura ho (sirf kuch items) to bhi poora invoice hi hisaab me
+    liya jata hai — is liye galti se poora amount dobara post nahi ho sakta.
+    Siblings party + invoice no. + invoice DATE se match hote hain (date na
+    ho to sirf selected rows — purane saal ke bill se takra na jaye).
+  • Amount poora pehle se book ho to saaf error: "...that is the whole
+    ₹X you entered, so there is nothing left to post."
+
+AAGE KYA KARNA HAI (user ke liye): Documents → Purchase Bill card (invoice 88)
+par ab amber box dikhega — "Partly in the Finance ledger ... short by
+₹6,977.20" → Amount payable 6,977.20 pre-filled → "Confirm — Send to
+Finance". Uske baad sheet ka BILLED aur Party Ledger dono ₹18,460.00 ho
+jayenge (GROSS ke barabar).
+
+Badlav:
+M  src/app/dashboard/documents/actions.ts             (partial posting, ek
+   company, remaining amount)
+M  src/app/dashboard/documents/page.tsx              (per-invoice posted count
+   + posted total)
+M  src/app/dashboard/documents/document-entry-tabs.tsx (box ko coverage pass)
+M  src/app/dashboard/documents/finance-post-box.tsx  ("Partly in the Finance
+   ledger" state + remaining amount)
+M  CHANGES.txt
+
+VERIFICATION: focused tsc exit 0; eslint un chaar files par exit 0. Live
+Supabase is workspace me nahi hai, is liye asli invoice 88 par posting nahi
+chala paya — pehla check Documents tab par wahi card khol kar "Send to
+Finance" dabana hai.
+
+
 DUPLICATE SIRF TAB JAB INVOICE NO. + DATE + AMOUNT SAME HO
 (2026-11-01b)
 ======================================================================

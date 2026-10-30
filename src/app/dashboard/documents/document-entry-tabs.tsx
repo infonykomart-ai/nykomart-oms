@@ -111,6 +111,9 @@ type PurchaseBillInvoiceRow = PurchaseBillInvoiceGroup<PurchaseBillItem> & {
   finance_bpr_id: string | null;
   /** 2026-10-29 — the company that actually holds this invoice in the Finance ledger. */
   financeCompanyId: string | null;
+  /** 2026-11-01 — item rows already booked, and what they add up to. */
+  financePostedCount: number;
+  financePostedTotal: number;
   notes: RelatedNote[];
 };
 
@@ -834,6 +837,8 @@ function PurchaseBillInvoiceList({
                 companies={companies}
                 defaultCompanyId={inv.companyId}
                 total={inv.grandTotal}
+                postedCount={inv.financePostedCount}
+                postedTotal={inv.financePostedTotal}
                 sent={
                   inv.finance_bpr_id
                     ? { billPassRegisterId: inv.finance_bpr_id, companyId: inv.financeCompanyId ?? inv.companyId ?? "" }

@@ -1766,13 +1766,63 @@ export async function sendPurchaseBillInvoiceToFinance(
   }
 
   // Idempotency: nothing posts twice.
-  const { data: already } = await supabase
+  //
+  // 2026-11-01 — "ladger me is purchase bill ka amount 11,482.80 dikha raha
+  // jabki aana 18,460.00 chahiye": an invoice is posted one ledger row per
+  // item, and this check used to abort on the FIRST already-posted item and
+  // call the whole invoice "already in the Finance ledger". So an invoice that
+  // had been booked in pieces (6 of 11 items, the rest never) could never be
+  // completed — the ledger kept the short figure for ever and the bill sheet
+  // said BILLED 11,482.80 against a GROSS of 18,460.00.
+  //
+  // Now only the items WITHOUT a ledger row are posted, at what is still
+  // unbooked of the approved total. Nothing is ever posted twice, and the
+  // invoice ends at exactly the amount the admin approved.
+  // The WHOLE invoice is the unit here, not just what the form happened to
+  // send: a partial selection must not be able to post the invoice total a
+  // second time. Siblings are matched on party + invoice no. + invoice date
+  // (the same identity the duplicate guard and the merge key use), and only
+  // when the date is known — an undated row could belong to another year.
+  let invoiceRows: PbRow[] = billRows;
+  if (first.vendor_invoice_date) {
+    const { data: siblings } = await supabase
+      .from("purchase_bills")
+      .select(selectCols)
+      .eq("vendor_party_id", partyId)
+      .ilike("vendor_invoice_no", invoiceNo)
+      .eq("vendor_invoice_date", first.vendor_invoice_date);
+    if (siblings && siblings.length > 0) {
+      const byId = new Map<string, PbRow>();
+      for (const r of [...billRows, ...(siblings as PbRow[])]) byId.set(r.id, r);
+      invoiceRows = Array.from(byId.values());
+    }
+  }
+  const invoiceItemIds = invoiceRows.map((r) => r.id);
+
+  const { data: postedRowsRaw } = await supabase
     .from("bill_pass_register")
-    .select("id")
+    .select("id, source_id, company_id, total_amt, merged_into_bill_id")
     .eq("source", "purchase_bill")
-    .in("source_id", billIds)
-    .limit(1);
-  if (already && already.length > 0) return { error: "This invoice is already in the Finance ledger.", success: null };
+    .in("source_id", invoiceItemIds);
+  // A merged duplicate is audit-only: its amount was zeroed, so it does NOT
+  // count as booked for this invoice (see the 2026-11-01c note).
+  const postedRows = (postedRowsRaw ?? []).filter((p) => !p.merged_into_bill_id);
+  const postedIds = new Set(postedRows.map((p) => p.source_id).filter((v): v is string => !!v));
+  const unpostedRows = invoiceRows.filter((r) => !postedIds.has(r.id));
+  if (unpostedRows.length === 0) return { error: "This invoice is already in the Finance ledger.", success: null };
+  const postedSum = Math.round(postedRows.reduce((s, p) => s + Number(p.total_amt ?? 0), 0) * 100) / 100;
+  // One invoice stays in ONE company: the company that already holds part of
+  // it wins, so finishing the posting can never split it again. The bill and
+  // its remaining items are stamped to that same company below.
+  const existingCompanyId = (postedRows ?? [])[0]?.company_id ?? null;
+  const bookingCompanyId = existingCompanyId ?? companyId;
+  const remainingTotal = Math.round((totalAmt - postedSum) * 100) / 100;
+  if (!(remainingTotal > 0)) {
+    return {
+      error: `₹${postedSum.toFixed(2)} of this invoice is already in the Finance ledger — that is the whole ₹${totalAmt.toFixed(2)} you entered, so there is nothing left to post. Raise the approved amount if the bill is bigger.`,
+      success: null,
+    };
+  }
 
   // Duplicate bill guard — same vendor invoice already booked ANYWHERE this
   // login can reach (2026-10-31). It used to check only the target company,
@@ -1800,22 +1850,23 @@ export async function sendPurchaseBillInvoiceToFinance(
     };
   }
 
-  // Distribute the reviewed total across the invoice's item rows — last row
-  // absorbs the paise so the sum is EXACTLY the approved figure.
-  const rowTotals = billRows.map((r) => Number(r.g_total_plus_gst ?? r.total_amount ?? 0));
+  // Distribute what is still unbooked across the item rows that have no
+  // ledger row yet — last row absorbs the paise so the sum is EXACTLY the
+  // remaining figure (and the invoice total is exactly the approved one).
+  const rowTotals = unpostedRows.map((r) => Number(r.g_total_plus_gst ?? r.total_amount ?? 0));
   const rawSum = Math.round(rowTotals.reduce((s, n) => s + n, 0) * 100) / 100;
-  const amounts = rowTotals.map((n) => (rawSum > 0 ? Math.round((n / rawSum) * totalAmt * 100) / 100 : 0));
-  const drift = Math.round((totalAmt - amounts.reduce((s, n) => s + n, 0)) * 100) / 100;
+  const amounts = rowTotals.map((n) => (rawSum > 0 ? Math.round((n / rawSum) * remainingTotal * 100) / 100 : 0));
+  const drift = Math.round((remainingTotal - amounts.reduce((s, n) => s + n, 0)) * 100) / 100;
   if (amounts.length > 0) amounts[amounts.length - 1] = Math.round((amounts[amounts.length - 1] + drift) * 100) / 100;
 
   const invoiceType = purchaseInvoiceType((first as { bill_kind?: string | null }).bill_kind);
   let firstBprId: string | null = null;
-  for (let i = 0; i < billRows.length; i++) {
-    const r = billRows[i];
+  for (let i = 0; i < unpostedRows.length; i++) {
+    const r = unpostedRows[i];
     const { data: inserted, error } = await supabase
       .from("bill_pass_register")
       .insert({
-        company_id: companyId,
+        company_id: bookingCompanyId,
         invoice_type: invoiceType,
         vendor_invoice_no: invoiceNo,
         invoice_date: r.vendor_invoice_date,
@@ -1839,8 +1890,13 @@ export async function sendPurchaseBillInvoiceToFinance(
   }
 
   // Stamp the bill's own company so the document sheet / report and the
-  // ledger can never disagree about which company books this invoice.
-  await supabase.from("purchase_bills").update({ company_id: companyId }).in("id", billIds);
+  // ledger can never disagree about which company books this invoice — and if
+  // part of it was already booked elsewhere, pull those rows into the same
+  // company so the invoice is never split again.
+  if (existingCompanyId && existingCompanyId !== bookingCompanyId) {
+    await supabase.from("bill_pass_register").update({ company_id: bookingCompanyId }).in("id", (postedRows ?? []).map((p) => p.id));
+  }
+  await supabase.from("purchase_bills").update({ company_id: bookingCompanyId }).in("id", invoiceItemIds);
 
   if (firstBprId) {
     await createJournalVoucherForBill(supabase, firstBprId);
@@ -1848,20 +1904,21 @@ export async function sendPurchaseBillInvoiceToFinance(
   }
 
   await logAudit(supabase, {
-    companyId,
+    companyId: bookingCompanyId,
     employeeId: employee.id,
     employeeName: employee.name,
     action: "purchase_bill.sent_to_finance",
     entityType: "purchase_bill",
     entityId: billRows[0].id,
     entityLabel: invoiceNo,
-    changes: { company_id: companyId, total_amt: totalAmt },
+    changes: { company_id: bookingCompanyId, total_amt: remainingTotal, already_booked: postedSum },
   });
 
   revalidatePath("/dashboard/documents");
   revalidatePath("/dashboard/bill-payment");
   revalidatePath("/dashboard/parties");
-  return { error: null, success: `Invoice ${invoiceNo} sent to the Finance ledger — ₹${totalAmt.toFixed(2)}.` };
+  const tail = postedSum > 0 ? ` ₹${postedSum.toFixed(2)} was already booked, invoice total now ₹${totalAmt.toFixed(2)}.` : "";
+  return { error: null, success: `Invoice ${invoiceNo} sent to the Finance ledger — ₹${remainingTotal.toFixed(2)}.${tail}` };
 }
 
 /**

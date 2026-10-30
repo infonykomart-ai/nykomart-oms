@@ -344,7 +344,11 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
           .in("source_id", [...freightBillIds, ...dutyBillIds])
       : Promise.resolve({ data: [] }),
     purchaseBillIds.length
-      ? supabase.from("bill_pass_register").select("id, source_id, company_id").eq("source", "purchase_bill").in("source_id", purchaseBillIds)
+      ? supabase
+          .from("bill_pass_register")
+          .select("id, source_id, company_id, total_amt, merged_into_bill_id")
+          .eq("source", "purchase_bill")
+          .in("source_id", purchaseBillIds)
       : Promise.resolve({ data: [] }),
   ]);
   const sentFreightBillIds = new Set((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => f.source_id));
@@ -367,10 +371,23 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   // bill_pass_register row (source_id -> bill_pass_register.id map).
   const bprIdByFreightBillId = new Map((financeLinks ?? []).filter((f) => f.source === "freight_bill").map((f) => [f.source_id, f.id]));
   const bprIdByDutyBillId = new Map((financeLinks ?? []).filter((f) => f.source === "duty_tax_bill").map((f) => [f.source_id, f.id]));
-  const bprIdByPurchaseBillId = new Map((purchaseFinanceLinks ?? []).map((f) => [f.source_id, f.id]));
+  // 2026-11-01 — only LIVE ledger rows count as "in Finance". A merged
+  // duplicate is kept for audit with its amount zeroed, so treating it as
+  // booked made a wrongly-merged invoice read as fully sent while the ledger
+  // stayed short ("11,482.80 dikha raha jabki aana 18,460 chahiye"). Live
+  // rows only → the card sees the missing slice and can send it.
+  const livePurchaseFinanceLinks = (purchaseFinanceLinks ?? []).filter((f) => !f.merged_into_bill_id);
+  const bprIdByPurchaseBillId = new Map(livePurchaseFinanceLinks.map((f) => [f.source_id, f.id]));
   // 2026-10-29 — which company holds each sent invoice in the Finance ledger
   // (the Send-to-Finance box shows it and offers to move it).
-  const bprCompanyByPurchaseBillId = new Map((purchaseFinanceLinks ?? []).map((f) => [f.source_id, f.company_id]));
+  const bprCompanyByPurchaseBillId = new Map(livePurchaseFinanceLinks.map((f) => [f.source_id, f.company_id]));
+  const bprAmountByPurchaseBillId = new Map(livePurchaseFinanceLinks.map((f) => [f.source_id, Number(f.total_amt ?? 0)]));
+  // 2026-11-01 — how much of each item actually reached the Finance ledger.
+  // "Invoice 88 ka 18,460 aana chahiye tha, ledger me 11,482.80 hai": the
+  // invoice's items were posted in pieces (6 items booked, 5 never), and the
+  // Send-to-Finance box treated ANY posted item as "sent", so the rest could
+  // never be posted and the ledger stayed short. The box now knows the
+  // covered amount per item and can send the remainder.
   const allBprIds = [
     ...bprIdByFreightBillId.values(),
     ...bprIdByDutyBillId.values(),
@@ -496,6 +513,10 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
         const item = g.items.find((i) => i.finance_bpr_id);
         return item ? bprCompanyByPurchaseBillId.get(item.id) ?? null : null;
       })(),
+      // 2026-11-01 — partial coverage, so the card can offer "send the rest"
+      // instead of claiming the whole invoice is already booked.
+      financePostedCount: g.items.filter((i) => i.finance_bpr_id).length,
+      financePostedTotal: g.items.reduce((s, i) => s + (i.finance_bpr_id ? Number(bprAmountByPurchaseBillId.get(i.id) ?? 0) : 0), 0),
       notes: g.items.flatMap((i) => i.related_notes),
     }))
     .slice(0, pbFiltered ? FILTERED_LIMIT : 8);
