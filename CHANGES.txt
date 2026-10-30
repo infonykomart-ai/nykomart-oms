@@ -1,3 +1,50 @@
+ROUND OFF REPORT — PERIOD KE SAARE ROUND-OFF EK JAGAH (AUDIT)
+(2026-10-31c)
+======================================================================
+
+NAYA PAGE: /dashboard/reports/round-off (Reports hub me "💰 Round Off
+Report" button se khulta hai; same `reports` capability).
+
+KAAM: "displays all round-off entries for a selected period … document
+type, number, gross amount, round-off amount, net amount … grand total".
+Date range (From/To) + Company filter, aur table me ek row per DOCUMENT.
+Neeche GRAND TOTAL row — gross, round off aur net teeno ka jod.
+
+Coverage (har document type jaha round off lagta hai): Purchase Bill,
+Printing Bill (bill_kind = printing), Freight Bill, Duty & Tax Bill,
+Washing Entry, Debit Note, Credit Note, Internal Invoice, Journal
+Voucher.
+
+Sahi hisaab: har table round off ko alag tarah store karti hai, is liye
+report har source ke apne convention se gross nikalta hai (schema.sql
+dekhein):
+
+  • purchase_bills     — g_total_plus_gst me round off PEHLE se juda hai
+  • debit_notes        — total_amount me pehle se juda hai
+  • credit_notes       — refund_amount me pehle se juda hai
+  • internal_invoices  — total_amount me pehle se juda hai
+  • journal_vouchers   — debit_amount me pehle se juda hai
+  • freight_bills      — gross_total_amt me NAHI juda (net = gross + ro)
+  • duty_tax_bills     — gross_total_amt me NAHI juda (net = gross + ro)
+  • washing_entries    — amount + debit_charges (net = gross + ro)
+
+Is liye har row par gross + round off = net exactly milta hai.
+
+JAAN-BOOJH KAR NAHI: freight/duty ke per-AWB round off (assignments). Wo
+pehle se parent bill ke payable me jude hote hain — yaha list karne par
+ek hi rupya do baar ginta. Per-AWB figure bill ke andar hi dikhta hai.
+
+Company filter un tables par lagta hai jinme company_id hai; Freight /
+Duty bills me company_id hota hi nahi (ek courier invoice kai companies
+ke AWB cover kar sakti hai — wahi limitation jo Freight/Duty report me
+pehle se documented hai), is liye wo hamesha dikhte hain aur form me yeh
+baat likhi hai.
+
+Top par 4 summary cards: documents count, gross total, round-off total
+(+/− ke saath), net payable total.
+
+----------------------------------------------------------------------
+
 AWB / ORDER LEVEL ROUND OFF — AB CALCULATION BHI DIKHTI HAI
 (2026-10-31b)
 ======================================================================

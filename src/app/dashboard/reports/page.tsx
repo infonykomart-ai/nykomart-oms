@@ -136,6 +136,17 @@ export default async function ReportsPage({
           >
             🛃 CSB Filing Report
           </Link>
+          {/* 2026-10-31 — "round off entries for a selected period … useful for
+              auditing round-off figures": one line per document (purchase /
+              printing, freight, duty, washing, debit & credit note, internal
+              invoice, JV) with gross → round off → net and a period grand
+              total. See round-off/page.tsx for the per-document sign rules. */}
+          <Link
+            href="/dashboard/reports/round-off"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            💰 Round Off Report
+          </Link>
           <Link
             href="/dashboard/reports/outstanding"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
