@@ -50,7 +50,10 @@ export function FinanceCompanyMover({
   return (
     <div className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
       {state.success ? (
-        <span className="text-green-700">✓ Company changed — the same Finance entry now sits in the new company.</span>
+        <span className="text-green-700">
+          ✓ Company changed — the same Finance entry now sits in the new company.
+          {state.notice && <span className="mt-0.5 block text-slate-600">{state.notice}</span>}
+        </span>
       ) : (
         <form action={action} className="flex flex-wrap items-center gap-1.5">
           <input type="hidden" name="bill_pass_register_id" value={billPassRegisterId} />
@@ -122,7 +125,12 @@ export function PurchaseFinanceBox({
             {open ? "Close" : "↔ Change company"}
           </button>
         </div>
-        {moved && <p className="mt-1 text-green-700">Company changed — the same ledger entry (with its payments) now sits in the new company.</p>}
+        {moved && (
+          <p className="mt-1 text-green-700">
+            Company changed — the same ledger entry (with its payments) now sits in the new company.
+            {moveState.notice && <span className="mt-0.5 block text-slate-600">{moveState.notice}</span>}
+          </p>
+        )}
         {moveState.error && <p className="mt-1 text-red-700">{moveState.error}</p>}
         {open && (
           <form action={moveAction} className="mt-1.5 flex flex-wrap items-end gap-2">

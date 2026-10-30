@@ -1077,7 +1077,10 @@ export async function saveInternalInvoice(_prev: DocFormState, formData: FormDat
 // (and the order <-> document chain this whole module exists to show)
 // key off them.
 export type DocEditState = { error: string | null; success: boolean };
-export type SimpleResult = { error: string | null; success: boolean };
+// 2026-11-01 — `notice` carries a non-blocking message ("ho gaya, par dhyan
+// rakho ye") so a caller can report why something was ALLOWED instead of
+// pretending nothing was there.
+export type SimpleResult = { error: string | null; success: boolean; notice?: string | null };
 
 export async function updateCreditNote(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
   const employee = await requireCapability("doc_entry");
@@ -1396,24 +1399,102 @@ type PurchaseBillParams = {
 // exact duplicate the user kept seeing in the Party Ledger ("Courier Bill
 // (Freight)" and "FREIGHT INVOICE" for the same invoice number). Same-company
 // duplicates are a subset of this check, so nothing was weakened.
+// 2026-11-01 — "duplicate to tab bataye na jab amount date price same ho":
+// an invoice NUMBER alone is not an identity. A vendor reuses numbers across
+// financial years (76 of 2026-02-19 and 76 of 2026-10-19 are two different
+// bills), so blocking on the number alone refused the legitimate second bill
+// — exactly what happened when a this-year purchase bill was moved from
+// Rugara to Nyko Mart and the old-year 76 was sitting there.
+//
+// A row is only a DUPLICATE when its invoice number, its invoice date AND its
+// amount all agree (the same rule the merge key uses —
+// src/lib/bill-merge-key.ts). The amount is compared as the SUM of every row
+// carrying that (party, invoice number, date) in that company, because one
+// Purchase/Printing invoice is stored one row per item.
+//
+// When either the date or the amount is unknown the old number-only check is
+// kept, so nothing is weakened where the identity cannot be established.
 async function findDuplicateFinanceEntry(
   supabase: ServiceClient,
   companyIds: string[],
-  vendorInvoiceNo: string | null
-): Promise<{ id: string; invoice_type: string | null; company_id: string; company_name: string | null } | null> {
+  vendorInvoiceNo: string | null,
+  identity?: {
+    partyId?: string | null;
+    invoiceDate?: string | null;
+    totalAmt?: number | null;
+    excludeIds?: string[];
+  }
+): Promise<{
+  id: string;
+  invoice_type: string | null;
+  company_id: string;
+  company_name: string | null;
+  invoice_date: string | null;
+  amount: number;
+  /** Same number/date found but a different amount — allowed, worth a note. */
+  sameNumberDifferentBill: boolean;
+} | null> {
   const inv = (vendorInvoiceNo ?? '').trim();
   if (!inv || companyIds.length === 0) return null;
   const { data } = await supabase
     .from('bill_pass_register')
-    .select('id, invoice_type, company_id, vendor_invoice_no, companies(name)')
+    .select('id, invoice_type, company_id, vendor_invoice_no, invoice_date, total_amt, party_id, companies(name)')
     .in('company_id', companyIds)
     .ilike('vendor_invoice_no', inv)
-    .limit(5);
-  const rows = (data ?? []).filter((r) => (r.vendor_invoice_no ?? '').trim().toLowerCase() === inv.toLowerCase());
-  if (rows.length === 0) return null;
-  const rel = (rows[0] as { companies?: { name: string } | { name: string }[] | null }).companies;
+    .limit(200);
+
+  const exclude = new Set(identity?.excludeIds ?? []);
+  const sameNumber = (data ?? []).filter(
+    (r) =>
+      (r.vendor_invoice_no ?? '').trim().toLowerCase() === inv.toLowerCase() &&
+      !exclude.has(r.id) &&
+      // A legacy row with no party on file can't contradict the party — its
+      // date/amount still have to match below.
+      (!identity?.partyId || !r.party_id || r.party_id === identity.partyId)
+  );
+  if (sameNumber.length === 0) return null;
+
+  const rel = (sameNumber[0] as { companies?: { name: string } | { name: string }[] | null }).companies;
   const companyName = Array.isArray(rel) ? rel[0]?.name ?? null : rel?.name ?? null;
-  return { id: rows[0].id, invoice_type: rows[0].invoice_type, company_id: rows[0].company_id, company_name: companyName };
+  const sum = Math.round(sameNumber.reduce((s, r) => s + Number(r.total_amt ?? 0), 0) * 100) / 100;
+  const base = {
+    id: sameNumber[0].id,
+    invoice_type: sameNumber[0].invoice_type,
+    company_id: sameNumber[0].company_id,
+    company_name: companyName,
+  };
+
+  const date = (identity?.invoiceDate ?? '').slice(0, 10);
+  const total = identity?.totalAmt;
+  if (!date || total == null) {
+    return { ...base, invoice_date: sameNumber[0].invoice_date, amount: sum, sameNumberDifferentBill: false };
+  }
+
+  // Group by invoice date: a true duplicate is the rows OF THAT DATE adding up
+  // to the same amount. Another date = another financial year = another bill.
+  const sameDate = sameNumber.filter((r) => (r.invoice_date ?? '').slice(0, 10) === date);
+  if (sameDate.length === 0) {
+    return {
+      ...base,
+      invoice_date: sameNumber[0].invoice_date,
+      amount: sum,
+      sameNumberDifferentBill: true,
+    };
+  }
+  const dateSum = Math.round(sameDate.reduce((s, r) => s + Number(r.total_amt ?? 0), 0) * 100) / 100;
+  if (Math.abs(dateSum - total) > 0.5) {
+    return { ...base, invoice_date: date, amount: dateSum, sameNumberDifferentBill: true };
+  }
+  const relDate = (sameDate[0] as { companies?: { name: string } | { name: string }[] | null }).companies;
+  return {
+    id: sameDate[0].id,
+    invoice_type: sameDate[0].invoice_type,
+    company_id: sameDate[0].company_id,
+    company_name: Array.isArray(relDate) ? relDate[0]?.name ?? null : relDate?.name ?? null,
+    invoice_date: date,
+    amount: dateSum,
+    sameNumberDifferentBill: false,
+  };
 }
 
 async function savePurchaseBillCore(
@@ -1702,19 +1783,19 @@ export async function sendPurchaseBillInvoiceToFinance(
   // me"). One invoice = one document = one company — re-posting it under a
   // second company is refused here, and "Change company" on the existing entry
   // moves the whole invoice instead.
-  const { data: dupRows } = await supabase
-    .from("bill_pass_register")
-    .select("id, vendor_invoice_no, company_id, companies(name)")
-    .in("company_id", employee.companyIds)
-    .eq("party_id", partyId)
-    .ilike("vendor_invoice_no", invoiceNo)
-    .limit(5);
-  const duplicate = (dupRows ?? []).find((d) => (d.vendor_invoice_no ?? "").trim().toLowerCase() === invoiceNo.toLowerCase());
-  if (duplicate) {
-    const rel = (duplicate as { companies?: { name: string } | { name: string }[] | null }).companies;
-    const where = (Array.isArray(rel) ? rel[0]?.name : rel?.name) ?? "another company";
+  //
+  // 2026-11-01 — "duplicate to tab bataye na jab amount date price same ho":
+  // the guard now needs the NUMBER, THE DATE AND THE AMOUNT to agree. A vendor
+  // reuses numbers across years, so 76 of 2026-02-19 never blocks 76 of this
+  // year — see findDuplicateFinanceEntry's own comment.
+  const duplicate = await findDuplicateFinanceEntry(supabase, employee.companyIds, invoiceNo, {
+    partyId,
+    invoiceDate: first.vendor_invoice_date,
+    totalAmt,
+  });
+  if (duplicate && !duplicate.sameNumberDifferentBill) {
     return {
-      error: `Duplicate entry: invoice "${invoiceNo}" from this vendor is already in the Finance ledger of ${where}. One invoice can only be booked once — use “Change company” on that entry to move the whole invoice, or raise a Debit Note if this is a second bill on the same PO.`,
+      error: `Duplicate entry: invoice "${invoiceNo}" of ${duplicate.invoice_date ?? "the same date"} for ₹${duplicate.amount.toFixed(2)} is already in the Finance ledger of ${duplicate.company_name ?? "another company"}. Same number + same date + same amount is one document — use “Change company” on that entry to move the whole invoice, or raise a Debit Note if this is a second bill on the same PO.`,
       success: null,
     };
   }
@@ -1856,22 +1937,38 @@ export async function moveBillFinanceCompany(_prev: SimpleResult, formData: Form
   }
 
   // Duplicate guard in the target company (ignore the rows being moved).
+  //
+  // 2026-11-01 — a bill is only a duplicate when the TARGET company already
+  // holds the same invoice NUMBER, the same invoice DATE and the same AMOUNT.
+  // Checking the number alone is what refused a legitimate transfer: this
+  // year's purchase invoice 76 was blocked because an old-year 76 of the same
+  // party (different date, different amount) was sitting in the target
+  // company. The moved invoice's own date + total are compared against the
+  // target's rows summed per date, so a same-number-different-bill moves
+  // through (with a notice) while a real double booking is still refused.
+  const { data: movingRows } = await supabase
+    .from("bill_pass_register")
+    .select("id, invoice_date, total_amt")
+    .in("id", bprIds);
+  const movedDate = (movingRows?.[0]?.invoice_date ?? "").slice(0, 10) || null;
+  const movedTotal = Math.round((movingRows ?? []).reduce((s, r) => s + Number(r.total_amt ?? 0), 0) * 100) / 100;
+
+  let notice: string | null = null;
   if (bill.vendor_invoice_no && bill.party_id) {
-    const { data: dupRows } = await supabase
-      .from("bill_pass_register")
-      .select("id, vendor_invoice_no")
-      .eq("company_id", targetCompanyId)
-      .eq("party_id", bill.party_id)
-      .ilike("vendor_invoice_no", bill.vendor_invoice_no)
-      .limit(5);
-    const clash = (dupRows ?? []).find(
-      (d) => !bprIds.includes(d.id) && (d.vendor_invoice_no ?? "").trim().toLowerCase() === bill.vendor_invoice_no!.trim().toLowerCase()
-    );
-    if (clash) {
+    const clash = await findDuplicateFinanceEntry(supabase, [targetCompanyId], bill.vendor_invoice_no, {
+      partyId: bill.party_id,
+      invoiceDate: movedDate,
+      totalAmt: movedTotal,
+      excludeIds: bprIds,
+    });
+    if (clash && !clash.sameNumberDifferentBill) {
       return {
-        error: `Invoice "${bill.vendor_invoice_no}" is already in the target company's Finance ledger — a second entry would be a duplicate. Merge or delete that one first.`,
+        error: `Invoice "${bill.vendor_invoice_no}" of ${clash.invoice_date ?? "the same date"} for ₹${clash.amount.toFixed(2)} is already in the target company's Finance ledger — same number, same date and same amount means it is the same bill. Merge or delete that one first.`,
         success: false,
       };
+    }
+    if (clash) {
+      notice = `Moved. Invoice "${bill.vendor_invoice_no}" already exists in ${clash.company_name ?? "the target company"} for ${clash.invoice_date ?? "another date"} (₹${clash.amount.toFixed(2)}) — date/amount differ, so it is a different bill and both stay.`;
     }
   }
 
@@ -1896,7 +1993,7 @@ export async function moveBillFinanceCompany(_prev: SimpleResult, formData: Form
   revalidatePath("/dashboard/bill-payment");
   revalidatePath("/dashboard/parties");
   revalidatePath("/dashboard/reports");
-  return { error: null, success: true };
+  return { error: null, success: true, notice };
 }
 
 // =============================================================================
@@ -3337,13 +3434,19 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
     .maybeSingle();
 
   // 2026-09-13 — duplicate Finance entry guard (see
-  // findDuplicateFinanceInvoiceEntry note / DB index comment).
+  // findDuplicateFinanceEntry note / DB index comment).
+  // 2026-11-01 — number + date + amount must all agree; a courier reuses an
+  // invoice number in another year and that is a different bill.
   {
-    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null);
-    if (dup) {
+    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null, {
+      partyId: bill?.vendor_party_id ?? null,
+      invoiceDate: bill?.invoice_date ?? null,
+      totalAmt,
+    });
+    if (dup && !dup.sameNumberDifferentBill) {
       const where = dup.company_name ? ` in ${dup.company_name}` : "";
       return {
-        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger${where}. The same invoice can only be entered once — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
+        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" of ${dup.invoice_date ?? "the same date"} for ₹${dup.amount.toFixed(2)} is already in the Finance ledger${where}. Same number + same date + same amount is one document — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
         success: false,
       };
     }
@@ -3886,12 +3989,18 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
     .maybeSingle();
 
   // 2026-09-13 — duplicate Finance entry guard (same as freight above).
+  // 2026-11-01 — number + date + amount must all agree (see
+  // findDuplicateFinanceEntry).
   {
-    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null);
-    if (dup) {
+    const dup = await findDuplicateFinanceEntry(supabase, employee.companyIds, bill?.invoice_no ?? null, {
+      partyId: bill?.vendor_party_id ?? null,
+      invoiceDate: bill?.invoice_date ?? null,
+      totalAmt,
+    });
+    if (dup && !dup.sameNumberDifferentBill) {
       const where = dup.company_name ? ` in ${dup.company_name}` : "";
       return {
-        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" is already in the Finance ledger${where}. The same invoice can only be entered once — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
+        error: `Duplicate entry: a bill with vendor invoice no. "${bill?.invoice_no}" of ${dup.invoice_date ?? "the same date"} for ₹${dup.amount.toFixed(2)} is already in the Finance ledger${where}. Same number + same date + same amount is one document — use “Change company” on that entry if it was booked in the wrong company, or raise a Debit Note if this is a second bill on the same PO.`,
         success: false,
       };
     }

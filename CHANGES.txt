@@ -1,3 +1,56 @@
+DUPLICATE SIRF TAB JAB INVOICE NO. + DATE + AMOUNT SAME HO
+(2026-11-01b)
+======================================================================
+
+KOI NAYA SQL NAHI (DB ka unique index pehle se invoice_date ke saath hai).
+
+PROBLEM: Prachi ka purchase bill (invoice no. 76, is saal ka) Rugara se Nyko
+Mart move karte hi "duplicate" bol kar ruk jata tha. Wajah: guard sirf PARTY +
+VENDOR INVOICE NO. dekhta tha, aur Nyko Mart me usi party ka PURANA 76
+(2026-02-19, alag amount) pada hua hai — do bilkul alag bills, alag financial
+year. Vendor invoice number apne aap me identity nahi hai: ek hi vendor
+saal-dar-saal wahi number dobara use karta hai.
+
+AB — duplicate ka matlab wahi hai jo merge ka matlab hai:
+  invoice no. + invoice date + amount, teeno same = ek hi document (block).
+  Number same par date ya amount alag = ALAG BILL — move/post ho jata hai.
+
+  • "Change company" (Bill Payment / Documents, Purchase/Printing aur
+    Courier/Duty dono): move se pehle target company me usi party + invoice
+    no. ki rows INVOICE DATE par group ho kar SUM hoti hain. Tab hi block
+    hota hai jab wahi date aur wahi total wahan pehle se ho. Same number par
+    alag date/amount mile to move chalta hai aur ek notice dikhta hai
+    ("... already exists for 2026-02-19 (₹18481.00) — date/amount differ,
+    so it is a different bill and both stay").
+  • "Send to Finance" (Purchase/Printing, Courier, Duty): wahi rule — ek hi
+    jagah, ek hi helper (findDuplicateFinanceEntry). Pehle wala block har
+    company me number-only check karta tha, is liye purane saal ka 76 naye
+    76 ko bhi rok deta tha.
+  • Ek Purchase/Printing invoice DB me per-item row hoti hai, is liye amount
+    compare row-wise nahi — (party + number + date) ki SAARI rows ka sum
+    hota hai. Isse split invoice ka duplicate sahi pakda jata hai.
+  • Agar date ya amount kisi taraf unknown ho (purane adhure rows), to purana
+    number-only check hi chalta hai — jahan identity pata hi nahi wahan kuch
+    kamzor nahi kiya.
+  • Duplicate ka error message ab date + amount dono batata hai, is liye pata
+    chalta hai kis bill se takra raha hai.
+
+Badlav:
+M  src/app/dashboard/documents/actions.ts        (findDuplicateFinanceEntry:
+   party + date + amount identity, per-date sum, excludeIds; move guard aur
+   Purchase/Freight/Duty send me wahi helper; SimpleResult.notice)
+M  src/app/dashboard/documents/finance-post-box.tsx (move ka notice dikhta hai)
+M  CHANGES.txt
+
+VERIFICATION: focused tsc (documents/actions.ts, finance-post-box.tsx,
+document-entry-tabs.tsx + note/bill statement files) exit 0; eslint un dono
+files par exit 0. Live Supabase is workspace me nahi hai, is liye asli
+Prachi bill par move nahi chala paya — pehla check: Documents → Prachi ka
+invoice 76 → "Change company" → Nyko Mart. Ab move hone chahiye aur niche
+notice aana chahiye; jis din wahi 76 wahi date + wahi amount ho, us din
+block hoga.
+
+
 EK DEBIT NOTE = LEDGER ME EK LINE (aur split bill sab jagah fix)
 (2026-11-01)
 ======================================================================
