@@ -11,6 +11,7 @@ import { BillDocLink } from "@/components/bill-doc-link";
 import { LedgerDuplicateMerge, type LedgerDuplicateGroup } from "./duplicate-merge";
 import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
 import { buildWalletLedgerLines, walletSettlementNote, type WalletSettlement } from "@/lib/ledger/wallet-ledger-lines";
+import { resolveBillCompanyOwners } from "@/lib/ledger/bill-company";
 import { fyOptions, fyStartYear, fyWindow } from "@/lib/fy-date";
 import { todayIST } from "@/lib/attendance/ist-date";
 
@@ -59,6 +60,29 @@ import { todayIST } from "@/lib/attendance/ist-date";
 // they can never drift), and the top summary adds the blocks up only as a
 // cross-check. The company filter in the bar narrows it to one company, which
 // is what the old default effectively was.
+//
+// 2026-10-31 — the multi-company default above is GONE, because the user asked
+// for exactly the opposite twice:
+//
+//   "ek baar me ek company ka ladger show hoye abhi minum 2 company ka ladger
+//    show ho raha hai"  →  ONE company at a time. The page opens on the
+//    company in the top-nav switcher and the Company select switches it; two
+//    ledgers are never stacked on one screen.
+//
+//   "bill me 4 order nyko ke hai to 4 ka total nyko me dikha raha, baki rugara
+//    me or bill register hua nyko me. total jud ke aana chahiye nyko ke
+//    ledger me"  →  the WHOLE document belongs to the company that books it.
+//    A Purchase/Printing bill is stored one bill_pass_register row per item/PO
+//    and each row carried the company of the order it came from, so a single
+//    vendor invoice used to appear SPLIT: part of its total in Nyko's ledger,
+//    the rest in Rugara's — neither showing the real bill. The document now
+//    decides: every row of the same vendor invoice (+ date) is attributed to
+//    the company the bill is registered in (purchase_bills.company_id, which
+//    the Finance hand-off stamps with the company it was posted to), and the
+//    full total — with every payment recorded against any of its rows — shows
+//    in that one company's ledger. Courier / Duty / expense bills are one row
+//    per document, so nothing changes for them: they simply stay in whichever
+//    company they were posted to.
 
 const SOURCE_LABEL: Record<string, string> = {
   purchase_bill: "Purchase Bill",
@@ -69,6 +93,10 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 function sourceLabelFor(e: { source: string | null; invoice_type: string | null }): string {
+  // 2026-10-31 — a Printing bill shares purchase_bills (source purchase_bill)
+  // but posts itself to the ledger with invoice_type "Printing", so it must
+  // not read as a plain Purchase Bill in Particulars.
+  if (e.source === "purchase_bill" && e.invoice_type === "Printing") return "Printing Bill";
   return SOURCE_LABEL[e.source ?? ""] ?? e.invoice_type ?? "Bill";
 }
 
@@ -153,11 +181,17 @@ async function PartyLedgerInner(
   const spVal = (key: string) => (typeof sp[key] === "string" ? (sp[key] as string) : "");
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const todayISTStr = todayIST();
-  // 2026-10-28 — `company` narrows the ledger to one company. Empty (the
-  // default) shows every company this login can access as its own block.
+  // 2026-10-31 — ONE company per view (user: "ek baar me ek company ka ladger
+  // show hoye ... abhi minimum 2 company ka ladger show ho raha hai").
+  // Default = the company selected in the top-nav switcher; the Company select
+  // in the bar below switches to another one, still one ledger at a time.
   const companyParam = spVal("company");
-  const requestedCompanyId = employee.companyIds.includes(companyParam) ? companyParam : "";
-  const scopedCompanyIds = requestedCompanyId ? [requestedCompanyId] : employee.companyIds;
+  const requestedCompanyId = employee.companyIds.includes(companyParam)
+    ? companyParam
+    : employee.companyIds.includes(employee.currentCompanyId)
+      ? employee.currentCompanyId
+      : employee.companyIds[0] ?? employee.currentCompanyId;
+  const scopedCompanyIds = [requestedCompanyId];
 
   const [
     { data: party },
@@ -170,8 +204,13 @@ async function PartyLedgerInner(
       .select(
         "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, to_be_pay, total_paid, balance_due, due_date, approval_status, remark, source, source_id, created_at, merged_into_bill_id"
       )
+      // Deliberately EVERY company this login can access (not just the one in
+      // view): a Purchase/Printing bill's item rows can sit in several
+      // companies, and the attribution below needs the whole invoice to move
+      // its total — with its payments — into the company that books it. Rows
+      // of other companies are simply not displayed.
       .eq("party_id", id)
-      .in("company_id", scopedCompanyIds)
+      .in("company_id", employee.companyIds)
       .order("invoice_date", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: true }),
     supabase.from("companies").select("id, name, logo_url"),
@@ -180,14 +219,27 @@ async function PartyLedgerInner(
 
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const currentCompanyName = companyName.get(employee.currentCompanyId) ?? "—";
-  // 2026-09-17 — report footer's company logo: only when this ledger is
-  // scoped to ONE company (no single logo would be correct across companies).
-  const currentCompanyLogoUrl = (companies ?? []).find((c) => c.id === employee.currentCompanyId)?.logo_url ?? null;
+  // 2026-09-17 — report footer's company logo. 2026-10-31: always the logo of
+  // the company whose ledger is on screen (one company per view now).
+  const scopedCompanyLogoUrl = (companies ?? []).find((c) => c.id === requestedCompanyId)?.logo_url ?? null;
 
   // 2026-10-29 — a merged duplicate row is kept for audit but must not render
   // as a second entry: after "merge into one" the ledger shows the single
   // surviving entry only.
-  const entries = (entriesRaw ?? []).filter((e) => !e.merged_into_bill_id);
+  const rowsAll = (entriesRaw ?? []).filter((e) => !e.merged_into_bill_id);
+
+  // ---- which company books each document (2026-10-31) ----------------------
+  // "bill me 4 order nyko ke hai to 4 ka total nyko me dikha raha, baki rugara
+  // me or bill register hua nyko me. total jud ke aana chahiye nyko ke ledger
+  // me": one vendor invoice = one document = ONE company's ledger. The rule
+  // itself lives in src/lib/ledger/bill-company.ts so Bill Payment, Approvals
+  // and this ledger can never disagree about it.
+  const ownerCompanyByBillId = await resolveBillCompanyOwners(supabase, rowsAll);
+
+  // Only the documents this company books — whole documents, never a slice of
+  // one (a split invoice's rows from the other company come along with it, so
+  // the total and every payment against it land here together).
+  const entries = rowsAll.filter((e) => ownerCompanyByBillId.get(e.id) === requestedCompanyId);
   // 2026-10-24 — the invoice cell of a bill row opens the bill's OWN document
   // sheet (Courier / Duty & Tax / Purchase Bill), exactly like Bill Payment
   // does. Same shared resolver, so the pages can never drift apart.
@@ -271,13 +323,16 @@ async function PartyLedgerInner(
   // from balance 0, so a company's running balance can never be carried over
   // from another company's invoices.
   function buildCompanyLedger(companyId: string): LedgerSection {
-    const companyEntries = entries.filter((e) => e.company_id === companyId);
+    // `entries` is already exactly this company's documents (see the
+    // attribution above) — including the member rows of a split invoice, so
+    // the group below sums to the FULL document amount.
+    const companyEntries = entries;
     const { lines: walletLines, settledByBill } = buildWalletLedgerLines((walletRaw ?? []).filter((w) => w.company_id === companyId));
 
     // Group key: same-company per-vendor-invoice grouping stays exactly as
     // groupBills() defines it (shared with Approvals / Bill Payment); rows
     // with no vendor invoice no. stay singletons (never merge unknowns).
-    type MergedBillGroup = { key: string; bills: typeof companyEntries; isCrossCompanyMerge: boolean };
+    type MergedBillGroup = { key: string; bills: typeof companyEntries };
     const mergedGroups: MergedBillGroup[] = [];
     {
       const baseGroups = groupBills(
@@ -301,14 +356,11 @@ async function PartyLedgerInner(
         if (existing) {
           existing.bills.push(...bg.bills);
         } else {
-          const g: MergedBillGroup = { key, bills: [...bg.bills], isCrossCompanyMerge: false };
+          const g: MergedBillGroup = { key, bills: [...bg.bills] };
           byKey.set(key, g);
           order.push(key);
           mergedGroups.push(g);
         }
-      }
-      for (const g of mergedGroups) {
-        g.isCrossCompanyMerge = new Set(g.bills.map((b) => b.company_id)).size > 1;
       }
       mergedGroups.sort((a, b) => {
         const da = a.bills[0].invoice_date ?? a.bills[0].invoice_recv_date ?? a.bills[0].created_at.slice(0, 10);
@@ -337,11 +389,9 @@ async function PartyLedgerInner(
       if (eg.bills.every((b) => Number(b.balance_due) <= 0.005)) status = "paid";
       else if (eg.bills.some((b) => b.due_date && b.due_date < today)) status = "overdue";
       else status = "pending";
-      const groupSuffix =
-        (eg.isCrossCompanyMerge ? ` — merged ${eg.bills.length} entries` : eg.bills.length > 1 ? ` (${eg.bills.length} items)` : "") +
-        (eg.isCrossCompanyMerge
-          ? ` (${Array.from(new Set(eg.bills.map((b) => companyName.get(b.company_id) ?? ""))).filter(Boolean).join(", ")})`
-          : "");
+      // 2026-10-31 — one invoice is ONE line with its whole amount now, so the
+      // only thing worth saying is how many item rows made it up.
+      const groupSuffix = eg.bills.length > 1 ? ` (${eg.bills.length} items)` : "";
 
       if (totalAmt !== 0) {
         // Merge every wallet settlement against this bill GROUP so Particulars
@@ -391,18 +441,45 @@ async function PartyLedgerInner(
       // 2026-09-13 — "CREDIT OR DEBIT NOTE ADJUST KI ENTRY EK SATH DIKHE NA":
       // each adjustment is its OWN dated line with the note number in
       // Particulars. Same math — the lines still sum to adj_amt.
+      //
+      // 2026-11-01 — "debit note jab ek hai to alag alag entry kyu aa rahi
+      // hai": the SAME note was printing five times against invoice 82. A note
+      // applied to a multi-item Purchase/Printing bill is stored as one
+      // adjustment row PER ITEM ROW — that is how each item's own payable is
+      // reduced (see saveDebitNoteCore) — but the party raised ONE note, so the
+      // ledger folds those rows back into ONE line per note + date, amounts
+      // summed. The running balance is unchanged: what was five debits of
+      // ₹1338.75 / ₹2142 / ₹1338.75 / ₹5880 / ₹567 is now one debit of ₹11266.50.
       const groupAdjRows = (adjustmentsRaw ?? []).filter((a) => groupBillIds.includes(a.bill_pass_register_id));
       if (adjAmt > 0 && groupAdjRows.length > 0) {
+        const adjByNote = new Map<string, { date: string; amount: number; billIds: string[]; isCredit: boolean; label: string }>();
         for (const a of groupAdjRows) {
-          const noteNo = a.credit_note_id ?? a.debit_note_id ? noteLabel.get(a.credit_note_id ?? a.debit_note_id ?? "") ?? "Note" : "Note";
+          const noteId = a.credit_note_id ?? a.debit_note_id;
+          const date = a.created_at.slice(0, 10);
+          const key = `${noteId ?? `adj:${a.id}`}|${date}`;
+          const entry = adjByNote.get(key);
+          if (entry) {
+            entry.amount += Number(a.amount);
+            if (!entry.billIds.includes(a.bill_pass_register_id)) entry.billIds.push(a.bill_pass_register_id);
+          } else {
+            adjByNote.set(key, {
+              date,
+              amount: Number(a.amount),
+              billIds: [a.bill_pass_register_id],
+              isCredit: Boolean(a.credit_note_id),
+              label: noteId ? noteLabel.get(noteId) ?? "Note" : "Note",
+            });
+          }
+        }
+        for (const [key, g] of adjByNote) {
           txns.push({
-            date: a.created_at.slice(0, 10),
-            particulars: `${a.credit_note_id ? "Credit Note" : "Debit Note"} ${noteNo} adjusted against ${ref}${groupSuffix}`,
+            date: g.date,
+            particulars: `${g.isCredit ? "Credit Note" : "Debit Note"} ${g.label} adjusted against ${ref}${groupSuffix}`,
             type: "Debit",
-            debit: Number(a.amount),
+            debit: round2(g.amount),
             credit: 0,
-            sortKey: `${a.created_at.slice(0, 10)}_1b_${eg.key}_${a.id}`,
-            billIds: [a.bill_pass_register_id],
+            sortKey: `${g.date}_1b_${eg.key}_${key}`,
+            billIds: g.billIds,
             invoiceNo: ref,
             paymentMode: null,
             referenceNo: null,
@@ -494,14 +571,10 @@ async function PartyLedgerInner(
     };
   }
 
-  // The current company's block first (it is the one the top-nav switcher is
-  // on), then the rest alphabetically — stable and predictable on every load.
-  const sectionCompanyIds = Array.from(new Set(entries.map((e) => e.company_id))).sort((a, b) => {
-    if (a === employee.currentCompanyId) return -1;
-    if (b === employee.currentCompanyId) return 1;
-    return (companyName.get(a) ?? "").localeCompare(companyName.get(b) ?? "");
-  });
-  const sections = sectionCompanyIds.map(buildCompanyLedger).filter((s) => s.ledgerLines.length > 0);
+  // ONE ledger at a time (2026-10-31): the company picked in the bar, which
+  // defaults to the top-nav switcher's company. Two companies are never shown
+  // or added together on one screen.
+  const sections = [buildCompanyLedger(requestedCompanyId)].filter((s) => s.ledgerLines.length > 0);
 
   const totalDebit = round2(sections.reduce((s, sec) => s + sec.totalDebit, 0));
   const totalCredit = round2(sections.reduce((s, sec) => s + sec.totalCredit, 0));
@@ -509,12 +582,7 @@ async function PartyLedgerInner(
   const shownDebit = round2(sections.reduce((s, sec) => s + sec.shownDebit, 0));
   const shownCredit = round2(sections.reduce((s, sec) => s + sec.shownCredit, 0));
   const periodClosing = round2(sections.reduce((s, sec) => s + sec.periodClosing, 0));
-  const isMultiCompany = sections.length > 1;
-  const scopeLabel = requestedCompanyId
-    ? companyName.get(requestedCompanyId) ?? currentCompanyName
-    : isMultiCompany
-      ? `${sections.length} companies (separate ledgers)`
-      : sections[0]?.companyName ?? currentCompanyName;
+  const scopeLabel = companyName.get(requestedCompanyId) ?? currentCompanyName;
 
   // FY presets built from this party's own history (newest first) — the same
   // helper the Party Balance Summary uses, so both pages offer identical years.
@@ -564,19 +632,6 @@ async function PartyLedgerInner(
           },
         ]
       : []),
-    ...(isMultiCompany
-      ? sections.map((sec) => ({
-          date: "",
-          invoice_no: "",
-          company: sec.companyName,
-          particulars: `SUMMARY — Closing balance (${sec.companyName})`,
-          payment_mode: "",
-          reference_no: "",
-          debit: sec.totalDebit,
-          credit: sec.totalCredit,
-          balance: sec.closingBalance,
-        }))
-      : []),
     {
       date: "",
       invoice_no: "",
@@ -603,7 +658,7 @@ async function PartyLedgerInner(
       date: "",
       invoice_no: "",
       company: "",
-      particulars: `SUMMARY — Closing balance as on ${toDate || todayISTStr}${isMultiCompany ? " (all companies)" : ""}`,
+      particulars: `SUMMARY — Closing balance as on ${toDate || todayISTStr} (${scopeLabel})`,
       payment_mode: "",
       reference_no: "",
       debit: 0,
@@ -652,7 +707,7 @@ async function PartyLedgerInner(
     for (const e of entries) {
       const inv = (e.vendor_invoice_no ?? e.invoice_no ?? "").trim();
       if (!inv) continue;
-      const key = `${e.company_id}|${inv.toLowerCase()}`;
+      const key = `${ownerCompanyByBillId.get(e.id) ?? e.company_id}|${inv.toLowerCase()}`;
       const list = byInvoice.get(key) ?? [];
       list.push(e);
       byInvoice.set(key, list);
@@ -668,7 +723,7 @@ async function PartyLedgerInner(
       out.push({
         key,
         invoiceNo: (first.vendor_invoice_no ?? first.invoice_no ?? "—") as string,
-        companyName: companyName.get(first.company_id) ?? "—",
+        companyName: companyName.get(ownerCompanyByBillId.get(first.id) ?? first.company_id) ?? "—",
         rows: list.map((e) => ({
           id: e.id,
           label: sourceLabelFor(e),
@@ -689,9 +744,8 @@ async function PartyLedgerInner(
       </div>
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm print:hidden">
-        {/* 2026-10-28 — company scope. Default = every company this login can
-            access, each shown as its own ledger below; picking one narrows it
-            to that company alone (the old default view). */}
+        {/* 2026-10-31 — company scope: ONE company's ledger at a time (the
+            user's ask), defaulting to the top-nav switcher's company. */}
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
           <select
@@ -699,9 +753,8 @@ async function PartyLedgerInner(
             name="company"
             defaultValue={requestedCompanyId}
             className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500"
-            title="Each company keeps its own ledger and its own closing balance — nothing is merged."
+            title="Each company keeps its own ledger and its own closing balance — one company at a time, nothing is merged."
           >
-            <option value="">All companies (separate ledgers)</option>
             {employee.companyIds.map((cid) => (
               <option key={cid} value={cid}>{companyName.get(cid) ?? cid}</option>
             ))}
@@ -743,22 +796,11 @@ async function PartyLedgerInner(
         )}
       </form>
 
-      {isMultiCompany && !requestedCompanyId && (
-        <p className="mb-2 text-[11px] text-slate-500 print:hidden">
-          Showing <strong>{sections.length} companies</strong> — each with its own ledger and its own closing balance. A bill and every payment made
-          against it always appear in the same company. Pick one company above to see it alone.
-        </p>
-      )}
-
       <div className="print:hidden">
         <LedgerDuplicateMerge groups={ledgerDuplicateGroups} />
       </div>
 
-      <PrintArea
-        id="party-ledger-area"
-        companyName={requestedCompanyId ? scopeLabel : undefined}
-        companyLogoUrl={requestedCompanyId ? currentCompanyLogoUrl : undefined}
-      >
+      <PrintArea id="party-ledger-area" companyName={scopeLabel} companyLogoUrl={scopedCompanyLogoUrl}>
         <div className="oms-ledger-card space-y-5 rounded-xl border border-slate-200 bg-white p-6 text-xs print:border-0 print:p-0">
           <div className="flex items-center justify-between">
             <div>
@@ -788,10 +830,9 @@ async function PartyLedgerInner(
             </div>
           </div>
 
-          {/* Direct, unambiguous answer to "ab kitna payment karna hai":
-              closingBalance > 0 means we owe the party that much; < 0 means the
-              party is in credit with us. With several company blocks this is
-              the combined figure — each block below carries its own. */}
+          {/* Direct, unambiguous answer to "ab kitna payment karna hai" for the
+              company on screen: closingBalance > 0 means we owe the party that
+              much here; < 0 means the party is in credit with us here. */}
           {(isPayable || isCredit) && (
             <div
               className={`rounded-lg border px-4 py-2.5 text-sm font-semibold ${
@@ -801,8 +842,8 @@ async function PartyLedgerInner(
               }`}
             >
               {isPayable
-                ? `Amount payable to ${party.name}: ₹${closingBalance.toFixed(2)}${isMultiCompany ? " (all companies)" : ""}`
-                : `${party.name} is in credit with us: ₹${Math.abs(closingBalance).toFixed(2)} (advance/overpayment)${isMultiCompany ? " — all companies" : ""}`}
+                ? `Amount payable to ${party.name} in ${scopeLabel}: ₹${closingBalance.toFixed(2)}`
+                : `${party.name} is in credit with us in ${scopeLabel}: ₹${Math.abs(closingBalance).toFixed(2)} (advance/overpayment)`}
             </div>
           )}
 
@@ -815,7 +856,7 @@ async function PartyLedgerInner(
           </p>
 
           {sections.length === 0 && (
-            <p className="py-3 text-center text-slate-400">No bills against this party yet.</p>
+            <p className="py-3 text-center text-slate-400">No bills against this party in {scopeLabel} yet.</p>
           )}
 
           {sections.map((sec) => {
@@ -823,8 +864,8 @@ async function PartyLedgerInner(
             const secCredit = sec.closingBalance < -0.005;
             return (
               <div key={sec.companyId} className="break-inside-avoid">
-                {/* 2026-10-28 — one block per company: this is the "jis company
-                    me invoice chadha hai usme hi payment dikhe" part. */}
+                {/* 2026-10-31 — the block heading names the ONE company whose
+                    ledger this is (everything below belongs to it). */}
                 <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2 border-b-2 border-slate-300 pb-1">
                   <h2 className="text-sm font-bold text-slate-900">{sec.companyName}</h2>
                   <p className="text-[11px] text-slate-600">
@@ -982,12 +1023,6 @@ async function PartyLedgerInner(
             );
           })}
 
-          {isMultiCompany && (
-            <div className="flex flex-wrap items-baseline justify-between gap-2 border-t-2 border-slate-400 pt-2 text-sm font-semibold text-slate-900">
-              <span>All companies — combined</span>
-              <span>Debit ₹{totalDebit.toFixed(2)} · Credit ₹{totalCredit.toFixed(2)} · Closing ₹{closingBalance.toFixed(2)}</span>
-            </div>
-          )}
         </div>
       </PrintArea>
     </div>

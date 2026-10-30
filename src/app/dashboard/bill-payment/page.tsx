@@ -5,6 +5,7 @@ import { BillPaymentList, type PayableBillRow } from "./bill-payment-list";
 import { MergedBillsPanel, type MergedBillRow } from "./merged-bills-panel";
 import { listRelatedNotesForBills } from "../documents/actions";
 import { resolveBillDocHrefs } from "@/lib/bill-doc-href";
+import { fetchBillsInCompanyView } from "@/lib/ledger/bill-company";
 // 2026-09-15 — courier prepaid wallets ("shipment bhejne se PEHLE wallet
 // recharge karna padta hai, invoice aane pe adjust hota hai"). The panel
 // (recharge/refund/history) + per-bill "Pay from Wallet" balance map.
@@ -75,34 +76,53 @@ export default async function BillPaymentPage({
   // no dependency on each other, so they go out as ONE parallel wave instead
   // of three serial round trips (each serial Supabase hop is added straight
   // to the page's time-to-first-byte).
-  const [{ data: companies }, { data: parties }, { data: bills }] = await Promise.all([
+  const [{ data: companies }, { data: parties }, bills] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("parties").select("id, name, party_type, invoice_type"),
+    // 2026-10-31 — one invoice = one document = ONE company (see
+    // src/lib/ledger/bill-company.ts). The page's own query stays exactly as
+    // it was; a Purchase/Printing invoice whose item rows sit in another
+    // company gets those rows pulled in (same filters, that invoice only) and
+    // the whole document is then kept only in the company that registered it.
+    // So a split invoice shows here ONCE, with its full amount and every
+    // payment, instead of two part-amounts in two companies — same rule as the
+    // Party Ledger.
     (async () => {
-      let q = supabase
-        .from("bill_pass_register")
-        .select(
-          // 2026-10-20 — source_id added so a grouped Purchase Bill's per-item
-          // rows can name the actual item (see itemLabelBySourceId below).
-          "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, source_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
-        )
-        .in("company_id", effectiveCompanyIds)
-        .order("due_date", { ascending: true, nullsFirst: false });
+      /** One builder for both reads, so the sibling read can never drift. */
+      const build = (companyIds: string[], vendorInvoiceNos?: string[]) => {
+        let q = supabase
+          .from("bill_pass_register")
+          .select(
+            // 2026-10-20 — source_id added so a grouped Purchase Bill's per-item
+            // rows can name the actual item (see itemLabelBySourceId below).
+            "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, party_id, party_type, source, source_id, due_date, total_amt, credit_note_amt, to_be_pay, total_paid, balance_due, remark"
+          )
+          .in("company_id", companyIds)
+          .order("due_date", { ascending: true, nullsFirst: false });
 
-      if (fyWin) q = q.gte("invoice_date", fyWin.start).lte("invoice_date", fyWin.end);
+        if (vendorInvoiceNos) q = q.eq("source", "purchase_bill").in("vendor_invoice_no", vendorInvoiceNos);
+        if (fyWin) q = q.gte("invoice_date", fyWin.start).lte("invoice_date", fyWin.end);
 
-      if (status === "paid") {
-        q = q.lte("balance_due", 0);
-      } else if (status === "pending") {
-        q = q.gt("balance_due", 0).gte("due_date", todayStr);
-      } else if (status === "overdue") {
-        q = q.gt("balance_due", 0).lt("due_date", todayStr);
-      } else {
-        // Default (no status filter picked yet) — unchanged from before this
-        // filter UI existed: every unpaid/partially-paid bill.
-        q = q.gt("balance_due", 0);
-      }
-      return q;
+        if (status === "paid") {
+          q = q.lte("balance_due", 0);
+        } else if (status === "pending") {
+          q = q.gt("balance_due", 0).gte("due_date", todayStr);
+        } else if (status === "overdue") {
+          q = q.gt("balance_due", 0).lt("due_date", todayStr);
+        } else {
+          // Default (no status filter picked yet) — unchanged from before this
+          // filter UI existed: every unpaid/partially-paid bill.
+          q = q.gt("balance_due", 0);
+        }
+        return q;
+      };
+
+      return fetchBillsInCompanyView({
+        supabase,
+        viewCompanyIds: effectiveCompanyIds,
+        allCompanyIds: employee.companyIds,
+        fetch: async (companyIds, vendorInvoiceNos) => (await build(companyIds, vendorInvoiceNos)).data ?? [],
+      });
     })(),
   ]);
 

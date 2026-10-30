@@ -1,3 +1,151 @@
+EK DEBIT NOTE = LEDGER ME EK LINE (aur split bill sab jagah fix)
+(2026-11-01)
+======================================================================
+
+Shikayat (screenshot ke saath):
+  • "ladger page ka ss bheja hu do company ka ek sath data aara hai"
+  • "debit note jab ek hai to alag alag entry kyu aari hai"
+  • "jo bill nyko mart me hai vo abhi bhi rugara me show ho rahe hai"
+
+1) DEBIT NOTE KI ALAG-ALAG ENTRY — FIX
+   Ek note jo multi-item Purchase/Printing bill par lagta hai, DB me har item
+   row ke liye ek bill_pass_register_adjustments row banata hai (yahi sahi
+   hai — har item ka apna payable kam hota hai, warna ek row ka balance
+   negative aur baaki due reh jate). Lekin party ne note EK hi banaya hai.
+   Ledger ab in rows ko note + date par fold karta hai → ek hi line, amounts
+   jude hue. Screenshot wale 5 lines (₹1338.75 + ₹2142 + ₹1338.75 + ₹5880 +
+   ₹567) ab ek line ₹11266.50. Running balance/CLOSING bilkul same rehta hai
+   (jod nahi badla, sirf dikhne ka tareeka) — same rule credit note par bhi.
+
+2) DO COMPANY / NYKO KE BILL RUGARA ME — inka fix pichhle round (2026-10-31d
+   aur 2026-10-31f) me hi ban chuka tha, par commit/push nahi hua tha, is liye
+   live app purana behaviour dikha raha tha. Ab commit + push ke saath jayega:
+   • ledger page ek baar me EK company (default top-nav switcher wali),
+   • ek invoice = ek document = ek company (Party Ledger, Bill Payment,
+     Approvals L1/L2, Party Ledger Report),
+   • naya split dobara na ho — "Send to Finance" ka duplicate guard
+     cross-company, aur "Change company" poora invoice move karta hai.
+   • PURANA DATA: db/2026-10-31e-purchase-invoice-company-attribution.sql ek
+     baar chalayein (Ageing / Outstanding / Party Summary / registers ke
+     totals uske baad apne aap sahi ho jate hain).
+
+----------------------------------------------------------------------
+
+SPLIT BILL SAB JAGAH FIX — BILL PAYMENT, APPROVALS, LEDGER REPORT
+(2026-10-31f)
+======================================================================
+
+User: "Bill Payment page abhi bhi per-company rows dikhata hai, is liye
+split invoice wahan do jagah dikh sakti hai jabki ledger me ek jagah —
+bolo to wahan bhi yahi rule laga du. isko bhi karo sath me jaha jahah ye
+vali problm hai vaha par bhi karo."
+
+1) EK HI RULE, EK HI JAGAH — src/lib/ledger/bill-company.ts
+   Naya shared helper `resolveBillCompanyOwners` / `withBillCompanyOwners` /
+   `fetchBillsInCompanyView`. Rule: ek vendor invoice = ek document = ek
+   company (jaha bill register hua hai), jiski definition Party Ledger me
+   pehle se thi. Ab har page isi helper se poochta hai, is liye do pages kabhi
+   alag jawab nahi de sakte.
+
+2) KAUN KAUN SI JAGAH LAGAYA
+   • Bill Payment (/dashboard/bill-payment) — split invoice ki doosri
+     company ki rows bhi padhi jati hain (wahi filters, sirf wahi invoice) aur
+     poora bill sirf usi company me dikhta hai jisme register hua hai; uske
+     saare payments sath aate hain.
+   • Approvals L1 + L2 — same rule (pending/approved list me bhi bill once,
+     whole).
+   • Party / Vendor Ledger Report (/dashboard/reports/party-ledger) — same
+     rule, is liye report aur single-party ledger ab ek jaise hain.
+   • Party ledger page pehle se isi rule par hai (2026-10-31d).
+
+   Jaan-boojh kar scoped+invoice-siblings read kiya (poori company list nahi):
+   page ka result set pehle jitna hi chhota rehta hai, PostgREST ke row cap se
+   bills chhupne ka koi naya risk nahi.
+
+3) DOBARA SPLIT NA HO — documents/actions.ts
+   • Purchase/Printing invoice "Send to Finance" ka duplicate guard ab
+     CROSS-COMPANY hai (pehle sirf target company dekhta tha) — ek invoice
+     dusri company me dobara post nahi ho sakti; error me us company ka naam
+     aata hai jahan pehle se hai, aur "Change company" se poora invoice move
+     karne ko kehta hai.
+   • "Change company" ab POORE invoice ke saare item rows uthata hai, chahe wo
+     is waqt kisi bhi company me hon (invoice date se hi document pehchanta
+     hai) — pehle company filter ki wajah se aadha invoice peeche reh jata tha.
+
+4) PURANA DATA EK BAAR SAHI KARNE KE LIYE SQL — ZAROOR CHALAYEIN
+   db/2026-10-31e-purchase-invoice-company-attribution.sql
+   • Har split Purchase/Printing invoice ki saari ledger rows usi company me
+     le jata hai jisme bill register hua hai (document company, warna
+     sabse bada hissa; tie → pehle post hui company).
+   • purchase_bills.company_id bhi wahi stamp karta hai, taaki bill ki A4
+     sheet, Document Entry list aur ledger teeno ek company bolein.
+   • Sirf company_id badalta hai — amount, date, payments, notes,
+     adjustments, audit history ko haath nahi lagta. Dobara chalane par kuch
+     nahi badalta (idempotent).
+   • Iske chalne ke baad Ageing, Outstanding, Party Balance Summary, registers
+     aur dashboard totals bhi apne aap sahi ho jate hain (ye pages aggregate
+     karte hain, is liye unme code change nahi kiya).
+
+   Local Postgres + db/schema.sql par fixtures ke saath test kiya gaya:
+   split invoice (A,A,B) → poora A me; document=A + row B → B wali row A me;
+   same invoice no. different dates → alag-alag rehte hain; courier bill par
+   koi asar nahi; dobara chalane par UPDATE 0.
+
+5) TESTS
+   src/lib/ledger/bill-company.test.ts — 7 naye unit tests (document company
+   wins, biggest-share fallback, same number different dates stay apart,
+   courier/manual untouched, invoice key, sibling read only for split
+   invoices). npm test: 79/79 pass.
+
+----------------------------------------------------------------------
+
+PARTY LEDGER — EK BAAR ME EK COMPANY, AUR POORA BILL USI COMPANY ME
+(2026-10-31d)
+======================================================================
+
+Shikayat: "ladger me purchase bill ho ya couriour ka ya kisi bhi party ka vo
+usi company ke ladger me dikhana chahiye jis company me usko chadhya hai
+full payment ke sath ... bill me 4 order nyko ke hai to 4 ka total nyko me
+dikha raha, baki rugara me or bill register hua nyko me ... ek baar me ek
+company ka ladger show hoye abhi minimum 2 company ka ladger show ho raha
+hai".
+
+1) EK BAAR ME EK COMPANY KA LEDGER
+   /dashboard/parties/[id]/ledger ab sirf EK company ka ledger dikhata hai
+   — default top-nav switcher wali company, aur bar ke Company select se
+   doosri company chuni ja sakti hai. Pehle 2+ companies ek ke neeche ek
+   stack ho jati thin (2026-10-28 ka default), wo hata diya. Company select
+   me se "All companies" option nikal gaya. Print/PDF header aur logo bhi
+   ab usi company ke.
+
+2) POORA BILL USI COMPANY ME JISME REGISTER HUA HAI
+   Purchase/Printing bill DB me ek bill_pass_register row per item/PO hota
+   hai, aur har row ki company apni order se aati thi — is liye ek vendor
+   invoice do companies me BAT jati thi: 4 items ka total Nyko me, bacha hua
+   Rugara me. Ab ledger pehle tay karta hai ki har document (vendor invoice
+   no. + invoice date; courier/duty/expense ek hi row) kis company ka hai:
+   purchase_bills.company_id (Finance hand-off jis company me bheja, wahi
+   stamp) — aur poora invoice usi company ke ledger me, poore amount ke
+   saath. Legacy rows jinka document stamp nahi milta / alag-alag hai, unke
+   liye invoice ka bada hissa jis company me hai wahi owner maana jata hai
+   (tie → jo pehle post hua).
+
+   Iske saath usi invoice ke saare payments bhi usi company me dikhte hain —
+   payment kisi bhi item row ke against ho, poora payment history bill ke
+   saath rehta hai ("full payment ke sath"). Doosri company ke ledger me us
+   bill ka adhoora amount nahi dikhta.
+
+3) Courier bill, Duty & Tax bill, office expense bill — ye ek row per
+   document hote hain, inpar koi split nahi tha; jis company me post hua
+   wahi dikhta rahega.
+
+Note: Washing Entry (chalan) abhi Finance ledger me post hota hi nahi (koi
+"send to finance" step nahi hai), is liye wo party ledger me nahi aata —
+chahe usme party + amount dono hain. Yeh alag kaam hai, is round me nahi
+kiya.
+
+----------------------------------------------------------------------
+
 ROUND OFF REPORT — PERIOD KE SAARE ROUND-OFF EK JAGAH (AUDIT)
 (2026-10-31c)
 ======================================================================

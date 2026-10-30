@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { ApprovalList, type ApprovalBillRow } from "../approval-list";
+import { fetchBillsInCompanyView } from "@/lib/ledger/bill-company";
 
 // Approvals (L2) — see ../actions.ts header comment. Lists every
 // bill_pass_register row already 'Approved L1' and waiting on final
@@ -15,15 +16,26 @@ export default async function ApprovalsL2Page() {
   const employee = await requireCapability("approve_level2");
   const supabase = createServiceRoleClient();
 
-  const [{ data: bills }, { data: companies }, { data: parties }, { data: employees }] = await Promise.all([
-    supabase
-      .from("bill_pass_register")
-      .select(
-        "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, party_id, total_amt, to_be_pay, prepared_by_employee_id, approved_l1_by, approved_l1_at, created_at, source, source_id"
-      )
-      .eq("company_id", employee.currentCompanyId)
-      .eq("approval_status", "Approved L1")
-      .order("approved_l1_at", { ascending: true }),
+  const [bills, { data: companies }, { data: parties }, { data: employees }] = await Promise.all([
+    // 2026-10-31 — scoped to the selected company, with a split
+    // Purchase/Printing invoice read in full and attributed to the company
+    // that registered it (same rule and helper as L1).
+    fetchBillsInCompanyView({
+      supabase,
+      viewCompanyIds: [employee.currentCompanyId],
+      allCompanyIds: employee.companyIds,
+      fetch: async (companyIds) =>
+        (
+          await supabase
+            .from("bill_pass_register")
+            .select(
+              "id, company_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, party_id, total_amt, to_be_pay, prepared_by_employee_id, approved_l1_by, approved_l1_at, created_at, source, source_id"
+            )
+            .in("company_id", companyIds)
+            .eq("approval_status", "Approved L1")
+            .order("approved_l1_at", { ascending: true })
+        ).data ?? [],
+    }),
     supabase.from("companies").select("id, name"),
     supabase.from("parties").select("id, name"),
     supabase.from("employees").select("id, name"),

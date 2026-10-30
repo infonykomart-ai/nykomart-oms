@@ -1693,17 +1693,28 @@ export async function sendPurchaseBillInvoiceToFinance(
     .limit(1);
   if (already && already.length > 0) return { error: "This invoice is already in the Finance ledger.", success: null };
 
-  // Duplicate bill guard — same vendor invoice already booked in this company.
+  // Duplicate bill guard — same vendor invoice already booked ANYWHERE this
+  // login can reach (2026-10-31). It used to check only the target company,
+  // which is exactly how one vendor invoice ended up posted in two companies:
+  // the first 4 items went to Nyko, then the remaining items were sent again
+  // to Rugara and the bill was split (
+  // "bill me 4 order nyko ke hai to 4 ka total nyko me dikha raha, baki rugara
+  // me"). One invoice = one document = one company — re-posting it under a
+  // second company is refused here, and "Change company" on the existing entry
+  // moves the whole invoice instead.
   const { data: dupRows } = await supabase
     .from("bill_pass_register")
-    .select("id, vendor_invoice_no")
-    .eq("company_id", companyId)
+    .select("id, vendor_invoice_no, company_id, companies(name)")
+    .in("company_id", employee.companyIds)
     .eq("party_id", partyId)
     .ilike("vendor_invoice_no", invoiceNo)
-    .limit(3);
-  if ((dupRows ?? []).some((d) => (d.vendor_invoice_no ?? "").trim().toLowerCase() === invoiceNo.toLowerCase())) {
+    .limit(5);
+  const duplicate = (dupRows ?? []).find((d) => (d.vendor_invoice_no ?? "").trim().toLowerCase() === invoiceNo.toLowerCase());
+  if (duplicate) {
+    const rel = (duplicate as { companies?: { name: string } | { name: string }[] | null }).companies;
+    const where = (Array.isArray(rel) ? rel[0]?.name : rel?.name) ?? "another company";
     return {
-      error: `Duplicate entry: invoice "${invoiceNo}" from this vendor is already in this company's Finance ledger. If this is a second bill on the same PO, raise a Debit Note against the earlier invoice instead of posting it again.`,
+      error: `Duplicate entry: invoice "${invoiceNo}" from this vendor is already in the Finance ledger of ${where}. One invoice can only be booked once — use “Change company” on that entry to move the whole invoice, or raise a Debit Note if this is a second bill on the same PO.`,
       success: null,
     };
   }
@@ -1813,19 +1824,25 @@ export async function moveBillFinanceCompany(_prev: SimpleResult, formData: Form
   if (bill.source === "purchase_bill" && bill.source_id) {
     const { data: pb } = await supabase
       .from("purchase_bills")
-      .select("id, vendor_party_id, vendor_invoice_no, company_id")
+      .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, company_id")
       .eq("id", bill.source_id)
       .maybeSingle();
     const pbInvoiceNo = pb?.vendor_invoice_no ?? null;
     const pbPartyId = pb?.vendor_party_id ?? null;
-    const pbCompanyId = pb?.company_id ?? null;
-    if (pbInvoiceNo && pbPartyId && pbCompanyId) {
-      const { data: siblings } = await supabase
+    if (pbInvoiceNo && pbPartyId) {
+      // 2026-10-31 — EVERY item row of this invoice moves, whatever company it
+      // currently sits in. Before this the lookup was narrowed to the row's own
+      // purchase_bills.company_id, so an invoice that had been split across
+      // companies (the bug this round fixes) could not be moved as a whole and
+      // kept half of itself behind. The invoice DATE keeps the sibling set to
+      // one real document — a vendor can reuse a number in another year.
+      let siblingQuery = supabase
         .from("purchase_bills")
         .select("id")
         .eq("vendor_party_id", pbPartyId)
-        .ilike("vendor_invoice_no", pbInvoiceNo)
-        .eq("company_id", pbCompanyId);
+        .ilike("vendor_invoice_no", pbInvoiceNo);
+      if (pb?.vendor_invoice_date) siblingQuery = siblingQuery.eq("vendor_invoice_date", pb.vendor_invoice_date);
+      const { data: siblings } = await siblingQuery;
       purchaseBillIds = (siblings ?? []).map((s) => s.id);
       if (purchaseBillIds.length > 0) {
         const { data: linked } = await supabase

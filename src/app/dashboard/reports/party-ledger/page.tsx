@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { groupBills } from "@/lib/bill-grouping";
+import { fetchBillsInCompanyView } from "@/lib/ledger/bill-company";
 import { PartyLedgerReportTable, type PartyLedgerRow } from "./party-ledger-report-table";
 
 // Party / Vendor Ledger report (2026-08-22) — one of the 3 new report
@@ -53,22 +54,39 @@ export default async function PartyLedgerReportPage({
     supabase.from("parties").select("id, name").order("name"),
   ]);
 
-  let query = finSupabase
-    .from("bill_pass_register")
-    .select(
-      "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, source, created_at"
-    )
-    .in("company_id", companyId ? [companyId] : employee.companyIds)
-    .not("party_id", "is", null)
-    .order("invoice_date", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true })
-    .limit(5000);
+  const scopedCompanyIds = companyId ? [companyId] : employee.companyIds;
 
-  if (partyId) query = query.eq("party_id", partyId);
+  const buildQuery = (companyIds: string[], vendorInvoiceNos?: string[]) => {
+    let q = finSupabase
+      .from("bill_pass_register")
+      .select(
+        "id, company_id, party_id, invoice_no, vendor_invoice_no, invoice_type, invoice_date, invoice_recv_date, total_amt, credit_note_amt, adj_amt, source, created_at"
+      )
+      .in("company_id", companyIds)
+      .not("party_id", "is", null)
+      .order("invoice_date", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .limit(5000);
 
-  const { data: entriesRaw } = await query;
+    if (partyId) q = q.eq("party_id", partyId);
+    if (vendorInvoiceNos) q = q.eq("source", "purchase_bill").in("vendor_invoice_no", vendorInvoiceNos);
+    return q;
+  };
 
-  const billIds = (entriesRaw ?? []).map((e) => e.id);
+  // 2026-10-31 — one invoice = one document = ONE company (see
+  // src/lib/ledger/bill-company.ts). The report's own query is unchanged; a
+  // Purchase/Printing invoice split across item rows has its other rows read
+  // in, and the whole document is then kept only in the company that registered
+  // it — so its full amount (and its payments) show once, not as part-amounts
+  // in two companies.
+  const entriesRaw = await fetchBillsInCompanyView({
+    supabase: finSupabase,
+    viewCompanyIds: scopedCompanyIds,
+    allCompanyIds: employee.companyIds,
+    fetch: async (companyIds, vendorInvoiceNos) => (await buildQuery(companyIds, vendorInvoiceNos)).data ?? [],
+  });
+
+  const billIds = entriesRaw.map((e) => e.id);
   const { data: paymentsRaw } = billIds.length
     ? await finSupabase
         .from("bill_pass_register_payments")
