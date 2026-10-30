@@ -33,11 +33,27 @@ export function RoundOffField({
   className,
   hint,
   onValueChange,
+  baseAmount,
+  gstAmount,
+  gstLabel,
 }: {
   /** Unique id prefix — bill edit forms render one per row. */
   id: string;
   /** Payable BEFORE this round-off (gross + whatever else). Omit if unknown. */
   payable?: number;
+  /**
+   * 2026-10-31 — "auto calculation show honi chahiye without gst with gst
+   * roundoff sabhi": the amount BEFORE GST on this document. When given, the
+   * control prints the full working — Amount (without GST) → GST → Total with
+   * GST → Round off → NET PAYABLE — instead of the single "before → after"
+   * line, and the round-off is unmistakably applied to the GST-inclusive
+   * total (the only reading that matches what gets saved).
+   */
+  baseAmount?: number;
+  /** The GST portion on that base. Omit (or 0) for a document with no GST. */
+  gstAmount?: number;
+  /** Heading for the GST line, e.g. "GST 5% (CGST 2.5% + SGST 2.5%)". */
+  gstLabel?: string;
   /** Existing round_off_amt when editing. */
   defaultValue?: number;
   label?: string;
@@ -58,8 +74,14 @@ export function RoundOffField({
   const mag = Number(magnitude);
   const value = (Number.isFinite(mag) ? mag : 0) * sign;
   const rounded = Math.round(value * 100) / 100;
-  const before = Number.isFinite(payable) ? Number(payable) : null;
-  const after = before == null ? null : Math.round((before + rounded) * 100) / 100;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  // With a GST breakdown the "before" figure is derived from base + GST so
+  // the printed working and the quick-round buttons can never disagree.
+  const hasBreakdown = Number.isFinite(baseAmount);
+  const base = hasBreakdown ? r2(Number(baseAmount)) : null;
+  const gst = hasBreakdown ? r2(Number(gstAmount) || 0) : null;
+  const before = hasBreakdown ? r2((base as number) + (gst as number)) : Number.isFinite(payable) ? Number(payable) : null;
+  const after = before == null ? null : r2(before + rounded);
 
   // Notify the parent only when the signed value changes (never during
   // render, and never on an unrelated re-render).
@@ -127,6 +149,33 @@ export function RoundOffField({
         )}
       </div>
 
+      {hasBreakdown && (
+        <div className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+          <div className="flex justify-between gap-3">
+            <span>Amount (without GST)</span>
+            <span className="tabular-nums">₹{(base as number).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span>{gstLabel ?? "GST"}</span>
+            <span className="tabular-nums">₹{(gst as number).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between gap-3 border-t border-slate-200 font-medium text-slate-700">
+            <span>Total with GST</span>
+            <span className="tabular-nums">₹{(before as number).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span>Round off</span>
+            <span className="tabular-nums">
+              {rounded === 0 ? "—" : `${rounded > 0 ? "+" : "−"} ${Math.abs(rounded).toFixed(2)}`}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3 border-t border-slate-300 font-semibold text-slate-900">
+            <span>NET PAYABLE</span>
+            <span className="tabular-nums">₹{(after as number).toFixed(2)}</span>
+          </div>
+        </div>
+      )}
+
       {before != null && before > 0 && (
         <div className="mt-1 flex flex-wrap items-center gap-1">
           {steps.map((s) => {
@@ -150,17 +199,21 @@ export function RoundOffField({
         </div>
       )}
 
-      <p className="mt-0.5 text-[11px] text-slate-400">
-        {before != null && before > 0 ? (
-          <>
-            Payable before round-off ₹{before.toFixed(2)} → after ₹{(after ?? before).toFixed(2)} (round off{" "}
-            {rounded >= 0 ? "+" : "−"}
-            {Math.abs(rounded).toFixed(2)})
-          </>
-        ) : (
-          hint ?? "e.g. +0.40 to round up, −0.30 to match the vendor's exact total."
-        )}
-      </p>
+      {hasBreakdown && hint && <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p>}
+
+      {!hasBreakdown && (
+        <p className="mt-0.5 text-[11px] text-slate-400">
+          {before != null && before > 0 ? (
+            <>
+              Payable before round-off ₹{before.toFixed(2)} → after ₹{(after ?? before).toFixed(2)} (round off{" "}
+              {rounded >= 0 ? "+" : "−"}
+              {Math.abs(rounded).toFixed(2)})
+            </>
+          ) : (
+            hint ?? "e.g. +0.40 to round up, −0.30 to match the vendor's exact total."
+          )}
+        </p>
+      )}
     </div>
   );
 }

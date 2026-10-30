@@ -19,7 +19,10 @@ export function InternalInvoiceForm({ companies }: { companies: { id: string; na
   // round-off control rounds the actual invoice total.
   const [qtyInput, setQtyInput] = useState("");
   const [rateInput, setRateInput] = useState("");
-  const preRoundTotal = Math.round((Number(qtyInput) || 0) * (Number(rateInput) || 0) * 1.18 * 100) / 100;
+  // 2026-10-31 — split into base + GST so the round-off control can show the
+  // full auto calculation (without GST → with GST → round off → net).
+  const preRoundBase = Math.round((Number(qtyInput) || 0) * (Number(rateInput) || 0) * 100) / 100;
+  const preRoundTotal = Math.round(preRoundBase * 1.18 * 100) / 100;
 
   if (state.success) {
     return <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">Internal Invoice created — <strong>{state.success.docNo}</strong>.</p>;
@@ -86,6 +89,9 @@ export function InternalInvoiceForm({ companies }: { companies: { id: string; na
           <RoundOffField
             id="ii_round_off"
             payable={preRoundTotal}
+            baseAmount={preRoundBase}
+            gstAmount={Math.round((preRoundTotal - preRoundBase) * 100) / 100}
+            gstLabel="GST 18% (CGST 9% + SGST 9%)"
             label="Round Off (added to the invoice total incl. 18% GST)"
             hint="Rounds the internal invoice total to an even figure."
           />

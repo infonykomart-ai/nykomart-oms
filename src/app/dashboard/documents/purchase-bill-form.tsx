@@ -256,7 +256,13 @@ export function PurchaseBillForm({
               db/2026-08-17-purchase-bills-round-off.sql.
               2026-10-24b / 2026-10-28: the shared +/− control with the
               round-figure shortcuts, identical to every other bill form. */}
-          <RoundOffField id="pb_round_off" payable={preRoundPayable} />
+          <RoundOffField
+            id="pb_round_off"
+            payable={preRoundPayable}
+            baseAmount={preRoundAmount}
+            gstAmount={Math.round((preRoundPayable - preRoundAmount) * 100) / 100}
+            gstLabel={gstRatePct == null ? "GST (0%)" : `GST ${totalGstPct}%${gstType === "IGST" ? " (IGST)" : " (CGST + SGST)"}`}
+          />
         </div>
       </div>
 

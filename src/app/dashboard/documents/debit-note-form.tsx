@@ -247,6 +247,9 @@ export function DebitNoteForm({
           <RoundOffField
             id="dn_round_off"
             payable={Math.round((Number(debitAmountInput) || 0) * 1.05 * 100) / 100}
+            baseAmount={Math.round((Number(debitAmountInput) || 0) * 100) / 100}
+            gstAmount={Math.round(Math.round((Number(debitAmountInput) || 0) * 1.05 * 100) - Math.round((Number(debitAmountInput) || 0) * 100)) / 100}
+            gstLabel="GST 5% (CGST 2.5% + SGST 2.5%)"
             label="Round Off (added to the note total incl. 5% GST)"
             hint="Rounds the debit note total to an even figure. GST is still charged on the debit amount, not on the rounding."
           />

@@ -133,8 +133,8 @@ export function FreightBillSection({
   const [fuelAmt, setFuelAmt] = useState("");
   const [otherAmt, setOtherAmt] = useState("");
   const amountOr0 = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-  const preRoundPayable =
-    Math.round((amountOr0(freightAmt) + amountOr0(fuelAmt) + amountOr0(otherAmt)) * 1.18 * 100) / 100;
+  const preRoundBase = Math.round((amountOr0(freightAmt) + amountOr0(fuelAmt) + amountOr0(otherAmt)) * 100) / 100;
+  const preRoundPayable = Math.round(preRoundBase * 1.18 * 100) / 100;
 
   return (
     <div className="space-y-4">
@@ -193,7 +193,13 @@ export function FreightBillSection({
               positive up; the ledger hand-off below starts at gross + this.
               2026-10-28 — now the shared +/− control, with the round-figure
               shortcuts, same as Purchase / Printing bills. */}
-          <RoundOffField id="fb_round_new" payable={preRoundPayable} />
+          <RoundOffField
+            id="fb_round_new"
+            payable={preRoundPayable}
+            baseAmount={preRoundBase}
+            gstAmount={Math.round((preRoundPayable - preRoundBase) * 100) / 100}
+            gstLabel="GST 18% (CGST 9% + SGST 9%)"
+          />
         </div>
 
         {/* 2026-08-12: "shipment ke against me courier ka credit note
@@ -411,6 +417,15 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             <RoundOffField
               id={`fb_round_${bill.id}`}
               payable={Number(bill.gross_total_amt ?? (Number(bill.freight_amt) + Number(bill.fuel_amt) + Number(bill.other_charges)) * 1.18)}
+              baseAmount={Number(bill.freight_amt) + Number(bill.fuel_amt) + Number(bill.other_charges)}
+              gstAmount={
+                Math.round(
+                  (Number(bill.gross_total_amt ?? (Number(bill.freight_amt) + Number(bill.fuel_amt) + Number(bill.other_charges)) * 1.18) -
+                    (Number(bill.freight_amt) + Number(bill.fuel_amt) + Number(bill.other_charges))) *
+                    100
+                ) / 100
+              }
+              gstLabel="GST 18% (CGST 9% + SGST 9%)"
               defaultValue={bill.round_off_amt ?? 0}
             />
           </div>

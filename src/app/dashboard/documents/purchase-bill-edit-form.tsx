@@ -79,6 +79,14 @@ export function PurchaseBillEditForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.success]);
 
+  // 2026-10-31 — "auto calculation show honi chahiye without gst with gst
+  // roundoff sabhi": the same three numbers the save action derives, so the
+  // edit form can show Amount (without GST) → GST → Total with GST → round
+  // off → NET PAYABLE instead of one opaque "payable" figure.
+  const editBaseAmount = Math.round((Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) * 100) / 100;
+  const editGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
+  const editGstAmount = Math.round(editBaseAmount * editGstPct) / 100;
+
   return (
     <form action={formAction} className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
       <input type="hidden" name="id" value={bill.id} />
@@ -197,10 +205,10 @@ export function PurchaseBillEditForm({
             2026-10-28 — the shared +/− control. */}
         <RoundOffField
           id={`pb_round_off_${bill.id}`}
-          payable={
-            (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) *
-            (1 + (gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2) / 100)
-          }
+          payable={Math.round((editBaseAmount + editGstAmount) * 100) / 100}
+          baseAmount={editBaseAmount}
+          gstAmount={editGstAmount}
+          gstLabel={gstRatePct == null ? "GST (0%)" : `GST ${editGstPct}%${gstType === "IGST" ? " (IGST)" : " (CGST + SGST)"}`}
           defaultValue={Number(bill.round_off_amt ?? 0)}
         />
       </div>

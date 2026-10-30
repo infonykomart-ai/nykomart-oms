@@ -192,6 +192,12 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
     const amount = (o.qty || 0) * (isPcs ? 1 : Number(o.sqFeetDisplay) || 0) * (Number(o.unitRateInput) || 0);
     return sum + amount + Math.round(amount * invoiceGstPct) / 100;
   }, 0);
+  // 2026-10-31 — the same total split into Amount (without GST) and GST, so
+  // the round-off control can print the full working (see round-off-field.tsx).
+  const invoicePreRoundBase = orders.reduce((sum, o) => {
+    const amount = (o.qty || 0) * (isPcs ? 1 : Number(o.sqFeetDisplay) || 0) * (Number(o.unitRateInput) || 0);
+    return sum + amount;
+  }, 0);
 
   const linesJson = JSON.stringify(
     orders.map((o) => ({
@@ -466,6 +472,9 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         <RoundOffField
           id="pbm_round_off"
           payable={invoicePreRoundTotal}
+          baseAmount={invoicePreRoundBase}
+          gstAmount={Math.round((invoicePreRoundTotal - invoicePreRoundBase) * 100) / 100}
+          gstLabel={gstRatePct == null ? "GST (0%)" : `GST ${invoiceGstPct}%${gstType === "IGST" ? " (IGST)" : " (CGST + SGST)"}`}
           label="Round Off (on the invoice total)"
           hint="Rounds the WHOLE invoice once — e.g. +0.40 makes the payable an even figure. Saved on the invoice, not per PO."
         />

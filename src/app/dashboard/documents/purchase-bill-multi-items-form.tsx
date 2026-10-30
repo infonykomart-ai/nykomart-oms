@@ -105,6 +105,15 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
       (Number(it.unitRateInput) || 0);
     return sum + amount + Math.round(amount * invoiceGstPct) / 100;
   }, 0);
+  // 2026-10-31 — same split as the Multiple-Orders form, for the round-off
+  // control's full working (Amount without GST / GST / Total / Round off / Net).
+  const invoicePreRoundBase = items.reduce((sum, it) => {
+    const amount =
+      (Number(it.qty) || 0) *
+      (it.sqFeetUnit === "PCS" ? 1 : Number(it.sqFeetInput) || 0) *
+      (Number(it.unitRateInput) || 0);
+    return sum + amount;
+  }, 0);
 
   const itemsJson = JSON.stringify(
     items.map((it) => ({
@@ -259,6 +268,9 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
         <RoundOffField
           id="pbmi_round_off"
           payable={invoicePreRoundTotal}
+          baseAmount={invoicePreRoundBase}
+          gstAmount={Math.round((invoicePreRoundTotal - invoicePreRoundBase) * 100) / 100}
+          gstLabel={gstRatePct == null ? "GST (0%)" : `GST ${invoiceGstPct}%${gstType === "IGST" ? " (IGST)" : " (CGST + SGST)"}`}
           label="Round Off (on the invoice total)"
           hint="Rounds the WHOLE invoice once — e.g. +0.40 makes the payable an even figure."
         />

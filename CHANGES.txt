@@ -1,3 +1,39 @@
+ROUND OFF — AUTO CALCULATION (WITHOUT GST → WITH GST → ROUND OFF → NET)
+(2026-10-31)
+======================================================================
+
+PROBLEM: "round off ka check karo … after gst calculate hone ke baad add
+kiya jata hai or auto calculation show honi chahiye without gst with gst
+roundoff sabhi, baad me bhi kabhi add karna pade roundoff to pura edit me
+vahi form open hona chahiye."
+
+AUDIT (sabhi forms, create + edit): round off har jagah GST ke BAAD wale
+payable par hi lagta hai — purchase bill (single / multiple orders /
+multiple items), freight, duty & tax, washing, debit note (Debit + 5%
+GST), credit note, internal invoice (Qty × Rate + 18% GST), journal
+voucher. Har edit form me bhi wahi round-off control pehle se maujood tha,
+is liye "edit me vahi form" wali baat already sahi thi — koi bug nahi
+mila. Sirf ek cheez missing thi: form me working (kitna base, kitna GST,
+round off ke baad kitna) dikhti nahi thi.
+
+AB (src/app/dashboard/documents/round-off-field.tsx):
+
+  • RoundOffField ko naye optional props: baseAmount / gstAmount /
+    gstLabel. Jab base diya jata hai to wahi control ek chhoti calculation
+    sheet dikhata hai — Amount (without GST) → GST x% → Total with GST →
+    Round off (+/−) → NET PAYABLE. "Before" figure base + GST se hi
+    derive hota hai (caller ka payable nahi), is liye printed working,
+    quick-round buttons aur saved round_off_amt kabhi alag nahi ho sakte.
+  • Breakdown har GST wale form me (create + edit dono): purchase bill
+    single, multiple orders, multiple items, freight, duty & tax, debit
+    note (GST 5%), internal invoice (GST 18%). Washing, credit note aur
+    journal voucher me GST ka alag split nahi hai, is liye waha pehle
+    wala "payable before → after" line hi rehta hai.
+  • Form ka apna hint breakdown ke neeche bhi dikhta hai (pehle breakdown
+    wale case me gum ho jata).
+
+----------------------------------------------------------------------
+
 ROUND OFF — AB HAR INVOICE / BILL / NOTE / VOUCHER ME (SINGLE + MULTIPLE ENTRY)
 (2026-10-29n)
 ======================================================================

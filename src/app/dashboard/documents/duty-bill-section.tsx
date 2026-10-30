@@ -107,8 +107,9 @@ export function DutyBillSection({
   const [dutyInr, setDutyInr] = useState("");
   const [gstAmt, setGstAmt] = useState("");
   const amountOr0 = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-  const preRoundPayable =
-    Math.round((amountOr0(dutyInr) + (gstAmt.trim() === "" ? Math.round(amountOr0(dutyInr) * 18) / 100 : amountOr0(gstAmt))) * 100) / 100;
+  const preRoundBase = Math.round(amountOr0(dutyInr) * 100) / 100;
+  const preRoundGst = gstAmt.trim() === "" ? Math.round(amountOr0(dutyInr) * 18) / 100 : amountOr0(gstAmt);
+  const preRoundPayable = Math.round((preRoundBase + preRoundGst) * 100) / 100;
 
   return (
     <div className="space-y-4">
@@ -199,7 +200,13 @@ export function DutyBillSection({
             {/* 2026-10-24b — "ROUND FIGURE SET KARNE KA OPTION ... DUTY": same
                 control as the Courier Bill form.
                 2026-10-28 — now the shared +/− control. */}
-            <RoundOffField id="db_round_new" payable={preRoundPayable} />
+            <RoundOffField
+              id="db_round_new"
+              payable={preRoundPayable}
+              baseAmount={preRoundBase}
+              gstAmount={Math.round(preRoundGst * 100) / 100}
+              gstLabel={gstAmt.trim() === "" ? "GST 18% (CGST 9% + SGST 9%)" : "GST (as entered)"}
+            />
           </div>
         </div>
 
@@ -410,6 +417,9 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
               <RoundOffField
                 id={`db_round_${bill.id}`}
                 payable={Number(bill.gross_total_amt ?? Number(bill.duty_tax_amt_inr) + Number(bill.gst_18pct_amt))}
+                baseAmount={Number(bill.duty_tax_amt_inr)}
+                gstAmount={Number(bill.gst_18pct_amt)}
+                gstLabel="GST 18% (CGST 9% + SGST 9%)"
                 defaultValue={bill.round_off_amt ?? 0}
                 label="Round Off"
               />

@@ -35,7 +35,10 @@ export function InternalInvoiceEditForm({
   const [state, formAction, pending] = useActionState(updateInternalInvoice, initialState);
   const [qtyInput, setQtyInput] = useState(String(invoice.qty));
   const [rateInput, setRateInput] = useState(String(invoice.rate));
-  const preRoundTotal = Math.round((Number(qtyInput) || 0) * (Number(rateInput) || 0) * 1.18 * 100) / 100;
+  // 2026-10-31 — same base + GST split as the create form, so the edit form's
+  // round-off control shows the identical auto calculation.
+  const preRoundBase = Math.round((Number(qtyInput) || 0) * (Number(rateInput) || 0) * 100) / 100;
+  const preRoundTotal = Math.round(preRoundBase * 1.18 * 100) / 100;
 
   useEffect(() => {
     if (state.success) onDone();
@@ -86,6 +89,9 @@ export function InternalInvoiceEditForm({
           <RoundOffField
             id={`ii_round_off_${invoice.id}`}
             payable={preRoundTotal}
+            baseAmount={preRoundBase}
+            gstAmount={Math.round((preRoundTotal - preRoundBase) * 100) / 100}
+            gstLabel="GST 18% (CGST 9% + SGST 9%)"
             defaultValue={invoice.round_off_amt}
             label="Round Off (added to the invoice total incl. 18% GST)"
           />

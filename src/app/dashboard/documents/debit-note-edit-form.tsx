@@ -130,6 +130,9 @@ export function DebitNoteEditForm({
           <RoundOffField
             id={`dn_round_off_${note.id}`}
             payable={Math.round(note.debit_amount * 1.05 * 100) / 100}
+            baseAmount={Math.round(note.debit_amount * 100) / 100}
+            gstAmount={Math.round(Math.round(note.debit_amount * 1.05 * 100) - Math.round(note.debit_amount * 100)) / 100}
+            gstLabel="GST 5% (CGST 2.5% + SGST 2.5%)"
             defaultValue={note.round_off_amt}
             label="Round Off (added to the note total incl. 5% GST)"
           />
