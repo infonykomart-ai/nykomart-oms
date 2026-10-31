@@ -143,6 +143,15 @@ export default async function BillPaymentPage({
   const purchaseSourceIds = (bills ?? [])
     .filter((b) => b.source === "purchase_bill" && !!b.source_id)
     .map((b) => b.source_id as string);
+  // 2026-11-03 — courier/duty bills on this page that may carry a disputed-AWB
+  // payment hold. Only source_id matters: the hold lives on the AWB assignment
+  // rows, not on the ledger row (see the migration's own comment).
+  const freightBillSourceIds = (bills ?? [])
+    .filter((b) => b.source === "freight_bill" && !!b.source_id)
+    .map((b) => b.source_id as string);
+  const dutyBillSourceIds = (bills ?? [])
+    .filter((b) => b.source === "duty_tax_bill" && !!b.source_id)
+    .map((b) => b.source_id as string);
 
   const [
     relatedNotes,
@@ -151,6 +160,8 @@ export default async function BillPaymentPage({
     { data: purchaseItems },
     docHrefByBillId,
     walletOverview,
+    { data: freightDisputes },
+    { data: dutyDisputes },
   ] = await Promise.all([
     listRelatedNotesForBills(pageBillIds),
     pageBillIds.length
@@ -180,7 +191,40 @@ export default async function BillPaymentPage({
     // 2026-09-15 — courier prepaid wallet balances for the "Pay from Wallet"
     // action, and the wallet panel itself.
     getWalletOverview(effectiveCompanyIds),
+    // 2026-11-03 — open disputes on this page's courier/duty bills. Missing
+    // columns (migration not run) just yield an error + empty data → no holds.
+    freightBillSourceIds.length
+      ? supabase
+          .from("freight_bill_awb_assignments")
+          .select("freight_bill_id, dispute_amount")
+          .eq("dispute_status", "under_dispute")
+          .in("freight_bill_id", freightBillSourceIds)
+      : Promise.resolve({ data: [] as { freight_bill_id: string | null; dispute_amount: number | null }[] }),
+    dutyBillSourceIds.length
+      ? supabase
+          .from("duty_bill_awb_assignments")
+          .select("duty_tax_bill_id, dispute_amount")
+          .eq("dispute_status", "under_dispute")
+          .in("duty_tax_bill_id", dutyBillSourceIds)
+      : Promise.resolve({ data: [] as { duty_tax_bill_id: string | null; dispute_amount: number | null }[] }),
   ]);
+
+  // 2026-11-03 — "under_dispute" holds, summed per source bill.
+  const disputeHoldBySourceId = new Map<string, number>();
+  for (const d of freightDisputes ?? []) {
+    if (!d.freight_bill_id) continue;
+    disputeHoldBySourceId.set(
+      `freight_bill:${d.freight_bill_id}`,
+      (disputeHoldBySourceId.get(`freight_bill:${d.freight_bill_id}`) ?? 0) + Number(d.dispute_amount ?? 0)
+    );
+  }
+  for (const d of dutyDisputes ?? []) {
+    if (!d.duty_tax_bill_id) continue;
+    disputeHoldBySourceId.set(
+      `duty_tax_bill:${d.duty_tax_bill_id}`,
+      (disputeHoldBySourceId.get(`duty_tax_bill:${d.duty_tax_bill_id}`) ?? 0) + Number(d.dispute_amount ?? 0)
+    );
+  }
   const notesByBillId = new Map<string, typeof relatedNotes>();
   for (const n of relatedNotes) {
     const list = notesByBillId.get(n.billPassRegisterId) ?? [];
@@ -260,6 +304,8 @@ export default async function BillPaymentPage({
     to_be_pay: Number(b.to_be_pay),
     total_paid: Number(b.total_paid),
     balance_due: Number(b.balance_due),
+    // 2026-11-03 — disputed-AWB hold; never part of the ledger balance.
+    dispute_hold: b.source && b.source_id ? Math.round((disputeHoldBySourceId.get(`${b.source}:${b.source_id}`) ?? 0) * 100) / 100 : 0,
     remark: b.remark,
     related_notes: notesByBillId.get(b.id) ?? [],
     // 2026-09-13 — Credit Notes panel data (see the page-level comment on

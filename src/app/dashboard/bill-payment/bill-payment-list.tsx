@@ -84,6 +84,14 @@ export type PayableBillRow = {
   to_be_pay: number;
   total_paid: number;
   balance_due: number;
+  /**
+   * 2026-11-03 — "Under Dispute" hold on this bill's courier/duty AWBs
+   * (freight_bill_awb_assignments / duty_bill_awb_assignments.dispute_amount).
+   * It is NOT part of the ledger — balance_due stays the posted figure — but
+   * the payment default/max subtracts it so disputed money is not paid out.
+   * 0 for every bill type without AWB-level disputes (purchase, salary, …).
+   */
+  dispute_hold: number;
   remark: string | null;
   related_notes: RelatedNote[];
   // 2026-09-13 — applied credit-note adjustments (bill_pass_register_
@@ -356,6 +364,7 @@ function GroupRow({
   const toBePay = group.bills.reduce((sum, b) => sum + b.to_be_pay, 0);
   const totalPaid = group.bills.reduce((sum, b) => sum + b.total_paid, 0);
   const balanceDue = group.bills.reduce((sum, b) => sum + b.balance_due, 0);
+  const disputeHold = group.bills.reduce((sum, b) => sum + b.dispute_hold, 0);
 
   useEffect(() => {
     if (editState.success) {
@@ -430,7 +439,17 @@ function GroupRow({
         </td>
         <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{toBePay.toFixed(2)}</td>
         <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">{totalPaid.toFixed(2)}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">{balanceDue.toFixed(2)}</td>
+        <td className="whitespace-nowrap px-3 py-2 text-right font-semibold text-slate-900">
+          {balanceDue.toFixed(2)}
+          {disputeHold > 0 && (
+            <span
+              className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-800"
+              title="Disputed AWBs — this amount is held back from payment until the dispute is resolved (Documents → that Courier/Duty bill → + Note / Dispute)"
+            >
+              ⚑ {disputeHold.toFixed(2)} held
+            </span>
+          )}
+        </td>
         <td className="whitespace-nowrap px-3 py-2 text-right space-x-2">
           {editable && !editLockedForPayments ? (
             <button type="button" onClick={() => setEditOpen((v) => !v)} className="text-xs font-semibold text-slate-600 hover:underline">
@@ -661,7 +680,9 @@ function PerBillAmountForm({
   sticky?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(recordBulkBillPayment, initialBulkState);
-  const total = bills.reduce((s, b) => s + b.balance_due, 0);
+  // 2026-11-03 — pay what is left after disputed-AWB holds (never below 0).
+  const payableOf = (b: PayableBillRow) => Math.max(0, Math.round((b.balance_due - b.dispute_hold) * 100) / 100);
+  const total = bills.reduce((s, b) => s + payableOf(b), 0);
 
   return (
     <div className={sticky ? "sticky bottom-3 mt-3 rounded-xl border border-amber-300 bg-white p-3 shadow-lg" : "rounded-xl border border-amber-200 bg-white p-3"}>
@@ -704,14 +725,17 @@ function PerBillAmountForm({
                 <span className="text-slate-400">
                   · {b.item_label ? `${b.item_label} · ` : ""}
                   {b.party_name ?? "—"} (balance {b.balance_due.toFixed(2)})
+                  {b.dispute_hold > 0 && (
+                    <span className="text-red-700"> · ⚑ {b.dispute_hold.toFixed(2)} held for disputed AWB(s)</span>
+                  )}
                 </span>
               </span>
               <input
                 name={`amount_${b.id}`}
                 type="number"
                 step="0.01"
-                max={b.balance_due}
-                defaultValue={b.balance_due.toFixed(2)}
+                max={payableOf(b)}
+                defaultValue={payableOf(b).toFixed(2)}
                 className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-right text-xs"
               />
             </div>

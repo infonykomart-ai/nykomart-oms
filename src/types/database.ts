@@ -3958,6 +3958,13 @@ export type Database = {
           remark: string | null;
           /** 2026-10-28e — per-AWB round-off (see db/2026-10-28e-awb-round-off.sql). */
           round_off_amt: number;
+          /** 2026-11-03 — disputed-AWB case (see db/2026-11-03-awb-dispute-and-duty-cn-split.sql). */
+          dispute_status: string;
+          dispute_amount: number;
+          dispute_reason: string | null;
+          dispute_raised_on: string | null;
+          dispute_resolved_on: string | null;
+          dispute_resolution: string | null;
         };
         Insert: {
           id?: string;
@@ -3976,6 +3983,12 @@ export type Database = {
           debit_note_amt?: number | null;
           remark?: string | null;
           round_off_amt?: number;
+          dispute_status?: string;
+          dispute_amount?: number;
+          dispute_reason?: string | null;
+          dispute_raised_on?: string | null;
+          dispute_resolved_on?: string | null;
+          dispute_resolution?: string | null;
         };
         Update: {
           id?: string;
@@ -3994,6 +4007,12 @@ export type Database = {
           debit_note_amt?: number | null;
           remark?: string | null;
           round_off_amt?: number;
+          dispute_status?: string;
+          dispute_amount?: number;
+          dispute_reason?: string | null;
+          dispute_raised_on?: string | null;
+          dispute_resolved_on?: string | null;
+          dispute_resolution?: string | null;
         };
         Relationships: [
           {
@@ -5933,6 +5952,13 @@ export type Database = {
           billed_gst_amt: number | null;
           /** 2026-10-28e — per-AWB round-off (see db/2026-10-28e-awb-round-off.sql). */
           round_off_amt: number;
+          /** 2026-11-03 — disputed-AWB case (see db/2026-11-03-awb-dispute-and-duty-cn-split.sql). */
+          dispute_status: string;
+          dispute_amount: number;
+          dispute_reason: string | null;
+          dispute_raised_on: string | null;
+          dispute_resolved_on: string | null;
+          dispute_resolution: string | null;
         };
         Insert: {
           id?: string;
@@ -5956,6 +5982,12 @@ export type Database = {
           billed_other_amt?: number | null;
           billed_gst_amt?: number | null;
           round_off_amt?: number;
+          dispute_status?: string;
+          dispute_amount?: number;
+          dispute_reason?: string | null;
+          dispute_raised_on?: string | null;
+          dispute_resolved_on?: string | null;
+          dispute_resolution?: string | null;
         };
         Update: {
           id?: string;
@@ -5979,6 +6011,12 @@ export type Database = {
           billed_other_amt?: number | null;
           billed_gst_amt?: number | null;
           round_off_amt?: number;
+          dispute_status?: string;
+          dispute_amount?: number;
+          dispute_reason?: string | null;
+          dispute_raised_on?: string | null;
+          dispute_resolved_on?: string | null;
+          dispute_resolution?: string | null;
         };
         Relationships: [
           {

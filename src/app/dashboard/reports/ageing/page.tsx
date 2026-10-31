@@ -97,6 +97,12 @@ async function AgeingInner(sp: { [key: string]: string | string[] | undefined })
           <Link href="/dashboard/reports" className="text-slate-500 hover:underline">
             ← Reports
           </Link>
+          {/* 2026-11-03 — ageing is per PARTY; a disputed courier/duty AWB has
+              its own age (days since the case was raised) and held amount —
+              that lives in the Courier 3-Way Match report. */}
+          <Link href="/dashboard/reports/freight-match?only=disputed" className="text-red-700 hover:underline">
+            ⚑ Disputed AWBs →
+          </Link>
           <Link href="/dashboard/parties/summary" className="text-amber-700 hover:underline">
             Party Balance Summary →
           </Link>
