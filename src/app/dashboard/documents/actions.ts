@@ -33,6 +33,8 @@
 // AWB lookup re-checks employee.companyIds (via the order it resolves to).
 
 import { requireCapability, requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
+import { todayIST } from "@/lib/attendance/ist-date";
+import { buildAwbDisputeUpdate, hasAwbDisputeFields } from "@/lib/couriers/awb-dispute";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
@@ -3456,6 +3458,28 @@ export async function updateFreightAwbAssignmentNotes(_prev: SimpleResult, formD
   );
   if (error) return { error: error.message, success: false };
 
+  // 2026-11-03 — disputed-AWB block, only when this form submitted it. The
+  // disputed amount is a PAYMENT HOLD, never a ledger adjustment: the bill's
+  // payable stays exactly what Finance was posted (see
+  // db/2026-11-03-awb-dispute-and-duty-cn-split.sql). Read the stored case
+  // first (tolerantly — the columns may not exist yet) so raising a case
+  // stamps `dispute_raised_on` once instead of moving the age on every edit.
+  let disputeError: string | null = null;
+  if (hasAwbDisputeFields(formData)) {
+    const { data: disputeRow, error: disputeReadError } = await supabase
+      .from("freight_bill_awb_assignments")
+      .select("dispute_status, dispute_amount, dispute_raised_on, dispute_resolved_on")
+      .eq("id", id)
+      .maybeSingle();
+    if (!isMissingSchemaPiece(disputeReadError)) {
+      const { error: disputeWriteError } = await supabase
+        .from("freight_bill_awb_assignments")
+        .update(buildAwbDisputeUpdate(formData, disputeRow ?? null, todayIST()))
+        .eq("id", id);
+      if (disputeWriteError) disputeError = disputeWriteError.message;
+    }
+  }
+
   if (deltaCn !== 0 || deltaDn !== 0 || deltaRoundOff !== 0) {
     const syncError = await applyBillLedgerDelta(supabase, "freight_bill", assignment.freight_bill_id, -deltaCn + deltaDn + deltaRoundOff);
     if (syncError) {
@@ -3464,7 +3488,7 @@ export async function updateFreightAwbAssignmentNotes(_prev: SimpleResult, formD
   }
 
   revalidatePath("/dashboard/documents");
-  return { error: null, success: true };
+  return { error: disputeError ? `Note saved, but the dispute could not be stored: ${disputeError}` : null, success: true };
 }
 
 /**
@@ -4044,6 +4068,24 @@ export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData
   );
   if (error) return { error: error.message, success: false };
 
+  // 2026-11-03 — same disputed-AWB (payment hold) block as the freight AWB
+  // notes above; see that comment for why the ledger is deliberately untouched.
+  let disputeError: string | null = null;
+  if (hasAwbDisputeFields(formData)) {
+    const { data: disputeRow, error: disputeReadError } = await supabase
+      .from("duty_bill_awb_assignments")
+      .select("dispute_status, dispute_amount, dispute_raised_on, dispute_resolved_on")
+      .eq("id", id)
+      .maybeSingle();
+    if (!isMissingSchemaPiece(disputeReadError)) {
+      const { error: disputeWriteError } = await supabase
+        .from("duty_bill_awb_assignments")
+        .update(buildAwbDisputeUpdate(formData, disputeRow ?? null, todayIST()))
+        .eq("id", id);
+      if (disputeWriteError) disputeError = disputeWriteError.message;
+    }
+  }
+
   if (deltaCn !== 0 || deltaDn !== 0 || deltaRoundOff !== 0) {
     const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", assignment.duty_tax_bill_id, -deltaCn + deltaDn + deltaRoundOff);
     if (syncError) {
@@ -4052,7 +4094,7 @@ export async function updateDutyAwbAssignmentNotes(_prev: SimpleResult, formData
   }
 
   revalidatePath("/dashboard/documents");
-  return { error: null, success: true };
+  return { error: disputeError ? `Note saved, but the dispute could not be stored: ${disputeError}` : null, success: true };
 }
 
 export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormData): Promise<SimpleResult> {

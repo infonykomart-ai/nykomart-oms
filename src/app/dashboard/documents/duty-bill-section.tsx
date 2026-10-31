@@ -49,6 +49,13 @@ export type DutyBillAssignment = {
   debit_note_date: string | null;
   debit_note_amt: number | null;
   remark: string | null;
+  // 2026-11-03 — disputed-AWB case (payment hold); see FreightBillAssignment.
+  dispute_status: "none" | "under_dispute" | "resolved" | null;
+  dispute_amount: number | null;
+  dispute_reason: string | null;
+  dispute_raised_on: string | null;
+  dispute_resolved_on: string | null;
+  dispute_resolution: string | null;
 };
 
 export type DutyBillRow = {
@@ -500,6 +507,9 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
                 gst += a.gst_18pct != null ? Number(a.gst_18pct) : Math.round(Number(a.duty_tax_amt_inr ?? 0) * 18) / 100;
               }
               const roundOff = awbRoundOff + Number(bill.round_off_amt ?? 0);
+              // 2026-11-03 — payment hold across this bill's OPEN disputes.
+              const disputed = bill.assignments.filter((a) => a.dispute_status === "under_dispute");
+              const holdTotal = disputed.reduce((s, a) => s + Number(a.dispute_amount ?? 0), 0);
               return (
                 <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600 sm:grid-cols-5">
                   <div>
@@ -522,6 +532,12 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
                     <span className="block text-slate-400">Payable</span>
                     <span className="font-semibold text-slate-900">₹{(duty + gst + roundOff).toFixed(2)}</span>
                   </div>
+                  {disputed.length > 0 && (
+                    <div>
+                      <span className="block text-red-500">⚑ Disputed ({disputed.length}) — payment hold</span>
+                      <span className="font-semibold text-red-700">₹{holdTotal.toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -820,11 +836,22 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
             </strong>
           </span>
           {assignment.remark && <span className="ml-2 text-slate-400">· {assignment.remark}</span>}
+          {assignment.dispute_status === "under_dispute" && (
+            <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-800">
+              ⚑ Disputed · ₹{Number(assignment.dispute_amount ?? 0).toFixed(2)} held
+              {assignment.dispute_reason ? ` · ${assignment.dispute_reason}` : ""}
+            </span>
+          )}
+          {assignment.dispute_status === "resolved" && (
+            <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-800">
+              ✓ Dispute resolved{assignment.dispute_resolved_on ? ` ${assignment.dispute_resolved_on}` : ""}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <p className="text-red-600">{deleteError}</p>
           <button type="button" onClick={() => setNoteMode((v) => !v)} className="rounded border border-slate-300 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50">
-            {noteMode ? "Cancel" : "+ Note"}
+            {noteMode ? "Cancel" : "+ Note / Dispute"}
           </button>
           <button
             type="button"
@@ -868,6 +895,55 @@ function AssignmentRow({ assignment }: { assignment: DutyBillAssignment }) {
             gstLabel={assignment.gst_18pct == null ? "GST 18% (auto)" : "GST (as entered)"}
             defaultValue={Number(assignment.round_off_amt ?? 0)}
           />
+          {/* 2026-11-03 — disputed AWB (payment hold), same block as the
+              Courier Bill's AWB form; ledger payable stays untouched. */}
+          <div className="grid grid-cols-1 gap-1.5 border-t border-purple-200 pt-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label className={labelClass} htmlFor={`db_dispute_status_${assignment.id}`}>Dispute</label>
+              <select
+                id={`db_dispute_status_${assignment.id}`}
+                name="dispute_status"
+                defaultValue={assignment.dispute_status ?? "none"}
+                className={inputClass}
+              >
+                <option value="none">No dispute</option>
+                <option value="under_dispute">⚑ Under dispute (hold)</option>
+                <option value="resolved">✓ Resolved</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor={`db_dispute_amount_${assignment.id}`}>Hold amount (₹)</label>
+              <input
+                id={`db_dispute_amount_${assignment.id}`}
+                name="dispute_amount"
+                type="number"
+                step="0.01"
+                defaultValue={assignment.dispute_amount ?? ""}
+                placeholder="0"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor={`db_dispute_reason_${assignment.id}`}>What is wrong</label>
+              <input
+                id={`db_dispute_reason_${assignment.id}`}
+                name="dispute_reason"
+                defaultValue={assignment.dispute_reason ?? ""}
+                placeholder="Duty / surcharge / duplicate…"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor={`db_dispute_resolution_${assignment.id}`}>How it closed</label>
+              <input
+                id={`db_dispute_resolution_${assignment.id}`}
+                name="dispute_resolution"
+                defaultValue={assignment.dispute_resolution ?? ""}
+                placeholder="CN diya / courier ne maana"
+                className={inputClass}
+              />
+            </div>
+          </div>
           <button type="submit" disabled={notePending} className="rounded bg-purple-600 px-2 py-1 font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
             {notePending ? "Saving..." : "Save Note"}
           </button>

@@ -19,6 +19,13 @@ export type SaleProfitRow = {
   item_category: string | null;
   qty: number | null;
   order_value_inr: number;
+  /**
+   * 2026-11-03 — courier/duty cost NET of that AWB's credit/debit notes (the
+   * bill-header CN split pro-rata across its AWBs + that AWB's own CN − DN,
+   * from freight_awb_net_view / duty_awb_net_view). cn_adjustment_inr is the
+   * amount those views took off (negative = net debit note).
+   */
+  cn_adjustment_inr: number;
   courier_expense_inr: number;
   duty_expense_inr: number;
   net_total_value: number;
@@ -36,8 +43,9 @@ const COLUMNS: ExportColumn<SaleProfitRow>[] = [
   { key: "item_category", label: "Item Category", value: (r) => r.item_category },
   { key: "qty", label: "Qty", value: (r) => r.qty },
   { key: "order_value_inr", label: "Order Value (INR)", value: (r) => r.order_value_inr },
-  { key: "courier_expense_inr", label: "Courier Expense", value: (r) => r.courier_expense_inr },
-  { key: "duty_expense_inr", label: "Duty Expense", value: (r) => r.duty_expense_inr },
+  { key: "cn_adjustment_inr", label: "CN / DN Adjustment", value: (r) => r.cn_adjustment_inr },
+  { key: "courier_expense_inr", label: "Courier Expense (net of CN)", value: (r) => r.courier_expense_inr },
+  { key: "duty_expense_inr", label: "Duty Expense (net of CN)", value: (r) => r.duty_expense_inr },
   { key: "net_total_value", label: "Net Total Value", value: (r) => r.net_total_value },
   { key: "portal_expenses_25pct", label: "Portal Expenses (25%)", value: (r) => r.portal_expenses_25pct },
   { key: "net_earn", label: "Net Earn", value: (r) => r.net_earn },
@@ -104,6 +112,10 @@ export function SaleProfitReportTable({
       </div>
 
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 print:hidden">
+        Courier and Duty expense are shown <strong>net of the courier&apos;s credit/debit notes</strong> — the whole-bill
+        CN is split across that bill&apos;s AWBs pro-rata by gross (plus each AWB&apos;s own CN − DN), the same
+        allocation the P&amp;L dashboard uses. CN / DN Adjustment column = how much was netted off.
+        <br />
         ⚠️ Net Earn/Profit % here excludes company-wide Purchase Bill costs (those are pooled across all orders, not
         attributable to a single order) — it only nets Order Value against that order&apos;s own Courier + Duty
         expense and the standard 25% portal-expense assumption. For a full company-level profit figure including

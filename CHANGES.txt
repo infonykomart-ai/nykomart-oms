@@ -1,3 +1,73 @@
+DISPUTED AWB KA PAYMENT-HOLD + 3-WAY MATCH + CN AWB-WISE MARGIN
+(2026-11-03)
+======================================================================
+
+SQL: db/2026-11-03-awb-dispute-and-duty-cn-split.sql  (ek baar chalayein)
+     Sirf 6 columns add karta hai (dono AWB tables par), dobara chalane par
+     safe, koi backfill nahi — purani rows dispute_status = 'none'.
+
+KYA THA / KYA AB
+  1) CN AWB-wise split → order margin
+     Bill-header CN ko AWB-wise todne wala view PEHLE SE tha
+     (freight_awb_net_view 2026-09-17 + duty_awb_net_view), aur P&L dashboard
+     use karta tha — par Sale & Profit report (per-order margin) abhi bhi
+     GROSS courier/duty cost dikha raha tha, is liye CN kisi order ke margin
+     me utarta hi nahi tha. Ab woh report dono NET views se padhti hai:
+     "Courier Expense (net of CN)" / "Duty Expense (net of CN)" + naya
+     "CN / DN Adjustment" column (gross − net). Formula wahi hai jo P&L
+     me hai: poore bill ka CN uske AWBs par gross ke hisaab se pro-rata +
+     us AWB ka apna CN − DN. Ledger / bill payable bilkul untouched.
+  2) Disputed AWB + payment hold + ageing
+     Pehle case likhne ki jagah hi nahi thi (sirf free-text remark). Ab har
+     AWB par: Dispute = No dispute / ⚑ Under dispute (hold) / ✓ Resolved,
+     hold amount, kya galat hai, kab utha, kab band hua, kaise band hua.
+     Documents → Courier/Duty bill → "+ Note / Dispute" me bhara jata hai.
+     Hold ka matlab: LEDGER PAYABLE WAISA HI REHTA HAI (Finance posting
+     untouched) — sirf Bill Payment us amount ko pay nahi karta:
+     • row par "⚑ ₹X held" badge, payment default/max = balance − hold,
+     • bill card par "⚑ Disputed (N) — payment hold" total,
+     • resolve karne par woh paisa apne aap wapas payable ban jata hai.
+     Ageing: Party Ageing page par "⚑ Disputed AWBs →" link, aur naya report
+     dispute ke din (raised_on se aaj tak) + held amount dikhata hai.
+  3) Rate-card vs booked vs billed — 3-way match
+     Naya report /dashboard/reports/freight-match (Reports hub me card).
+     Har AWB par: rate card expected (courier_rate_cards: base + per-kg ×
+     bill weight + fuel % + other; match company + courier + zone
+     [order ka destination country] + weight slab), humara booked amount
+     (order_shipments.booked_freight_amt — USD ho to variance nahi), aur
+     courier ka actual bill (pre-tax / GST / gross), us AWB ka CN share aur
+     net cost. Variance chip: ✓ OK (₹50 ya 2% ke andar), ⚠ Above rate card,
+     ↓ Below rate card, "no rate card" (guess nahi karta). Duty rows par rate
+     card "—" kyunki rate card freight ka model hai. "Only disputed AWBs"
+     filter + export/print.
+
+Badlav:
+A  db/2026-11-03-awb-dispute-and-duty-cn-split.sql
+M  db/schema.sql                       (dispute columns dono AWB tables par)
+M  src/types/database.ts               (columns + row types)
+A  src/lib/courier/awb-dispute.ts       (+ .test.ts, 7 tests — dates/hold rules)
+M  src/app/dashboard/documents/actions.ts (dispute save, freight + duty AWB notes)
+M  src/app/dashboard/documents/freight-bill-section.tsx / duty-bill-section.tsx
+     (+ Note / Dispute form, per-AWB badge, bill-level hold total)
+M  src/app/dashboard/documents/page.tsx  (dispute fields pass-through)
+M  src/app/dashboard/bill-payment/page.tsx / bill-payment-list.tsx (hold badge +
+     hold-adjusted payable, default/max)
+M  src/app/dashboard/reports/sale-profit/page.tsx / -report-table.tsx (net of CN)
+A  src/app/dashboard/reports/freight-match/page.tsx / freight-match-table.tsx
+M  src/app/dashboard/reports/page.tsx   (report card)
+M  src/app/dashboard/reports/ageing/page.tsx (disputed-AWB link)
+M  CHANGES.txt
+
+VERIFICATION: `npm test` 86/86 pass (7 naye dispute tests); focused tsc un
+sabhi changed files par exit 0; eslint exit 0. SQL local Postgres 14 par do
+baar chalaya — doosri run NOTICE-only, 4 CHECK constraints lage (bogus status
+/ negative hold reject hote hain), purani row 'none'/0 default se aayi.
+Live Supabase is workspace me nahi hai, is liye asli bills par render / rate
+card matching verify nahi hua — pehla check: Reports → Courier 3-Way Match,
+phir Documents → kisi courier bill ke AWB par "+ Note / Dispute".
+
+======================================================================
+
 ADHURA BILL FINANCE ME PURA CHADHTA HAI (11,482.80 vs 18,460.00)
 (2026-11-01c)
 ======================================================================

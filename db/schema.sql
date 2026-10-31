@@ -1444,6 +1444,18 @@ CREATE TABLE freight_bill_awb_assignments (
   -- (see db/2026-10-28e-awb-round-off.sql).
   round_off_amt     numeric(8,2) NOT NULL DEFAULT 0
                       CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
+  -- 2026-11-03 — disputed AWB (payment hold). Ledger payable is NOT changed
+  -- by a dispute: while status = 'under_dispute' the app holds
+  -- `dispute_amount` back from the payment default and reports the AWB's age
+  -- in the Courier Match report; resolving it releases the money again.
+  -- See db/2026-11-03-awb-dispute-and-duty-cn-split.sql.
+  dispute_status      text NOT NULL DEFAULT 'none'
+                        CHECK (dispute_status IN ('none', 'under_dispute', 'resolved')),
+  dispute_amount      numeric(14,2) NOT NULL DEFAULT 0 CHECK (dispute_amount >= 0),
+  dispute_reason      text,
+  dispute_raised_on   date,
+  dispute_resolved_on date,
+  dispute_resolution  text,
   UNIQUE (order_shipment_id)   -- one AWB is billed under exactly one freight invoice (Gap 1, 2026-08-20 — was UNIQUE(order_id))
 );
 CREATE INDEX idx_freight_awb_assign_bill ON freight_bill_awb_assignments(freight_bill_id);
@@ -1471,6 +1483,14 @@ CREATE TABLE duty_bill_awb_assignments (
   -- freight_bill_awb_assignments.round_off_amt above.
   round_off_amt               numeric(8,2) NOT NULL DEFAULT 0
                                 CHECK (round_off_amt >= -1000 AND round_off_amt <= 1000),
+  -- 2026-11-03 — same disputed-AWB tracking as freight_bill_awb_assignments.
+  dispute_status              text NOT NULL DEFAULT 'none'
+                                CHECK (dispute_status IN ('none', 'under_dispute', 'resolved')),
+  dispute_amount              numeric(14,2) NOT NULL DEFAULT 0 CHECK (dispute_amount >= 0),
+  dispute_reason              text,
+  dispute_raised_on           date,
+  dispute_resolved_on         date,
+  dispute_resolution          text,
   UNIQUE (order_shipment_id)
 );
 CREATE INDEX idx_duty_awb_assign_bill ON duty_bill_awb_assignments(duty_tax_bill_id);

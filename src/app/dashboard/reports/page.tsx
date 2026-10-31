@@ -130,6 +130,15 @@ export default async function ReportsPage({
               chahiye ki kab se kab tak or konkonse colom chahiye": customs
               CSB-V register + uske order ki poori detail, date range aur
               column picker ke saath. */}
+          {/* 2026-11-03 — "Rate-card vs billed 3-way match" + "disputed AWB
+              ka payment-hold + ageing": rate card → booked → actual bill per
+              AWB, net of CN, with dispute days/held. */}
+          <Link
+            href="/dashboard/reports/freight-match"
+            className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
+          >
+            🔍 Courier 3-Way Match &amp; Disputes
+          </Link>
           <Link
             href="/dashboard/reports/csb-filings"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"

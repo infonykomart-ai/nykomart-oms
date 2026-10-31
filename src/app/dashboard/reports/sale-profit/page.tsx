@@ -80,22 +80,45 @@ export default async function SaleProfitReportPage({
   // goodwill/duty-only refund on an order that stays Dispatched/Delivered
   // (order-hold-cancel-actions.tsx) — any money actually refunded reduces
   // recognized revenue here, regardless of which button entered it.
+  // 2026-11-03 — "CN ko AWB-wise split karke us AWB ke order margin me
+  // dikhana": expense now comes from the two NET views, not the raw
+  // reconciliation views. freight_awb_net_view / duty_awb_net_view split each
+  // bill's own credit note across its AWBs pro-rata by gross and add that
+  // AWB's own CN − DN, so an order's Courier/Duty cost is what was actually
+  // payable after the notes — the same allocation the P&L dashboard uses.
+  // gross_shipping_amt/gross_duty_amt are still read to show the adjustment
+  // (gross − net) as its own column instead of silently shrinking the cost.
   const [{ data: freightRows }, { data: dutyRows }, { data: refundRows }] = orderIds.length
     ? await Promise.all([
-        finSupabase.from("freight_reconciliation_view").select("order_id, gross_shipping_amt").in("order_id", orderIds),
-        finSupabase.from("duty_reconciliation_view").select("order_id, duty_gross_amt").in("order_id", orderIds),
+        finSupabase
+          .from("freight_awb_net_view")
+          .select("order_id, gross_shipping_amt, cn_allocated_inr, net_shipping_amt")
+          .in("order_id", orderIds),
+        finSupabase
+          .from("duty_awb_net_view")
+          .select("order_id, gross_duty_amt, cn_allocated_inr, net_duty_amt")
+          .in("order_id", orderIds),
         finSupabase.from("order_refunds").select("order_id, refund_amount_inr").in("order_id", orderIds),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
   const courierByOrder = new Map<string, number>();
+  const cnByOrder = new Map<string, number>();
   for (const r of freightRows ?? []) {
     if (!r.order_id) continue;
-    courierByOrder.set(r.order_id, (courierByOrder.get(r.order_id) ?? 0) + Number(r.gross_shipping_amt ?? 0));
+    const gross = Number(r.gross_shipping_amt ?? 0);
+    const cn = Number(r.cn_allocated_inr ?? 0);
+    const net = r.net_shipping_amt != null ? Number(r.net_shipping_amt) : gross - cn;
+    courierByOrder.set(r.order_id, (courierByOrder.get(r.order_id) ?? 0) + net);
+    cnByOrder.set(r.order_id, (cnByOrder.get(r.order_id) ?? 0) + cn);
   }
   const dutyByOrder = new Map<string, number>();
   for (const r of dutyRows ?? []) {
     if (!r.order_id) continue;
-    dutyByOrder.set(r.order_id, (dutyByOrder.get(r.order_id) ?? 0) + Number(r.duty_gross_amt ?? 0));
+    const gross = Number(r.gross_duty_amt ?? 0);
+    const cn = Number(r.cn_allocated_inr ?? 0);
+    const net = r.net_duty_amt != null ? Number(r.net_duty_amt) : gross - cn;
+    dutyByOrder.set(r.order_id, (dutyByOrder.get(r.order_id) ?? 0) + net);
+    cnByOrder.set(r.order_id, (cnByOrder.get(r.order_id) ?? 0) + cn);
   }
   const refundByOrder = new Map<string, number>();
   for (const r of refundRows ?? []) {
@@ -106,6 +129,7 @@ export default async function SaleProfitReportPage({
   const liveRows: SaleProfitRow[] = (orders ?? []).map((o) => {
     const courier = courierByOrder.get(o.id) ?? 0;
     const duty = dutyByOrder.get(o.id) ?? 0;
+    const cnAdjustment = cnByOrder.get(o.id) ?? 0;
     const refunded = refundByOrder.get(o.id) ?? 0;
     const orderValue = Number(o.order_value_inr ?? 0) - refunded;
     const netTotalValue = orderValue - courier - duty;
@@ -121,6 +145,7 @@ export default async function SaleProfitReportPage({
       item_category: o.item_category_id ? categoryName.get(o.item_category_id) ?? "—" : "—",
       qty: o.qty,
       order_value_inr: orderValue,
+      cn_adjustment_inr: cnAdjustment,
       courier_expense_inr: courier,
       duty_expense_inr: duty,
       net_total_value: netTotalValue,
@@ -156,6 +181,9 @@ export default async function SaleProfitReportPage({
     item_category: h.item_category_id ? categoryName.get(h.item_category_id) ?? "—" : "—",
     qty: h.qty,
     order_value_inr: Number(h.total_value_inr),
+    // Historical rows carry their own already-netted expenses (no AWB-level
+    // CN allocation exists for them), so there is no separate adjustment.
+    cn_adjustment_inr: 0,
     courier_expense_inr: 0,
     duty_expense_inr: Number(h.total_expenses_inr),
     net_total_value: Number(h.net_total_value),

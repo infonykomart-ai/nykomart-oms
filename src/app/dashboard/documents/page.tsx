@@ -677,6 +677,14 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
                   debit_note_date: a.debit_note_date,
                   debit_note_amt: a.debit_note_amt != null ? Number(a.debit_note_amt) : null,
                   remark: a.remark,
+                  // 2026-11-03 — disputed AWB (payment hold). 'none' until the
+                  // 2026-11-03 SQL is run, since `*` simply omits the columns.
+                  dispute_status: (a.dispute_status ?? "none") as "none" | "under_dispute" | "resolved",
+                  dispute_amount: a.dispute_amount != null ? Number(a.dispute_amount) : null,
+                  dispute_reason: a.dispute_reason ?? null,
+                  dispute_raised_on: a.dispute_raised_on ?? null,
+                  dispute_resolved_on: a.dispute_resolved_on ?? null,
+                  dispute_resolution: a.dispute_resolution ?? null,
                 };
               }),
           })),
@@ -714,6 +722,13 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
                 debit_note_date: a.debit_note_date,
                 debit_note_amt: a.debit_note_amt != null ? Number(a.debit_note_amt) : null,
                 remark: a.remark,
+                // 2026-11-03 — same disputed-AWB fields as the freight side.
+                dispute_status: (a.dispute_status ?? "none") as "none" | "under_dispute" | "resolved",
+                dispute_amount: a.dispute_amount != null ? Number(a.dispute_amount) : null,
+                dispute_reason: a.dispute_reason ?? null,
+                dispute_raised_on: a.dispute_raised_on ?? null,
+                dispute_resolved_on: a.dispute_resolved_on ?? null,
+                dispute_resolution: a.dispute_resolution ?? null,
               })),
           })),
         }}
