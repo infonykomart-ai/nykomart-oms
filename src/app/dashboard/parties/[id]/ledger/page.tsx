@@ -288,6 +288,26 @@ async function PartyLedgerInner(
     noteLabel.set(n.id, n.debit_note_no ?? "DN");
   }
 
+  // 2026-11-02 — "credit note ka amount debit kyu nahi hua isme": a Courier /
+  // Duty & Tax bill's own Credit Note now sits on its ledger row's
+  // credit_note_amt (see sendFreightBillToFinance), and the courier's CN number
+  // lives on the bill itself — fetch it so that Debit line names the note the
+  // same way the adjustment lines do.
+  const courierCnSourceIds = entries
+    .filter((e) => (e.source === "freight_bill" || e.source === "duty_tax_bill") && e.source_id && Number(e.credit_note_amt) > 0)
+    .map((e) => e.source_id as string);
+  const [freightCnRows, dutyCnRows] = await Promise.all([
+    courierCnSourceIds.length
+      ? supabase.from("freight_bills").select("id, credit_note_no").in("id", courierCnSourceIds)
+      : Promise.resolve({ data: [] as { id: string; credit_note_no: string | null }[] }),
+    courierCnSourceIds.length
+      ? supabase.from("duty_tax_bills").select("id, credit_note_no").in("id", courierCnSourceIds)
+      : Promise.resolve({ data: [] as { id: string; credit_note_no: string | null }[] }),
+  ]);
+  const courierCnNoBySourceId = new Map<string, string>();
+  for (const f of freightCnRows.data ?? []) if (f.credit_note_no) courierCnNoBySourceId.set(f.id, f.credit_note_no);
+  for (const d of dutyCnRows.data ?? []) if (d.credit_note_no) courierCnNoBySourceId.set(d.id, d.credit_note_no);
+
   // 2026-09-15 — prepaid courier wallet txns belong in THIS passbook too.
   // 2026-10-12 — recharge = Debit, refund = Credit, settlements post no line
   // at all (see src/lib/ledger/wallet-ledger-lines.ts for the reasoning).
@@ -423,9 +443,12 @@ async function PartyLedgerInner(
         });
       }
       if (creditNoteAmt > 0) {
+        // The courier's own CN number, when this bill carries one (Duty & Tax /
+        // Courier Bill); a manual CN on a purchase bill keeps the plain text.
+        const cnNo = eg.bills.map((b) => (b.source_id ? courierCnNoBySourceId.get(b.source_id) : null)).find((v): v is string => !!v) ?? null;
         txns.push({
           date: billDate,
-          particulars: `Credit Note against ${ref}${groupSuffix}`,
+          particulars: `Credit Note ${cnNo ? `${cnNo} ` : ""}against ${ref}${groupSuffix}`,
           type: "Debit",
           debit: creditNoteAmt,
           credit: 0,

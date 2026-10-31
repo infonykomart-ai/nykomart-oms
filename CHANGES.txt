@@ -116,6 +116,50 @@ invoice 76 → "Change company" → Nyko Mart. Ab move hone chahiye aur niche
 notice aana chahiye; jis din wahi 76 wahi date + wahi amount ho, us din
 block hoga.
 
+----------------------------------------------------------------------
+
+COURIER / DUTY BILL KA CREDIT NOTE AB LEDGER ME DEBIT LINE BANE
+(2026-11-02)
+======================================================================
+
+Shikayat (screenshot ke saath): "creditnote ka ammout debit kyu nahi hua isme,
+ye kaha kaha problm hai solve kar ke updated file do" — Courier Bill
+276437655, gross ₹342842.63, CN CNINTRJ000042030 −₹26337.30. Ledger me sirf EK
+Credit ₹342842.63 tha, CN ka koi Debit nahi — is liye party ka balance poore
+CN jitna zyada dikh raha tha.
+
+KYA GALAT THA
+  "Send to Finance" par courier/duty bill ka apna Credit Note chup-chaap amount
+  me se ghata diya jata tha (aur jo bill CN aane se PEHLE bhej diye gaye the,
+  unka total hamesha gross reh jata tha) — aur bill_pass_register.credit_note_amt
+  0 hi rehta tha. Iska matlab CN kabhi ledger me apni line nahi banata tha.
+
+AB KAISE HAI (Work A wala CN workflow, jo system me pehle se tha, use chalaya)
+  • Ledger row bill ko waise hi post karta hai jaisa courier ne issue kiya:
+    total_amt = gross + round-off, aur credit_note_amt = us bill ka CN — CN
+    number/date bill se hi aate hain.
+  • to_be_pay / balance_due pehle se hi "total − CN − adj − paid" generated
+    hain, is liye Bill Payment, Ageing, Outstanding, Party Summary, Journal
+    Voucher (Debit Adjustment) aur merge — sab apne aap net ho gaye.
+  • Party Ledger ab "Credit Note CNINTRJ000042030 against 276437655" Debit
+    line dikhata hai (purchase bill ka manual CN bhi pehle jaisa).
+  • Courier/Duty bill edit karte waqt CN badla to wo seedha ledger row ke CN
+    column me jata hai (total ko chhedta nahi). Amount/round-off badla to
+    total delta se update hota hai, jaisa pehle.
+
+PURANA DATA — db/2026-11-02-courier-cn-ledger-line.sql ek baar chalayein
+  Ek hi DO block (idempotent). Sirf un rows ko theek karta hai jinka
+  credit_note_amt abhi 0 hai par bill par CN hai:
+   • total = gross      → CN column bharta hai (payable ghat jayega — yahi bug).
+   • total = gross − CN → gross + CN re-post karta hai (net same, bas CN ab
+     dikhne lagta hai).
+   • kuch aur (haath se type kiya amount) → chhod deta hai, NOTICE me count
+     batata hai; aise bill ke "↻ Re-sync Finance amount" button se theek karein.
+  Local Postgres fixtures par verify kiya: 276437655 shape → payable
+  342842.63 → 316505.33; netted row ka net same; no-CN aur hand-typed rows
+  untouched; doosre run par 0 change.
+
+----------------------------------------------------------------------
 
 EK DEBIT NOTE = LEDGER ME EK LINE (aur split bill sab jagah fix)
 (2026-11-01)

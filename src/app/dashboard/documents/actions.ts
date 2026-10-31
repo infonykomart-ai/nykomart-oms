@@ -3051,7 +3051,6 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
     .select("credit_note_amt, round_off_amt, freight_amt, fuel_amt, other_charges")
     .eq("id", freightBillId)
     .maybeSingle();
-  const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
   const prevRoundOffAmt = Number(prevBill?.round_off_amt ?? 0);
   // gross_total_amt is a GENERATED column ((freight + fuel + other) × 1.18),
   // so the same formula gives the before/after figure to diff against.
@@ -3085,20 +3084,28 @@ export async function updateFreightBillDetails(_prev: SimpleResult, formData: Fo
     .eq("source", "freight_bill")
     .eq("source_id", freightBillId)
     .maybeSingle();
+  // 2026-11-02 — "credit note ka amount debit kyu nahi hua isme": the Courier
+  // Bill's own Credit Note is now carried in the ledger row's own
+  // credit_note_amt (see sendFreightBillToFinance), so editing it here writes
+  // that column instead of shaving the reviewed total — to_be_pay /
+  // balance_due net it and the Party Ledger prints it as its own Debit line.
   await supabase
     .from("bill_pass_register")
-    .update({ party_id: vendorPartyId, vendor_invoice_no: invoiceNo, invoice_date: invoiceDate, invoice_recv_date: invoiceDate })
+    .update({
+      party_id: vendorPartyId,
+      vendor_invoice_no: invoiceNo,
+      invoice_date: invoiceDate,
+      invoice_recv_date: invoiceDate,
+      credit_note_amt: Math.round(newCnAmt * 100) / 100,
+      credit_note_date: newCnAmt > 0 ? strOrNull(formData, "credit_note_date") : null,
+    })
     .eq("source", "freight_bill")
     .eq("source_id", freightBillId);
 
-  // 2026-09-30 — CN delta → ledger total; 2026-10-28e — the same delta rule
-  // now also carries the bill's gross change and its round-off change, which
-  // is what the user reported as "round off ledger me update nahi ho rahi".
-  // All three are signed deltas on the reviewed total, never an overwrite.
-  // (bpr.credit_note_amt stays untouched: the ledger total already nets the
-  // CN, writing it there too would double-reduce balance_due.)
+  // 2026-10-28e — the bill's gross change and its round-off change travel to
+  // the reviewed total as signed deltas, never an overwrite.
   if (mirror) {
-    const delta = Math.round((((newGross - prevGross) + (newRoundOffAmt - prevRoundOffAmt)) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const delta = Math.round(((newGross - prevGross) + (newRoundOffAmt - prevRoundOffAmt)) * 100) / 100;
     const syncError = await applyBillLedgerDelta(supabase, "freight_bill", freightBillId, delta);
     if (syncError) {
       return { error: `Bill saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
@@ -3126,7 +3133,7 @@ export async function resyncFreightBillFinanceAmount(freightBillId: string): Pro
 
   const { data: bill } = await supabase
     .from("freight_bills")
-    .select("freight_amt, fuel_amt, other_charges, round_off_amt, credit_note_amt")
+    .select("freight_amt, fuel_amt, other_charges, round_off_amt, credit_note_amt, credit_note_date")
     .eq("id", freightBillId)
     .maybeSingle();
   if (!bill) return { error: "Courier Bill not found.", success: false };
@@ -3147,9 +3154,17 @@ export async function resyncFreightBillFinanceAmount(freightBillId: string): Pro
     ? 0
     : (roundRows ?? []).reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
 
+  // 2026-11-02 — the bill is re-posted as issued (gross + round-offs) with its
+  // CN kept in its OWN column, so the CN shows up as a Debit line instead of
+  // disappearing into the total. Net payable is unchanged: balance_due is
+  // generated as total_amt − credit_note_amt − adj_amt − total_paid.
   const gross = (Number(bill.freight_amt ?? 0) + Number(bill.fuel_amt ?? 0) + Number(bill.other_charges ?? 0)) * 1.18;
-  const payable = Math.round((gross + Number(bill.round_off_amt ?? 0) + awbRoundOff - Number(bill.credit_note_amt ?? 0)) * 100) / 100;
-  const { error } = await supabase.from("bill_pass_register").update({ total_amt: payable }).eq("id", mirror.id);
+  const payable = Math.round((gross + Number(bill.round_off_amt ?? 0) + awbRoundOff) * 100) / 100;
+  const cnAmt = Math.round(Number(bill.credit_note_amt ?? 0) * 100) / 100;
+  const { error } = await supabase
+    .from("bill_pass_register")
+    .update({ total_amt: payable, credit_note_amt: cnAmt, credit_note_date: cnAmt > 0 ? bill.credit_note_date ?? null : null })
+    .eq("id", mirror.id);
   if (error) return { error: error.message, success: false };
 
   revalidatePath("/dashboard/documents");
@@ -3486,9 +3501,16 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
 
   const { data: bill } = await supabase
     .from("freight_bills")
-    .select("invoice_no, invoice_date, vendor_party_id")
+    .select("invoice_no, invoice_date, vendor_party_id, credit_note_no, credit_note_date, credit_note_amt")
     .eq("id", freightBillId)
     .maybeSingle();
+  // 2026-11-02 — the courier's own Credit Note travels WITH the bill instead
+  // of being baked into the amount typed here: credit_note_amt is exactly what
+  // to_be_pay/balance_due net, what Bill Payment shows, what the Party Ledger
+  // posts as a Debit line and what the auto Journal Voucher lists as the Debit
+  // Adjustment. Baking it into the total made it invisible ("CN ka amount
+  // debit kyu nahi hua") and left older bills overstated by the whole CN.
+  const cnAmt = Math.round(Number(bill?.credit_note_amt ?? 0) * 100) / 100;
 
   // 2026-09-13 — duplicate Finance entry guard (see
   // findDuplicateFinanceEntry note / DB index comment).
@@ -3518,6 +3540,8 @@ export async function sendFreightBillToFinance(_prev: SimpleResult, formData: Fo
       invoice_date: bill?.invoice_date ?? null,
       invoice_recv_date: bill?.invoice_date ?? null,
       total_amt: totalAmt,
+      credit_note_amt: cnAmt,
+      credit_note_date: cnAmt > 0 ? bill?.credit_note_date ?? null : null,
       // 2026-08-17: carry the Courier Bill's own vendor/party through to the
       // Finance ledger — previously this stayed NULL even when the bill had
       // a vendor selected, which is why Courier Bills could never appear in
@@ -3693,7 +3717,6 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
     .select("credit_note_amt, round_off_amt, duty_tax_amt_inr, gst_18pct_amt, total_payable_amt")
     .eq("id", dutyTaxBillId)
     .maybeSingle();
-  const prevCnAmt = Number(prevBill?.credit_note_amt ?? 0);
   const prevRoundOffAmt = Number(prevBill?.round_off_amt ?? 0);
   // The amount "Send to Finance" starts from (see the send form's default):
   // the manually cleared Total Payable when present, else the generated gross.
@@ -3731,18 +3754,26 @@ export async function updateDutyBillDetails(_prev: SimpleResult, formData: FormD
     .eq("source", "duty_tax_bill")
     .eq("source_id", dutyTaxBillId)
     .maybeSingle();
+  // 2026-11-02 — same rule as updateFreightBillDetails: the Duty & Tax Bill's
+  // own CN is written to the ledger row's credit_note_amt, never shaved off
+  // the total, so it prints as a Debit line in the Party Ledger.
   await supabase
     .from("bill_pass_register")
-    .update({ party_id: vendorPartyId, vendor_invoice_no: invoiceNo, invoice_date: invoiceDate, invoice_recv_date: invoiceDate })
+    .update({
+      party_id: vendorPartyId,
+      vendor_invoice_no: invoiceNo,
+      invoice_date: invoiceDate,
+      invoice_recv_date: invoiceDate,
+      credit_note_amt: Math.round(newCnAmt * 100) / 100,
+      credit_note_date: newCnAmt > 0 ? strOrNull(formData, "credit_note_date") : null,
+    })
     .eq("source", "duty_tax_bill")
     .eq("source_id", dutyTaxBillId);
 
-  // 2026-09-30 — same credit-note delta sync as updateFreightBillDetails;
-  // 2026-10-28e — the bill's base amount and round-off change now travel the
-  // same way, so a round-off entered after "Send to Finance" is no longer
-  // invisible to Bill Payment / the Party Ledger.
+  // 2026-10-28e — the bill's base amount and round-off change travel to the
+  // reviewed total as signed deltas.
   if (mirror) {
-    const delta = Math.round((((newBase - prevBase) + (newRoundOffAmt - prevRoundOffAmt)) + (prevCnAmt - newCnAmt)) * 100) / 100;
+    const delta = Math.round(((newBase - prevBase) + (newRoundOffAmt - prevRoundOffAmt)) * 100) / 100;
     const syncError = await applyBillLedgerDelta(supabase, "duty_tax_bill", dutyTaxBillId, delta);
     if (syncError) {
       return { error: `Bill saved, but the Finance ledger could not be updated: ${syncError}`, success: false };
@@ -3762,7 +3793,7 @@ export async function resyncDutyBillFinanceAmount(dutyTaxBillId: string): Promis
 
   const { data: bill } = await supabase
     .from("duty_tax_bills")
-    .select("duty_tax_amt_inr, gst_18pct_amt, total_payable_amt, round_off_amt, credit_note_amt")
+    .select("duty_tax_amt_inr, gst_18pct_amt, total_payable_amt, round_off_amt, credit_note_amt, credit_note_date")
     .eq("id", dutyTaxBillId)
     .maybeSingle();
   if (!bill) return { error: "Duty & Tax Bill not found.", success: false };
@@ -3783,9 +3814,15 @@ export async function resyncDutyBillFinanceAmount(dutyTaxBillId: string): Promis
     ? 0
     : (roundRows ?? []).reduce((s, r) => s + Number((r as { round_off_amt?: number | null }).round_off_amt ?? 0), 0);
 
+  // 2026-11-02 — same re-post rule as resyncFreightBillFinanceAmount: gross +
+  // round-offs in total_amt, the CN in its own column.
   const base = Number(bill.total_payable_amt ?? Number(bill.duty_tax_amt_inr ?? 0) + Number(bill.gst_18pct_amt ?? 0));
-  const payable = Math.round((base + Number(bill.round_off_amt ?? 0) + awbRoundOff - Number(bill.credit_note_amt ?? 0)) * 100) / 100;
-  const { error } = await supabase.from("bill_pass_register").update({ total_amt: payable }).eq("id", mirror.id);
+  const payable = Math.round((base + Number(bill.round_off_amt ?? 0) + awbRoundOff) * 100) / 100;
+  const cnAmt = Math.round(Number(bill.credit_note_amt ?? 0) * 100) / 100;
+  const { error } = await supabase
+    .from("bill_pass_register")
+    .update({ total_amt: payable, credit_note_amt: cnAmt, credit_note_date: cnAmt > 0 ? bill.credit_note_date ?? null : null })
+    .eq("id", mirror.id);
   if (error) return { error: error.message, success: false };
 
   revalidatePath("/dashboard/documents");
@@ -4041,9 +4078,12 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
 
   const { data: bill } = await supabase
     .from("duty_tax_bills")
-    .select("invoice_no, invoice_date, vendor_party_id")
+    .select("invoice_no, invoice_date, vendor_party_id, credit_note_no, credit_note_date, credit_note_amt")
     .eq("id", dutyTaxBillId)
     .maybeSingle();
+  // 2026-11-02 — same CN-carries-with-the-bill rule as
+  // sendFreightBillToFinance above.
+  const cnAmt = Math.round(Number(bill?.credit_note_amt ?? 0) * 100) / 100;
 
   // 2026-09-13 — duplicate Finance entry guard (same as freight above).
   // 2026-11-01 — number + date + amount must all agree (see
@@ -4072,6 +4112,8 @@ export async function sendDutyBillToFinance(_prev: SimpleResult, formData: FormD
       invoice_date: bill?.invoice_date ?? null,
       invoice_recv_date: bill?.invoice_date ?? null,
       total_amt: totalAmt,
+      credit_note_amt: cnAmt,
+      credit_note_date: cnAmt > 0 ? bill?.credit_note_date ?? null : null,
       // 2026-08-17: same vendor/party carry-through as sendFreightBillToFinance above.
       party_id: bill?.vendor_party_id ?? null,
       party_type: "Courier",

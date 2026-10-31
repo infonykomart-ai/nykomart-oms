@@ -441,9 +441,10 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             <div className="text-[11px] text-slate-400">
               <p>
                 This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
-                reviewed when it was sent, EXCEPT the Courier Credit Note / amounts / round-off: changing them here adjusts that entry&apos;s total
-                by the same difference, so Bill Payment / the Party Ledger reflect it immediately. Round-off entered BEFORE this fix went in? Use
-                the button below once.
+                reviewed when it was sent, EXCEPT the amounts / round-off: changing them here adjusts that entry&apos;s total by the same difference.
+                The Courier Credit Note is posted to that entry as its own Credit Note column (never shaved off the total), so it shows up as a
+                Debit line in the Party Ledger and Bill Payment nets it. Credit Note / round-off entered BEFORE this fix went in? Use the button
+                below once.
               </p>
               <ResyncFinanceAmountButton billId={bill.id} kind="freight" />
             </div>
@@ -467,8 +468,11 @@ function FreightBillCard({ bill, companies, parties }: { bill: FreightBillRow; c
             Number(bill.gross_total_amt ?? bill.total_amt ?? 0) +
             Number(bill.round_off_amt ?? 0) +
             // 2026-10-28e — every AWB's own round-off counts too.
-            bill.assignments.reduce((s, a) => s + Number(a.round_off_amt ?? 0), 0) -
-            Number(bill.credit_note_amt ?? 0)
+            // 2026-11-02 — the Courier Credit Note is NOT subtracted here any
+            // more: it travels to Finance in its own column (see
+            // sendFreightBillToFinance) so the ledger can show it as a Debit
+            // line instead of losing it inside the bill amount.
+            bill.assignments.reduce((s, a) => s + Number(a.round_off_amt ?? 0), 0)
           }
           onDone={() => setFinanceMode(false)}
         />
@@ -1042,10 +1046,16 @@ function BulkAssignAwbForm({ freightBillId }: { freightBillId: string }) {
 /**
  * 2026-10-28e — the explicit repair for a bill whose round-off was entered
  * (or changed) after it had already gone to Finance, i.e. before the ledger
- * sync existed. Recomputes the bill's CURRENT payable — gross + every AWB's
- * round-off + the bill header's round-off − credit note — and writes it to
- * the existing ledger row. Only this button ever overwrites the reviewed
- * amount; ordinary edits keep using deltas.
+ * sync existed. Recomputes the bill's CURRENT amount — gross + every AWB's
+ * round-off + the bill header's round-off — and writes it, together with the
+ * bill's own Credit Note, to the existing ledger row. Only this button ever
+ * overwrites the reviewed amount; ordinary edits keep using deltas.
+ *
+ * 2026-11-02 — "credit note ka amount debit kyu nahi hua isme": the CN is
+ * written to bill_pass_register.credit_note_amt (its own Debit line) instead
+ * of being netted into the total, so this button is also the one-click repair
+ * for a bill whose total was posted before its CN. Net payable is the same
+ * either way — balance_due is generated as total − CN − adj_amt − paid.
  */
 export function ResyncFinanceAmountButton({ billId, kind }: { billId: string; kind: "freight" | "duty" }) {
   const [pending, startTransition] = useTransition();
@@ -1065,7 +1075,7 @@ export function ResyncFinanceAmountButton({ billId, kind }: { billId: string; ki
             setMessage(r.error ?? "✓ Finance amount updated");
           })
         }
-        title="Post today's payable for this bill (gross + AWB round-off + bill round-off − CN) to the Finance ledger"
+        title="Post this bill's amount (gross + AWB round-off + bill round-off) and its Credit Note separately to the Finance ledger"
         className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
       >
         {pending ? "Updating..." : "↻ Re-sync Finance amount"}

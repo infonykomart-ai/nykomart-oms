@@ -429,9 +429,10 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
             <div className="text-[11px] text-slate-400">
               <p>
                 This bill is already in Bill Pass Register — Invoice No./Date/Vendor saved here also update that entry. Amount there stays as
-                reviewed when it was sent, EXCEPT the Courier Credit Note / amounts / round-off: changing them here adjusts that entry&apos;s total
-                by the same difference, so Bill Payment / the Party Ledger reflect it immediately. Round-off entered BEFORE this fix went in? Use
-                the button below once.
+                reviewed when it was sent, EXCEPT the amounts / round-off: changing them here adjusts that entry&apos;s total by the same difference.
+                The Courier Credit Note is posted to that entry as its own Credit Note column (never shaved off the total), so it shows up as a
+                Debit line in the Party Ledger and Bill Payment nets it. Credit Note / round-off entered BEFORE this fix went in? Use the button
+                below once.
               </p>
               <ResyncFinanceAmountButton billId={bill.id} kind="duty" />
             </div>
@@ -455,8 +456,10 @@ function DutyBillCard({ bill, companies, parties }: { bill: DutyBillRow; compani
             Number(bill.total_payable_amt ?? bill.gross_total_amt ?? bill.duty_tax_amt_inr ?? 0) +
             Number(bill.round_off_amt ?? 0) +
             // 2026-10-28e — every AWB's own round-off counts too.
-            bill.assignments.reduce((s, a) => s + Number(a.round_off_amt ?? 0), 0) -
-            Number(bill.credit_note_amt ?? 0)
+            // 2026-11-02 — the CN is no longer subtracted: it goes to Finance
+            // in its own column and prints as a Debit line (see
+            // sendDutyBillToFinance).
+            bill.assignments.reduce((s, a) => s + Number(a.round_off_amt ?? 0), 0)
           }
           onDone={() => setFinanceMode(false)}
         />
