@@ -1,92 +1,50 @@
-STAIR RUG: SET-BASED QUANTITY + AUTO AREA (BAKI PRODUCTS JAISE THE WAISE)
-(2026-11-02)
+RETURNS / REFUNDS REPORT — SAAF ENGLISH + WORKING FILTERS
+(2026-11-01d)
 ======================================================================
 
-SQL: db/2026-11-02-stair-rug-set-quantity.sql  (ek baar chalayein)
-     Sirf 5 nullable columns orders par + CHECKs. Dobara chalane par safe,
-     koi backfill nahi. Na chalane par bhi order save/edit chalta rahega —
-     bas sets/pieces/area store nahi honge (retry-without-column).
+KOI NAYA SQL NAHI.
 
-KYA THA / KYA AB
-  1) Stair Rug = set system, baki 3 products bilkul untouched
-     Cotton / Jute / Tufted ke order form me wahi purana "Quantity *" box
-     hai, wahi qty calculation, wahi WhatsApp format — ek line bhi nahi
-     badli. Sirf jab ITEM CATEGORY me "Stair..." (Stair Rug / Stair Rugs /
-     STAIR RUG / Staircase Rug) chuni jati hai, tab Quantity box ki jagah:
-       • Number of Sets
-       • Pieces Per Set  (free number input + suggestions 2/4/6/12/14/18/
-         24/50/100/125/150/200 — fixed list NAHI, 7 ya 1000 bhi chalega,
-         minimum 1, koi maximum limit nahi)
-       • Total Pieces  (read-only, sets × pieces, khud update hota hai)
-     SETS ya PCS badlo → Total Pieces turant badalta hai. Total Pieces hi
-     order ki asli qty hai (neeche wajah).
-  2) Area, har unit me
-     Per-piece Length × Width — FT / INCH / CM me. Live readout:
-     Area per piece (SQ INCH) aur Total area = per-piece × total pieces,
-     SQ INCH + SQ FT + SQ CM teeno me. Internal maths full precision
-     (1 cm = 1/2.54 inch, 1 sq ft = 144 sq in), rounding sirf display par.
-     Examples jo test me pin hain: 9×29 INCH → 261 SQ INCH/pc;
-     12 PCS = 3,132 SQ INCH = 21.75 SQ FT; 18 PCS = 32.625 SQ FT;
-     2 sets × 50 = 100 PCS = 26,100 SQ INCH = 181.25 SQ FT.
-     Area optional hai — dimensions blank chhodo to koi guess nahi hota.
-  3) WhatsApp message
-     Stair Rug ke caption me ab:
-       Product / Size / Number of Sets / Pieces Per Set / Total Pieces /
-       Area Per Piece / Total Area (SQ INCH) / Total Area (SQ FT)
-     Baki sab (PO/RF/RG, Dispatch Date, Photo, Colour, Tassel, SKU, Note,
-     Amazon TOP PRIORITY, Telegram/Whapi/manual share) exactly wahi.
-     Cotton/Jute/Tufted ke message me koi change nahi — wahi QTY + Size.
+PROBLEM (user ke screenshot se): page par Hinglish help text tha jo asal me
+galat cheez samjha raha tha, filters par bharosa nahi ho raha tha (company
+badalne par numbers wahi rehte the), aur ek order ka refund dhundhne ka koi
+rasta nahi tha.
 
-SABSE ZARURI DESIGN DECISION — koi billing/stock break nahi
-  Stair Rug ka Total Pieces hi orders.qty me jata hai. Iska matlab stock,
-  sales invoice (rate = value/qty), purchase bill, courier/duty bill, P&L,
-  margin, reports, Orders list — sab pehle jaise hi qty padhte hain, aur
-  unka number sahi hota hai. Sets/Pieces/Size-area sirf SAATH me store hote
-  hain (naye columns) taaki order page, edit form aur WhatsApp dobara wahi
-  detail dikha sakein. Area kabhi store nahi hota — hamesha dimensions ×
-  qty se derive hota hai, is liye stale sq ft ka sawal hi nahi.
+ASLI BUG: company filter JavaScript me `.limit(300)` ke BAAD lag raha tha.
+Matlab pehle SAARI companies ke latest 300 refund rows aate, phir unme se
+company filter hoti — jis company ke refunds purane the use khaali page
+dikhta (aur count bhi galat aata). Ab company/store/order-no teeno filter
+query me hi lagte hain (joined order par, `orders!inner`).
 
-Edit / purane orders
-  Orders hub → Edit me bhi wahi set fields (sets/pcs badlo, Total Pieces
-  khud badalta hai; category badal ke non-stair ki to set columns clear
-  ho jate hain). Is feature se pehle save hue stair order (sets NULL) 1 set
-  × qty pieces maan kar dikhte hain — data touch nahi hota.
-  Bulk CSV upload me set columns nahi hain, to CSV row pehle jaisa plain
-  qty hi rehta hai.
+AB:
+  • Poora page English me. Har table ke upar saaf likha hai kaun kya count
+    karta hai aur kaun si date use hoti hai (refund date vs order date).
+  • Naye filters: Store aur Order no. (partial match, jaise PO-A451) —
+    refunds table aur historical sheet table dono par lagte hain.
+  • Chhota summary line: kaun si company / store / date range dikh rahi hai.
+  • 4 cards: OMS me recorded refunds (count + USD total + doosri currency +
+    duty refunded + Dispatch/No-Dispatch split), historical marketplace
+    sheets (count + USD total), range ke orders (cancelled/returned count aur
+    %), aur refund rows as % of orders.
+  • Har table par CSV / Excel / Word / PDF export pehle jaisa hi.
+
+SAATH ME: docs/oms-worldwide-cancellation-returns-refunds.md — poora audit
+(aapke worldwide cancellation/return/refund/duty-refund requirement ka):
+konsi table/route pehle se hai, kya missing hai, chhote additive SQL
+proposals (refund lifecycle + duplicate index, duty_refund_claims,
+order_returns), DDP/DDU aur duty workflow, automation/alerts, dashboard
+structure aur 15 international test cases.
 
 Badlav:
-A  db/2026-11-02-stair-rug-set-quantity.sql
-M  db/schema.sql                        (orders par 5 columns + CHECKs)
-M  src/types/database.ts                (Row/Insert/Update)
-A  src/lib/orders/stair-rug.ts           (+ .test.ts, 10 tests)
-M  src/lib/db/missing-column.ts          (tolerateMissingColumns — ek patch
-     me 5 columns)
-A  src/app/dashboard/orders/stair-rug-fields.tsx  (naya shared set/area block)
-M  src/app/dashboard/orders/new/order-form.tsx    (category → set fields)
-M  src/app/dashboard/orders/new/actions.ts        (sets/pcs/dims parse, total
-     pieces = qty, size label auto, tolerant insert)
-M  src/app/dashboard/orders/actions.ts            (edit path, same rules)
-M  src/app/dashboard/orders/order-edit-form.tsx   (edit UI)
-M  src/app/dashboard/orders/new/order-whatsapp-button.tsx (stair caption)
-M  src/app/dashboard/orders/[id]/order-view.tsx   (set breakdown + area)
-M  src/app/dashboard/orders/page.tsx, orders/new/page.tsx,
-   orders/[id]/order-detail-loader.ts, orders/print/page.tsx  (reads "*" so
-   SQL pending hone par bhi page blank na ho)
-M  src/lib/migrations/probes.ts          (Admin → Migrations me file dikhegi)
+M  src/app/dashboard/returns/page.tsx
+M  src/app/dashboard/returns/returns-report-tables.tsx
+A  docs/oms-worldwide-cancellation-returns-refunds.md
 M  CHANGES.txt
 
-VERIFICATION: `npm test` 96/96 (10 naye stair tests — brief ke teeno
-worked examples, 12→18→50→100 sq ft, custom 125/150/1000, FT/INCH/CM,
-SQ CM, missing-dims no-guess, legacy row fallback, category match).
-Focused tsc un sabhi changed files par exit 0, eslint exit 0. Migration
-local Postgres 14 par do baar chalayi — doosri run NOTICE-only; 0 pieces /
-'MM' unit / 0 length sab reject, 3 sets × 1000 PCS accept.
-Live Supabase is workspace me nahi hai, is liye asli order par UI render
-verify nahi hua — pehla check: Order Entry → category "Stair Rug" →
-1 set × 12 PCS, 9 × 29 INCH → Total 12 / 3,132 SQ INCH / 21.75 SQ FT,
-save karke WhatsApp caption dekhein.
+VERIFICATION: focused tsc exit 0; eslint dono files par exit 0. Live data par
+screenshots nahi le paya (Supabase is workspace me nahi hai) — filters query
+me hai, is liye company/store/order-no badalne par tables aur cards dono
+badalte hain.
 
-======================================================================
 
 ADHURA BILL FINANCE ME PURA CHADHTA HAI (11,482.80 vs 18,460.00)
 (2026-11-01c)
@@ -206,50 +164,6 @@ invoice 76 → "Change company" → Nyko Mart. Ab move hone chahiye aur niche
 notice aana chahiye; jis din wahi 76 wahi date + wahi amount ho, us din
 block hoga.
 
-----------------------------------------------------------------------
-
-COURIER / DUTY BILL KA CREDIT NOTE AB LEDGER ME DEBIT LINE BANE
-(2026-11-02)
-======================================================================
-
-Shikayat (screenshot ke saath): "creditnote ka ammout debit kyu nahi hua isme,
-ye kaha kaha problm hai solve kar ke updated file do" — Courier Bill
-276437655, gross ₹342842.63, CN CNINTRJ000042030 −₹26337.30. Ledger me sirf EK
-Credit ₹342842.63 tha, CN ka koi Debit nahi — is liye party ka balance poore
-CN jitna zyada dikh raha tha.
-
-KYA GALAT THA
-  "Send to Finance" par courier/duty bill ka apna Credit Note chup-chaap amount
-  me se ghata diya jata tha (aur jo bill CN aane se PEHLE bhej diye gaye the,
-  unka total hamesha gross reh jata tha) — aur bill_pass_register.credit_note_amt
-  0 hi rehta tha. Iska matlab CN kabhi ledger me apni line nahi banata tha.
-
-AB KAISE HAI (Work A wala CN workflow, jo system me pehle se tha, use chalaya)
-  • Ledger row bill ko waise hi post karta hai jaisa courier ne issue kiya:
-    total_amt = gross + round-off, aur credit_note_amt = us bill ka CN — CN
-    number/date bill se hi aate hain.
-  • to_be_pay / balance_due pehle se hi "total − CN − adj − paid" generated
-    hain, is liye Bill Payment, Ageing, Outstanding, Party Summary, Journal
-    Voucher (Debit Adjustment) aur merge — sab apne aap net ho gaye.
-  • Party Ledger ab "Credit Note CNINTRJ000042030 against 276437655" Debit
-    line dikhata hai (purchase bill ka manual CN bhi pehle jaisa).
-  • Courier/Duty bill edit karte waqt CN badla to wo seedha ledger row ke CN
-    column me jata hai (total ko chhedta nahi). Amount/round-off badla to
-    total delta se update hota hai, jaisa pehle.
-
-PURANA DATA — db/2026-11-02-courier-cn-ledger-line.sql ek baar chalayein
-  Ek hi DO block (idempotent). Sirf un rows ko theek karta hai jinka
-  credit_note_amt abhi 0 hai par bill par CN hai:
-   • total = gross      → CN column bharta hai (payable ghat jayega — yahi bug).
-   • total = gross − CN → gross + CN re-post karta hai (net same, bas CN ab
-     dikhne lagta hai).
-   • kuch aur (haath se type kiya amount) → chhod deta hai, NOTICE me count
-     batata hai; aise bill ke "↻ Re-sync Finance amount" button se theek karein.
-  Local Postgres fixtures par verify kiya: 276437655 shape → payable
-  342842.63 → 316505.33; netted row ka net same; no-CN aur hand-typed rows
-  untouched; doosre run par 0 change.
-
-----------------------------------------------------------------------
 
 EK DEBIT NOTE = LEDGER ME EK LINE (aur split bill sab jagah fix)
 (2026-11-01)

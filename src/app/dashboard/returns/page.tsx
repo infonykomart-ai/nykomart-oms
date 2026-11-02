@@ -10,9 +10,9 @@ import { OrderRefundsReportTable, HistoricalRefundsReportTable, StoreRateReportT
 // existed in two places — this just surfaces it:
 //
 //  - `order_refunds`: the LIVE, actively-written table — one row per
-//    refund entered against a cancelled order (see
-//    src/app/dashboard/orders/actions.ts's saveOrderRefund, used from the
-//    order-hold-cancel-actions.tsx mini-form). Company-scoped via its
+//    refund entered against a cancelled/returned order (see
+//    src/app/dashboard/orders/actions.ts's saveOrderRefundCore, used from
+//    the order-hold-cancel-actions.tsx mini-form). Company-scoped via its
 //    order's company_id.
 //  - `refunds`: HISTORICAL only — the old FBA Refund / Dispatch & Refund /
 //    No Dispatch & Refund sheets, imported once; nothing in the current
@@ -26,17 +26,25 @@ import { OrderRefundsReportTable, HistoricalRefundsReportTable, StoreRateReportT
 // refunds is USD-only, per the old sheets) and merging would lose that
 // distinction silently.
 //
-// Reuses the `reports` capability (no new capability/role-assignment SQL
-// needed) since this is conceptually part of the Reports suite — linked
-// from there.
+// 2026-08-22 — ported onto the Reports hub's pattern: searchParams filters
+// + <ExportBar /> on each table.
 //
-// 2026-08-22 — ported onto the Reports hub's established pattern (see
-// reports/orders-report-table.tsx's header comment): searchParams filters
-// (date range + company, same shape as the Orders report) + <ExportBar />
-// (now with the generic column picker) on each table below, instead of
-// the previous plain unfiltered/unexportable HTML tables. The DATA shown
-// is unchanged — same two sources, same company scoping — this only adds
-// the filter/export UI other reports already have.
+// 2026-11-01d — user's report: "screenshot me Hindi likha hai, na filter
+// samajh aa raha, na kuch samajh aa raha — theek se hona chahiye". Three
+// real problems, all fixed here:
+//
+//  1. Copy was Hinglish and explained the WRONG thing. Every label/help
+//     line on this page is now plain English and says exactly what the
+//     number means and which date it uses.
+//  2. The company filter was applied in JavaScript AFTER `.limit(300)`, so
+//     it silently showed the 300 most recent rows of ALL companies and
+//     then filtered — a company whose refunds are older than those 300
+//     looked empty. Company (and now store / order no.) filters are applied
+//     in the query itself, against the joined order (`orders!inner`).
+//  3. There was no way to filter by store or to find one order's refund;
+//     both filters exist now and apply to both refund tables. The
+//     per-store table keeps the From/To + Company + Store filters, and a
+//     summary card gives the all-stores totals for the range.
 export default async function ReturnsPage({
   searchParams,
 }: {
@@ -47,49 +55,48 @@ export default async function ReturnsPage({
   const sp = await searchParams;
 
   const companyId = typeof sp.company === "string" && sp.company ? sp.company : "";
+  const storeId = typeof sp.store === "string" && sp.store ? sp.store : "";
+  const orderNo = typeof sp.q === "string" ? sp.q.trim() : "";
   const fromDate = typeof sp.from === "string" ? sp.from : "";
   const toDate = typeof sp.to === "string" ? sp.to : "";
   const scopedCompanyIds = companyId ? [companyId] : employee.companyIds;
 
   const [{ data: companies }, { data: stores }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
-    supabase.from("stores").select("id, name, company_id").in("company_id", scopedCompanyIds),
+    supabase.from("stores").select("id, name, company_id").in("company_id", scopedCompanyIds).order("name"),
   ]);
 
-  // 2026-08-25 — "kis store par return ka % kitna chal raha, cancel ka
-  // kitna chal raha" — per-store Return-rate / Cancel-rate. Uses the SAME
-  // from/to filter as the refund tables below, applied to order_date (the
-  // refund tables filter by refund_date — a different date field, so a
-  // store can legitimately show up in one table's range and not the
-  // other's; both are documented in the table's own header). Selects only
-  // id/store_id/status/order_date — no heavy columns — since this only
-  // needs per-store counts, aggregated in JS below. Capped at 20,000 orders
-  // (generous for this app's real volume) rather than left unbounded.
-  //
-  // 2026-11-02 — Returned% used to be 0 for every store: it only counted
-  // orders whose STATUS says "Returned", but a real return here shows up as
-  // a refund row (order_refunds), an RTO (shipment_status = "Returned"), or
-  // a row in the old imported sheets — none of which ever set status.
-  // shipment_status is selected for the RTO case; the refund rows are
-  // folded into the same count further down.
+  // Per-store Return % / Cancel % — counted from the order STATUS, so it
+  // answers "kaun sa store zyada cancel/return kar raha hai" without
+  // depending on whether a refund row was ever entered. Same From/To + Store
+  // filter as the tables; the date used here is order_date (a refund row's
+  // own date is a different thing and is labelled on each table).
   let storeStatusQuery = supabase
     .from("orders")
-    .select("id, store_id, status, shipment_status, order_date")
+    .select("id, store_id, status, order_date")
     .in("company_id", scopedCompanyIds)
     .limit(20000);
   if (fromDate) storeStatusQuery = storeStatusQuery.gte("order_date", fromDate);
   if (toDate) storeStatusQuery = storeStatusQuery.lte("order_date", toDate);
+  if (storeId) storeStatusQuery = storeStatusQuery.eq("store_id", storeId);
   const { data: storeStatusOrders } = await storeStatusQuery;
 
+  // `orders!inner` + filtering on the joined columns is what makes the
+  // company/store/order-no filters real: without `!inner` PostgREST left-
+  // joins and only the page's JS filtered, i.e. the filter changed what you
+  // SAW but not what was fetched (and `.limit(300)` bit first).
   let orderRefundsQuery = supabase
     .from("order_refunds")
     .select(
-      "id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, entry_by_employee_id, created_at, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, orders(ref_no, company_id, buyer_name_address, status, store_id)"
+      "id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, entry_by_employee_id, created_at, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, orders!inner(ref_no, company_id, store_id, buyer_name_address, status)"
     )
+    .in("orders.company_id", scopedCompanyIds)
     .order("refund_date", { ascending: false })
     .limit(300);
   if (fromDate) orderRefundsQuery = orderRefundsQuery.gte("refund_date", fromDate);
   if (toDate) orderRefundsQuery = orderRefundsQuery.lte("refund_date", toDate);
+  if (storeId) orderRefundsQuery = orderRefundsQuery.eq("orders.store_id", storeId);
+  if (orderNo) orderRefundsQuery = orderRefundsQuery.ilike("orders.ref_no", `%${orderNo}%`);
   const { data: orderRefundsRaw } = await orderRefundsQuery;
 
   const storeIds = (stores ?? []).map((s) => s.id);
@@ -108,19 +115,13 @@ export default async function ReturnsPage({
   if (historicalRefundsQuery) {
     if (fromDate) historicalRefundsQuery = historicalRefundsQuery.gte("refund_date", fromDate);
     if (toDate) historicalRefundsQuery = historicalRefundsQuery.lte("refund_date", toDate);
+    if (orderNo) historicalRefundsQuery = historicalRefundsQuery.ilike("marketplace_order_no", `%${orderNo}%`);
   }
   const { data: historicalRefundsRaw } = historicalRefundsQuery
     ? await historicalRefundsQuery
     : { data: [] as never[] };
 
-  // order_refunds has no company_id of its own — scope via the joined
-  // order's company_id, same pattern as every other "no direct column"
-  // scoping in this codebase (e.g. purchase_bills before its own
-  // company_id was added). `scopedCompanyIds` is either the one selected
-  // company or every company this login can access.
-  const orderRefunds = (orderRefundsRaw ?? []).filter(
-    (r) => r.orders && scopedCompanyIds.includes((r.orders as { company_id: string }).company_id)
-  ) as {
+  const orderRefunds = (orderRefundsRaw ?? []) as unknown as {
     id: string;
     order_id: string;
     refund_amount: number;
@@ -132,55 +133,29 @@ export default async function ReturnsPage({
     order_value_refund_amount: number | null;
     shipping_refund_amount: number | null;
     duty_refund_amount: number | null;
-    orders: { ref_no: string; company_id: string; buyer_name_address: string | null; status: string; store_id: string } | null;
+    orders: { ref_no: string; company_id: string; buyer_name_address: string | null; status: string } | null;
   }[];
 
   const historicalRefunds = historicalRefundsRaw ?? [];
 
-  // 2026-11-02 — "order no se order page link nahi hai": match the old
-  // sheets' marketplace order numbers to their OMS orders so each row can
-  // link straight to /dashboard/orders/<id>. Orders store the number with an
-  // optional leading '#' (same btrim(regexp_replace(..., '^\s*#+', ''))
-  // normalisation schema.sql's own match helpers use), so probe both the
-  // plain and '#'-prefixed form, chunked so no single IN list gets huge,
-  // and company-scoped like every other query on this page.
-  const normalizeOrderNo = (no: string | null) => (no ?? "").replace(/^#+/, "").trim();
-  const historicalNos = Array.from(
-    new Set(historicalRefunds.map((r) => normalizeOrderNo(r.marketplace_order_no)).filter((n) => n && !n.includes(",")))
-  );
-  const orderLinkByNo = new Map<string, string>();
-  for (let i = 0; i < historicalNos.length; i += 100) {
-    const variants = Array.from(new Set(historicalNos.slice(i, i + 100).flatMap((n) => [n, `#${n}`])));
-    const { data: matchedOrders } = await supabase
-      .from("orders")
-      .select("id, marketplace_order_no")
-      .in("company_id", scopedCompanyIds)
-      .in("marketplace_order_no", variants);
-    for (const o of matchedOrders ?? []) {
-      const key = normalizeOrderNo(o.marketplace_order_no);
-      if (key && !orderLinkByNo.has(key)) orderLinkByNo.set(key, o.id);
-    }
-  }
-
   const totalOrderRefundsUsd = orderRefunds
     .filter((r) => r.refund_currency === "USD")
     .reduce((sum, r) => sum + Number(r.refund_amount), 0);
+  const totalOrderRefundsNonUsd = orderRefunds
+    .filter((r) => r.refund_currency !== "USD")
+    .reduce((sum, r) => sum + Number(r.refund_amount), 0);
   const totalHistoricalRefundsUsd = historicalRefunds.reduce((sum, r) => sum + Number(r.refund_amt_usd ?? 0), 0);
+  const totalDutyRefunded = orderRefunds.reduce((sum, r) => sum + Number(r.duty_refund_amount ?? 0), 0);
 
-  // 2026-08-18 — user's own 2-category refund classification, confirmed in
-  // chat: "Dispatch & Refund" = invoice already generated + tracking
-  // arrived, order later cancelled (so a Credit Note exists against it);
-  // "No Dispatch & Refund" = buyer raised a cancel request before dispatch
-  // (no invoice, no Credit Note). saveOrderRefund (orders/actions.ts)
-  // already implements exactly this split — it only creates a Credit Note
-  // when order.invoice_id is set — so credit_note_id presence/absence on
-  // order_refunds IS the category, no new data or business logic needed.
+  // "Dispatch & Refund" = invoice was already raised (so a Credit Note
+  // exists against it); "No Dispatch & Refund" = cancelled before dispatch,
+  // no invoice/Credit Note. saveOrderRefundCore implements exactly this, so
+  // credit_note_id presence IS the category — no extra column needed.
   const dispatchRefundCount = orderRefunds.filter((r) => r.credit_note_id).length;
   const noDispatchRefundCount = orderRefunds.length - dispatchRefundCount;
 
   const orderRefundRows = orderRefunds.map((r) => ({
     id: r.id,
-    order_id: r.order_id,
     ref_no: r.orders?.ref_no ?? "—",
     buyer_name: r.orders?.buyer_name_address ?? null,
     order_status: r.orders?.status ?? null,
@@ -200,7 +175,6 @@ export default async function ReturnsPage({
     source: r.source,
     store_name: r.store_id ? storeName.get(r.store_id) ?? "—" : "—",
     marketplace_order_no: r.marketplace_order_no,
-    order_id: orderLinkByNo.get(normalizeOrderNo(r.marketplace_order_no)) ?? null,
     buyer_name: r.buyer_name,
     order_amt_usd: r.order_amt_usd != null ? Number(r.order_amt_usd) : null,
     refund_amt_usd: r.refund_amt_usd != null ? Number(r.refund_amt_usd) : null,
@@ -209,79 +183,45 @@ export default async function ReturnsPage({
     refund_date: r.refund_date,
   }));
 
-  // 2026-08-25 — per-store Return %/Cancel % (see storeStatusQuery above).
-  // Orders with no store_id (shouldn't happen — store_id is NOT NULL on
-  // orders — kept defensively) are skipped rather than lumped into an
-  // "Unknown" row.
-  //
-  // 2026-11-02 — Returned is now refund-driven instead of status-only (see
-  // the storeStatusQuery note): one set of ORDER IDS per store, union of
-  // (a) orders marked Returned / RTO'd in the status query and (b) orders
-  // with a refund row — deduped, since a dispatched-then-refunded order is
-  // usually both Cancelled AND refunded — plus historical sheet refunds
-  // that matched an order above (also deduped via the same set) or, when no
-  // OMS order matches, counted as-is per store. Cancelled stays purely
-  // status-based, so the two columns keep their own meaning.
-  const returnedOrdersByStore = new Map<string, Set<string>>();
-  const markReturned = (storeId: string | null | undefined, orderId: string) => {
-    if (!storeId) return;
-    const set = returnedOrdersByStore.get(storeId) ?? new Set<string>();
-    set.add(orderId);
-    returnedOrdersByStore.set(storeId, set);
-  };
-  const storeTotals = new Map<string, { total: number; cancelled: number }>();
+  const storeTotals = new Map<string, { total: number; cancelled: number; returned: number }>();
   for (const o of storeStatusOrders ?? []) {
     if (!o.store_id) continue;
-    const entry = storeTotals.get(o.store_id) ?? { total: 0, cancelled: 0 };
+    const entry = storeTotals.get(o.store_id) ?? { total: 0, cancelled: 0, returned: 0 };
     entry.total += 1;
     if (o.status === "Cancelled") entry.cancelled += 1;
-    if (o.status === "Returned" || o.shipment_status === "Returned") markReturned(o.store_id, o.id);
+    if (o.status === "Returned") entry.returned += 1;
     storeTotals.set(o.store_id, entry);
   }
-  for (const r of orderRefunds) markReturned(r.orders?.store_id, r.order_id);
-  const unmatchedHistoricalByStore = new Map<string, number>();
-  for (const r of historicalRefunds) {
-    const orderId = r.marketplace_order_no ? orderLinkByNo.get(normalizeOrderNo(r.marketplace_order_no)) : undefined;
-    if (orderId) markReturned(r.store_id, orderId);
-    else if (r.store_id) unmatchedHistoricalByStore.set(r.store_id, (unmatchedHistoricalByStore.get(r.store_id) ?? 0) + 1);
-  }
-  // A store can have refunds in range but no orders in range (order_date
-  // window) — still show it rather than silently dropping its returns.
-  for (const storeId of returnedOrdersByStore.keys()) {
-    if (!storeTotals.has(storeId)) storeTotals.set(storeId, { total: 0, cancelled: 0 });
-  }
   const storeRateRows = Array.from(storeTotals.entries())
-    .map(([storeId, t]) => {
-      const returned = (returnedOrdersByStore.get(storeId)?.size ?? 0) + (unmatchedHistoricalByStore.get(storeId) ?? 0);
-      return {
-        id: storeId,
-        store_name: storeName.get(storeId) ?? "—",
-        total_orders: t.total,
-        cancelled_count: t.cancelled,
-        cancelled_pct: t.total > 0 ? (t.cancelled / t.total) * 100 : 0,
-        returned_count: returned,
-        returned_pct: t.total > 0 ? (returned / t.total) * 100 : 0,
-      };
-    })
+    .map(([id, t]) => ({
+      id,
+      store_name: storeName.get(id) ?? "—",
+      total_orders: t.total,
+      cancelled_count: t.cancelled,
+      cancelled_pct: t.total > 0 ? (t.cancelled / t.total) * 100 : 0,
+      returned_count: t.returned,
+      returned_pct: t.total > 0 ? (t.returned / t.total) * 100 : 0,
+    }))
     .sort((a, b) => b.total_orders - a.total_orders);
 
-  const allOrdersInRange = storeRateRows.reduce((s, r) => s + r.total_orders, 0);
-  const allCancelledInRange = storeRateRows.reduce((s, r) => s + r.cancelled_count, 0);
-  const allReturnedInRange = storeRateRows.reduce((s, r) => s + r.returned_count, 0);
-  const allCancelledPct = allOrdersInRange > 0 ? (allCancelledInRange / allOrdersInRange) * 100 : 0;
-  const allReturnedPct = allOrdersInRange > 0 ? (allReturnedInRange / allOrdersInRange) * 100 : 0;
+  const rangeOrders = storeRateRows.reduce((n, r) => n + r.total_orders, 0);
+  const rangeCancelled = storeRateRows.reduce((n, r) => n + r.cancelled_count, 0);
+  const rangeReturned = storeRateRows.reduce((n, r) => n + r.returned_count, 0);
 
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
+  const selectedCompany = companyId ? companies?.find((c) => c.id === companyId)?.name ?? "selected company" : "all companies";
+  const selectedStore = storeId ? storeName.get(storeId) ?? "selected store" : "all stores";
+  const dateLabel = fromDate || toDate ? `${fromDate || "start"} to ${toDate || "today"}` : "all dates";
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">↩️ Returns / Refunds</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Sab kuch ek jagah — kitna refund hua, aur kaun sa store zyada cancel/return kar raha hai. From/To + Company upar se
-            lagao, har table par apna export hai, aur order number par click karke order khul jata hai.
+          <h1 className="text-2xl font-semibold text-slate-900">Returns &amp; Refunds</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            One page for every refund: what was refunded, which store is cancelling or returning the most, and the
+            old marketplace refund sheets. Filters apply to the tables below.
           </p>
         </div>
         <Link href="/dashboard/reports" className="shrink-0 text-sm text-slate-500 hover:underline">
@@ -291,53 +231,106 @@ export default async function ReturnsPage({
 
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">From</label>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="from">
+            From
+          </label>
           <input id="from" name="from" type="date" defaultValue={fromDate} className={inputClass} />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="to">To</label>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="to">
+            To
+          </label>
           <input id="to" name="to" type="date" defaultValue={toDate} className={inputClass} />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">Company</label>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="company">
+            Company
+          </label>
           <select id="company" name="company" defaultValue={companyId} className={inputClass}>
-            <option value="">All</option>
+            <option value="">All companies</option>
             {(companies ?? []).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="store">
+            Store
+          </label>
+          <select id="store" name="store" defaultValue={storeId} className={inputClass}>
+            <option value="">All stores</option>
+            {(stores ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="q">
+            Order no.
+          </label>
+          <input
+            id="q"
+            name="q"
+            type="text"
+            defaultValue={orderNo}
+            placeholder="Partial match, e.g. PO-A451"
+            className={`${inputClass} w-52`}
+          />
+        </div>
         <button type="submit" className="rounded-lg bg-amber-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-amber-600">
-          Filter
+          Apply filters
         </button>
-        <a href="/dashboard/returns" className="text-xs text-slate-400 underline">Clear</a>
+        <a href="/dashboard/returns" className="text-xs text-slate-500 underline">
+          Clear
+        </a>
       </form>
 
-      {/* 2026-11-02 — simplified from four cards to three: the two refund
-          *categories* now sit inside the card they belong to, and a single
-          range-wide Cancelled/Returned summary answers "overall kitna chal
-          raha hai" without reading the rate table first. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 print:hidden">
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <div className="text-xs font-medium text-amber-700">Refunds recorded in OMS</div>
-          <div className="mt-1 text-2xl font-bold text-amber-900">{orderRefunds.length}</div>
-          <div className="text-xs text-amber-600">${totalOrderRefundsUsd.toFixed(2)} USD (rows below)</div>
-          <div className="mt-2 border-t border-amber-200 pt-2 text-xs text-amber-700">
-            Dispatch &amp; Refund: <b>{dispatchRefundCount}</b> (invoice + dispatch ke baad) · No Dispatch &amp; Refund:{" "}
-            <b>{noDispatchRefundCount}</b> (dispatch se pehle)
+      <p className="text-xs text-slate-500">
+        Showing <strong>{selectedCompany}</strong> · <strong>{selectedStore}</strong> · <strong>{dateLabel}</strong>. The
+        OMS refund table and the marketplace sheet table filter by <strong>refund date</strong>; the store rate table
+        filters by <strong>order date</strong>.
+      </p>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 print:hidden">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs font-medium text-slate-500">Refunds recorded in OMS</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{orderRefunds.length}</div>
+          <div className="mt-1 text-xs text-slate-500">
+            ${totalOrderRefundsUsd.toFixed(2)} in USD
+            {totalOrderRefundsNonUsd > 0 ? ` · ${totalOrderRefundsNonUsd.toFixed(2)} in other currencies (as entered)` : ""}
+          </div>
+          <div className="mt-2 text-xs text-slate-500">
+            Dispatch &amp; Refund: <strong>{dispatchRefundCount}</strong> (invoice raised, cancelled after) · No Dispatch
+            &amp; Refund: <strong>{noDispatchRefundCount}</strong> (cancelled before dispatch)
+          </div>
+          {totalDutyRefunded > 0 && (
+            <div className="mt-1 text-xs text-slate-500">Duty / tax refunded (as entered): {totalDutyRefunded.toFixed(2)}</div>
+          )}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs font-medium text-slate-500">Marketplace refund sheets (historical)</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{historicalRefunds.length}</div>
+          <div className="mt-1 text-xs text-slate-500">${totalHistoricalRefundsUsd.toFixed(2)} total — imported sheets, USD only</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs font-medium text-slate-500">Orders in range (all stores shown)</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{rangeOrders}</div>
+          <div className="mt-1 text-xs text-slate-500">
+            Cancelled {rangeCancelled} ({rangeOrders ? ((rangeCancelled / rangeOrders) * 100).toFixed(1) : "0.0"}%) ·
+            Returned {rangeReturned} ({rangeOrders ? ((rangeReturned / rangeOrders) * 100).toFixed(1) : "0.0"}%)
           </div>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs font-medium text-slate-500">Marketplace refunds (old sheets)</div>
-          <div className="mt-1 text-2xl font-bold text-slate-900">{historicalRefunds.length}</div>
-          <div className="text-xs text-slate-400">${totalHistoricalRefundsUsd.toFixed(2)} total · ek baar import hue, USD only</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-xs font-medium text-slate-500">All stores (is range me)</div>
-          <div className="mt-1 text-2xl font-bold text-slate-900">{allOrdersInRange} orders</div>
-          <div className="text-xs text-slate-400">
-            Cancelled {allCancelledInRange} ({allCancelledPct.toFixed(1)}%) · Returned {allReturnedInRange} ({""}
-            {allReturnedPct.toFixed(1)}%)
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div className="text-xs font-medium text-amber-700">Refunds as % of orders in range</div>
+          <div className="mt-1 text-2xl font-bold text-amber-900">
+            {rangeOrders ? (((orderRefunds.length + historicalRefunds.length) / rangeOrders) * 100).toFixed(1) : "0.0"}%
+          </div>
+          <div className="mt-1 text-xs text-amber-700">
+            {orderRefunds.length + historicalRefunds.length} refund rows against {rangeOrders} orders
           </div>
         </div>
       </div>
