@@ -6,6 +6,8 @@ import { PhotoUrlField } from "../photo-url-field";
 import { MultiPhotoUrls } from "../multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
+import { isStairRugCategory } from "@/lib/orders/stair-rug";
+import { StairRugFields } from "../stair-rug-fields";
 
 const initialState: OrderFormState = { error: null, success: null };
 
@@ -50,6 +52,15 @@ function ItemBlock({
   // see handleSubmit below — matching that same pattern rather than lifting
   // everything into state just for this).
   const [stockQty, setStockQty] = useState<number | null>(null);
+
+  // 2026-11-02 — Stair Rug switches this item block's Quantity box over to
+  // the set-based fields (see ../stair-rug-fields.tsx). Only the selected
+  // category is lifted into state, because that's the one decision the UI
+  // has to react to; everything else stays DOM-read exactly as before, and
+  // Cotton/Jute/Tufted render exactly the same Quantity input they always
+  // did.
+  const [categoryId, setCategoryId] = useState("");
+  const isStairRug = isStairRugCategory(itemCategories.find((c) => c.id === categoryId)?.name);
 
   // 2026-09-19 — "Closeup Photo" section: "order me ek to main photo ka
   // section hai dusra ab or banana hai jisme Closup photo ka option ho ek
@@ -97,7 +108,15 @@ function ItemBlock({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className={labelClass} htmlFor={id("item_category_id")}>Item Category *</label>
-          <select id={id("item_category_id")} name={id("item_category_id")} required className={inputClass} defaultValue="" onBlur={checkStock}>
+          <select
+            id={id("item_category_id")}
+            name={id("item_category_id")}
+            required
+            className={inputClass}
+            defaultValue=""
+            onChange={(e) => setCategoryId(e.target.value)}
+            onBlur={checkStock}
+          >
             <option value="" disabled>Select category</option>
             {itemCategories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -122,10 +141,14 @@ function ItemBlock({
             ℹ️ {stockQty} unit{stockQty === 1 ? "" : "s"} of this SKU+Size already in Inventory.
           </p>
         )}
-        <div>
-          <label className={labelClass} htmlFor={id("qty")}>Quantity *</label>
-          <input id={id("qty")} name={id("qty")} type="number" min={1} defaultValue={1} required className={inputClass} />
-        </div>
+        {isStairRug ? (
+          <StairRugFields suffix={String(itemKey)} qtyName={id("qty")} inputClass={inputClass} labelClass={labelClass} />
+        ) : (
+          <div>
+            <label className={labelClass} htmlFor={id("qty")}>Quantity *</label>
+            <input id={id("qty")} name={id("qty")} type="number" min={1} defaultValue={1} required className={inputClass} />
+          </div>
+        )}
         <div>
           <label className={labelClass} htmlFor={id("colour")}>Colour</label>
           <input id={id("colour")} name={id("colour")} className={inputClass} />
@@ -261,11 +284,25 @@ export function OrderForm({
         .map((el) => el.value.trim())
         .filter(Boolean);
 
+    // 2026-11-02 — stair-set fields are only present in a block whose
+    // category is a Stair Rug (StairRugFields renders them); for every other
+    // item `val()` returns "" and the server simply sees no set data. `qty_
+    // {key}` itself is the set form's read-only Total Pieces, so the normal
+    // quantity path is unchanged for Cotton/Jute/Tufted.
+    const num = (name: string) => {
+      const raw = val(name);
+      return raw === "" ? null : Number(raw);
+    };
     const items = itemKeys.map((key) => ({
       itemCategoryId: val(`item_category_id_${key}`),
       skuLabel: val(`sku_label_${key}`),
       sizeLabel: val(`size_label_${key}`),
       qty: Number(val(`qty_${key}`)),
+      setsCount: num(`sets_count_${key}`),
+      piecesPerSet: num(`pieces_per_set_${key}`),
+      dimensionLength: num(`dimension_length_${key}`),
+      dimensionWidth: num(`dimension_width_${key}`),
+      dimensionUnit: val(`dimension_unit_${key}`) || null,
       colour: val(`colour_${key}`),
       photoType: val(`photo_type_${key}`),
       photoUrl: val(`photo_url_${key}`),

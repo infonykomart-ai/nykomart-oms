@@ -7479,6 +7479,14 @@ export type Database = {
           order_value_usd: number | null;
           order_value_inr: number | null;
           exchange_rate_source: string | null;
+          // 2026-11-02 — Stair Rug set-based quantity; qty above is the TOTAL
+          // PIECES, these only carry the set facts (see
+          // db/2026-11-02-stair-rug-set-quantity.sql).
+          sets_count: number | null;
+          pieces_per_set: number | null;
+          dimension_length: number | null;
+          dimension_width: number | null;
+          dimension_unit: string | null;
           created_at: string;
           invoice_id: string | null;
           weight_kg: number | null;
@@ -7543,6 +7551,11 @@ export type Database = {
           order_value_usd?: number | null;
           order_value_inr?: number | null;
           exchange_rate_source?: string | null;
+          sets_count?: number | null;
+          pieces_per_set?: number | null;
+          dimension_length?: number | null;
+          dimension_width?: number | null;
+          dimension_unit?: string | null;
           created_at?: string;
           invoice_id?: string | null;
           weight_kg?: number | null;
@@ -7607,6 +7620,11 @@ export type Database = {
           order_value_usd?: number | null;
           order_value_inr?: number | null;
           exchange_rate_source?: string | null;
+          sets_count?: number | null;
+          pieces_per_set?: number | null;
+          dimension_length?: number | null;
+          dimension_width?: number | null;
+          dimension_unit?: string | null;
           created_at?: string;
           invoice_id?: string | null;
           weight_kg?: number | null;

@@ -8,7 +8,17 @@ import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/c
 import { notifyCompanion } from "@/lib/companion/notify";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { validateDateFields } from "@/lib/fy-date";
+import { tolerateMissingColumns } from "@/lib/db/missing-column";
+import {
+  isStairDimensionUnit,
+  normalizeCount,
+  stairSizeLabel,
+  stairTotalPieces,
+} from "@/lib/orders/stair-rug";
+import type { Database } from "@/types/database";
 import { revalidatePath } from "next/cache";
+
+type OrderInsert = Database["public"]["Tables"]["orders"]["Insert"];
 
 export type OrderFormState = {
   error: string | null;
@@ -39,7 +49,24 @@ type ParsedItem = {
   tasselFringes: boolean;
   orderCurrency: string;
   orderValueOriginal: number;
+  // 2026-11-02 — Stair Rug only (db/2026-11-02-stair-rug-set-quantity.sql).
+  // `qty` above is always the TOTAL PIECES for a stair order; these five
+  // are the set facts stored beside it, NULL for every other product.
+  setsCount: number | null;
+  piecesPerSet: number | null;
+  dimensionLength: number | null;
+  dimensionWidth: number | null;
+  dimensionUnit: string | null;
 };
+
+/** The columns that only exist once db/2026-11-02-stair-rug-set-quantity.sql has been run. */
+const STAIR_ORDER_COLUMNS = [
+  "sets_count",
+  "pieces_per_set",
+  "dimension_length",
+  "dimension_width",
+  "dimension_unit",
+] as const;
 
 /**
  * 2026-08-07: "Add More Item" — a buyer ordering more than one distinct
@@ -94,11 +121,42 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
       .map((u) => String(u ?? "").trim())
       .filter(Boolean);
     const orderCurrency = String(raw.orderCurrency ?? "").trim();
+
+    // 2026-11-02 — Stair Rug set quantity. Sets/pieces are taken as whole
+    // numbers, minimum 1, and Total Pieces is recomputed HERE rather than
+    // trusted from the client's read-only box; that product is the order's
+    // qty. If a block sends no set data (Cotton/Jute/Tufted, bulk CSV, or an
+    // older form) every stair field stays null and `qty` is used exactly as
+    // submitted — the pre-existing path, byte for byte.
+    const setsRaw = Number(raw.setsCount);
+    const pcsRaw = Number(raw.piecesPerSet);
+    const hasStairQty = Number.isFinite(setsRaw) && setsRaw >= 1 && Number.isFinite(pcsRaw) && pcsRaw >= 1;
+    const setsCount = hasStairQty ? normalizeCount(setsRaw) : null;
+    const piecesPerSet = hasStairQty ? normalizeCount(pcsRaw) : null;
+    const totalPieces = hasStairQty ? stairTotalPieces(setsCount, piecesPerSet) : null;
+
+    const dimLength = Number(raw.dimensionLength);
+    const dimWidth = Number(raw.dimensionWidth);
+    const hasDims = Number.isFinite(dimLength) && dimLength > 0 && Number.isFinite(dimWidth) && dimWidth > 0;
+    const dimensionLength = hasDims ? dimLength : null;
+    const dimensionWidth = hasDims ? dimWidth : null;
+    const dimensionUnit = hasDims && isStairDimensionUnit(raw.dimensionUnit) ? raw.dimensionUnit : null;
+
+    const stairSize = stairSizeLabel(dimensionLength, dimensionWidth, dimensionUnit);
+    // Auto size label ONLY when the employee left Size blank — a size they
+    // typed themselves is never overwritten.
+    const finalSizeLabel = sizeLabel || stairSize;
+
     items.push({
       itemCategoryId,
       skuLabel: skuLabel || null,
-      sizeLabel,
-      qty,
+      sizeLabel: finalSizeLabel,
+      qty: totalPieces ?? qty,
+      setsCount,
+      piecesPerSet,
+      dimensionLength,
+      dimensionWidth,
+      dimensionUnit,
       colour: colour || null,
       photoType: photoType === "Dispatch" || photoType === "Website" ? photoType : null,
       photoUrl: photoUrl || null,
@@ -420,7 +478,7 @@ export async function createOrderCore(
     siblingCount += 1;
     const provisionalRefNo = siblingCount > 1 ? `${baseRefNo}-${siblingCount}/${siblingCount}` : baseRefNo;
 
-    const { error: insertError } = await supabase.from("orders").insert({
+    const payload: OrderInsert = {
       company_id: companyId,
       store_id: storeId,
       order_date: orderDate,
@@ -470,7 +528,26 @@ export async function createOrderCore(
       order_value_usd: conversion.usd,
       order_value_inr: conversion.inr,
       exchange_rate_source: conversion.source,
-    });
+    };
+
+    // 2026-11-02 — Stair Rug's set columns ride along only when the item
+    // actually has set data (Cotton/Jute/Tufted payloads are byte-identical to
+    // before), and the write retries without them while
+    // db/2026-11-02-stair-rug-set-quantity.sql is still pending — see
+    // src/lib/db/missing-column.ts.
+    if (item.setsCount != null) {
+      Object.assign(payload, {
+        sets_count: item.setsCount,
+        pieces_per_set: item.piecesPerSet,
+        dimension_length: item.dimensionLength,
+        dimension_width: item.dimensionWidth,
+        dimension_unit: item.dimensionUnit,
+      });
+    }
+
+    const { error: insertError } = await tolerateMissingColumns(payload, STAIR_ORDER_COLUMNS, (p) =>
+      supabase.from("orders").insert(p)
+    );
 
     if (insertError) {
       return { error: `Save failed: ${insertError.message}`, refNo: null };
@@ -792,6 +869,14 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       tasselFringes: tasselRaw === "yes" || tasselRaw === "y" || tasselRaw === "true",
       orderCurrency: currency,
       orderValueOriginal,
+      // 2026-11-02 — the CSV template has one Quantity column and no set
+      // columns, so a bulk row is always a plain piece count (a Stair Rug
+      // entered this way behaves exactly like today's orders: qty = pieces).
+      setsCount: null,
+      piecesPerSet: null,
+      dimensionLength: null,
+      dimensionWidth: null,
+      dimensionUnit: null,
     };
 
     const result = await createOrderCore(employee, supabase, store.companyId, {

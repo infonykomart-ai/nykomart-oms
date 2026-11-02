@@ -1,8 +1,10 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { updateOrder, type OrderEditState } from "./actions";
 import { PhotoUrlField } from "./photo-url-field";
+import { StairRugFields } from "./stair-rug-fields";
+import { isStairRugCategory } from "@/lib/orders/stair-rug";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
 
@@ -31,6 +33,15 @@ export type EditableOrder = {
   sku_label: string | null;
   size_label: string | null;
   qty: number;
+  // 2026-11-02 — Stair Rug set quantity; NULL/undefined for every other
+  // product and for orders saved before this feature (see
+  // db/2026-11-02-stair-rug-set-quantity.sql). Optional so a read that
+  // predates the migration still type-checks.
+  sets_count?: number | null;
+  pieces_per_set?: number | null;
+  dimension_length?: number | null;
+  dimension_width?: number | null;
+  dimension_unit?: string | null;
   colour: string | null;
   photo_type: string | null;
   photo_url: string | null;
@@ -88,6 +99,11 @@ export function OrderEditForm({
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updateOrder, initialState);
+  // 2026-11-02 — same react-to-category pattern as the new-order form: only a
+  // Stair Rug swaps the Quantity box for the set-based fields; every other
+  // category keeps the ordinary quantity input untouched.
+  const [categoryId, setCategoryId] = useState(order.item_category_id);
+  const isStairRug = isStairRugCategory(itemCategories.find((c) => c.id === categoryId)?.name);
 
   useEffect(() => {
     if (state.success) onDone();
@@ -218,7 +234,14 @@ export function OrderEditForm({
         </div>
         <div>
           <label className={labelClass} htmlFor={`item_category_id-${order.id}`}>Item Category *</label>
-          <select id={`item_category_id-${order.id}`} name="item_category_id" defaultValue={order.item_category_id} required className={inputClass}>
+          <select
+            id={`item_category_id-${order.id}`}
+            name="item_category_id"
+            defaultValue={order.item_category_id}
+            onChange={(e) => setCategoryId(e.target.value)}
+            required
+            className={inputClass}
+          >
             {itemCategories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -237,10 +260,27 @@ export function OrderEditForm({
             ))}
           </datalist>
         </div>
-        <div>
-          <label className={labelClass} htmlFor={`qty-${order.id}`}>Quantity *</label>
-          <input id={`qty-${order.id}`} name="qty" type="number" min={1} defaultValue={order.qty} required className={inputClass} />
-        </div>
+        {isStairRug ? (
+          <StairRugFields
+            suffix=""
+            qtyName="qty"
+            inputClass={inputClass}
+            labelClass={labelClass}
+            initial={{
+              sets: order.sets_count ?? 1,
+              piecesPerSet: order.pieces_per_set ?? order.qty,
+              length: order.dimension_length,
+              width: order.dimension_width,
+              unit: order.dimension_unit,
+              qty: order.qty,
+            }}
+          />
+        ) : (
+          <div>
+            <label className={labelClass} htmlFor={`qty-${order.id}`}>Quantity *</label>
+            <input id={`qty-${order.id}`} name="qty" type="number" min={1} defaultValue={order.qty} required className={inputClass} />
+          </div>
+        )}
         <div>
           <label className={labelClass} htmlFor={`colour-${order.id}`}>Colour</label>
           <input id={`colour-${order.id}`} name="colour" defaultValue={order.colour ?? ""} className={inputClass} />

@@ -74,11 +74,15 @@ export default async function OrdersPage({
     supabase.from("stores").select("id, name").in("company_id", employee.companyIds).order("name"),
   ]);
 
-  let query = supabase
-    .from("orders")
-    .select(
-      "id, ref_no, order_date, company_id, store_id, status, shipment_status, dispatch_date, estimated_dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, photo_urls, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, vendor_party_id, advance_tracking, final_tracking"
-    )
+  // 2026-11-02 — deliberately "*" rather than a column list: this read now
+  // feeds the edit form's Stair Rug fields (sets_count / pieces_per_set /
+  // dimension_*), which may not exist yet on a database where
+  // db/2026-11-02-stair-rug-set-quantity.sql hasn't been run. Naming those
+  // columns here would make PostgREST reject the WHOLE select and blank the
+  // entire Orders hub over one optional patch (the 2026-10-17 failure mode),
+  // whereas "*" simply returns whatever the table actually has — the fields
+  // then read as undefined and the form treats the order as a plain quantity.
+  let query = supabase.from("orders").select("*")
     .in("company_id", effectiveCompanyIds)
     .order("entry_timestamp", { ascending: false })
     .limit(300);
