@@ -1,3 +1,71 @@
+RETURNS / REFUNDS PAGE — ORDERS PAGE JISA BANAYA + LIVE DATA
+(2026-11-02b)
+======================================================================
+
+"RETURN REFUND PAGE BHI ISI PARKAR SE BANAO ... SS ORDER PAGE KA HAI OR
+RETURN REFUND VALA PAGE BHI ESA HI BANE ... PO LINK NHI HAI, BUYER NAME
+LINK NHI, ORDER NO LINK NHI HAI, JO SHEET TEYAR HORI UNKO FILTER KARNE
+KA OPTION HI NAHI HAI. DATA REALTIME UPDATE HO."
+
+A) TEENO SHEETS AB ORDERS PAGE WALE GRID PAR (returns-report-tables.tsx
+   ka naya shared FilterableSheet component):
+   - amber frozen header + har column ke niche apna "Filter..." box
+     (text dropdown), exactly Orders page jaisa.
+   - upar ek page-level search box (poori row par match), row count
+     "N of M rows", kuch filter lage ho to "Clear Filters (n)" button.
+   - Columns picker + wahi ExportBar (CSV/Excel/Word/PDF/Email/WA/TG) —
+     jo column screen par chhupate ho wahi download me bhi nahi jata.
+   - per-column filter + search DONO client par chalte hain, to result
+     turant dikhta hai (koi 450ms wait nahi).
+
+B) LINKS (pehle sab plain text the):
+   - PO No.      -> /dashboard/orders/<id> (usi order ka detail page)
+   - Order No.   -> /dashboard/orders?q=<order no> (Orders page par search)
+   - Buyer       -> /dashboard/orders?q=<buyer> (us buyer ke sabhi orders)
+   - Historical sheet me bhi Order No. / Buyer ka wahi link.
+
+C) SEARCH AB SERVER PAR, POORA DATA PAR:
+   - Purana sirf orders.ref_no search karta tha. Ab PO no, marketplace
+     order no aur buyer NAME teeno — aur sirf loaded rows me nahi, poori
+     company me. Query ki direction ulti ki gayi hai: orders se shuru
+     (jahan PostgREST ka top-level `.or()` proven hai) +
+     `order_refunds!inner(...)` embedded, phir flatten. Ye is liye ki
+     id-list wala `.in()` 300+ order par "URI too long" se fail hota hai
+     (supabase/postgrest-js#423) — matlab broad search wahin fail hota
+     jahan usko chalna chahiye tha.
+   - Window 300 se 1000 (orders with refunds) — sheet spreadsheet ki
+     tarah padhi jaati hai, 300 chupke se kaat deta tha.
+   - Historical sheet ka search bhi ab PO + buyer dono par.
+
+D) REALTIME: AutoRefresh (src/components/auto-refresh.tsx) har 15 second
+   par page ka server fetch dobara chalata hai — reload nahi, typed filter
+   / dropdown state zinda rehta hai, aur focus input me ho to refresh
+   ruk jata hai. Header me live badge ("Live — refreshes every 15 seconds").
+
+E) REFUND KA RULE BILKUL WAISA HI, AB SCREEN PAR BHI DIKHTA HAI:
+   - saveOrderRefundCore me teen caps: (1) same currency me order value,
+     (2) refund currency me order value (conversion usi official rate se
+     jo har INR/$ figure app me use hoti hai — koi doosra rate nahi, is
+     liye currency ke beech koi farq nahi), (3) INR safety net. Value 0/NULL
+     ho to cap nahi lagta (warna har refund block ho jata tha).
+   - NAYA "Value Check" column: har order ke SARE refunds (₹ me) vs order
+     value (₹) — OK / OVER / N/A. Totals bina date filter ke, poori company
+     se, is liye date filter ke baad bhi number sahi rehta hai.
+   - "Add Refund" button ab har order status par (Pending/Confirmed/
+     In Production/Hold par pehle tha hi nahi).
+
+Badlav:
+M  src/app/dashboard/returns/page.tsx                  (query direction, links, live, KPI)
+M  src/app/dashboard/returns/returns-report-tables.tsx (FilterableSheet + columns)
+M  src/app/dashboard/orders/actions.ts                (cross-currency refund cap)
+M  CHANGES.txt
+
+VERIFICATION: focused tsc exit 0; eslint teeno files par exit 0. Live
+Supabase is workspace me nahi — DB query par runtime click-through nahi
+ho paya (query ke syntax wahi hain jo is page/Orders page pehle se use
+kar raha hai: top-level .or(), !inner embed, embedded column filter).
+
+
 ORDER SEARCH "SHOW NAHI HOTA" + REFUND ADD NAHI HO PA RAHA
 (2026-11-02)
 ======================================================================

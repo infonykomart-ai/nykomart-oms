@@ -379,7 +379,7 @@ export async function saveOrderRefundCore(
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, ref_no, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label, qty"
+      "id, ref_no, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, order_date, item_category_id, sku_label, size_label, qty"
     )
     .eq("id", orderId)
     .single();
@@ -409,6 +409,19 @@ export async function saveOrderRefundCore(
   // itself is still recorded, audited and reported) instead of being blocked
   // outright by a comparison against zero.
   const orderValueOriginal = Number(order.order_value_original ?? 0);
+
+  // 2026-11-02b — the order's own value in INR, used by BOTH cross-currency
+  // caps below. The stored order_value_inr is preferred; when an order never
+  // got one it is computed here with the same computeCurrencyConversion()
+  // (official Exchange Rate Master rate as of the ORDER's own date) the
+  // order's own INR value is built from — so a fallback conversion never
+  // introduces a rate or a date the app wouldn't already have used.
+  let orderValueInr = Number(order.order_value_inr ?? 0);
+  if (!(orderValueInr > 0) && orderValueOriginal > 0) {
+    const orderConversion = await computeCurrencyConversion(supabase, order.order_currency, order.order_date ?? refundDate, orderValueOriginal);
+    orderValueInr = orderConversion.inr ?? 0;
+  }
+
   if (refundCurrency === order.order_currency && orderValueOriginal > 0) {
     const existingSameCurrencyTotal = (existingRefunds ?? [])
       .filter((r) => r.refund_currency === order.order_currency)
@@ -421,6 +434,39 @@ export async function saveOrderRefundCore(
         error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${orderValueOriginal.toFixed(2)} ${order.order_currency}.`,
         success: null,
       };
+    }
+  }
+
+  // 2026-11-02b — "order value se jyada refund nahi hoga, lekin currency
+  // conversion se koi frq nahi padna chahiye": when the refund currency is
+  // NOT the order's currency, the very same "never beyond the order's worth"
+  // rule is applied after putting the order's value into the refund's own
+  // currency. The rate used is derived from THIS refund's own conversion
+  // (conversion.inr / refundAmount — i.e. the official rate as of the
+  // refund date) and the order value side is the order's own INR value, so
+  // both sides come from the same rate master and no third rate, no second
+  // rounding and no manual conversion is ever involved — nothing to disagree
+  // with. Without this a USD order refunded in INR had no same-currency cap
+  // at all unless order_value_inr happened to be stored.
+  if (refundCurrency !== order.order_currency && orderValueInr > 0) {
+    const refundRateToInr =
+      conversion.inr != null && refundAmount > 0
+        ? conversion.inr / refundAmount
+        : refundCurrency === "INR"
+          ? 1
+          : null;
+    if (refundRateToInr != null && refundRateToInr > 0) {
+      const orderValueInRefundCurrency = orderValueInr / refundRateToInr;
+      const existingSameCurrencyTotal = (existingRefunds ?? [])
+        .filter((r) => r.refund_currency === refundCurrency)
+        .reduce((sum, r) => sum + Number(r.refund_amount), 0);
+      const prospectiveTotal = existingSameCurrencyTotal + refundAmount;
+      if (prospectiveTotal > orderValueInRefundCurrency + 0.01) {
+        return {
+          error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${refundCurrency}, which exceeds the order's value of ${orderValueInRefundCurrency.toFixed(2)} ${refundCurrency} (the order's value converted at the ${refundDate} rate).`,
+          success: null,
+        };
+      }
     }
   }
 
@@ -440,7 +486,6 @@ export async function saveOrderRefundCore(
   // check's ₹0.01) allows for the small rounding noise that legitimately
   // compounds when several refunds, each separately converted at their own
   // refund-date rate, are summed together.
-  const orderValueInr = Number(order.order_value_inr ?? 0);
   if (orderValueInr > 0 && conversion.inr != null) {
     const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
     const prospectiveInrTotal = existingInrTotal + conversion.inr;
