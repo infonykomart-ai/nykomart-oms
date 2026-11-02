@@ -22,8 +22,14 @@ import type { ExportColumn } from "@/lib/export/export-table";
 // load avoids that class of bug entirely; a viewer's picks apply for the
 // session/tab they're looking at, which is what "show/hide columns while
 // I look at this report" actually needs.
-export function useColumnVisibility<T>(columns: ExportColumn<T>[]) {
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+// 2026-11-02 — optional `defaultHiddenKeys` so a wide report can start
+// with just its readable columns on screen (the picker still shows every
+// column and exports follow the picker). Must be a module-level constant
+// array, not something computed per render — the lazy initializer runs on
+// server and client and the two runs have to agree, same reasoning as the
+// localStorage note above.
+export function useColumnVisibility<T>(columns: ExportColumn<T>[], defaultHiddenKeys: readonly string[] = []) {
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set(defaultHiddenKeys));
 
   const toggleColumn = useCallback((key: string) => {
     setHidden((prev) => {

@@ -34,11 +34,12 @@ export default async function OrdersPrintPage({
   if (!requestedIds.length) notFound();
 
   const supabase = await createClient();
+  // 2026-11-02 — "*" so the printed sheet can show a Stair Rug's sets/area
+  // without this query failing while db/2026-11-02-stair-rug-set-quantity.sql
+  // is still pending (same reasoning as the detail loader and Orders hub).
   const { data: orders } = await supabase
     .from("orders")
-    .select(
-      "id, ref_no, company_id, store_id, order_date, po_date, delivery_date, dispatch_date, estimated_dispatch_date, status, shipment_status, marketplace_order_no, buyer_name_address, contact_no, email_id, address_type, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, item_category_id, sku_label, size_label, qty, colour, photo_type, photo_url, photo_urls, order_currency, order_value_original, order_value_usd, order_value_inr, exchange_rate_source, invoice_id, vendor_party_id, remark, entry_timestamp"
-    )
+    .select("*")
     .in("id", requestedIds);
 
   const accessible = (orders ?? []).filter((o) => employee.companyIds.includes(o.company_id));

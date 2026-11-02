@@ -76,9 +76,24 @@ export async function tolerateMissingColumn<P extends object, R extends { error:
   column: keyof P & string,
   attempt: (payload: P) => PromiseLike<R>
 ): Promise<R> {
+  return tolerateMissingColumns(payload, [column], attempt);
+}
+
+/**
+ * 2026-11-02 — same rule for a feature that stores SEVERAL columns at once
+ * (Stair Rug's sets_count / pieces_per_set / dimension_*): one missing column
+ * rejects the whole write, so the retry has to drop them all together.
+ */
+export async function tolerateMissingColumns<P extends object, R extends { error: DbError }>(
+  payload: P,
+  columns: readonly (keyof P & string)[],
+  attempt: (payload: P) => PromiseLike<R>
+): Promise<R> {
   const first = await attempt(payload);
   if (!isMissingSchemaPiece(first.error)) return first;
-  // The cast is contained here: dropping one optional key can only ever widen
+  // The cast is contained here: dropping optional keys can only ever widen
   // what the write accepts, never change what it means.
-  return attempt(withoutColumn(payload, column) as P);
+  let stripped: P = payload;
+  for (const column of columns) stripped = withoutColumn(stripped, column) as P;
+  return attempt(stripped);
 }

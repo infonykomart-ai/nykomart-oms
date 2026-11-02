@@ -164,6 +164,19 @@ export async function probeMigrations(
         { name: "duty_bill_awb_assignments.round_off_amt", promise: hasColumn(client, "duty_bill_awb_assignments", "round_off_amt") },
       ]),
 
+    // 2026-11-02 — Stair Rug set-based quantity on orders. Until this file is
+    // run, order entry/editing still saves (the stair columns are retried
+    // away — see src/lib/db/missing-column.ts), but the sets / pieces-per-set /
+    // per-piece dimensions are dropped: the order keeps its total piece count
+    // and simply can't show either the set breakdown or the area.
+    probe("db/2026-11-02-stair-rug-set-quantity.sql", "Stair Rug set quantity + per-piece area",
+      "A Stair Rug order saves only its total piece count — Sets, Pieces Per Set and the per-piece dimensions/area are dropped, so the order page and the packing WhatsApp caption can't show them.",
+      [
+        { name: "orders.sets_count", promise: hasColumn(client, "orders", "sets_count") },
+        { name: "orders.pieces_per_set", promise: hasColumn(client, "orders", "pieces_per_set") },
+        { name: "orders.dimension_length", promise: hasColumn(client, "orders", "dimension_length") },
+      ]),
+
     // 2026-10-29 — round-off on Credit Note / Debit Note / Internal Invoice /
     // Journal Voucher. Until this file is run those four forms still save
     // (round_off_amt simply stays 0), so their totals just can’t be rounded.

@@ -15,11 +15,14 @@ export default async function NewOrderPage() {
       supabase.from("sizes").select("id, label").order("label"),
       supabase.from("currencies").select("code, name").order("code"),
       supabase.from("parties").select("id, name").order("name"),
+      // 2026-11-02 — "*" so the Stair Rug set fields (sets_count /
+      // pieces_per_set / dimension_*) reach the WhatsApp caption without this
+      // query breaking on a database where
+      // db/2026-11-02-stair-rug-set-quantity.sql is still pending (a named
+      // list would reject the whole select — see orders/page.tsx's note).
       supabase
         .from("orders")
-        .select(
-          "id, ref_no, order_date, buyer_name_address, contact_no, photo_url, photo_urls, qty, size_label, item_category_id, order_value_original, order_currency, status, whatsapp_sent_at, store_id, company_id, dispatch_date, estimated_dispatch_date, sku_label, colour, tassel_fringes, photo_type, remark"
-        )
+        .select("*")
         .eq("company_id", employee.currentCompanyId)
         .order("entry_timestamp", { ascending: false })
         .limit(10),
@@ -87,6 +90,11 @@ export default async function NewOrderPage() {
                       item_category_name: categoryName.get(o.item_category_id) ?? null,
                       size_label: o.size_label,
                       qty: o.qty,
+                      sets_count: o.sets_count ?? null,
+                      pieces_per_set: o.pieces_per_set ?? null,
+                      dimension_length: o.dimension_length ?? null,
+                      dimension_width: o.dimension_width ?? null,
+                      dimension_unit: o.dimension_unit ?? null,
                       order_value_original: o.order_value_original,
                       order_currency: o.order_currency,
                       whatsapp_sent_at: o.whatsapp_sent_at,

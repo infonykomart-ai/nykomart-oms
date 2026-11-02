@@ -8,6 +8,12 @@ import { FlagErrorButton } from "./flag-error-button";
 import { ShippingDetailsForm } from "./shipping-details-form";
 import { OrderHoldCancelActions } from "../order-hold-cancel-actions";
 import { TrackingRefreshButton } from "./tracking-refresh-button";
+import {
+  formatAreaNumber,
+  isStairRugCategory,
+  stairArea,
+  stairSizeFromRow,
+} from "@/lib/orders/stair-rug";
 
 // Read-only order detail/print view — mirrors invoice-view.tsx's structure
 // (header block -> info grids -> item table -> value breakdown -> footer)
@@ -46,6 +52,14 @@ export type Order = {
   sku_label: string | null;
   size_label: string | null;
   qty: number;
+  // 2026-11-02 — Stair Rug set facts (db/2026-11-02-stair-rug-set-quantity.sql).
+  // Optional so a database without that patch (and any order saved before it)
+  // keeps rendering exactly as before.
+  sets_count?: number | null;
+  pieces_per_set?: number | null;
+  dimension_length?: number | null;
+  dimension_width?: number | null;
+  dimension_unit?: string | null;
   colour: string | null;
   photo_type: string | null;
   photo_url: string | null;
@@ -160,6 +174,12 @@ export function OrderPrintSheet({
   shipment?: OrderDispatchSummary | null;
 }) {
   const rate = Number(order.order_value_original || 0) / (order.qty || 1);
+  // 2026-11-02 — Stair Rug: qty stays the total piece count, but the sheet
+  // also says how those pieces were ordered and how much area that is.
+  const stair = order.sets_count != null || isStairRugCategory(itemCategoryName) ? stairSizeFromRow(order) : null;
+  const stairAreaInfo = stair
+    ? stairArea({ length: stair.length, width: stair.width, unit: stair.unit, totalPieces: stair.totalPieces })
+    : null;
   const dimsText =
     shipment && shipment.lengthCm != null && shipment.widthCm != null && shipment.heightCm != null
       ? `${shipment.lengthCm} × ${shipment.widthCm} × ${shipment.heightCm} cm`
@@ -276,7 +296,14 @@ export function OrderPrintSheet({
                 <td className="border border-slate-300 px-2 py-1">{order.sku_label || "—"}</td>
                 <td className="border border-slate-300 px-2 py-1">{order.size_label || "—"}</td>
                 <td className="border border-slate-300 px-2 py-1">{order.colour || "—"}</td>
-                <td className="border border-slate-300 px-2 py-1 text-right">{order.qty}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right">
+                  {order.qty}
+                  {stair && (
+                    <div className="text-[9px] font-normal text-slate-500">
+                      {stair.setsCount} set{stair.setsCount === 1 ? "" : "s"} × {stair.piecesPerSet} PCS
+                    </div>
+                  )}
+                </td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{rate.toFixed(2)}</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{Number(order.order_value_original || 0).toFixed(2)}</td>
               </tr>
@@ -292,6 +319,21 @@ export function OrderPrintSheet({
               </tr>
             </tfoot>
           </table>
+
+          {stair && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] text-slate-700">
+              <p className="mb-1 font-semibold text-slate-800">Stair Rug — set quantity &amp; area</p>
+              <p>
+                {stair.setsCount} set{stair.setsCount === 1 ? "" : "s"} × {stair.piecesPerSet} PCS = {stair.totalPieces} PCS
+                {stairAreaInfo ? (
+                  <>
+                    {" · "}Area per piece {formatAreaNumber(stairAreaInfo.perPieceSqIn)} SQ INCH{" · "}Total area{" "}
+                    {formatAreaNumber(stairAreaInfo.totalSqIn)} SQ INCH = {formatAreaNumber(stairAreaInfo.totalSqFt)} SQ FT
+                  </>
+                ) : null}
+              </p>
+            </div>
+          )}
 
           {(order.order_value_usd != null || order.order_value_inr != null) && (
             <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[10px] text-slate-600">

@@ -11,6 +11,13 @@ import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
+import { tolerateMissingColumns } from "@/lib/db/missing-column";
+import {
+  isStairDimensionUnit,
+  normalizeCount,
+  stairSizeLabel,
+  stairTotalPieces,
+} from "@/lib/orders/stair-rug";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -93,7 +100,27 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   }
 
   const itemCategoryId = str(formData, "item_category_id");
-  const qty = Number(str(formData, "qty"));
+
+  // 2026-11-02 — Stair Rug edit path: same rules as order entry (see
+  // new/actions.ts's parseItems). Sets/pieces present → Total Pieces IS the
+  // qty; absent → the plain Quantity field is used exactly as before, and the
+  // stair columns are cleared (so switching a category away from Stair Rug
+  // doesn't leave stale set data behind).
+  const setsRaw = Number(str(formData, "sets_count"));
+  const pcsRaw = Number(str(formData, "pieces_per_set"));
+  const hasStairQty = Number.isFinite(setsRaw) && setsRaw >= 1 && Number.isFinite(pcsRaw) && pcsRaw >= 1;
+  const setsCount = hasStairQty ? normalizeCount(setsRaw) : null;
+  const piecesPerSet = hasStairQty ? normalizeCount(pcsRaw) : null;
+  const qty = hasStairQty ? stairTotalPieces(setsCount, piecesPerSet) : Number(str(formData, "qty"));
+
+  const dimLength = Number(str(formData, "dimension_length"));
+  const dimWidth = Number(str(formData, "dimension_width"));
+  const hasDims = Number.isFinite(dimLength) && dimLength > 0 && Number.isFinite(dimWidth) && dimWidth > 0;
+  const dimensionLength = hasDims ? dimLength : null;
+  const dimensionWidth = hasDims ? dimWidth : null;
+  const dimensionUnit = hasDims && isStairDimensionUnit(str(formData, "dimension_unit")) ? str(formData, "dimension_unit") : null;
+  const stairSize = stairSizeLabel(dimensionLength, dimensionWidth, dimensionUnit);
+
   const orderCurrency = str(formData, "order_currency") || "USD";
   const orderValueOriginal = Number(str(formData, "order_value_original"));
   const orderDate = str(formData, "order_date") || existing.order_date;
@@ -124,9 +151,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const buyerNameAddress = strOrNull(formData, "buyer_name_address");
   const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
 
-  const { error } = await supabase
-    .from("orders")
-    .update({
+  const updatePayload = {
       order_date: orderDate,
       status: str(formData, "status") as never,
       dispatch_date: strOrNull(formData, "dispatch_date"),
@@ -136,8 +161,13 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       estimated_dispatch_date: strOrNull(formData, "estimated_dispatch_date"),
       item_category_id: itemCategoryId,
       sku_label: strOrNull(formData, "sku_label"),
-      size_label: strOrNull(formData, "size_label") ?? "",
+      size_label: strOrNull(formData, "size_label") || stairSize || "",
       qty,
+      sets_count: setsCount,
+      pieces_per_set: piecesPerSet,
+      dimension_length: dimensionLength,
+      dimension_width: dimensionWidth,
+      dimension_unit: dimensionUnit,
       colour: strOrNull(formData, "colour"),
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
       photo_url: strOrNull(formData, "photo_url"),
@@ -168,8 +198,17 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       order_value_usd: conversion.usd,
       order_value_inr: conversion.inr,
       exchange_rate_source: conversion.source,
-    })
-    .eq("id", orderId);
+  };
+
+  // Tolerant of db/2026-11-02-stair-rug-set-quantity.sql not being run yet:
+  // an ordinary order edit must never fail because of the new columns.
+  const { error } = await tolerateMissingColumns(updatePayload, [
+    "sets_count",
+    "pieces_per_set",
+    "dimension_length",
+    "dimension_width",
+    "dimension_unit",
+  ], (p) => supabase.from("orders").update(p).eq("id", orderId));
 
   if (error) return { error: error.message, success: false };
 

@@ -13,11 +13,15 @@ export async function loadOrderDetail(id: string) {
   const employee = await getAuthedEmployee();
   const supabase = await createClient();
 
+  // 2026-11-02 — "*" rather than a named list: the detail sheet now also
+  // shows the Stair Rug set fields, and those columns may not exist yet on a
+  // database where db/2026-11-02-stair-rug-set-quantity.sql is pending. A
+  // named list would make PostgREST reject the whole row (blank detail page);
+  // "*" returns what the table actually has and the view falls back to a
+  // plain quantity.
   const { data: order } = await supabase
     .from("orders")
-    .select(
-      "id, ref_no, company_id, store_id, order_date, po_date, delivery_date, dispatch_date, estimated_dispatch_date, status, shipment_status, marketplace_order_no, buyer_name_address, contact_no, email_id, address_type, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, item_category_id, sku_label, size_label, qty, colour, photo_type, photo_url, photo_urls, order_currency, order_value_original, order_value_usd, order_value_inr, exchange_rate_source, invoice_id, vendor_party_id, remark, entry_timestamp, advance_tracking, final_tracking"
-    )
+    .select("*")
     .eq("id", id)
     .maybeSingle();
 

@@ -852,6 +852,20 @@ CREATE TABLE orders (
   order_value_inr           numeric(14,2),                      -- app-computed; NULL only if truly unavailable
   exchange_rate_source      text,                                -- audit trail, e.g. "Official rate as of 1 April, 2026"
 
+  -- 2026-11-02 — Stair Rug set-based quantity (db/2026-11-02-stair-rug-set-quantity.sql).
+  -- "1 set = 12 PCS" products are entered as Number of Sets × Pieces Per Set,
+  -- but the product is still written to `qty` above as the TOTAL PIECES — so
+  -- every existing consumer of qty (stock, invoices, bills, reports, margin)
+  -- stays exactly as it was. These columns only keep the set facts so the
+  -- order page / edit form / WhatsApp caption can show them again; area is
+  -- always derived (src/lib/orders/stair-rug.ts), never stored. NULL for
+  -- Cotton/Jute/Tufted and for orders saved before this migration.
+  sets_count                integer CHECK (sets_count IS NULL OR sets_count >= 1),
+  pieces_per_set            integer CHECK (pieces_per_set IS NULL OR pieces_per_set >= 1),
+  dimension_length          numeric(12,4) CHECK (dimension_length IS NULL OR dimension_length > 0),
+  dimension_width           numeric(12,4) CHECK (dimension_width IS NULL OR dimension_width > 0),
+  dimension_unit            text CHECK (dimension_unit IS NULL OR dimension_unit IN ('FT','INCH','CM')),
+
   created_at                timestamptz NOT NULL DEFAULT now(),
 
   UNIQUE (company_id, ref_no)
