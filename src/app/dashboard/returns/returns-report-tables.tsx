@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
@@ -48,7 +49,10 @@ export function StoreRateReportTable({ rows }: { rows: StoreRateRow[] }) {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">Return / Cancel Rate by Store</h2>
-          <p className="text-xs text-slate-400">Based on order status (order_date filter above) — not the refund tables below, which filter by refund date.</p>
+          <p className="text-xs text-slate-400">
+            Cancelled = order status (order date). Returned = refund rows + orders marked/RTO Returned (refund date). Dono me From/To
+            apply hota hai.
+          </p>
         </div>
         <ExportBar
           title="Return/Cancel Rate by Store"
@@ -92,6 +96,10 @@ export function StoreRateReportTable({ rows }: { rows: StoreRateRow[] }) {
 
 export type OrderRefundRow = {
   id: string;
+  // 2026-11-02 — "order no se order page link nahi hai": the order this
+  // refund sits on, rendered as a link on the PO/RF/RG cell. Exports keep
+  // the plain text value (see ORDER_REFUND_COLUMNS below).
+  order_id: string | null;
   ref_no: string;
   buyer_name: string | null;
   order_status: string | null;
@@ -109,6 +117,15 @@ export type OrderRefundRow = {
   duty_refund_amount: number | null;
 };
 
+// 2026-11-02 — refund-calculator breakdown columns, hidden by default so
+// the live refunds table reads at a glance (see OrderRefundsReportTable).
+// Module-level on purpose — see use-column-visibility.ts's hydration note.
+const ORDER_REFUND_DEFAULT_HIDDEN = [
+  "order_value_refund_amount",
+  "shipping_refund_amount",
+  "duty_refund_amount",
+] as const;
+
 const ORDER_REFUND_COLUMNS: ExportColumn<OrderRefundRow>[] = [
   { key: "ref_no", label: "PO/RF/RG", value: (r) => r.ref_no },
   { key: "buyer_name", label: "Buyer", value: (r) => r.buyer_name },
@@ -125,12 +142,19 @@ const ORDER_REFUND_COLUMNS: ExportColumn<OrderRefundRow>[] = [
 ];
 
 export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
-  const { visibleColumns, hiddenKeys, toggleColumn } = useColumnVisibility(ORDER_REFUND_COLUMNS);
+  // 2026-11-02 — "return refund vala section thoda tough lag raha": the three
+  // refund-calculator breakdown columns (order value / shipping / duty split)
+  // are niche detail — hidden on screen by default so the table reads at a
+  // glance. One click in the picker brings them back, and exports follow the
+  // same picker, so nothing is lost.
+  const { visibleColumns, hiddenKeys, toggleColumn } = useColumnVisibility(ORDER_REFUND_COLUMNS, ORDER_REFUND_DEFAULT_HIDDEN);
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-800">Order Refunds (live — company-scoped, most recent 300)</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Refunds recorded in OMS (most recent 300)</h2>
+            <p className="text-xs text-slate-400">PO/RF/RG par click karo to order khul jayega. Company + From/To upar se.</p>
+          </div>
         <ExportBar
           title="Order Refunds Report"
           filenameBase="order-refunds-report"
@@ -162,7 +186,16 @@ export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
             {rows.map((r) => (
               <tr key={r.id} className="hover:bg-slate-50">
                 {visibleColumns.map((c) => (
-                  <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">{String(c.value(r) ?? "")}</td>
+                  <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">
+                    {/* Link cell: exports/print still read c.value() as plain text. */}
+                    {c.key === "ref_no" && r.order_id ? (
+                      <Link href={`/dashboard/orders/${r.order_id}`} className="font-medium text-amber-700 hover:underline">
+                        {r.ref_no}
+                      </Link>
+                    ) : (
+                      String(c.value(r) ?? "")
+                    )}
+                  </td>
                 ))}
                 <td className="whitespace-nowrap px-3 py-2 text-right print:hidden">
                   <DocStatementDialog type="order_refund" id={r.id} />
@@ -186,6 +219,10 @@ export type HistoricalRefundRow = {
   source: string;
   store_name: string;
   marketplace_order_no: string | null;
+  // 2026-11-02 — matched OMS order id (page.tsx normalises the number the
+  // same way schema.sql's match helpers do); null when no order matches,
+  // in which case the cell falls back to plain text.
+  order_id: string | null;
   buyer_name: string | null;
   order_amt_usd: number | null;
   refund_amt_usd: number | null;
@@ -211,8 +248,10 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-800">Historical Marketplace Refunds (company-scoped, most recent 300)</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Marketplace refunds — old sheets (most recent 300)</h2>
+            <p className="text-xs text-slate-400">Ek baar import hue, USD only. Order no par click karo to order khul jayega.</p>
+          </div>
         <ExportBar
           title="Historical Marketplace Refunds Report"
           filenameBase="historical-refunds-report"
@@ -241,7 +280,15 @@ export function HistoricalRefundsReportTable({ rows }: { rows: HistoricalRefundR
             {rows.map((r) => (
               <tr key={r.id} className="hover:bg-slate-50">
                 {visibleColumns.map((c) => (
-                  <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">{String(c.value(r) ?? "")}</td>
+                  <td key={c.key} className="whitespace-nowrap px-3 py-2 text-slate-700">
+                    {c.key === "marketplace_order_no" && r.order_id ? (
+                      <Link href={`/dashboard/orders/${r.order_id}`} className="font-medium text-amber-700 hover:underline">
+                        {r.marketplace_order_no}
+                      </Link>
+                    ) : (
+                      String(c.value(r) ?? "")
+                    )}
+                  </td>
                 ))}
                 <td className="whitespace-nowrap px-3 py-2 text-right print:hidden">
                   <DocStatementDialog type="refund" id={r.id} />
