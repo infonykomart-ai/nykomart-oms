@@ -92,6 +92,17 @@ export function OrderHoldCancelActions({
   const [refundDate, setRefundDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [refundReason, setRefundReason] = useState("");
   const [refundCurrency, setRefundCurrency] = useState(order.order_currency);
+  // 2026-11-02 — the currency dropdown listed only the currency master. If the
+  // order's own currency isn't in that list (a marketplace order in GBP before
+  // GBP was added, say), the <select> had no matching option, so it displayed
+  // the FIRST currency while the form still meant another one — and a refund
+  // could be saved in the wrong currency, or rejected outright when that first
+  // currency isn't in `currencies` at all. The order's own currency is now
+  // always offered, and selected.
+  const refundCurrencyOptions = useMemo(() => {
+    const codes = currencies.map((c) => c.code);
+    return codes.includes(order.order_currency) ? codes : [order.order_currency, ...codes];
+  }, [currencies, order.order_currency]);
 
   const orderValueRefundAmount = useMemo(() => {
     if (!refundBasisPercent) return 0;
@@ -180,7 +191,14 @@ export function OrderHoldCancelActions({
   // being cancelled or sent back — see header comment. No longer blocked by
   // an existing refund, either — a second refund later on the same order is
   // a real sequence (duty goodwill now, a full return later).
-  const canAddRefund = ["Cancelled", "Returned", "Dispatched", "Delivered"].includes(order.status);
+  // 2026-11-02 — "kabhi kabhi refund add nahi ho pa raha": this used to be
+  // gated to Cancelled / Returned / Dispatched / Delivered only, so an order
+  // still Pending / Confirmed / In Production / Hold — e.g. buyer paid through
+  // a marketplace and then cancelled before we ever shipped — had no way to
+  // record the money going back at all. A refund record is just money paid
+  // back; the order's own status still only changes through Cancel / Return
+  // above, so the button is available for every status now.
+  const canAddRefund = true;
 
   return (
     <div className="flex flex-col items-end gap-1.5">
@@ -366,9 +384,9 @@ export function OrderHoldCancelActions({
                     onChange={(e) => setRefundCurrency(e.target.value)}
                     className={inputClass}
                   >
-                    {currencies.length > 0
-                      ? currencies.map((c) => (
-                          <option key={c.code} value={c.code}>{c.code}</option>
+                    {refundCurrencyOptions.length > 0
+                      ? refundCurrencyOptions.map((c) => (
+                          <option key={c} value={c}>{c}</option>
                         ))
                       : ["USD", "INR", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>

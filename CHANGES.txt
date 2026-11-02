@@ -1,3 +1,62 @@
+ORDER SEARCH "SHOW NAHI HOTA" + REFUND ADD NAHI HO PA RAHA
+(2026-11-02)
+======================================================================
+
+KOI NAYA SQL NAHI. Sirf 4 files.
+
+A) SEARCH KARNE PAR ORDER SHOW NAHI HOTA — 3 alag wajah thi:
+
+ 1. Server search aur table ka apna (client) search DO ALAG field list
+    use karte the. DB me search hoti thi: ref_no, buyer, contact,
+    marketplace order no, SKU, advance_tracking, final_tracking. Lekin jo
+    rows server se aati thi, unhe table dobara apne chhote list se filter
+    karta tha — jisme advance/final tracking hai hi nahi (Tracking column
+    courier/purchase-bill ka number dikhata hai, jo alag hota hai).
+    Matlab: AWB se search karne par order DB me mil gaya, phir table ne
+    use hata diya -> "No orders match". AB: jab typed term wahi hai jo
+    server ne search kiya, to server ka result hi final hai (dobara filter
+    nahi hota); typing ke dauran bhi advance/final tracking match hota hai.
+ 2. Email / Remark / VAT / EORI / IOSS / destination country / buyer city
+    SIRF client-side search ho rahe the — yaani sirf latest 300 orders me.
+    Purana order in me se kisi bhi cheez se kabhi nahi milta tha. AB ye sab
+    DB query me hain (page.tsx), to poore data par chalte hain.
+ 3. Form ka label "Search (Ref/Buyer/Contact)" galat expectation de raha
+    tha — ab "Search (PO / buyer / contact / AWB / SKU / email / VAT)".
+
+  (Company ke bahar ka order abhi bhi apne aap nahi aata — search current
+  company me hoti hai. Us case me page "Search all companies →" link deta
+  hai, wo pehle se hai.)
+
+B) REFUND ADD NAHI HO PA RAHA — 3 fix:
+
+ 1. Order ki value 0 / khaali hone par refund kabhi save nahi hota tha:
+    dono caps (same-currency aur INR) "0.00 se zyada nahi" bana dete the,
+    is liye har amount "exceeds the order's value of 0.00" se reject.
+    AB cap sirf tab lagta hai jab order ki value > 0 ho. Value na ho to
+    refund entry banti hai (band nahi hoti), aur credit note PARTIAL
+    REFUND hi kehta hai (0 ka 100% nahi).
+ 2. "💸 Add Refund" button sirf Cancelled / Returned / Dispatched /
+    Delivered par dikhta tha — Pending / Confirmed / In Production / Hold
+    order par button hi nahi tha, is liye refund add karne ka rasta nahi
+    tha. AB har status par hai (order ka status khud sirf Cancel/Return se
+    badalta hai, refund se nahi).
+ 3. Currency dropdown me order ki apni currency na hone par (marketplace
+    order GBP me, master me GBP nahi) select ka koi matching option nahi
+    hota tha — galat currency save ho sakti thi ya insert FK par fail.
+    AB order ki currency hamesha list me hai aur selected rehti hai.
+
+Badlav:
+M  src/app/dashboard/orders/page.tsx                    (search fields + label)
+M  src/app/dashboard/orders/order-list-table.tsx        (server result authoritative)
+M  src/app/dashboard/orders/order-hold-cancel-actions.tsx (refund button + currency)
+M  src/app/dashboard/orders/actions.ts                 (refund caps 0-value orders)
+M  CHANGES.txt
+
+VERIFICATION: focused tsc exit 0; eslint chaaron files par exit 0. Live
+Supabase is workspace me nahi hai, is liye asli data par click-through nahi
+kar paya — logic-level fix hai (DB query + cap condition).
+
+
 RETURNS / REFUNDS REPORT — SAAF ENGLISH + WORKING FILTERS
 (2026-11-01d)
 ======================================================================

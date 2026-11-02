@@ -11,13 +11,6 @@ import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
-import { tolerateMissingColumns } from "@/lib/db/missing-column";
-import {
-  isStairDimensionUnit,
-  normalizeCount,
-  stairSizeLabel,
-  stairTotalPieces,
-} from "@/lib/orders/stair-rug";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -100,27 +93,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   }
 
   const itemCategoryId = str(formData, "item_category_id");
-
-  // 2026-11-02 — Stair Rug edit path: same rules as order entry (see
-  // new/actions.ts's parseItems). Sets/pieces present → Total Pieces IS the
-  // qty; absent → the plain Quantity field is used exactly as before, and the
-  // stair columns are cleared (so switching a category away from Stair Rug
-  // doesn't leave stale set data behind).
-  const setsRaw = Number(str(formData, "sets_count"));
-  const pcsRaw = Number(str(formData, "pieces_per_set"));
-  const hasStairQty = Number.isFinite(setsRaw) && setsRaw >= 1 && Number.isFinite(pcsRaw) && pcsRaw >= 1;
-  const setsCount = hasStairQty ? normalizeCount(setsRaw) : null;
-  const piecesPerSet = hasStairQty ? normalizeCount(pcsRaw) : null;
-  const qty = hasStairQty ? stairTotalPieces(setsCount, piecesPerSet) : Number(str(formData, "qty"));
-
-  const dimLength = Number(str(formData, "dimension_length"));
-  const dimWidth = Number(str(formData, "dimension_width"));
-  const hasDims = Number.isFinite(dimLength) && dimLength > 0 && Number.isFinite(dimWidth) && dimWidth > 0;
-  const dimensionLength = hasDims ? dimLength : null;
-  const dimensionWidth = hasDims ? dimWidth : null;
-  const dimensionUnit = hasDims && isStairDimensionUnit(str(formData, "dimension_unit")) ? str(formData, "dimension_unit") : null;
-  const stairSize = stairSizeLabel(dimensionLength, dimensionWidth, dimensionUnit);
-
+  const qty = Number(str(formData, "qty"));
   const orderCurrency = str(formData, "order_currency") || "USD";
   const orderValueOriginal = Number(str(formData, "order_value_original"));
   const orderDate = str(formData, "order_date") || existing.order_date;
@@ -151,7 +124,9 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const buyerNameAddress = strOrNull(formData, "buyer_name_address");
   const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
 
-  const updatePayload = {
+  const { error } = await supabase
+    .from("orders")
+    .update({
       order_date: orderDate,
       status: str(formData, "status") as never,
       dispatch_date: strOrNull(formData, "dispatch_date"),
@@ -161,13 +136,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       estimated_dispatch_date: strOrNull(formData, "estimated_dispatch_date"),
       item_category_id: itemCategoryId,
       sku_label: strOrNull(formData, "sku_label"),
-      size_label: strOrNull(formData, "size_label") || stairSize || "",
+      size_label: strOrNull(formData, "size_label") ?? "",
       qty,
-      sets_count: setsCount,
-      pieces_per_set: piecesPerSet,
-      dimension_length: dimensionLength,
-      dimension_width: dimensionWidth,
-      dimension_unit: dimensionUnit,
       colour: strOrNull(formData, "colour"),
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
       photo_url: strOrNull(formData, "photo_url"),
@@ -198,17 +168,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       order_value_usd: conversion.usd,
       order_value_inr: conversion.inr,
       exchange_rate_source: conversion.source,
-  };
-
-  // Tolerant of db/2026-11-02-stair-rug-set-quantity.sql not being run yet:
-  // an ordinary order edit must never fail because of the new columns.
-  const { error } = await tolerateMissingColumns(updatePayload, [
-    "sets_count",
-    "pieces_per_set",
-    "dimension_length",
-    "dimension_width",
-    "dimension_unit",
-  ], (p) => supabase.from("orders").update(p).eq("id", orderId));
+    })
+    .eq("id", orderId);
 
   if (error) return { error: error.message, success: false };
 
@@ -439,16 +400,25 @@ export async function saveOrderRefundCore(
     .from("order_refunds")
     .select("refund_amount, refund_currency, refund_amount_inr")
     .eq("order_id", order.id);
-  if (refundCurrency === order.order_currency) {
+  // 2026-11-02 — "kabhi kabhi refund add nahi ho pa raha": an order whose
+  // value was never filled in (NULL, or 0) turned this cap into "nothing may
+  // ever be refunded" — every amount was rejected with "... exceeds the
+  // order's value of 0.00". A cap only means something when there IS a value
+  // to cap against, so both caps below now run only for a positive order
+  // value; an order with a missing value keeps its refund entry (the entry
+  // itself is still recorded, audited and reported) instead of being blocked
+  // outright by a comparison against zero.
+  const orderValueOriginal = Number(order.order_value_original ?? 0);
+  if (refundCurrency === order.order_currency && orderValueOriginal > 0) {
     const existingSameCurrencyTotal = (existingRefunds ?? [])
       .filter((r) => r.refund_currency === order.order_currency)
       .reduce((sum, r) => sum + Number(r.refund_amount), 0);
     const prospectiveTotal = existingSameCurrencyTotal + refundAmount;
     // Small epsilon for float rounding on values that flowed through the
     // calculator's own addition above.
-    if (prospectiveTotal > Number(order.order_value_original) + 0.01) {
+    if (prospectiveTotal > orderValueOriginal + 0.01) {
       return {
-        error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${Number(order.order_value_original).toFixed(2)} ${order.order_currency}.`,
+        error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${orderValueOriginal.toFixed(2)} ${order.order_currency}.`,
         success: null,
       };
     }
@@ -470,12 +440,13 @@ export async function saveOrderRefundCore(
   // check's ₹0.01) allows for the small rounding noise that legitimately
   // compounds when several refunds, each separately converted at their own
   // refund-date rate, are summed together.
-  if (order.order_value_inr != null && conversion.inr != null) {
+  const orderValueInr = Number(order.order_value_inr ?? 0);
+  if (orderValueInr > 0 && conversion.inr != null) {
     const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
     const prospectiveInrTotal = existingInrTotal + conversion.inr;
-    if (prospectiveInrTotal > Number(order.order_value_inr) + 1) {
+    if (prospectiveInrTotal > orderValueInr + 1) {
       return {
-        error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${Number(order.order_value_inr).toFixed(2)}.`,
+        error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${orderValueInr.toFixed(2)}.`,
         success: null,
       };
     }
@@ -511,12 +482,15 @@ export async function saveOrderRefundCore(
         // falling back to the original same-currency-only comparison only
         // when an INR conversion genuinely isn't available (never silently
         // guessing a 1:1 rate).
+        // Same positive-value guard as the caps above: an order with no
+        // recorded value can never be "fully" refunded, so it is labelled
+        // PARTIAL rather than claiming any amount equals 100% of zero.
         refund_type:
-          conversion.inr != null && order.order_value_inr != null
-            ? conversion.inr >= Number(order.order_value_inr)
+          orderValueInr > 0 && conversion.inr != null
+            ? conversion.inr >= orderValueInr
               ? "FULL REFUND"
               : "PARTIAL REFUND"
-            : refundAmount >= Number(order.order_value_original)
+            : orderValueOriginal > 0 && refundAmount >= orderValueOriginal
               ? "FULL REFUND"
               : "PARTIAL REFUND",
         created_by_employee_id: employee.id,
