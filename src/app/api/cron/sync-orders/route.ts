@@ -160,6 +160,13 @@ export async function GET(req: NextRequest) {
               skuLabel: o.skuLabel,
               sizeLabel: null,
               qty: o.qty,
+              // 2026-11-02 — marketplace APIs carry a plain piece count, never
+              // set data, so a synced row behaves exactly like before.
+              setsCount: null,
+              piecesPerSet: null,
+              dimensionLength: null,
+              dimensionWidth: null,
+              dimensionUnit: null,
               colour: null,
               photoType: null,
               photoUrl: null,
