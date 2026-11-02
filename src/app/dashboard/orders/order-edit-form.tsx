@@ -103,7 +103,15 @@ export function OrderEditForm({
   // Stair Rug swaps the Quantity box for the set-based fields; every other
   // category keeps the ordinary quantity input untouched.
   const [categoryId, setCategoryId] = useState(order.item_category_id);
-  const isStairRug = isStairRugCategory(itemCategories.find((c) => c.id === categoryId)?.name);
+  const categoryIsStair = isStairRugCategory(itemCategories.find((c) => c.id === categoryId)?.name);
+  // 2026-11-02 (follow-up) — an order that ALREADY carries set data keeps its
+  // set fields even if its category's name doesn't contain "Stair" (renamed
+  // category, or saved via the new-order form's manual switch), and any
+  // plain order can be ticked into set mode below. The server accepts set
+  // numbers for any category — parseItems gates on the numbers, not the name.
+  const hasSavedSets = (order.sets_count ?? null) != null;
+  const [stairOverride, setStairOverride] = useState(false);
+  const isStairRug = categoryIsStair || hasSavedSets || stairOverride;
 
   useEffect(() => {
     if (state.success) onDone();
@@ -260,6 +268,19 @@ export function OrderEditForm({
             ))}
           </datalist>
         </div>
+        {!categoryIsStair && !hasSavedSets && (
+          <div className="sm:col-span-4">
+            <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-slate-500">
+              <input
+                type="checkbox"
+                checked={stairOverride}
+                onChange={(e) => setStairOverride(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+              />
+              Set-based quantity (Stair Rug style) — 1 set = N PCS
+            </label>
+          </div>
+        )}
         {isStairRug ? (
           <StairRugFields
             suffix=""

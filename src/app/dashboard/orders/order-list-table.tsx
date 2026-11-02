@@ -440,8 +440,27 @@ export function OrderListTable({
       label: "Qty",
       filter: "text",
       tdClass: "text-right",
-      filterValue: (o) => String(o.qty),
-      cell: (o) => o.qty,
+      // 2026-11-02 (follow-up — "order page purane format me aa raha hai"):
+      // a Stair Rug order books its TOTAL PIECES in `qty`, so a bare number
+      // in this column reads exactly like the old format. Show the set
+      // breakdown underneath whenever the order carries one (the columns are
+      // null on a database where the migration is still pending, so this
+      // degrades to the plain number by itself).
+      filterValue: (o) =>
+        o.sets_count != null && o.pieces_per_set != null
+          ? `${o.qty} ${o.sets_count} sets x ${o.pieces_per_set}`
+          : String(o.qty),
+      cell: (o) =>
+        o.sets_count != null && o.pieces_per_set != null ? (
+          <span className="block whitespace-nowrap">
+            <span>{o.qty}</span>
+            <span className="block text-[11px] font-normal text-slate-500">
+              {o.sets_count} set{o.sets_count === 1 ? "" : "s"} × {o.pieces_per_set}
+            </span>
+          </span>
+        ) : (
+          o.qty
+        ),
     },
     {
       key: "item",

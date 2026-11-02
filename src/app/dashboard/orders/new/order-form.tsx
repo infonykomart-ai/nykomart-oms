@@ -60,7 +60,16 @@ function ItemBlock({
   // Cotton/Jute/Tufted render exactly the same Quantity input they always
   // did.
   const [categoryId, setCategoryId] = useState("");
-  const isStairRug = isStairRugCategory(itemCategories.find((c) => c.id === categoryId)?.name);
+  const categoryIsStair = isStairRugCategory(itemCategories.find((c) => c.id === categoryId)?.name);
+  // 2026-11-02 (follow-up — "order page purane format me aa raha hai"): the
+  // category NAME must not be the only trigger. A differently named stair
+  // category can be ticked into set mode with the small switch below, and
+  // the SERVER already accepts set numbers for any category (parseItems
+  // gates on the numbers themselves, never on the name — see actions.ts),
+  // so no action change is needed. Cotton/Jute/Tufted are untouched unless
+  // the employee ticks the box themselves.
+  const [stairOverride, setStairOverride] = useState(false);
+  const isStairRug = categoryIsStair || stairOverride;
 
   // 2026-09-19 — "Closeup Photo" section: "order me ek to main photo ka
   // section hai dusra ab or banana hai jisme Closup photo ka option ho ek
@@ -140,6 +149,19 @@ function ItemBlock({
           <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800 sm:col-span-2">
             ℹ️ {stockQty} unit{stockQty === 1 ? "" : "s"} of this SKU+Size already in Inventory.
           </p>
+        )}
+        {!categoryIsStair && (
+          <div className="sm:col-span-2">
+            <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-slate-500">
+              <input
+                type="checkbox"
+                checked={stairOverride}
+                onChange={(e) => setStairOverride(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+              />
+              Set-based quantity (Stair Rug style) — 1 set = N PCS
+            </label>
+          </div>
         )}
         {isStairRug ? (
           <StairRugFields suffix={String(itemKey)} qtyName={id("qty")} inputClass={inputClass} labelClass={labelClass} />
