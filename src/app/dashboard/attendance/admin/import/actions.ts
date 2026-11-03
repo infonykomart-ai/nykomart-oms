@@ -161,23 +161,49 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
   // back "2" where the employee_code is stored as "0002". Keep a second,
   // leading-zero-insensitive index so a code typed either way still finds
   // its employee instead of reporting "no active employee matches code".
-  const byCodeLoose = new Map<string, (typeof employees)[number] | null>();
+  // 2026-11-03 — widened to digits-only: the roster stores "EMP0002" /
+  // "NY-002" for some staff while the device sheet prints "0002", and the
+  // old numeric-only index missed exactly those ("Row 15: no active
+  // employee matches code '0002'"). Prefixes, dashes and spaces are now
+  // ignored on both sides; ambiguity is still never guessed.
+  const byDigits = new Map<string, (typeof employees)[number] | null>();
+  const normName = (n: string) =>
+    n
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const digitKey = (c: string) => {
+    const digits = c.replace(/\D/g, "");
+    return digits ? digits.replace(/^0+/, "") || "0" : "";
+  };
   for (const e of employees) {
     const code = (e.employee_code ?? "").trim().toLowerCase();
     if (code) {
       byCode.set(code, byCode.has(code) ? null : e);
-      if (/^\d+$/.test(code)) {
-        const loose = code.replace(/^0+/, "") || "0";
-        byCodeLoose.set(loose, byCodeLoose.has(loose) ? null : e);
-      }
+      const digits = digitKey(code);
+      if (digits) byDigits.set(digits, byDigits.has(digits) ? null : e);
     }
-    const name = e.name.trim().toLowerCase().replace(/\s+/g, " ");
+    const name = normName(e.name);
     if (name) byName.set(name, byName.has(name) ? null : e);
   }
 
   const issues = [...parsed.issues];
   const pushIssue = (msg: string) => {
     if (issues.length < 60) issues.push(msg);
+  };
+
+  // Unmatched rows are grouped by what they asked for (code + name) instead
+  // of one identical line per date — a month's sheet previously produced a
+  // wall of fifty "Row 15: no active employee matches code '0002'" lines and
+  // hid the real problem.
+  const unmatched = new Map<string, { line: number; count: number; code: string; name: string }>();
+  const noteUnmatched = (code: string, name: string, line: number) => {
+    const key = `${code.toLowerCase()}||${name.toLowerCase()}`;
+    const existing = unmatched.get(key);
+    if (existing) existing.count++;
+    else unmatched.set(key, { line, count: 1, code, name });
   };
 
   type Plan = { row: PunchImportRow; emp: (typeof employees)[number]; existing: ExistingRow | null };
@@ -192,25 +218,54 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
   let skipped = 0;
 
   for (const row of parsed.rows) {
-    const codeKey = row.code.toLowerCase();
-    const nameKey = row.name.toLowerCase().replace(/\s+/g, " ");
+    const codeKey = row.code.trim().toLowerCase();
+    const nameKey = normName(row.name);
     let emp: (typeof employees)[number] | null | undefined;
     if (codeKey) emp = byCode.get(codeKey);
-    if (emp === undefined && codeKey && /^\d+$/.test(codeKey)) {
-      emp = byCodeLoose.get(codeKey.replace(/^0+/, "") || "0");
+    if (emp === undefined && codeKey) {
+      const digits = digitKey(codeKey);
+      if (digits) emp = byDigits.get(digits);
     }
     if (emp === undefined || emp === null) emp = nameKey ? byName.get(nameKey) : undefined;
     if (emp === null) {
       skipped++;
-      pushIssue(`Row ${row.line}: duplicate employee ${row.code || row.name} in your roster — fix employee_code first.`);
+      pushIssue(`Duplicate employee "${row.code || row.name}" in your roster — fix employee_code first.`);
       continue;
     }
     if (!emp) {
       skipped++;
-      pushIssue(`Row ${row.line}: no active employee matches code "${row.code || row.name}".`);
+      noteUnmatched(row.code, row.name, row.line);
       continue;
     }
     resolved.push({ row, emp, existing: null });
+  }
+
+  // One line per unmatched employee, with the closest roster entries so the
+  // fix (a wrong employee_code, or a staff member on another company) is
+  // obvious without exporting the roster.
+  if (unmatched.size > 0) {
+    const rosterHint = (code: string, name: string) => {
+      const q = (code || name).trim().toLowerCase();
+      if (!q) return "";
+      const near = employees
+        .filter((e) => {
+          const ec = (e.employee_code ?? "").toLowerCase();
+          return (
+            ec.includes(q) ||
+            normName(e.name).includes(normName(name || code)) ||
+            (digitKey(ec) !== "" && digitKey(ec) === digitKey(code))
+          );
+        })
+        .slice(0, 3)
+        .map((e) => `"${e.employee_code ?? "—"} ${e.name}"`);
+      return near.length ? ` Closest in roster: ${near.join(", ")}.` : ` Roster me ${employees.length} employee hain — code/naam milta nahi.`;
+    };
+    for (const u of unmatched.values()) {
+      pushIssue(
+        `Row ${u.line}: employee code "${u.code || "(blank)"}"${u.name ? ` / name "${u.name}"` : ""} roster me nahi mila` +
+          `${u.count > 1 ? ` (${u.count} punch rows)` : ""}.${rosterHint(u.code, u.name)}`
+      );
+    }
   }
 
   if (!resolved.length) return { ...EMPTY, error: "No rows matched an employee.", issues };

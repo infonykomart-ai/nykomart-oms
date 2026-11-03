@@ -40,12 +40,22 @@ export default async function BulkOrderUploadPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📤 Bulk Order Entry (CSV/Excel)</h1>
         </div>
-        <Link
-          href="/dashboard/orders"
-          className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-        >
-          ← Back to Orders
-        </Link>
+        <div className="flex shrink-0 gap-2">
+          {/* 2026-11-03 — Amazon ke apne order sheet (book format) ka alag
+              upload: template columns me convert karne ki zarurat nahi. */}
+          <Link
+            href="/dashboard/orders/bulk-upload/amazon"
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+          >
+            📦 Amazon format upload
+          </Link>
+          <Link
+            href="/dashboard/orders"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            ← Back to Orders
+          </Link>
+        </div>
       </div>
 
       <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">

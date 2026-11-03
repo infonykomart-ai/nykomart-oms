@@ -470,14 +470,42 @@ export async function saveOrderRefundCore(
   // check's ₹0.01) allows for the small rounding noise that legitimately
   // compounds when several refunds, each separately converted at their own
   // refund-date rate, are summed together.
-  if (order.order_value_inr != null && conversion.inr != null) {
-    const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
-    const prospectiveInrTotal = existingInrTotal + conversion.inr;
-    if (prospectiveInrTotal > Number(order.order_value_inr) + 1) {
-      return {
-        error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${Number(order.order_value_inr).toFixed(2)}.`,
-        success: null,
-      };
+  // 2026-11-03 — "usd ko dekha jaye na refund ke dauran ... jis date me order
+  // aaya us din kya conversion rate thi or jab refund hora tab kya": this
+  // net used to convert the REFUND at its own (refund-date) rate but compare
+  // it with order_value_inr, which is frozen at the ORDER-date rate. Any
+  // movement of the rupee between the two dates then rejected a perfectly
+  // valid full refund — e.g. a 72.39 USD order (₹6870.53 at ₹94.91) refunded
+  // 100% later at ₹95.25 came out as ₹6895.15 "(converted)" and was blocked
+  // by ~₹25 of pure FX drift. Two changes, both about "one FX basis":
+  //  1. A refund in the order's OWN currency needs no INR net at all — the
+  //     exact same-currency check above already governs it completely.
+  //  2. A refund in a different currency converts the ORDER's value at the
+  //     SAME refund-date rate, so both sides share one rate and order-date
+  //     vs refund-date drift can no longer create a phantom over-cap. The
+  //     stored order_value_inr is only the fallback when the order's own
+  //     currency has no rate on the refund date.
+  // Order value expressed in INR at the REFUND date's rate — one FX basis for
+  // both the cap and the FULL/PARTIAL label below (see the note above).
+  let orderValueInrAtRefundRate: number | null = null;
+  if (refundCurrency !== order.order_currency && conversion.inr != null) {
+    const orderValueAtRefundRate = await computeCurrencyConversion(
+      supabase,
+      order.order_currency,
+      refundDate,
+      Number(order.order_value_original)
+    );
+    orderValueInrAtRefundRate = orderValueAtRefundRate.inr;
+    const capInr = orderValueAtRefundRate.inr ?? (order.order_value_inr != null ? Number(order.order_value_inr) : null);
+    if (capInr != null) {
+      const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
+      const prospectiveInrTotal = existingInrTotal + conversion.inr;
+      if (prospectiveInrTotal > capInr + 1) {
+        return {
+          error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${capInr.toFixed(2)} (converted at the same refund-date rate).`,
+          success: null,
+        };
+      }
     }
   }
 
@@ -512,12 +540,19 @@ export async function saveOrderRefundCore(
         // when an INR conversion genuinely isn't available (never silently
         // guessing a 1:1 rate).
         refund_type:
-          conversion.inr != null && order.order_value_inr != null
-            ? conversion.inr >= Number(order.order_value_inr)
+          // Same currency: compare in that currency (exact). Different
+          // currency: compare on the refund-date FX basis fixed above, so a
+          // rate move cannot label a 100% refund "PARTIAL".
+          refundCurrency === order.order_currency
+            ? refundAmount >= Number(order.order_value_original) - 0.01
               ? "FULL REFUND"
               : "PARTIAL REFUND"
-            : refundAmount >= Number(order.order_value_original)
-              ? "FULL REFUND"
+            : conversion.inr != null && (orderValueInrAtRefundRate ?? order.order_value_inr) != null
+              ? conversion.inr >= Number(orderValueInrAtRefundRate ?? order.order_value_inr) - 1
+                ? "FULL REFUND"
+                : "PARTIAL REFUND"
+              : refundAmount >= Number(order.order_value_original)
+                ? "FULL REFUND"
               : "PARTIAL REFUND",
         created_by_employee_id: employee.id,
         remark: reason,
@@ -637,4 +672,78 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/returns");
   return result;
+}
+
+// 2026-11-03 — "conversion rate bhi to work karegi na yaha ki jis date me
+// order aaya us din kya conversion rate thi or jab refund hora tab kya":
+// the refund sheet shows BOTH rates — the one that produced the order's own
+// INR value (order date) and the one the refund will be converted at
+// (refund date) — so a difference between them is visible instead of
+// turning into a mysterious "exceeds the order's value" error. Read-only and
+// computed by the exact same helper the save path uses
+// (computeCurrencyConversion), so what the sheet prints is what gets stored.
+// Never throws and never blocks a save: a missing rate just comes back null
+// with the reason in `source`.
+export type RefundFxPreview = {
+  error: string | null;
+  order: {
+    currency: string;
+    date: string;
+    value: number;
+    valueInr: number | null;
+    /** INR per 1 unit of the order currency on the ORDER date. */
+    rate: number | null;
+  } | null;
+  refund: {
+    currency: string;
+    date: string;
+    amount: number;
+    valueInr: number | null;
+    /** INR per 1 unit of the refund currency on the REFUND date. */
+    rate: number | null;
+  } | null;
+  source: string;
+};
+
+export async function getRefundFxPreview(orderId: string, currency: string, refundDate: string, amount: number): Promise<RefundFxPreview> {
+  const empty: RefundFxPreview = { error: null, order: null, refund: null, source: "" };
+  if (!orderId) return { ...empty, error: "Order missing." };
+
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, ref_no, company_id, order_currency, order_value_original, order_date")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) return { ...empty, error: "Order not found." };
+
+  const amountNum = Number.isFinite(amount) ? amount : 0;
+  const orderValue = Number(order.order_value_original) || 0;
+  const orderConversion = await computeCurrencyConversion(supabase, order.order_currency, order.order_date, orderValue);
+  const refundConversion =
+    refundDate && amountNum > 0
+      ? await computeCurrencyConversion(supabase, currency || order.order_currency, refundDate, amountNum)
+      : null;
+
+  return {
+    error: null,
+    order: {
+      currency: order.order_currency,
+      date: order.order_date,
+      value: orderValue,
+      valueInr: orderConversion.inr,
+      rate: orderConversion.inr != null && orderValue > 0 ? orderConversion.inr / orderValue : null,
+    },
+    refund: refundConversion
+      ? {
+          currency: currency || order.order_currency,
+          date: refundDate,
+          amount: amountNum,
+          valueInr: refundConversion.inr,
+          rate: refundConversion.inr != null && amountNum > 0 ? refundConversion.inr / amountNum : null,
+        }
+      : null,
+    source: refundConversion?.source ?? orderConversion.source,
+  };
 }

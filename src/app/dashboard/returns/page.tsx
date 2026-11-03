@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { OrderRefundsReportTable, HistoricalRefundsReportTable, StoreRateReportTable } from "./returns-report-tables";
+import { RefundOrderPicker, type RefundPickerOrder } from "./refund-order-picker";
 
 // 2026-08-17 — dedicated Returns/Refunds report. Gap identified in a
 // system-wide OMS-features audit: "Refunds/order_refunds tables hain
@@ -50,10 +51,15 @@ export default async function ReturnsPage({
   const fromDate = typeof sp.from === "string" ? sp.from : "";
   const toDate = typeof sp.to === "string" ? sp.to : "";
   const scopedCompanyIds = companyId ? [companyId] : employee.companyIds;
+  // 2026-11-03 — "isi section se ... po ya order no select kar to us order ki
+  // sari detail auto fill hokar a4 ka form open ho jaye": a refund can now
+  // be started from THIS report instead of hunting the order in Orders.
+  const poSearch = (typeof sp.po === "string" ? sp.po : "").trim();
 
-  const [{ data: companies }, { data: stores }] = await Promise.all([
+  const [{ data: companies }, { data: stores }, { data: currencies }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("stores").select("id, name, company_id").in("company_id", scopedCompanyIds),
+    supabase.from("currencies").select("code, name").order("code"),
   ]);
 
   // 2026-08-25 — "kis store par return ka % kitna chal raha, cancel ka
@@ -94,6 +100,37 @@ export default async function ReturnsPage({
 
   const storeIds = (stores ?? []).map((s) => s.id);
   const storeName = new Map((stores ?? []).map((s) => [s.id, s.name]));
+
+  // Orders this login can raise a refund against. Searched by PO/RF/RG no,
+  // marketplace order no or buyer — PostgREST's or() filter can't contain
+  // its own separators, so any comma/paren/percent in the typed text is
+  // dropped before it goes into the pattern.
+  let pickerOrders: RefundPickerOrder[] = [];
+  if (poSearch) {
+    const safe = poSearch.replace(/[%,()\\]/g, "").trim();
+    if (safe) {
+      const { data } = await supabase
+        .from("orders")
+        .select(
+          "id, ref_no, status, order_currency, order_value_original, buyer_name_address, marketplace_order_no, order_date, store_id"
+        )
+        .in("company_id", scopedCompanyIds)
+        .or(`ref_no.ilike.%${safe}%,marketplace_order_no.ilike.%${safe}%,buyer_name_address.ilike.%${safe}%`)
+        .order("order_date", { ascending: false })
+        .limit(25);
+      pickerOrders = (data ?? []).map((o) => ({
+        id: o.id,
+        ref_no: o.ref_no,
+        status: o.status,
+        order_currency: o.order_currency,
+        order_value_original: Number(o.order_value_original) || 0,
+        buyer_name_address: o.buyer_name_address,
+        marketplace_order_no: o.marketplace_order_no,
+        order_date: o.order_date,
+        store_name: o.store_id ? storeName.get(o.store_id) ?? null : null,
+      }));
+    }
+  }
 
   let historicalRefundsQuery = storeIds.length
     ? supabase
@@ -312,6 +349,43 @@ export default async function ReturnsPage({
         </button>
         <a href="/dashboard/returns" className="text-xs text-slate-400 underline">Clear</a>
       </form>
+
+      {/* 2026-11-03 — new refund straight from this section: type the PO /
+          order no (or buyer), pick the order, and its read-only A4 refund
+          sheet opens — only reason + amount (and date/currency) are typed
+          there. Same dialog, same save action as the Orders page. */}
+      <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 print:hidden">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-teal-900">🆕 New refund / return</h2>
+            <p className="text-xs text-teal-700">
+              PO / RF / RG no, marketplace order no ya buyer ka naam daalo — order select karo, uski poori detail wali
+              A4 refund sheet khul jayegi (read only), phir reason aur amount bhar ke save karo.
+            </p>
+          </div>
+          <form method="get" className="flex flex-wrap items-end gap-2">
+            <input type="hidden" name="from" value={fromDate} />
+            <input type="hidden" name="to" value={toDate} />
+            <input type="hidden" name="company" value={companyId} />
+            <div>
+              <label className="mb-1 block text-xs font-medium text-teal-800" htmlFor="po">PO / Order No / Buyer</label>
+              <input
+                id="po"
+                name="po"
+                defaultValue={poSearch}
+                placeholder="PO-123 / 171-1234567-1234567"
+                className={inputClass}
+              />
+            </div>
+            <button type="submit" className="rounded-lg bg-teal-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-teal-700">
+              Find order
+            </button>
+          </form>
+        </div>
+        {poSearch && (
+          <RefundOrderPicker orders={pickerOrders} currencies={currencies ?? []} search={poSearch} />
+        )}
+      </div>
 
       {/* 2026-11-02 — simplified from four cards to three: the two refund
           *categories* now sit inside the card they belong to, and a single
