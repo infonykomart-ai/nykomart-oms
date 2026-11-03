@@ -188,6 +188,31 @@ export async function probeMigrations(
         { name: "internal_invoices.round_off_amt", promise: hasColumn(client, "internal_invoices", "round_off_amt") },
         { name: "journal_vouchers.round_off_amt", promise: hasColumn(client, "journal_vouchers", "round_off_amt") },
       ]),
+
+    // 2026-11-03b — Returns that need MD/Admin approval. Without the file: no
+    // approval queue exists, so the Returns page shows a "run this migration"
+    // banner and only the (immediate) refund section is offered.
+    probe("db/2026-11-03b-return-approval.sql", "Return requests with mandatory MD/Admin approval",
+      "Returns cannot be handed in for approval — order-entry staff would have to change the order directly, with no approval trail.",
+      [{ name: "return_requests table", promise: hasColumn(client, "return_requests", "status") }]),
+
+    // 2026-11-03 — Vendor Agreements (Legal & Compliance → Agreement Generator).
+    // Without the file: the generator shows a "run this migration" banner and
+    // refuses to create documents, because numbering, the template registry and
+    // the private PDF bucket all live in it.
+    probe("db/2026-11-03-vendor-agreements.sql", "Vendor agreements (numbering, versions, signatures, letterhead)",
+      "The Agreement Generator cannot create or store any agreement — no NKM-AGR numbering function, no template registry, no private PDF bucket.",
+      [
+        { name: "agreement_documents table", promise: hasColumn(client, "agreement_documents", "ref_no") },
+        { name: "agreement_document_versions table", promise: hasColumn(client, "agreement_document_versions", "pdf_sha256") },
+        { name: "agreement_signature_records table", promise: hasColumn(client, "agreement_signature_records", "kind") },
+        { name: "agreement_letterhead_settings table", promise: hasColumn(client, "agreement_letterhead_settings", "brand_color") },
+        // NOTE: deliberately NOT an rpc("next_agreement_ref") probe — that
+        // function INCREMENTS a counter row, and this panel must stay
+        // strictly read-only. The counters table existing is proof enough that
+        // the file ran.
+        { name: "agreement_number_counters table", promise: hasColumn(client, "agreement_number_counters", "last_value") },
+      ]),
   ]);
 }
 

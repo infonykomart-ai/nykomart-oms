@@ -40,7 +40,7 @@ export default async function DashboardHome() {
       <NavTileGrid>
         {tiles.map((tile, i) => (
           <NavTile
-            key={tile.code}
+            key={`${tile.code}:${tile.href}`}
             href={tile.href}
             icon={tile.icon}
             label={tile.label}

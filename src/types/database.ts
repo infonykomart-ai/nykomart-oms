@@ -13,6 +13,644 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      // 2026-11-03 — Vendor Agreements (db/2026-11-03-vendor-agreements.sql).
+      // Hand-annotated to match the generator's table/column set; the literal
+      // unions on status/kind/channel/method are intentional hand annotations
+      // (the generator would emit plain `string` for a CHECK-constrained
+      // text column) and are kept in sync with the CHECK constraints above.
+      agreement_access_links: {
+        Row: {
+          id: string;
+          document_id: string;
+          token_hash: string;
+          purpose: "view" | "view_and_upload";
+          expires_at: string;
+          revoked_at: string | null;
+          created_by: string | null;
+          created_at: string;
+          last_used_at: string | null;
+          use_count: number;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          token_hash: string;
+          purpose?: "view" | "view_and_upload";
+          expires_at: string;
+          revoked_at?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          last_used_at?: string | null;
+          use_count?: number;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          token_hash?: string;
+          purpose?: "view" | "view_and_upload";
+          expires_at?: string;
+          revoked_at?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          last_used_at?: string | null;
+          use_count?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_access_links_document_id_fkey";
+            columns: ["document_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_access_links_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_document_versions: {
+        Row: {
+          id: string;
+          document_id: string;
+          version: number;
+          pdf_path: string;
+          pdf_sha256: string;
+          pdf_size: number | null;
+          template_version: number;
+          content_snapshot: Json;
+          generated_by: string | null;
+          generated_at: string;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          version: number;
+          pdf_path: string;
+          pdf_sha256: string;
+          pdf_size?: number | null;
+          template_version: number;
+          content_snapshot?: Json;
+          generated_by?: string | null;
+          generated_at?: string;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          version?: number;
+          pdf_path?: string;
+          pdf_sha256?: string;
+          pdf_size?: number | null;
+          template_version?: number;
+          content_snapshot?: Json;
+          generated_by?: string | null;
+          generated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_document_versions_document_id_fkey";
+            columns: ["document_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_document_versions_generated_by_fkey";
+            columns: ["generated_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_documents: {
+        Row: {
+          id: string;
+          ref_no: string;
+          company_id: string;
+          vendor_party_id: string | null;
+          vendor_name_snapshot: string;
+          template_slug: string;
+          template_version: number;
+          included_clause_slugs: string[];
+          status: "draft" | "generated" | "shared" | "signed_received" | "countersigned" | "active" | "renewed" | "terminated";
+          effective_date: string;
+          field_values: Json;
+          include_witnesses: boolean;
+          document_version: number;
+          created_by: string;
+          created_at: string;
+          last_shared_at: string | null;
+          activated_at: string | null;
+          terminated_at: string | null;
+          terminated_reason: string | null;
+          renewal_of: string | null;
+          notes: string | null;
+        };
+        Insert: {
+          id?: string;
+          ref_no: string;
+          company_id: string;
+          vendor_party_id?: string | null;
+          vendor_name_snapshot: string;
+          template_slug: string;
+          template_version?: number;
+          included_clause_slugs?: string[];
+          status?: "draft" | "generated" | "shared" | "signed_received" | "countersigned" | "active" | "renewed" | "terminated";
+          effective_date: string;
+          field_values?: Json;
+          include_witnesses?: boolean;
+          document_version?: number;
+          created_by: string;
+          created_at?: string;
+          last_shared_at?: string | null;
+          activated_at?: string | null;
+          terminated_at?: string | null;
+          terminated_reason?: string | null;
+          renewal_of?: string | null;
+          notes?: string | null;
+        };
+        Update: {
+          id?: string;
+          ref_no?: string;
+          company_id?: string;
+          vendor_party_id?: string | null;
+          vendor_name_snapshot?: string;
+          template_slug?: string;
+          template_version?: number;
+          included_clause_slugs?: string[];
+          status?: "draft" | "generated" | "shared" | "signed_received" | "countersigned" | "active" | "renewed" | "terminated";
+          effective_date?: string;
+          field_values?: Json;
+          include_witnesses?: boolean;
+          document_version?: number;
+          created_by?: string;
+          created_at?: string;
+          last_shared_at?: string | null;
+          activated_at?: string | null;
+          terminated_at?: string | null;
+          terminated_reason?: string | null;
+          renewal_of?: string | null;
+          notes?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_documents_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_documents_vendor_party_id_fkey";
+            columns: ["vendor_party_id"];
+            isOneToOne: false;
+            referencedRelation: "parties";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_documents_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_documents_renewal_of_fkey";
+            columns: ["renewal_of"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_history: {
+        Row: {
+          id: string;
+          document_id: string;
+          action:
+            | "created"
+            | "template_selected"
+            | "pdf_generated"
+            | "pdf_regenerated"
+            | "pdf_downloaded"
+            | "whatsapp_share_initiated"
+            | "whatsapp_shared"
+            | "vendor_link_created"
+            | "vendor_link_opened"
+            | "signed_received"
+            | "countersigned"
+            | "activated"
+            | "renewed"
+            | "terminated"
+            | "updated"
+            | "letterhead_updated";
+          actor_employee_id: string | null;
+          actor_name: string | null;
+          note: string | null;
+          meta: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          action:
+            | "created"
+            | "template_selected"
+            | "pdf_generated"
+            | "pdf_regenerated"
+            | "pdf_downloaded"
+            | "whatsapp_share_initiated"
+            | "whatsapp_shared"
+            | "vendor_link_created"
+            | "vendor_link_opened"
+            | "signed_received"
+            | "countersigned"
+            | "activated"
+            | "renewed"
+            | "terminated"
+            | "updated"
+            | "letterhead_updated";
+          actor_employee_id?: string | null;
+          actor_name?: string | null;
+          note?: string | null;
+          meta?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          action?:
+            | "created"
+            | "template_selected"
+            | "pdf_generated"
+            | "pdf_regenerated"
+            | "pdf_downloaded"
+            | "whatsapp_share_initiated"
+            | "whatsapp_shared"
+            | "vendor_link_created"
+            | "vendor_link_opened"
+            | "signed_received"
+            | "countersigned"
+            | "activated"
+            | "renewed"
+            | "terminated"
+            | "updated"
+            | "letterhead_updated";
+          actor_employee_id?: string | null;
+          actor_name?: string | null;
+          note?: string | null;
+          meta?: Json;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_history_document_id_fkey";
+            columns: ["document_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_history_actor_employee_id_fkey";
+            columns: ["actor_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_letterhead_settings: {
+        Row: {
+          company_id: string;
+          logo_url: string | null;
+          legal_name: string | null;
+          address: string | null;
+          email: string | null;
+          website: string | null;
+          phone: string | null;
+          gstin: string | null;
+          footer_text: string | null;
+          signature_url: string | null;
+          brand_color: string;
+          accent_color: string;
+          font_family: "Helvetica" | "Times-Roman" | "Courier";
+          updated_by: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          company_id: string;
+          logo_url?: string | null;
+          legal_name?: string | null;
+          address?: string | null;
+          email?: string | null;
+          website?: string | null;
+          phone?: string | null;
+          gstin?: string | null;
+          footer_text?: string | null;
+          signature_url?: string | null;
+          brand_color?: string;
+          accent_color?: string;
+          font_family?: "Helvetica" | "Times-Roman" | "Courier";
+          updated_by?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          company_id?: string;
+          logo_url?: string | null;
+          legal_name?: string | null;
+          address?: string | null;
+          email?: string | null;
+          website?: string | null;
+          phone?: string | null;
+          gstin?: string | null;
+          footer_text?: string | null;
+          signature_url?: string | null;
+          brand_color?: string;
+          accent_color?: string;
+          font_family?: "Helvetica" | "Times-Roman" | "Courier";
+          updated_by?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_letterhead_settings_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_letterhead_settings_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_number_counters: {
+        Row: {
+          year: number;
+          last_value: number;
+        };
+        Insert: {
+          year: number;
+          last_value?: number;
+        };
+        Update: {
+          year?: number;
+          last_value?: number;
+        };
+        Relationships: [];
+      };
+      agreement_sharing_logs: {
+        Row: {
+          id: string;
+          document_id: string;
+          version_id: string | null;
+          channel: "whatsapp" | "email" | "download" | "vendor_link";
+          provider: string | null;
+          status: "initiated" | "sent" | "failed" | "manual_attach_required";
+          phone: string | null;
+          message: string | null;
+          provider_message_id: string | null;
+          actor_employee_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          version_id?: string | null;
+          channel: "whatsapp" | "email" | "download" | "vendor_link";
+          provider?: string | null;
+          status: "initiated" | "sent" | "failed" | "manual_attach_required";
+          phone?: string | null;
+          message?: string | null;
+          provider_message_id?: string | null;
+          actor_employee_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          version_id?: string | null;
+          channel?: "whatsapp" | "email" | "download" | "vendor_link";
+          provider?: string | null;
+          status?: "initiated" | "sent" | "failed" | "manual_attach_required";
+          phone?: string | null;
+          message?: string | null;
+          provider_message_id?: string | null;
+          actor_employee_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_sharing_logs_document_id_fkey";
+            columns: ["document_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_sharing_logs_version_id_fkey";
+            columns: ["version_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_document_versions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_sharing_logs_actor_employee_id_fkey";
+            columns: ["actor_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_signature_records: {
+        Row: {
+          id: string;
+          document_id: string;
+          version_id: string | null;
+          kind: "vendor" | "counter";
+          method: "scanned_upload" | "esign_provider";
+          signer_name: string;
+          signer_designation: string | null;
+          signed_on: string | null;
+          pdf_path: string;
+          pdf_sha256: string;
+          verification: Json;
+          uploaded_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          version_id?: string | null;
+          kind: "vendor" | "counter";
+          method: "scanned_upload" | "esign_provider";
+          signer_name: string;
+          signer_designation?: string | null;
+          signed_on?: string | null;
+          pdf_path: string;
+          pdf_sha256: string;
+          verification?: Json;
+          uploaded_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          version_id?: string | null;
+          kind?: "vendor" | "counter";
+          method?: "scanned_upload" | "esign_provider";
+          signer_name?: string;
+          signer_designation?: string | null;
+          signed_on?: string | null;
+          pdf_path?: string;
+          pdf_sha256?: string;
+          verification?: Json;
+          uploaded_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_signature_records_document_id_fkey";
+            columns: ["document_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_signature_records_version_id_fkey";
+            columns: ["version_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_document_versions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agreement_signature_records_uploaded_by_fkey";
+            columns: ["uploaded_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      agreement_templates: {
+        Row: {
+          id: string;
+          slug: string;
+          title: string;
+          version: number;
+          status: "draft" | "legal_review" | "active" | "retired";
+          legally_reviewed_by: string | null;
+          legally_reviewed_on: string | null;
+          activated_at: string | null;
+          retired_at: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          slug: string;
+          title: string;
+          version?: number;
+          status?: "draft" | "legal_review" | "active" | "retired";
+          legally_reviewed_by?: string | null;
+          legally_reviewed_on?: string | null;
+          activated_at?: string | null;
+          retired_at?: string | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          slug?: string;
+          title?: string;
+          version?: number;
+          status?: "draft" | "legal_review" | "active" | "retired";
+          legally_reviewed_by?: string | null;
+          legally_reviewed_on?: string | null;
+          activated_at?: string | null;
+          retired_at?: string | null;
+          notes?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      agreement_vendor_details: {
+        Row: {
+          document_id: string;
+          legal_name: string;
+          business_name: string | null;
+          contact_person: string | null;
+          designation: string | null;
+          address: string;
+          city: string | null;
+          state: string | null;
+          country: string | null;
+          postal_code: string | null;
+          email: string | null;
+          whatsapp: string | null;
+          gstin: string | null;
+          registration_no: string | null;
+          category: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          document_id: string;
+          legal_name: string;
+          business_name?: string | null;
+          contact_person?: string | null;
+          designation?: string | null;
+          address: string;
+          city?: string | null;
+          state?: string | null;
+          country?: string | null;
+          postal_code?: string | null;
+          email?: string | null;
+          whatsapp?: string | null;
+          gstin?: string | null;
+          registration_no?: string | null;
+          category?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          document_id?: string;
+          legal_name?: string;
+          business_name?: string | null;
+          contact_person?: string | null;
+          designation?: string | null;
+          address?: string;
+          city?: string | null;
+          state?: string | null;
+          country?: string | null;
+          postal_code?: string | null;
+          email?: string | null;
+          whatsapp?: string | null;
+          gstin?: string | null;
+          registration_no?: string | null;
+          category?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agreement_vendor_details_document_id_fkey";
+            columns: ["document_id"];
+            isOneToOne: false;
+            referencedRelation: "agreement_documents";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       amazon_transactions: {
         Row: {
           id: string;
@@ -8338,6 +8976,95 @@ export type Database = {
           },
         ];
       };
+      // 2026-11-03b — customer returns that need MD/Admin approval before they
+      // have any effect (db/2026-11-03b-return-approval.sql). Refunds remain
+      // immediate and are NOT stored here.
+      return_requests: {
+        Row: {
+          id: string;
+          order_id: string;
+          company_id: string;
+          requested_by: string | null;
+          requested_at: string;
+          reason: string;
+          note: string | null;
+          refund_amount: number | null;
+          refund_currency: string | null;
+          refund_date: string | null;
+          status: "Pending" | "Approved" | "Rejected";
+          decided_by: string | null;
+          decided_at: string | null;
+          decision_note: string | null;
+          applied_refund_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          order_id: string;
+          company_id: string;
+          requested_by?: string | null;
+          requested_at?: string;
+          reason: string;
+          note?: string | null;
+          refund_amount?: number | null;
+          refund_currency?: string | null;
+          refund_date?: string | null;
+          status?: "Pending" | "Approved" | "Rejected";
+          decided_by?: string | null;
+          decided_at?: string | null;
+          decision_note?: string | null;
+          applied_refund_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          order_id?: string;
+          company_id?: string;
+          requested_by?: string | null;
+          requested_at?: string;
+          reason?: string;
+          note?: string | null;
+          refund_amount?: number | null;
+          refund_currency?: string | null;
+          refund_date?: string | null;
+          status?: "Pending" | "Approved" | "Rejected";
+          decided_by?: string | null;
+          decided_at?: string | null;
+          decision_note?: string | null;
+          applied_refund_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "return_requests_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "return_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "return_requests_requested_by_fkey";
+            columns: ["requested_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "return_requests_decided_by_fkey";
+            columns: ["decided_by"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       roles: {
         Row: {
           id: string;
@@ -10180,6 +10907,12 @@ export type Database = {
           status: "Pending" | "Confirmed" | "In Production" | "Dispatched" | "Delivered" | "Hold" | "Cancelled" | "Returned" | null;
           cnt: number | null;
         }[];
+      };
+      next_agreement_ref: {
+        Args: {
+          p_year: number;
+        };
+        Returns: string;
       };
       get_unread_group_message_count: {
         Args: {

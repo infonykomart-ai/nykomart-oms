@@ -24,8 +24,13 @@ export type AmazonPreviewRow = {
   buyer: string;
   size: string;
   qty: number | null;
+  /** Buyer paid total when the sheet has shipping/tax/discount columns. */
   amount: number | null;
   currency: string | null;
+  status: string;
+  productName: string;
+  asin: string;
+  itemId: string;
   remark: string;
   /** Validation problem — the row is skipped on create when set. */
   error: string | null;
@@ -117,6 +122,10 @@ export async function importAmazonOrders(_prev: AmazonImportState, formData: For
       qty: row.qty,
       amount: row.amount,
       currency: row.currency ?? fallbackCurrency,
+      status: row.orderStatus,
+      productName: row.productName,
+      asin: row.asin,
+      itemId: row.itemId,
       remark: row.remark,
       error: problems.length ? problems.join(" · ") : null,
     };
@@ -126,21 +135,27 @@ export async function importAmazonOrders(_prev: AmazonImportState, formData: For
     return { error: null, mode, shape: parsed.shape, issues: parsed.issues, preview, results: null };
   }
 
-  // CREATE — skip anything already imported (same marketplace order no in
-  // this company) so re-uploading a corrected file can't double-book orders.
+  // CREATE — skip anything already imported so re-uploading a corrected file
+  // can't double-book orders. Amazon sends several rows for one order (one per
+  // order-item-id), so the identity is order no + item id; an order imported
+  // without an item id is matched on the order no alone.
   const orderNos = Array.from(new Set(parsed.rows.map((r) => r.orderNo).filter(Boolean)));
-  const existingByNo = new Map<string, string>();
+  const existingByKey = new Map<string, string>();
   for (let i = 0; i < orderNos.length; i += 150) {
     const chunk = orderNos.slice(i, i + 150);
     const { data } = await supabase
       .from("orders")
-      .select("ref_no, marketplace_order_no")
+      .select("ref_no, marketplace_order_no, remark")
       .in("company_id", [store.company_id])
       .in("marketplace_order_no", chunk);
     for (const o of data ?? []) {
-      if (o.marketplace_order_no) existingByNo.set(o.marketplace_order_no.trim(), o.ref_no);
+      if (!o.marketplace_order_no) continue;
+      const no = o.marketplace_order_no.trim();
+      const itemId = /Amazon item ([^\s·]+)/.exec(o.remark ?? "")?.[1] ?? "";
+      existingByKey.set(itemId ? `${no}#${itemId}` : no, o.ref_no);
     }
   }
+  const rowKey = (rowNo: string, itemId: string) => (itemId ? `${rowNo.trim()}#${itemId}` : rowNo.trim());
 
   const results: AmazonCreateResult[] = [];
   for (let i = 0; i < parsed.rows.length; i++) {
@@ -150,7 +165,8 @@ export async function importAmazonOrders(_prev: AmazonImportState, formData: For
       results.push({ line: row.line, orderNo: row.orderNo, refNo: null, error: checked.error });
       continue;
     }
-    const already = existingByNo.get(row.orderNo.trim());
+    const key = rowKey(row.orderNo, row.itemId);
+    const already = existingByKey.get(key) ?? existingByKey.get(row.orderNo.trim());
     if (already) {
       results.push({ line: row.line, orderNo: row.orderNo, refNo: already, error: `Already imported as ${already}` });
       continue;
@@ -173,7 +189,7 @@ export async function importAmazonOrders(_prev: AmazonImportState, formData: For
       items: [
         {
           itemCategoryId,
-          skuLabel: row.sku || null,
+          skuLabel: row.sku || row.asin || null,
           sizeLabel: row.size || null,
           qty: row.qty!,
           colour: row.colour || null,
@@ -204,7 +220,7 @@ export async function importAmazonOrders(_prev: AmazonImportState, formData: For
       vendorPartyId: null,
     });
     results.push({ line: row.line, orderNo: row.orderNo, refNo: result.refNo, error: result.error });
-    if (result.refNo) existingByNo.set(row.orderNo.trim(), result.refNo);
+    if (result.refNo) existingByKey.set(key, result.refNo);
   }
 
   revalidatePath("/dashboard/orders");

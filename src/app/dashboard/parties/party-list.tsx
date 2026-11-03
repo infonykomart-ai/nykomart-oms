@@ -80,6 +80,15 @@ export function PartyList({ parties }: { parties: EditableParty[] }) {
                     >
                       📒 Ledger
                     </Link>
+                    {/* 2026-11-03 — vendor profile shortcut from the Legal &
+                        Compliance spec: jump straight from the vendor record to
+                        a pre-selected agreement for this party. */}
+                    <Link
+                      href={`/dashboard/agreements/new?vendor=${p.id}`}
+                      className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                    >
+                      📑 Generate Agreement
+                    </Link>
                     <button
                       type="button"
                       onClick={() => setEditingId(p.id)}

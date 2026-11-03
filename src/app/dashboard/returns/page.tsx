@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { requireCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { requireAnyCapability } from "@/lib/auth/require-capability";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { sanitizeSearchTerm } from "@/lib/orders/find-order";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { OrderRefundsReportTable, HistoricalRefundsReportTable, StoreRateReportTable } from "./returns-report-tables";
 import { RefundOrderPicker, type RefundPickerOrder } from "./refund-order-picker";
+import { ReturnRequestPanel, type MyReturnRow, type PendingReturnRow } from "./return-request-panel";
+import { isMissingAgreementSchema } from "@/lib/agreements/migration";
 
 // 2026-08-17 — dedicated Returns/Refunds report. Gap identified in a
 // system-wide OMS-features audit: "Refunds/order_refunds tables hain
@@ -53,7 +55,14 @@ export default async function ReturnsPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const employee = await requireCapability("reports");
+  // 2026-11-03b — order-entry staff must be able to raise refunds and return
+  // requests from here (owner: "refund/return section ... order ki entry karne
+  // wale employees ko access dena hai"), so the page is no longer reports-only.
+  // The three REPORTS stay behind `reports` (see hasReports below), while the
+  // refund sheet needs order_entry and the approval queue needs return_approval.
+  const employee = await requireAnyCapability("reports", "order_entry", "return_approval");
+  const hasReports = employee.capabilities.includes("reports");
+  const canApproveReturns = employee.capabilities.includes("return_approval");
   const supabase = await createClient();
   const sp = await searchParams;
 
@@ -356,6 +365,102 @@ export default async function ReturnsPage({
     }
   }
 
+  // 2026-11-03b — return approval queue. return_requests is RLS-forced with no
+  // policies, so it is read with the service-role client AFTER the capability
+  // gate above; the same company scope as the refund sheet applies.
+  const serviceDb = createServiceRoleClient();
+  const returnMigrationPending = await serviceDb
+    .from("return_requests")
+    .select("id")
+    .limit(1)
+    .then(({ error }) => Boolean(error) && isMissingAgreementSchema(error));
+
+  type PendingRow = {
+    id: string;
+    reason: string;
+    note: string | null;
+    refund_amount: number | null;
+    refund_currency: string | null;
+    refund_date: string | null;
+    requested_at: string;
+    requested_by: string | null;
+    orders: { ref_no: string | null; buyer_name_address: string | null } | null;
+  };
+  type MyRow = {
+    id: string;
+    status: "Pending" | "Approved" | "Rejected";
+    reason: string;
+    refund_amount: number | null;
+    requested_at: string;
+    decided_at: string | null;
+    decision_note: string | null;
+    orders: { ref_no: string | null } | null;
+  };
+
+  let pendingReturnRows: PendingRow[] = [];
+  let myReturnRows: MyRow[] = [];
+  if (!returnMigrationPending) {
+    const [pendingResult, mineResult] = await Promise.all([
+      canApproveReturns
+        ? serviceDb
+            .from("return_requests")
+            .select(
+              "id, reason, note, refund_amount, refund_currency, refund_date, requested_at, requested_by, orders!inner(ref_no, buyer_name_address)"
+            )
+            .eq("status", "Pending")
+            .in("company_id", employee.companyIds)
+            .order("requested_at", { ascending: true })
+            .limit(100)
+        : Promise.resolve({ data: [] as PendingRow[] }),
+      serviceDb
+        .from("return_requests")
+        .select("id, status, reason, refund_amount, requested_at, decided_at, decision_note, orders!inner(ref_no)")
+        .eq("requested_by", employee.id)
+        .order("requested_at", { ascending: false })
+        .limit(20),
+    ]);
+    pendingReturnRows = (pendingResult.data ?? []) as unknown as PendingRow[];
+    myReturnRows = (mineResult.data ?? []) as unknown as MyRow[];
+  }
+
+  const requesterIds = Array.from(new Set(pendingReturnRows.map((row) => row.requested_by).filter(Boolean))) as string[];
+  const { data: requesterNames } = requesterIds.length
+    ? await serviceDb.from("employees").select("id, name").in("id", requesterIds)
+    : { data: [] as { id: string; name: string }[] };
+  const requesterNameById = new Map((requesterNames ?? []).map((row) => [row.id, row.name]));
+
+  // The embedded `orders` relation is typed loosely here (hand-written
+  // Database type), so normalise defensively instead of trusting the shape.
+  const pendingReturns: PendingReturnRow[] = pendingReturnRows.map((row) => {
+    const order = (row.orders ?? {}) as { ref_no?: string | null; buyer_name_address?: string | null };
+    return {
+      id: row.id,
+      refNo: order.ref_no ?? "—",
+      buyer: order.buyer_name_address ?? null,
+      reason: row.reason,
+      note: row.note,
+      refundAmount: row.refund_amount != null ? Number(row.refund_amount) : null,
+      refundCurrency: row.refund_currency,
+      refundDate: row.refund_date,
+      requestedAt: row.requested_at,
+      requestedByName: row.requested_by ? (requesterNameById.get(row.requested_by) ?? null) : null,
+    };
+  });
+
+  const myReturns: MyReturnRow[] = myReturnRows.map((row) => {
+    const order = (row.orders ?? {}) as { ref_no?: string | null };
+    return {
+      id: row.id,
+      refNo: order.ref_no ?? "—",
+      status: row.status,
+      reason: row.reason,
+      refundAmount: row.refund_amount != null ? Number(row.refund_amount) : null,
+      requestedAt: row.requested_at,
+      decidedAt: row.decided_at,
+      decisionNote: row.decision_note,
+    };
+  });
+
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500";
   const selectedCompany = companyId ? companies?.find((c) => c.id === companyId)?.name ?? "selected company" : "all companies";
@@ -487,6 +592,19 @@ export default async function ReturnsPage({
         {poSearch && <RefundOrderPicker orders={pickerOrders} currencies={currencies ?? []} search={poSearch} />}
       </div>
 
+      {/* 2026-11-03b — refunds post immediately; returns need MD/Admin
+          approval before they change anything. */}
+      <div className="mt-4">
+        <ReturnRequestPanel
+          canApprove={canApproveReturns}
+          pending={pendingReturns}
+          mine={myReturns}
+          currencies={(currencies ?? []).map((row) => row.code)}
+          migrationPending={returnMigrationPending}
+          migrationFile="db/2026-11-03b-return-approval.sql"
+        />
+      </div>
+
       <p className="text-xs text-slate-500">
         Showing <strong>{selectedCompany}</strong> · <strong>{selectedStore}</strong> · <strong>{dateLabel}</strong>.
         The OMS refund sheet and the marketplace sheet filter by <strong>refund date</strong>; the store rate sheet
@@ -546,9 +664,15 @@ export default async function ReturnsPage({
         </div>
       </div>
 
-      <StoreRateReportTable rows={storeRateRows} />
-      <OrderRefundsReportTable rows={orderRefundRows} />
-      <HistoricalRefundsReportTable rows={historicalRefundRows} />
+      {/* Reports stay behind the `reports` capability; order-entry staff see
+          only the refund / return actions above. */}
+      {hasReports ? (
+        <>
+          <StoreRateReportTable rows={storeRateRows} />
+          <OrderRefundsReportTable rows={orderRefundRows} />
+          <HistoricalRefundsReportTable rows={historicalRefundRows} />
+        </>
+      ) : null}
     </div>
   );
 }

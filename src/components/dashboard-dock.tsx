@@ -142,7 +142,7 @@ export function DashboardDock({ capabilities }: { capabilities: string[] }) {
             <DockTile href="/dashboard" icon="🏠" label="Home" active={pathname === "/dashboard"} />
             {items.map((item) => (
               <DockTile
-                key={item.code}
+                key={`${item.code}:${item.href}`}
                 href={item.href}
                 icon={item.icon}
                 label={item.label}

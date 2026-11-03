@@ -81,7 +81,7 @@ export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
         />
         {items.map((item) => (
           <SidebarTile
-            key={item.code}
+            key={`${item.code}:${item.href}`}
             href={item.href}
             icon={item.icon}
             label={item.label}

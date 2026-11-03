@@ -88,6 +88,28 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Add new companies, item categories, sizes." },
   { code: "hr_letters", label: "HR Letters", icon: "✉️", href: "/dashboard/hr-letters",
     description: "Generate Joining / Promotion / Experience / Salary Slip and other letters." },
+  // 2026-11-03 — Vendor Agreements (agreement generator + WhatsApp/PDF).
+  // Rides on the EXISTING hr_letters capability rather than a new code:
+  // this is the same "issue an official document on company letterhead"
+  // job MD/Admin already hold it for, and a brand-new capability would sit
+  // unusable until someone ran a role_capabilities grant by hand (this
+  // module ships with no migration at all — see agreements/actions.ts).
+  // Same-capability-second-destination precedent as the entries below.
+  // 2026-11-03b — return approvals are deliberately a SEPARATE capability
+  // from order_entry: whoever raises a return can't approve it. Granted to
+  // MD/Admin by db/2026-11-03b-return-approval.sql; the queue itself shows on
+  // the Returns page.
+  { code: "return_approval", label: "Return Approvals", icon: "↩️", href: "/dashboard/returns",
+    description: "Review customer return requests raised by order-entry staff: approve to release the refund and mark the order Returned, or reject with a note." },
+  // 2026-11-03b — the same page, reachable by the people who actually take
+  // refund/return entries (owner: "refund/return section ... order ki entry
+  // karne wale employees ko access dena hai"). A second entry under the
+  // order_entry capability, because the tile list is one-to-one with the href
+  // a capability opens and order_entry's own tile is the Orders page.
+  { code: "order_entry", label: "Refunds & Returns", icon: "♻️", href: "/dashboard/returns",
+    description: "Post a refund immediately, or raise a return for MD/Admin approval — and track what is still pending." },
+  { code: "hr_letters", label: "Agreement Generator", icon: "📑", href: "/dashboard/agreements",
+    description: "Legal & Compliance — vendor agreements (NDA, supplier, design IP, e-commerce, data protection, software, photography, logistics, custom) as numbered PDFs on the official letterhead, with version history, WhatsApp sharing, signed-copy upload and activation." },
   { code: "employee_admin", label: "Employees", icon: "👥", href: "/dashboard/admin/employees",
     description: "Manage the employee roster." },
   // 2026-10-21 — same capability, a second destination (same pattern as

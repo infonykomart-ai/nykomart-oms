@@ -25,6 +25,88 @@ test("an Amazon All-Orders header row is read as one order per row", () => {
   assert.equal(parsed.rows[1].currency, "GBP");
 });
 
+test("the full Amazon All-Orders sheet maps every column the office exports", () => {
+  // Headers exactly as in the sheet the owner uploads by hand.
+  const headers = [
+    "amazon-order-id",
+    "merchant-order-id",
+    "purchase-date",
+    "last-updated-date",
+    "order-status",
+    "fulfillment-channel",
+    "sales-channel",
+    "ship-service-level",
+    "product-name",
+    "sku",
+    "asin",
+    "quantity",
+    "currency",
+    "item-price",
+    "item-tax",
+    "shipping-price",
+    "item-promotion-discount",
+    "order-item-id",
+    "ship-city",
+    "ship-state",
+    "ship-postal-code",
+    "ship-country",
+    "fulfilled-by",
+    "is-business-order",
+  ];
+  const aoa = [
+    headers,
+    [
+      "171-1234567-1234567",
+      "P-1001",
+      "2026-10-02T08:15:00+00:00",
+      "2026-10-02T09:00:00+00:00",
+      "Shipped",
+      "FBA",
+      "Amazon.in",
+      "Expedited",
+      "Hand Tufted Wool Rug — Ivory 5x7",
+      "RUG-001",
+      "B0C4TEST01",
+      "1",
+      "INR",
+      "72.39",
+      "3.61",
+      "5.00",
+      "2.00",
+      "171123456789012",
+      "Jaipur",
+      "Rajasthan",
+      "302001",
+      "IN",
+      "Amazon",
+      "false",
+    ],
+  ];
+  const parsed = parseAmazonOrders(aoa);
+  assert.equal(parsed.shape, "amazon-report");
+  assert.equal(parsed.rows.length, 1);
+  const row = parsed.rows[0];
+  assert.equal(row.orderNo, "171-1234567-1234567");
+  assert.equal(row.merchantOrderId, "P-1001");
+  assert.equal(row.orderDate, "2026-10-02");
+  assert.equal(row.orderStatus, "Shipped");
+  assert.equal(row.channel, "FBA");
+  assert.equal(row.productName, "Hand Tufted Wool Rug — Ivory 5x7");
+  assert.equal(row.asin, "B0C4TEST01");
+  assert.equal(row.itemId, "171123456789012");
+  assert.equal(row.qty, 1);
+  // Item price + shipping + tax − promotion discount = what the buyer paid.
+  assert.equal(row.amount, 79);
+  assert.equal(row.tax, 3.61);
+  assert.equal(row.shipping, 5);
+  assert.equal(row.discount, 2);
+  assert.equal(row.currency, "INR");
+  assert.equal(row.postalCode, "302001");
+  assert.equal(row.country, "IN");
+  assert.match(row.remark, /Status: Shipped/);
+  assert.match(row.remark, /Amazon item 171123456789012/);
+});
+
 test("the Order-No book layout keeps the order's own amount when a Refund line follows", () => {
   const aoa = [
     ["Order No", "171-1234567-1234567", "02/10/2026", "Jane Doe", "5X7 FT", "2", "72.39", "USD"],

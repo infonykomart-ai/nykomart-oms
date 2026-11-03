@@ -128,7 +128,7 @@ export function AmazonUploadForm({
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  {["Line", "Order No", "Date", "Buyer", "Size", "Qty", "Amount", "Result"].map((h) => (
+                  {["Line", "Order No", "Date", "Buyer", "Item / ASIN", "Size", "Qty", "Amount", "Status", "Result"].map((h) => (
                     <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-slate-500">{h}</th>
                   ))}
                 </tr>
@@ -142,11 +142,16 @@ export function AmazonUploadForm({
                       <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-800">{row.orderNo || "—"}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.orderDate ?? "—"}</td>
                       <td className="max-w-[16rem] truncate px-3 py-2 text-slate-600" title={row.buyer}>{row.buyer || "—"}</td>
+                      <td className="max-w-[14rem] px-3 py-2 text-xs text-slate-600">
+                        <span className="block truncate" title={row.productName}>{row.productName || "—"}</span>
+                        {row.asin ? <span className="font-mono text-[11px] text-slate-400">{row.asin}</span> : null}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.size || "—"}</td>
                       <td className="px-3 py-2 text-slate-600">{row.qty ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-slate-600">
                         {row.amount != null ? `${row.amount.toFixed(2)} ${row.currency ?? ""}` : "—"}
                       </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-600">{row.status || "—"}</td>
                       <td className="px-3 py-2 text-xs">
                         {row.error ? (
                           <span className="text-red-700">{row.error}</span>

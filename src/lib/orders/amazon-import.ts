@@ -34,9 +34,22 @@ export type AmazonOrderRow = {
   colour: string;
   sku: string;
   qty: number | null;
+  /** What the buyer paid: item price + shipping + tax − promotion discount when
+   *  those columns exist, otherwise the plain amount column. */
   amount: number | null;
   currency: string | null;
   remark: string;
+  /** Amazon "All Orders" extras, carried through the preview so nothing from the
+   *  sheet is silently dropped (the OMS order itself has no column for them). */
+  itemId: string;
+  asin: string;
+  productName: string;
+  orderStatus: string;
+  channel: string;
+  merchantOrderId: string;
+  tax: number | null;
+  shipping: number | null;
+  discount: number | null;
 };
 
 export type AmazonParseResult = {
@@ -72,6 +85,16 @@ const SKU_HEADERS = ["sku", "sellersku", "itemsku"];
 const SIZE_HEADERS = ["size", "itemsize", "sizelabel"];
 const COLOUR_HEADERS = ["colour", "color", "itemcolor", "itemcolour"];
 const NOTE_HEADERS = ["remark", "remarks", "note", "notes", "comment", "comments"];
+// Amazon "All Orders" report (the sheet shape the OMS is fed manually).
+const ITEM_ID_HEADERS = ["orderitemid", "itemid", "orderlineid", "lineitemid"];
+const ASIN_HEADERS = ["asin", "productasin"];
+const PRODUCT_HEADERS = ["productname", "itemname", "itemtitle", "title"];
+const STATUS_HEADERS = ["orderstatus", "status", "itemstatus"];
+const CHANNEL_HEADERS = ["fulfillmentchannel", "saleschannel", "channel", "fulfilledby", "shipservicelevel"];
+const MERCHANT_ORDER_HEADERS = ["merchantorderid", "merchantid", "sellerorderid"];
+const TAX_HEADERS = ["itemtax", "tax", "taxamount"];
+const SHIPPING_HEADERS = ["shippingprice", "shipping", "shippingamount", "shipcharge"];
+const DISCOUNT_HEADERS = ["itempromotiondiscount", "promotiondiscount", "discount", "itemdiscount"];
 
 type Field =
   | "orderNo"
@@ -88,7 +111,16 @@ type Field =
   | "qty"
   | "amount"
   | "currency"
-  | "remark";
+  | "remark"
+  | "itemId"
+  | "asin"
+  | "productName"
+  | "orderStatus"
+  | "channel"
+  | "merchantOrderId"
+  | "tax"
+  | "shipping"
+  | "discount";
 
 const HEADER_FIELDS: Record<Field, string[]> = {
   orderNo: ORDER_HEADERS,
@@ -106,6 +138,15 @@ const HEADER_FIELDS: Record<Field, string[]> = {
   amount: AMOUNT_HEADERS,
   currency: CURRENCY_HEADERS,
   remark: NOTE_HEADERS,
+  itemId: ITEM_ID_HEADERS,
+  asin: ASIN_HEADERS,
+  productName: PRODUCT_HEADERS,
+  orderStatus: STATUS_HEADERS,
+  channel: CHANNEL_HEADERS,
+  merchantOrderId: MERCHANT_ORDER_HEADERS,
+  tax: TAX_HEADERS,
+  shipping: SHIPPING_HEADERS,
+  discount: DISCOUNT_HEADERS,
 };
 
 /** "01/10/2026" | "2026-10-01" | "1 Oct 2026" | "2026-10-01T12:00:00Z" → YYYY-MM-DD. */
@@ -221,7 +262,33 @@ function buildAddress(r: Partial<AmazonOrderRow>): string {
 
 function rowFromMap(row: unknown[], map: Map<Field, number>, line: number): AmazonOrderRow {
   const at = (f: Field) => (map.has(f) ? cell(row[map.get(f)!]) : "");
+  const num = (f: Field) => (map.has(f) ? parseAmount(at(f)) : null);
   const currencyRaw = at("currency").toUpperCase();
+  const base = num("amount");
+  const tax = num("tax");
+  const shipping = num("shipping");
+  const discount = num("discount");
+  // Amazon's item-price excludes shipping/tax and is BEFORE the promotion
+  // discount, so the order value is the sum Amazon actually charged. Only
+  // applied when the sheet really carries those columns.
+  const hasBreakdown = tax != null || shipping != null || discount != null;
+  const total =
+    base == null ? null : Math.max(0, base + (shipping ?? 0) + (tax ?? 0) - (discount ?? 0));
+
+  const remarkParts: string[] = [];
+  const status = at("orderStatus");
+  const channel = at("channel");
+  const asin = at("asin");
+  const itemId = at("itemId");
+  const productName = at("productName");
+  if (status) remarkParts.push(`Status: ${status}`);
+  if (channel) remarkParts.push(`Channel: ${channel}`);
+  if (productName) remarkParts.push(productName);
+  if (asin) remarkParts.push(`ASIN ${asin}`);
+  if (itemId) remarkParts.push(`Amazon item ${itemId}`);
+  const sheetRemark = at("remark");
+  if (sheetRemark) remarkParts.push(sheetRemark);
+
   return {
     line,
     orderNo: at("orderNo"),
@@ -236,9 +303,18 @@ function rowFromMap(row: unknown[], map: Map<Field, number>, line: number): Amaz
     colour: at("colour"),
     sku: at("sku"),
     qty: map.has("qty") ? parseAmount(at("qty")) : null,
-    amount: map.has("amount") ? parseAmount(at("amount")) : null,
+    amount: hasBreakdown ? total : base,
     currency: looksLikeCurrency(currencyRaw) ? currencyRaw : null,
-    remark: at("remark"),
+    remark: remarkParts.join(" · "),
+    itemId,
+    asin,
+    productName,
+    orderStatus: status,
+    channel,
+    merchantOrderId: at("merchantOrderId"),
+    tax,
+    shipping,
+    discount,
   };
 }
 
@@ -365,6 +441,15 @@ export function parseAmazonOrders(aoa: unknown[][]): AmazonParseResult {
       amount: c.amount ?? null,
       currency: c.currency ?? null,
       remark: c.remark ?? "",
+      itemId: c.itemId ?? "",
+      asin: c.asin ?? "",
+      productName: c.productName ?? "",
+      orderStatus: c.orderStatus ?? "",
+      channel: c.channel ?? "",
+      merchantOrderId: c.merchantOrderId ?? "",
+      tax: c.tax ?? null,
+      shipping: c.shipping ?? null,
+      discount: c.discount ?? null,
     };
     row.address = buildAddress(row);
     rows.push(row);
