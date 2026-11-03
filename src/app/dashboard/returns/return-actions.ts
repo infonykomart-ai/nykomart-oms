@@ -20,7 +20,11 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { saveOrderRefundCore } from "@/app/dashboard/orders/actions";
 import { isMissingAgreementSchema } from "@/lib/agreements/migration";
 
-export const RETURN_MIGRATION_FILE = "db/2026-11-03b-return-approval.sql";
+// NOT exported: a "use server" module may only export async functions, and a
+// const here fails the production build (Turbopack: "Only async functions are
+// allowed to be exported in a \"use server\" file"). The Returns page passes
+// the same path to the panel as a prop.
+const RETURN_MIGRATION_FILE = "db/2026-11-03b-return-approval.sql";
 
 function schemaPending(error: { code?: string | null; message?: string | null } | null): boolean {
   if (!error) return false;
