@@ -11,13 +11,6 @@ import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
-import { tolerateMissingColumns } from "@/lib/db/missing-column";
-import {
-  isStairDimensionUnit,
-  normalizeCount,
-  stairSizeLabel,
-  stairTotalPieces,
-} from "@/lib/orders/stair-rug";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -100,27 +93,7 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   }
 
   const itemCategoryId = str(formData, "item_category_id");
-
-  // 2026-11-02 — Stair Rug edit path: same rules as order entry (see
-  // new/actions.ts's parseItems). Sets/pieces present → Total Pieces IS the
-  // qty; absent → the plain Quantity field is used exactly as before, and the
-  // stair columns are cleared (so switching a category away from Stair Rug
-  // doesn't leave stale set data behind).
-  const setsRaw = Number(str(formData, "sets_count"));
-  const pcsRaw = Number(str(formData, "pieces_per_set"));
-  const hasStairQty = Number.isFinite(setsRaw) && setsRaw >= 1 && Number.isFinite(pcsRaw) && pcsRaw >= 1;
-  const setsCount = hasStairQty ? normalizeCount(setsRaw) : null;
-  const piecesPerSet = hasStairQty ? normalizeCount(pcsRaw) : null;
-  const qty = hasStairQty ? stairTotalPieces(setsCount, piecesPerSet) : Number(str(formData, "qty"));
-
-  const dimLength = Number(str(formData, "dimension_length"));
-  const dimWidth = Number(str(formData, "dimension_width"));
-  const hasDims = Number.isFinite(dimLength) && dimLength > 0 && Number.isFinite(dimWidth) && dimWidth > 0;
-  const dimensionLength = hasDims ? dimLength : null;
-  const dimensionWidth = hasDims ? dimWidth : null;
-  const dimensionUnit = hasDims && isStairDimensionUnit(str(formData, "dimension_unit")) ? str(formData, "dimension_unit") : null;
-  const stairSize = stairSizeLabel(dimensionLength, dimensionWidth, dimensionUnit);
-
+  const qty = Number(str(formData, "qty"));
   const orderCurrency = str(formData, "order_currency") || "USD";
   const orderValueOriginal = Number(str(formData, "order_value_original"));
   const orderDate = str(formData, "order_date") || existing.order_date;
@@ -151,7 +124,9 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const buyerNameAddress = strOrNull(formData, "buyer_name_address");
   const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
 
-  const updatePayload = {
+  const { error } = await supabase
+    .from("orders")
+    .update({
       order_date: orderDate,
       status: str(formData, "status") as never,
       dispatch_date: strOrNull(formData, "dispatch_date"),
@@ -161,13 +136,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       estimated_dispatch_date: strOrNull(formData, "estimated_dispatch_date"),
       item_category_id: itemCategoryId,
       sku_label: strOrNull(formData, "sku_label"),
-      size_label: strOrNull(formData, "size_label") || stairSize || "",
+      size_label: strOrNull(formData, "size_label") ?? "",
       qty,
-      sets_count: setsCount,
-      pieces_per_set: piecesPerSet,
-      dimension_length: dimensionLength,
-      dimension_width: dimensionWidth,
-      dimension_unit: dimensionUnit,
       colour: strOrNull(formData, "colour"),
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
       photo_url: strOrNull(formData, "photo_url"),
@@ -198,17 +168,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       order_value_usd: conversion.usd,
       order_value_inr: conversion.inr,
       exchange_rate_source: conversion.source,
-  };
-
-  // Tolerant of db/2026-11-02-stair-rug-set-quantity.sql not being run yet:
-  // an ordinary order edit must never fail because of the new columns.
-  const { error } = await tolerateMissingColumns(updatePayload, [
-    "sets_count",
-    "pieces_per_set",
-    "dimension_length",
-    "dimension_width",
-    "dimension_unit",
-  ], (p) => supabase.from("orders").update(p).eq("id", orderId));
+    })
+    .eq("id", orderId);
 
   if (error) return { error: error.message, success: false };
 
@@ -418,7 +379,7 @@ export async function saveOrderRefundCore(
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id, ref_no, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, item_category_id, sku_label, size_label, qty"
+      "id, ref_no, company_id, store_id, buyer_name_address, invoice_id, order_currency, order_value_original, order_value_usd, order_value_inr, order_date, item_category_id, sku_label, size_label, qty"
     )
     .eq("id", orderId)
     .single();
@@ -439,18 +400,92 @@ export async function saveOrderRefundCore(
     .from("order_refunds")
     .select("refund_amount, refund_currency, refund_amount_inr")
     .eq("order_id", order.id);
-  if (refundCurrency === order.order_currency) {
+  // 2026-11-02 — "kabhi kabhi refund add nahi ho pa raha": an order whose
+  // value was never filled in (NULL, or 0) turned this cap into "nothing may
+  // ever be refunded" — every amount was rejected with "... exceeds the
+  // order's value of 0.00". A cap only means something when there IS a value
+  // to cap against, so both caps below now run only for a positive order
+  // value; an order with a missing value keeps its refund entry (the entry
+  // itself is still recorded, audited and reported) instead of being blocked
+  // outright by a comparison against zero.
+  const orderValueOriginal = Number(order.order_value_original ?? 0);
+
+  // 2026-11-02b — the order's own value in INR, used by BOTH cross-currency
+  // caps below. The stored order_value_inr is preferred; when an order never
+  // got one it is computed here with the same computeCurrencyConversion()
+  // (official Exchange Rate Master rate as of the ORDER's own date) the
+  // order's own INR value is built from — so a fallback conversion never
+  // introduces a rate or a date the app wouldn't already have used.
+  let orderValueInr = Number(order.order_value_inr ?? 0);
+  if (!(orderValueInr > 0) && orderValueOriginal > 0) {
+    const orderConversion = await computeCurrencyConversion(supabase, order.order_currency, order.order_date ?? refundDate, orderValueOriginal);
+    orderValueInr = orderConversion.inr ?? 0;
+  }
+
+  if (refundCurrency === order.order_currency && orderValueOriginal > 0) {
     const existingSameCurrencyTotal = (existingRefunds ?? [])
       .filter((r) => r.refund_currency === order.order_currency)
       .reduce((sum, r) => sum + Number(r.refund_amount), 0);
     const prospectiveTotal = existingSameCurrencyTotal + refundAmount;
     // Small epsilon for float rounding on values that flowed through the
     // calculator's own addition above.
-    if (prospectiveTotal > Number(order.order_value_original) + 0.01) {
+    if (prospectiveTotal > orderValueOriginal + 0.01) {
       return {
-        error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${Number(order.order_value_original).toFixed(2)} ${order.order_currency}.`,
+        error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${orderValueOriginal.toFixed(2)} ${order.order_currency}.`,
         success: null,
       };
+    }
+  }
+
+  // 2026-11-02b — "order value se jyada refund nahi hoga, lekin currency
+  // conversion se koi frq nahi padna chahiye": when the refund currency is
+  // NOT the order's currency, the very same "never beyond the order's worth"
+  // rule is applied after putting the order's value into the refund's own
+  // currency. The rate used is derived from THIS refund's own conversion
+  // (conversion.inr / refundAmount — i.e. the official rate as of the
+  // refund date) and the order value side is the order's own INR value, so
+  // both sides come from the same rate master and no third rate, no second
+  // rounding and no manual conversion is ever involved — nothing to disagree
+  // with. Without this a USD order refunded in INR had no same-currency cap
+  // at all unless order_value_inr happened to be stored.
+  // 2026-11-03 — "jis date me order aaya us din kya conversion rate thi or
+  // jab refund hora tab kya": every cross-currency comparison now uses ONE
+  // rate basis — the ORDER's value converted at the REFUND date's rate, via
+  // the same computeCurrencyConversion() helper (official Exchange Rate
+  // Master, falling back to the live estimate). Dividing an order-DATE INR
+  // value by a refund-DATE rate mixed two different rates, which is what
+  // rejected a legitimate 100% USD refund by ~₹25 of pure FX drift
+  // ("₹6895.15 (converted) exceeds the order's value of ₹6870.53").
+  let orderValueInrAtRefundRate: number | null = null;
+  if (refundCurrency !== order.order_currency && orderValueOriginal > 0) {
+    const orderValueAtRefundDate = await computeCurrencyConversion(
+      supabase,
+      order.order_currency,
+      refundDate,
+      orderValueOriginal
+    );
+    orderValueInrAtRefundRate = orderValueAtRefundDate.inr ?? (orderValueInr > 0 ? orderValueInr : null);
+  }
+
+  if (refundCurrency !== order.order_currency && orderValueInrAtRefundRate != null) {
+    const refundRateToInr =
+      conversion.inr != null && refundAmount > 0
+        ? conversion.inr / refundAmount
+        : refundCurrency === "INR"
+          ? 1
+          : null;
+    if (refundRateToInr != null && refundRateToInr > 0) {
+      const orderValueInRefundCurrency = orderValueInrAtRefundRate / refundRateToInr;
+      const existingSameCurrencyTotal = (existingRefunds ?? [])
+        .filter((r) => r.refund_currency === refundCurrency)
+        .reduce((sum, r) => sum + Number(r.refund_amount), 0);
+      const prospectiveTotal = existingSameCurrencyTotal + refundAmount;
+      if (prospectiveTotal > orderValueInRefundCurrency + 0.01) {
+        return {
+          error: `This refund would bring total refunds on this order to ${prospectiveTotal.toFixed(2)} ${refundCurrency}, which exceeds the order's value of ${orderValueInRefundCurrency.toFixed(2)} ${refundCurrency} (the order's value converted at the ${refundDate} rate).`,
+          success: null,
+        };
+      }
     }
   }
 
@@ -470,42 +505,20 @@ export async function saveOrderRefundCore(
   // check's ₹0.01) allows for the small rounding noise that legitimately
   // compounds when several refunds, each separately converted at their own
   // refund-date rate, are summed together.
-  // 2026-11-03 — "usd ko dekha jaye na refund ke dauran ... jis date me order
-  // aaya us din kya conversion rate thi or jab refund hora tab kya": this
-  // net used to convert the REFUND at its own (refund-date) rate but compare
-  // it with order_value_inr, which is frozen at the ORDER-date rate. Any
-  // movement of the rupee between the two dates then rejected a perfectly
-  // valid full refund — e.g. a 72.39 USD order (₹6870.53 at ₹94.91) refunded
-  // 100% later at ₹95.25 came out as ₹6895.15 "(converted)" and was blocked
-  // by ~₹25 of pure FX drift. Two changes, both about "one FX basis":
-  //  1. A refund in the order's OWN currency needs no INR net at all — the
-  //     exact same-currency check above already governs it completely.
-  //  2. A refund in a different currency converts the ORDER's value at the
-  //     SAME refund-date rate, so both sides share one rate and order-date
-  //     vs refund-date drift can no longer create a phantom over-cap. The
-  //     stored order_value_inr is only the fallback when the order's own
-  //     currency has no rate on the refund date.
-  // Order value expressed in INR at the REFUND date's rate — one FX basis for
-  // both the cap and the FULL/PARTIAL label below (see the note above).
-  let orderValueInrAtRefundRate: number | null = null;
-  if (refundCurrency !== order.order_currency && conversion.inr != null) {
-    const orderValueAtRefundRate = await computeCurrencyConversion(
-      supabase,
-      order.order_currency,
-      refundDate,
-      Number(order.order_value_original)
-    );
-    orderValueInrAtRefundRate = orderValueAtRefundRate.inr;
-    const capInr = orderValueAtRefundRate.inr ?? (order.order_value_inr != null ? Number(order.order_value_inr) : null);
-    if (capInr != null) {
-      const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
-      const prospectiveInrTotal = existingInrTotal + conversion.inr;
-      if (prospectiveInrTotal > capInr + 1) {
-        return {
-          error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${capInr.toFixed(2)} (converted at the same refund-date rate).`,
-          success: null,
-        };
-      }
+  // 2026-11-03 — same-currency refunds are governed exactly by the
+  // same-currency check above, so they skip this net entirely (comparing
+  // their refund-date INR value with the order-date INR value is what used
+  // to reject a valid full refund whenever the rupee moved). For a refund in
+  // another currency, both sides of this net are on the refund-date basis
+  // fixed above.
+  if (refundCurrency !== order.order_currency && orderValueInrAtRefundRate != null && conversion.inr != null) {
+    const existingInrTotal = (existingRefunds ?? []).reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
+    const prospectiveInrTotal = existingInrTotal + conversion.inr;
+    if (prospectiveInrTotal > orderValueInrAtRefundRate + 1) {
+      return {
+        error: `This refund would bring total refunds on this order to ₹${prospectiveInrTotal.toFixed(2)} (converted), which exceeds the order's value of ₹${orderValueInrAtRefundRate.toFixed(2)} (converted at the same refund-date rate).`,
+        success: null,
+      };
     }
   }
 
@@ -539,21 +552,24 @@ export async function saveOrderRefundCore(
         // falling back to the original same-currency-only comparison only
         // when an INR conversion genuinely isn't available (never silently
         // guessing a 1:1 rate).
+        // Same positive-value guard as the caps above: an order with no
+        // recorded value can never be "fully" refunded, so it is labelled
+        // PARTIAL rather than claiming any amount equals 100% of zero.
+        // Same currency: compare in that currency (exact). Different
+        // currency: compare on the refund-date FX basis fixed above, so a
+        // rate move can never label a 100% refund "PARTIAL".
         refund_type:
-          // Same currency: compare in that currency (exact). Different
-          // currency: compare on the refund-date FX basis fixed above, so a
-          // rate move cannot label a 100% refund "PARTIAL".
           refundCurrency === order.order_currency
-            ? refundAmount >= Number(order.order_value_original) - 0.01
+            ? orderValueOriginal > 0 && refundAmount >= orderValueOriginal - 0.01
               ? "FULL REFUND"
               : "PARTIAL REFUND"
-            : conversion.inr != null && (orderValueInrAtRefundRate ?? order.order_value_inr) != null
-              ? conversion.inr >= Number(orderValueInrAtRefundRate ?? order.order_value_inr) - 1
+            : conversion.inr != null && orderValueInrAtRefundRate != null
+              ? conversion.inr >= orderValueInrAtRefundRate - 1
                 ? "FULL REFUND"
                 : "PARTIAL REFUND"
-              : refundAmount >= Number(order.order_value_original)
+              : orderValueOriginal > 0 && refundAmount >= orderValueOriginal
                 ? "FULL REFUND"
-              : "PARTIAL REFUND",
+                : "PARTIAL REFUND",
         created_by_employee_id: employee.id,
         remark: reason,
       })

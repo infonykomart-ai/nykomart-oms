@@ -65,6 +65,17 @@ export function RefundSheetDialog({
   const [refundCurrency, setRefundCurrency] = useState(order.order_currency);
   const [fx, setFx] = useState<RefundFxPreview | null>(null);
 
+  // 2026-11-02 — the currency dropdown listed only the currency master. If the
+  // order's own currency isn't in that list (a marketplace order in GBP before
+  // GBP was added, say), the <select> had no matching option, so it displayed
+  // the FIRST currency while the form still meant another one — and a refund
+  // could be saved in the wrong currency. The order's own currency is now
+  // always offered, and selected.
+  const refundCurrencyOptions = useMemo(() => {
+    const codes = currencies.map((c) => c.code);
+    return codes.includes(order.order_currency) ? codes : [order.order_currency, ...codes];
+  }, [currencies, order.order_currency]);
+
   const orderValueRefundAmount = useMemo(() => {
     if (!refundBasisPercent) return 0;
     return (Number(order.order_value_original) || 0) * (Number(refundBasisPercent) / 100);
@@ -242,9 +253,9 @@ export function RefundSheetDialog({
                 onChange={(e) => setRefundCurrency(e.target.value)}
                 className={inputClass}
               >
-                {currencies.length > 0
-                  ? currencies.map((c) => (
-                      <option key={c.code} value={c.code}>{c.code}</option>
+                {refundCurrencyOptions.length > 0
+                  ? refundCurrencyOptions.map((c) => (
+                      <option key={c} value={c}>{c}</option>
                     ))
                   : ["USD", "INR", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}
               </select>

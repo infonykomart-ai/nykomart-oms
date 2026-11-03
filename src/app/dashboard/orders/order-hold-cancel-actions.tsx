@@ -18,8 +18,8 @@ import { RefundSheetDialog } from "./refund-sheet-dialog";
 //
 // A refund doesn't always mean the order was returned at all — a
 // duty-only goodwill refund keeps the order where it is. So "💸 Add Refund"
-// also opens directly on Dispatched/Delivered orders with no status change,
-// and a second refund later on the same order is allowed.
+// opens directly on a shipped order with no status change, and a second
+// refund later on the same order is allowed.
 //
 // 2026-11-03 — the refund form + printable A4 sheet moved to the shared
 // RefundSheetDialog (refund-sheet-dialog.tsx) so /dashboard/returns opens
@@ -81,8 +81,14 @@ export function OrderHoldCancelActions({
   const canCancel = !["Dispatched", "Delivered", "Cancelled", "Returned"].includes(order.status);
   // Return & Refund is the post-delivery counterpart.
   const canReturn = ["Dispatched", "Delivered"].includes(order.status);
-  // "💸 Add Refund" is deliberately broader than Cancel/Return.
-  const canAddRefund = ["Cancelled", "Returned", "Dispatched", "Delivered"].includes(order.status);
+  // 2026-11-02 — "kabhi kabhi refund add nahi ho pa raha": this used to be
+  // gated to Cancelled / Returned / Dispatched / Delivered only, so an order
+  // still Pending / Confirmed / In Production / Hold — e.g. buyer paid through
+  // a marketplace and then cancelled before we ever shipped — had no way to
+  // record the money going back at all. A refund record is just money paid
+  // back; the order's own status still only changes through Cancel / Return
+  // above, so the button is available for every status now.
+  const canAddRefund = true;
 
   return (
     <div className="flex flex-col items-end gap-1.5">

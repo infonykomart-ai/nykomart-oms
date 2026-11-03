@@ -33,6 +33,13 @@ type OrderRow = EditableOrder & {
   invoice_id: string | null;
   entry_timestamp: string;
   shipment_status: string | null;
+  // 2026-11-02 — selected by page.tsx and searched by the database (see its
+  // `or(...)` list), but never declared here: the "Tracking" column below
+  // shows the courier / Purchase-Bill tracking no. instead, which can be a
+  // DIFFERENT number. A row the server found by advance/final tracking was
+  // therefore filtered straight back out by the local search filter.
+  advance_tracking: string | null;
+  final_tracking: string | null;
 };
 
 type EtsyFeeLine = {
@@ -440,27 +447,8 @@ export function OrderListTable({
       label: "Qty",
       filter: "text",
       tdClass: "text-right",
-      // 2026-11-02 (follow-up — "order page purane format me aa raha hai"):
-      // a Stair Rug order books its TOTAL PIECES in `qty`, so a bare number
-      // in this column reads exactly like the old format. Show the set
-      // breakdown underneath whenever the order carries one (the columns are
-      // null on a database where the migration is still pending, so this
-      // degrades to the plain number by itself).
-      filterValue: (o) =>
-        o.sets_count != null && o.pieces_per_set != null
-          ? `${o.qty} ${o.sets_count} sets x ${o.pieces_per_set}`
-          : String(o.qty),
-      cell: (o) =>
-        o.sets_count != null && o.pieces_per_set != null ? (
-          <span className="block whitespace-nowrap">
-            <span>{o.qty}</span>
-            <span className="block text-[11px] font-normal text-slate-500">
-              {o.sets_count} set{o.sets_count === 1 ? "" : "s"} × {o.pieces_per_set}
-            </span>
-          </span>
-        ) : (
-          o.qty
-        ),
+      filterValue: (o) => String(o.qty),
+      cell: (o) => o.qty,
     },
     {
       key: "item",
@@ -670,10 +658,29 @@ export function OrderListTable({
   // reuses every column's own filterValue() so this never drifts out of
   // sync with what the column filters below already know how to read off
   // an order. Column filters still narrow further on top of this.
+  //
+  // 2026-11-02 — "kabhi kabhi order search karen par show nahi hota": this
+  // filter runs ON TOP of rows the database already matched for the same
+  // term, using only the columns this table happens to display. Any field the
+  // server searches but no column exposes (advance/final tracking) made a
+  // correctly-found order vanish again, which is exactly what the user saw.
+  // So: (1) when the typed term is the one the server already searched, the
+  // server's rows are authoritative and are not re-filtered here; (2) while
+  // typing ahead of that request, the remaining server-only fields are matched
+  // too.
+  const SERVER_ONLY_MATCH: ((o: OrderRow) => string | null)[] = [
+    (o) => o.advance_tracking,
+    (o) => o.final_tracking,
+  ];
+
   const matchesGlobalSearch = (o: OrderRow): boolean => {
     const term = globalSearch.trim().toLowerCase();
     if (!term) return true;
-    return ALL_COLUMNS.some((c) => c.filter !== "none" && c.filterValue(o).toLowerCase().includes(term));
+    if (term === initialSearch.trim().toLowerCase()) return true;
+    return (
+      ALL_COLUMNS.some((c) => c.filter !== "none" && c.filterValue(o).toLowerCase().includes(term)) ||
+      SERVER_ONLY_MATCH.some((get) => (get(o) ?? "").toLowerCase().includes(term))
+    );
   };
 
   const filteredOrders = orders.filter(

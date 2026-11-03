@@ -74,15 +74,11 @@ export default async function OrdersPage({
     supabase.from("stores").select("id, name").in("company_id", employee.companyIds).order("name"),
   ]);
 
-  // 2026-11-02 — deliberately "*" rather than a column list: this read now
-  // feeds the edit form's Stair Rug fields (sets_count / pieces_per_set /
-  // dimension_*), which may not exist yet on a database where
-  // db/2026-11-02-stair-rug-set-quantity.sql hasn't been run. Naming those
-  // columns here would make PostgREST reject the WHOLE select and blank the
-  // entire Orders hub over one optional patch (the 2026-10-17 failure mode),
-  // whereas "*" simply returns whatever the table actually has — the fields
-  // then read as undefined and the form treats the order as a plain quantity.
-  let query = supabase.from("orders").select("*")
+  let query = supabase
+    .from("orders")
+    .select(
+      "id, ref_no, order_date, company_id, store_id, status, shipment_status, dispatch_date, estimated_dispatch_date, marketplace_order_no, buyer_name_address, contact_no, email_id, tax_id, address_type, po_date, delivery_date, photo_url, sku_label, size_label, qty, item_category_id, order_value_original, order_currency, colour, photo_type, photo_urls, tassel_fringes, remark, whatsapp_sent_at, invoice_id, entry_timestamp, vat_number, eori_number, ioss_number, destination_country, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, vendor_party_id, advance_tracking, final_tracking"
+    )
     .in("company_id", effectiveCompanyIds)
     .order("entry_timestamp", { ascending: false })
     .limit(300);
@@ -101,6 +97,14 @@ export default async function OrdersPage({
   if (q) {
     const safeQ = sanitizeSearchTerm(q);
     if (safeQ) {
+      // 2026-11-02 — "kabhi kabhi order search karen par show nahi hota":
+      // the in-table search box also matches email / remark / VAT-EORI-IOSS /
+      // destination / city, but THIS query never searched any of them — so
+      // those searches only worked inside the newest 300 rows the page
+      // preloads and silently found nothing for an older order. The field
+      // list below is now the single list of everything a search covers, and
+      // the table's own local filter defers to it (see order-list-table.tsx's
+      // matchesGlobalSearch) instead of keeping a narrower copy of its own.
       query = query.or(
         [
           `ref_no.ilike.%${safeQ}%`,
@@ -108,6 +112,13 @@ export default async function OrdersPage({
           `contact_no.ilike.%${safeQ}%`,
           `marketplace_order_no.ilike.%${safeQ}%`,
           `sku_label.ilike.%${safeQ}%`,
+          `email_id.ilike.%${safeQ}%`,
+          `remark.ilike.%${safeQ}%`,
+          `vat_number.ilike.%${safeQ}%`,
+          `eori_number.ilike.%${safeQ}%`,
+          `ioss_number.ilike.%${safeQ}%`,
+          `destination_country.ilike.%${safeQ}%`,
+          `buyer_city.ilike.%${safeQ}%`,
           `advance_tracking.ilike.%${safeQ}%`,
           `final_tracking.ilike.%${safeQ}%`,
         ].join(",")
@@ -261,7 +272,7 @@ export default async function OrdersPage({
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="q">Search (Ref/Buyer/Contact)</label>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="q">Search (PO / buyer / contact / AWB / SKU / email / VAT)</label>
           <input id="q" name="q" defaultValue={q} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500" />
         </div>
         <div>
