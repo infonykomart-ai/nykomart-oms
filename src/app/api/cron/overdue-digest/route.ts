@@ -20,13 +20,14 @@
 // `?dry=1` returns the exact message and recipients WITHOUT sending.
 // `?skipEmpty=1` sends nothing when there is no overdue amount.
 import { NextRequest, NextResponse } from "next/server";
+import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { runOverdueDigest } from "@/lib/parties/overdue-digest";
 
 export const maxDuration = 60;
 
 async function run(req: NextRequest) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

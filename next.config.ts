@@ -38,6 +38,37 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  // 2026-11-04 (security audit) — baseline response headers for every route.
+  // These are the OWASP-recommended defaults the app was missing entirely:
+  // MIME sniffing off, clickjacking blocked outside our own origin (the app
+  // previews its own dashboard pages in same-origin iframes — see proxy.ts's
+  // ?embed=1 handler — so SAMEORIGIN, not DENY), referrer trimmed on
+  // cross-origin hops (tokens can appear in URLs on the vendor agreement
+  // page), and browser features the OMS never uses switched off.
+  // A full Content-Security-Policy is deliberately NOT set here: Next's App
+  // Router injects inline bootstrap scripts, so a policy needs per-request
+  // nonces and would break the app if shipped blind. Tracked in SECURITY.md.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-DNS-Prefetch-Control", value: "off" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains; preload",
+          },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

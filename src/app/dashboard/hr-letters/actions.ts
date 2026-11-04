@@ -18,6 +18,7 @@
 // already use) is what actually protects this, not RLS.
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { sanitizeLetterBody } from "@/lib/hr-letters/sanitize-body-html";
 import { revalidatePath } from "next/cache";
 import { TEMPLATE_TO_LETTER_TYPE } from "@/lib/hr-letters/letter-type-map";
 
@@ -78,7 +79,9 @@ export async function issueHrLetter(input: IssueLetterInput): Promise<IssueLette
       signatory_designation: input.signatoryDesignation || null,
       subject_line: input.subjectLine || null,
       field_values: input.fieldValues,
-      body_text: input.bodyText,
+      // Sanitised before storage: the body is rich-text HTML from a
+      // contentEditable area (see lib/hr-letters/sanitize-body-html.ts).
+      body_text: sanitizeLetterBody(input.bodyText),
     })
     .select("id, ref_no")
     .single();
@@ -145,7 +148,7 @@ export async function updateIssuedHrLetter(input: UpdateLetterInput): Promise<Up
       employee_address: input.employeeAddress.trim() || null,
       letter_date: letterDate,
       subject_line: input.subjectLine.trim() || null,
-      body_text: input.bodyText,
+      body_text: sanitizeLetterBody(input.bodyText),
       signatory_name: input.signatoryName.trim() || null,
       signatory_designation: input.signatoryDesignation.trim() || null,
     })

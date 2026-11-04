@@ -1881,3 +1881,72 @@ M  BRAIN.md                                                         (§12 is rou
 M  CHANGES.txt
 
 KOI NAYA NPM PACKAGE NAHI CHAHIYE.
+
+
+FULL REPOSITORY AUDIT — DEPENDENCY, AUTH AUR XSS FIXES
+(2026-11-04)
+======================================================================
+
+Poora repo audit kiya (10-phase pipeline), findings AUDIT_REPORT.md me,
+health assessment FINAL_AUDIT_REPORT.md me. Jo code change hua:
+
+A) CRITICAL — Next.js 16.3.0 me 3 advisories thi (2 unauthenticated RCE:
+   Image Optimization SVG/AVIF aur `use cache` typed arrays; 1 Server
+   Actions DoS). 16.4.5 par upgrade, exact pin (pehle bhi exact hi tha).
+   eslint-config-next bhi 16.4.5. `npm audit --omit=dev` ab clean.
+
+B) sharp 0.35.3 -> 0.35.5 (libheif/librsvg advisories).
+   xlsx 0.18.5 (npm par kabhi patch nahi hua) -> official SheetJS
+   tarball 0.20.3 (cdn.sheetjs.com). Sirf XLSX.utils / read / write use
+   hote hain, teeno 0.20 me same — write->read round-trip verify kiya.
+   NOTE: `npm ci` ab cdn.sheetjs.com par jaata hai, band ho to install
+   fail hoga (silently purane vulnerable package par nahi girega).
+
+C) CRON ROUTES FAIL-OPEN THE (asli bug):
+   `authorization !== `Bearer ${CRON_SECRET}`` — CRON_SECRET set na ho to
+   string "Bearer undefined" ban jaati thi aur wahi header bhejne wala
+   har banda andar. Paanch cron routes service-role client se orders/
+   tracking/backup likhte hain. Naya src/lib/auth/cron-auth.ts:
+   secret missing => sab reject, warna timingSafeEqual. Paanch routes
+   ab isi ko call karte hain.
+
+D) HR LETTER BODY ME STORED XSS THE:
+   body_text rich-text editor ka HTML hai aur do jagah
+   dangerouslySetInnerHTML se render hota tha — paste ke zariye
+   <img onerror>/<script>/javascript: link save ho sakta tha, har HR
+   user ke browser me chalta, aur Word/PDF export me bhi jaata.
+   Naya src/lib/hr-letters/sanitize-body-html.ts (sanitize-html,
+   allowlist: editor ke apne tags, style sirf safe properties, link
+   sirf http/https/mailto/tel, img/script/iframe drop). Write par
+   (issue + update) AUR read par (issued-letter page) lagaya, taaki
+   purani rows bhi safe rahein. 7 naye unit tests.
+
+E) SECURITY HEADERS + LINT:
+   next.config.ts me /:path* ke liye X-Content-Type-Options,
+   X-Frame-Options SAMEORIGIN (apne ?embed=1 iframes ke liye DENY nahi),
+   Referrer-Policy, Permissions-Policy, HSTS, X-DNS-Prefetch-Control.
+   eslint.config.mjs me `^_` convention honour hota hai, is liye
+   bill-payment/merge-actions.ts ke do permanent warnings gaye —
+   `npm run lint` ab 0 problems.
+
+F) CI:
+   ci.yml — permissions: contents: read, concurrency cancel-in-progress,
+   job timeouts, aur naya step `npm audit --omit=dev --audit-level=high`.
+   Naya .github/dependabot.yml (weekly, grouped: next+react ek PR me).
+
+FILES
+-----
+N  AUDIT_REPORT.md
+N  FINAL_AUDIT_REPORT.md
+N  .github/dependabot.yml
+N  src/lib/auth/cron-auth.ts
+N  src/lib/hr-letters/sanitize-body-html.ts
+N  src/lib/hr-letters/sanitize-body-html.test.ts
+M  package.json / package-lock.json        (next, eslint-config-next, sharp, xlsx, sanitize-html)
+M  next.config.ts                          (security headers)
+M  eslint.config.mjs                       (underscore-args convention)
+M  src/app/api/cron/{sync-orders,poll-fedex-tracking,backup-snapshot,leave-digest,overdue-digest}/route.ts
+M  src/app/dashboard/hr-letters/actions.ts
+M  src/app/dashboard/hr-letters/records/[id]/page.tsx
+M  .github/workflows/ci.yml
+M  README.md / SECURITY.md / CHANGES.txt

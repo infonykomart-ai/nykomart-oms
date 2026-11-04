@@ -14,6 +14,7 @@
 // else calling this URL without the token gets 401.
 
 import { NextRequest, NextResponse } from "next/server";
+import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { createOrderCore } from "@/app/dashboard/orders/new/actions";
 import { decryptSecret } from "@/lib/crypto/secret-box";
@@ -44,8 +45,7 @@ function buildConnector(
 }
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

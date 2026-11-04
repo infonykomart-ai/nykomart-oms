@@ -30,13 +30,14 @@
 // leaves (without it, "aaj koi leave par nahi hai" is still sent — which is
 // what proves the job ran).
 import { NextRequest, NextResponse } from "next/server";
+import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { runLeaveDigest } from "@/lib/leave/digest-run";
 
 export const maxDuration = 60;
 
 async function run(req: NextRequest) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

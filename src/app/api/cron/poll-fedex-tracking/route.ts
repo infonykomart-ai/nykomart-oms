@@ -51,6 +51,7 @@
 // `Authorization: Bearer $CRON_SECRET`.
 
 import { NextRequest, NextResponse } from "next/server";
+import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { getAramexClientInfo } from "@/lib/couriers/aramex-tracking";
 import { getDhlApiKey } from "@/lib/couriers/dhl-tracking";
@@ -154,8 +155,7 @@ async function processCourier(
 }
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -17,6 +17,7 @@ into Postgres functions and Next.js server actions.
 | Auth       | Supabase Auth (email/password) + an `employees` table; session refresh in `src/proxy.ts` |
 | Hosting    | Vercel (2 cron jobs via `vercel.json`) |
 | PDF/images | `@react-pdf/renderer`, `pdfjs-dist` + `pdf-parse` (courier-bill import), `sharp` |
+| Spreadsheets | `xlsx` 0.20.3, pinned to the **official SheetJS tarball** (`cdn.sheetjs.com`) — the npm package stops at 0.18.5, which has unpatched prototype-pollution/ReDoS advisories (`npm install` needs that host reachable) |
 | Types      | `src/types/database.ts` — **generated**, see below |
 
 ## Getting started
@@ -378,11 +379,19 @@ Both are now integrated instead of one winning:
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push/PR to `main`:
+`.github/workflows/ci.yml` runs on every push/PR to `main` (least-privilege token,
+cancelled superseded runs, job timeouts):
 
-1. **build** — `npm run lint`, `npm test`, `npx tsc --noEmit`, `npm run build`
-2. **schema-check** — applies `db/schema.sql` to a throwaway Postgres 16, regenerates the
-   database types, and fails if `src/types/database.ts` differs from what's committed.
+1. **build** — `npm ci`, `npm audit --omit=dev --audit-level=high`, `npm run lint`, `npm test`,
+   `npx tsc --noEmit`, `npm run build`
+2. **schema-check** — applies `db/schema.sql` to a throwaway Postgres 16 (with Supabase's
+   `authenticated`/`anon`/`service_role` roles created first) and runs
+   `scripts/check-types-in-sync.mjs`, which fails when `src/types/database.ts` and the schema
+   drift apart in either direction (table/column coverage, not a byte-for-byte diff).
+
+Dependency PRs come from Dependabot (`.github/dependabot.yml`, weekly, grouped; Next/React are
+kept on one PR because they must move together). The production audit gate is deliberate — a
+high/critical advisory in a shipped dependency fails CI.
 
 ## Application structure
 
@@ -432,8 +441,15 @@ src/
   through Server Actions / Route Handlers that verify identity (`src/proxy.ts`,
   `src/lib/auth/`) and capability + company scope before writing.
 - Courier webhooks are HMAC/timing-safe-verified and fail closed when unconfigured; cron routes
-  check `CRON_SECRET`.
+  check `CRON_SECRET` through `src/lib/auth/cron-auth.ts`, which **denies every request when the
+  secret is unset** and compares in constant time.
 - Stored marketplace/courier API keys are encrypted at rest.
+- Baseline response headers (`X-Frame-Options: SAMEORIGIN`, `nosniff`, `Referrer-Policy`,
+  `Permissions-Policy`, HSTS) are set in `next.config.ts`; a CSP is still outstanding.
+- Rich-text HR letter bodies are sanitised server-side on write and on read
+  (`src/lib/hr-letters/sanitize-body-html.ts`) before any `dangerouslySetInnerHTML`.
+- Current audit state: **0 high/critical advisories in production dependencies**; 16 moderate
+  remain in the dev toolchain. Full inventory in [`AUDIT_REPORT.md`](AUDIT_REPORT.md).
 
 ## Conventions
 

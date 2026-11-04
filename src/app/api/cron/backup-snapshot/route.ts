@@ -22,14 +22,14 @@
 // The same code path is also run manually from Admin -> Backup Export
 // (see src/app/dashboard/admin/backup), so a missed week is one button away.
 import { NextRequest, NextResponse } from "next/server";
+import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { collectSnapshot } from "@/lib/backup/snapshot";
 import { runSnapshotBackup } from "@/lib/backup/run";
 
 export const maxDuration = 60;
 
 async function run(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

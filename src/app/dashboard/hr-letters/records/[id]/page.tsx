@@ -1,6 +1,7 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { findTemplate } from "@/lib/hr-letters/templates";
+import { sanitizeLetterBody } from "@/lib/hr-letters/sanitize-body-html";
 import { notFound } from "next/navigation";
 import { IssuedLetterView } from "./issued-letter-view";
 
@@ -37,7 +38,9 @@ export default async function IssuedLetterPage({ params }: { params: Promise<{ i
           employeeName: letter.for_employee_name_snapshot,
           employeeAddress: letter.employee_address,
           subjectLine: letter.subject_line,
-          bodyText: letter.body_text,
+          // Sanitised on READ too, not just on write: rows stored before the
+          // sanitizer existed still must never render active content.
+          bodyText: sanitizeLetterBody(letter.body_text ?? ""),
           signatoryName: letter.signatory_name,
           signatoryDesignation: letter.signatory_designation,
           toWhomsoever: template?.toWhomsoever ?? false,

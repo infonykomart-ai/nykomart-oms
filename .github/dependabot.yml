@@ -1,0 +1,52 @@
+# Dependabot — 2026-11-04 (audit).
+#
+# Weekly, grouped dependency PRs. Without grouping every patch release opened
+# its own PR and the noise was why the repo drifted 0.4 versions behind on
+# Next.js (which is how the critical Next 16.3.0 advisories sat in `main`).
+#
+# Grouping rules:
+#   - `next-core` keeps next / react / react-dom / eslint-config-next on one
+#     PR, because they must move together for the App Router build to work.
+#   - everything else is grouped into a single minor/patch PR; majors stay
+#     individual so they get a human look.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    versioning-strategy: "increase"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      next-core:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+          - "eslint-config-next"
+      dev-minor-patch:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      prod-minor-patch:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Keep the workflow actions themselves current (checkout/setup-node majors
+  # are the usual source of "Node 20 actions are deprecated" warnings).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"

@@ -944,18 +944,29 @@ export async function setAgreementTemplateStatus(input: {
   }
 
   const supabase = createServiceRoleClient();
-  const { error } = await supabase.from("agreement_templates").upsert({
-    slug: template.slug,
-    title: template.title,
-    version: template.version,
-    status: input.status,
-    legally_reviewed_by: input.reviewedBy?.trim() || null,
-    legally_reviewed_on: isoDate(input.reviewedOn),
-    activated_at: input.status === "active" ? new Date().toISOString() : null,
-    retired_at: input.status === "retired" ? new Date().toISOString() : null,
-    notes: input.notes?.trim() || null,
-    updated_at: new Date().toISOString(),
-  });
+  // onConflict: "slug" is REQUIRED. agreement_templates' primary key is the
+  // generated `id` uuid, which this payload never sends, so without it
+  // PostgREST emits `ON CONFLICT (id) DO UPDATE` — which can never match — and
+  // the statement degenerates into a plain INSERT that dies on the table's
+  // separate `slug` unique index with
+  // `duplicate key value violates unique constraint "agreement_templates_slug_key"`
+  // on the SECOND save of any template. Slug is the natural key here
+  // (one registry row per code template), so conflict on it.
+  const { error } = await supabase.from("agreement_templates").upsert(
+    {
+      slug: template.slug,
+      title: template.title,
+      version: template.version,
+      status: input.status,
+      legally_reviewed_by: input.reviewedBy?.trim() || null,
+      legally_reviewed_on: isoDate(input.reviewedOn),
+      activated_at: input.status === "active" ? new Date().toISOString() : null,
+      retired_at: input.status === "retired" ? new Date().toISOString() : null,
+      notes: input.notes?.trim() || null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "slug" }
+  );
   if (error) return failure(error, "Could not update the template registry.");
 
   // NOTE: agreement_history rows are per DOCUMENT (document_id is NOT NULL),

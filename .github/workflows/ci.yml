@@ -6,9 +6,22 @@ on:
   pull_request:
     branches: ["main"]
 
+# Least privilege: the workflow only reads the checkout. Nothing here needs to
+# write to the repository, push images or comment on PRs.
+permissions:
+  contents: read
+
+# A new push to the same branch/PR cancels the superseded run — the previous
+# result can no longer be the one that matters, and this keeps the free runner
+# minutes for the newest commit.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +32,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # 2026-11-04 (audit) — fail the build on a HIGH or CRITICAL advisory in a
+      # dependency we actually ship. Dev-only toolchain advisories are excluded
+      # on purpose (they never reach the browser bundle) and are reviewed on the
+      # next toolchain upgrade instead of blocking every PR.
+      - name: Dependency audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Lint
         run: npm run lint
@@ -45,6 +65,7 @@ jobs:
 
   schema-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16

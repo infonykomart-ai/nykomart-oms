@@ -77,6 +77,24 @@ The areas most worth testing, and how they are meant to work:
 service, volumetric load testing, and vulnerabilities in third-party services
 (Supabase, Cloudflare, courier APIs) that we merely consume.
 
+## Hardening applied — repository audit 2026-11-04
+
+What changed as a result of the full-repository audit (details and evidence in
+[`AUDIT_REPORT.md`](AUDIT_REPORT.md) and [`FINAL_AUDIT_REPORT.md`](FINAL_AUDIT_REPORT.md)):
+
+| Area | Change |
+|---|---|
+| Framework | `next` 16.3.0 → 16.4.5. 16.3.0 carried three advisories, two of them unauthenticated RCE (Image Optimization with SVG/AVIF, `use cache` with typed arrays) plus an App Router Server Actions DoS. |
+| `sharp` | 0.35.3 → 0.35.5 (libheif/librsvg memory-safety advisories). |
+| `xlsx` | npm 0.18.5 (prototype pollution + ReDoS, never patched on npm) → official 0.20.3 tarball from `cdn.sheetjs.com`. |
+| Cron auth | New `src/lib/auth/cron-auth.ts`. **Fail closed when `CRON_SECRET` is unset** (previously `Bearer undefined` authorized every cron route) and constant-time comparison instead of `!==`. |
+| HR letter HTML | New `src/lib/hr-letters/sanitize-body-html.ts` (allowlist sanitizer). Bodies from the rich-text editor are sanitised on write **and** on read before `dangerouslySetInnerHTML`, closing a stored-XSS path into the HR module and the Word/PDF export. |
+| Response headers | `next.config.ts` now sends `X-Content-Type-Options`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Permissions-Policy`, HSTS, `X-DNS-Prefetch-Control: off` on every route. |
+| CI | `npm audit --omit=dev --audit-level=high` is a required build step; workflows run with `permissions: contents: read`, timeouts and concurrency cancellation; Dependabot groups weekly dependency PRs. |
+
+What this audit did **not** do: no RLS policy-by-policy review, no penetration
+test of the live deployment, no history rewrite for the incident below.
+
 ## Known gaps — not yet verified
 
 Stated plainly, because this is **not** a complete security audit:
@@ -92,6 +110,15 @@ Stated plainly, because this is **not** a complete security audit:
   actions and RLS are untested.
 - **No runtime penetration test** of the live deployment, its Supabase
   policies, deployment secrets, or third-party API integrations.
+- **No Content-Security-Policy.** App Router injects inline bootstrap scripts,
+  so a CSP needs per-request nonces; shipping one blind would break the app.
+  The other baseline headers are in place (see above).
+- **No general rate limiting.** Only `companion-chat` throttles per employee.
+  Server Actions and document/PDF routes are unbounded, so an authenticated
+  caller can burn CPU on PDF rendering. Needs shared state (DB or Upstash).
+- **16 moderate advisories remain in the dev toolchain** (ESLint/Next build
+  dependencies). None ship to the browser; `npm audit fix --force` would break
+  the toolchain majors.
 - **Credential rotation and repository history cleanup are outstanding** — see
   "Open incident" below.
 
