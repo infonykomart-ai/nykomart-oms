@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireAnyCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/server";
 import { AGREEMENT_TEMPLATES } from "@/lib/agreements/templates";
 import { AGREEMENT_MIGRATION_FILE, isMissingAgreementSchema } from "@/lib/agreements/migration";
 import { TemplateRegistryTable } from "./template-registry-table";
@@ -14,7 +14,11 @@ import { TemplateRegistryTable } from "./template-registry-table";
  */
 export default async function AgreementTemplatesPage() {
   await requireAnyCapability("hr_letters", "party_admin");
-  const supabase = await createClient();
+  // agreement_templates is RLS-forced with zero policies, so the registry is
+  // only readable with the service-role client (the capability check above is
+  // the gate). The anon-key client returns permission denied here, which used
+  // to look like "migration not run" on this very screen.
+  const supabase = createServiceRoleClient();
 
   const { data: registry, error } = await supabase
     .from("agreement_templates")

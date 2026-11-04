@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requireAnyCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { AGREEMENT_MIGRATION_FILE, isMissingAgreementSchema } from "@/lib/agreements/migration";
 import { AgreementWorkspace } from "./agreement-workspace";
 
@@ -14,8 +14,11 @@ export default async function AgreementDocumentPage({ params }: { params: Promis
   const employee = await requireAnyCapability("hr_letters", "party_admin");
   const { id } = await params;
   const supabase = await createClient();
+  // agreement_* tables are RLS-forced with zero policies (service-role only);
+  // the capability + company checks below are the gate.
+  const db = createServiceRoleClient();
 
-  const { data: document, error } = await supabase.from("agreement_documents").select("*").eq("id", id).maybeSingle();
+  const { data: document, error } = await db.from("agreement_documents").select("*").eq("id", id).maybeSingle();
 
   if (error && isMissingAgreementSchema(error)) {
     return (
@@ -31,30 +34,30 @@ export default async function AgreementDocumentPage({ params }: { params: Promis
   if (!employee.companyIds.includes(document.company_id)) notFound();
 
   const [versions, signatures, sharing, history, company, letterheadSettings] = await Promise.all([
-    supabase
+    db
       .from("agreement_document_versions")
       .select("id, version, pdf_sha256, pdf_size, generated_at, template_version")
       .eq("document_id", id)
       .order("version", { ascending: false }),
-    supabase
+    db
       .from("agreement_signature_records")
       .select("id, kind, method, signer_name, signer_designation, signed_on, pdf_sha256, created_at, verification")
       .eq("document_id", id)
       .order("created_at", { ascending: false }),
-    supabase
+    db
       .from("agreement_sharing_logs")
       .select("id, channel, provider, status, phone, created_at, actor_employee_id")
       .eq("document_id", id)
       .order("created_at", { ascending: false })
       .limit(50),
-    supabase
+    db
       .from("agreement_history")
       .select("id, action, actor_name, note, created_at, meta")
       .eq("document_id", id)
       .order("created_at", { ascending: false })
       .limit(100),
     supabase.from("companies").select("name").eq("id", document.company_id).maybeSingle(),
-    supabase.from("agreement_letterhead_settings").select("company_id").eq("company_id", document.company_id).maybeSingle(),
+    db.from("agreement_letterhead_settings").select("company_id").eq("company_id", document.company_id).maybeSingle(),
   ]);
 
   return (

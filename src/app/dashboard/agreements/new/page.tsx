@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { requireAnyCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { AGREEMENT_TEMPLATES, CLAUSE_LIBRARY } from "@/lib/agreements/templates";
-import { AGREEMENT_MIGRATION_FILE } from "@/lib/agreements/migration";
+import { AGREEMENT_MIGRATION_FILE, isMissingAgreementSchema } from "@/lib/agreements/migration";
 import { NewAgreementForm, type TemplateOption, type VendorOption } from "./new-agreement-form";
 
 /**
@@ -17,15 +17,20 @@ export default async function NewAgreementPage({ searchParams }: { searchParams:
   const employee = await requireAnyCapability("hr_letters", "party_admin");
   const { vendor: vendorParam, template: templateParam } = await searchParams;
   const supabase = await createClient();
+  // The registry is RLS-forced with zero policies, so it is read with the
+  // service-role client; the capability check above is the gate.
+  const db = createServiceRoleClient();
 
   const [{ data: companies }, { data: parties }, { data: registry, error: registryError }] = await Promise.all([
     supabase.from("companies").select("id, name, active").in("id", employee.companyIds).order("name"),
     supabase.from("parties").select("id, name, address, contact_no, email, gst").order("name"),
-    supabase.from("agreement_templates").select("slug, version, status"),
+    db.from("agreement_templates").select("slug, version, status"),
   ]);
 
   const registryBySlug = new Map((registry ?? []).map((row) => [row.slug, row]));
-  const migrationPending = Boolean(registryError);
+  // Only a genuinely missing table/function means the migration is pending;
+  // anything else is a different failure and must not be reported as one.
+  const migrationPending = isMissingAgreementSchema(registryError);
 
   const templates: TemplateOption[] = AGREEMENT_TEMPLATES.map((template) => {
     const row = registryBySlug.get(template.slug);

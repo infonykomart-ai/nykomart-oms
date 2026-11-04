@@ -1950,3 +1950,41 @@ M  src/app/dashboard/hr-letters/actions.ts
 M  src/app/dashboard/hr-letters/records/[id]/page.tsx
 M  .github/workflows/ci.yml
 M  README.md / SECURITY.md / CHANGES.txt
+
+AGREEMENT TEMPLATES — "TABLES NOT SET UP YET" GALAT BANNER + SLUG UPSERT
+(2026-11-04)
+======================================================================
+
+"ye error kyu or kese work karega agreement system" / SQL file run karne ke
+baad bhi /dashboard/agreements/new par wahi amber banner aur har template par
+"Not in the template registry yet".
+
+A) TEMPLATE ACTIVATION "duplicate key ... agreement_templates_slug_key"
+   setAgreementTemplateStatus() upsert karta tha bina onConflict ke. Table ka
+   PK `id uuid DEFAULT gen_random_uuid()` hai aur payload id bhejta hi nahi, to
+   PostgREST ON CONFLICT (id) par plain INSERT ban jata tha aur slug ke UNIQUE
+   index par girta tha — is liye pehli save ke baad har retry fail.
+   FIX: .upsert(payload, { onConflict: "slug" }) — natural key slug hi hai.
+
+B) "TABLES ARE NOT SET UP YET" BANNER (asli wajah permission thi, migration
+   nahi):
+   - agreement_* tables FORCE ROW LEVEL SECURITY + ZERO policies +
+     REVOKE ALL FROM anon, authenticated hain (service-role only by design).
+   - Lekin 5 dashboard pages unhe logged-in user ke anon-key client se padh
+     rahe the -> Postgres 42501 "permission denied for table
+     agreement_templates". new/page.tsx har read error ko "migration pending"
+     maan leta tha (is liye banner), templates page error code ignore karta tha
+     (is liye rows khaali, koi banner nahi).
+   - FIX: wahi pattern jo hr_letter_records ka hai — capability check ke baad
+     reads createServiceRoleClient() se; banner sirf tab jab
+     isMissingAgreementSchema() (42P01/PGRST205) sach me missing bataye.
+   - DB me kuch chalane ki zarurat NAHI: SQL file pehle hi lag chuki hai.
+
+FILES
+-----
+M  src/app/dashboard/agreements/actions.ts          (onConflict: "slug")
+M  src/app/dashboard/agreements/page.tsx            (hub read -> service role)
+M  src/app/dashboard/agreements/new/page.tsx        (registry read + banner)
+M  src/app/dashboard/agreements/templates/page.tsx  (registry read)
+M  src/app/dashboard/agreements/[id]/page.tsx       (sab agreement_* reads)
+M  src/app/dashboard/agreements/letterhead/page.tsx (settings read)

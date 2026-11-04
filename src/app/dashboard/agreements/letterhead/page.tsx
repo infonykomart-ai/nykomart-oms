@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireAnyCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { loadAgreementLetterhead } from "@/lib/agreements/letterhead";
 import { AGREEMENT_MIGRATION_FILE, isMissingAgreementSchema } from "@/lib/agreements/migration";
 import { LetterheadForm } from "./letterhead-form";
@@ -18,10 +18,13 @@ export default async function AgreementLetterheadPage({
   const employee = await requireAnyCapability("hr_letters", "party_admin");
   const { company: requestedCompany } = await searchParams;
   const supabase = await createClient();
+  // agreement_letterhead_settings is RLS-forced with zero policies, so it is
+  // read with the service-role client; the capability check above is the gate.
+  const db = createServiceRoleClient();
 
   const [{ data: companies }, settingsResult] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
-    supabase.from("agreement_letterhead_settings").select("*").in("company_id", employee.companyIds),
+    db.from("agreement_letterhead_settings").select("*").in("company_id", employee.companyIds),
   ]);
 
   const migrationPending = Boolean(settingsResult.error) && isMissingAgreementSchema(settingsResult.error);
@@ -34,7 +37,7 @@ export default async function AgreementLetterheadPage({
         ? employee.currentCompanyId
         : (companies?.[0]?.id ?? "");
 
-  const letterhead = await loadAgreementLetterhead(supabase, selectedCompanyId);
+  const letterhead = await loadAgreementLetterhead(db, selectedCompanyId);
   const settings = settingsByCompany.get(selectedCompanyId);
 
   return (

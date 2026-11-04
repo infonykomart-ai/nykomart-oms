@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireAnyCapability } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { findAgreementTemplate } from "@/lib/agreements/templates";
 import { AGREEMENT_MIGRATION_FILE, isMissingAgreementSchema } from "@/lib/agreements/migration";
 import { AGREEMENT_STATUS_LABELS, AGREEMENT_STATUS_STYLES } from "@/lib/agreements/status";
@@ -15,9 +15,14 @@ import { AGREEMENT_STATUS_LABELS, AGREEMENT_STATUS_STYLES } from "@/lib/agreemen
 export default async function AgreementsHubPage() {
   const employee = await requireAnyCapability("hr_letters", "party_admin");
   const supabase = await createClient();
+  // agreement_* tables are RLS-forced with zero policies (service-role only),
+  // so the signed-in user's anon-key client can read nothing from them. Same
+  // rule as hr_letter_records: the capability check above is the gate, then the
+  // service-role client does the read.
+  const db = createServiceRoleClient();
 
   const [{ data: documents, error }, { data: companies }] = await Promise.all([
-    supabase
+    db
       .from("agreement_documents")
       .select(
         "id, ref_no, company_id, vendor_name_snapshot, template_slug, status, effective_date, document_version, created_at, last_shared_at"
