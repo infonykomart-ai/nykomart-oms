@@ -60,6 +60,7 @@ import { DocStatementDialog } from "@/components/doc-statement-dialog";
 import type { DocType } from "@/lib/doc-statement";
 import type { PurchaseBillInvoiceGroup } from "@/lib/bill-grouping";
 import { formatAuditStamp, purchaseBillAmountLabel, purchaseHasGst } from "@/lib/purchase-bill-money";
+import { AREA_UNIT_LABEL, LENGTH_UNIT_LABEL, formatMeasurement, type AreaUnit, type LengthUnit } from "@/lib/measurement";
 import { PurchaseFinanceBox } from "./finance-post-box";
 
 type Company = { id: string; name: string };
@@ -205,6 +206,7 @@ export function DocumentEntryTabs({
   billFilters,
   washingEntriesTotal,
   debitNoteDefaults,
+  measurementSettings,
 }: {
   companies: Company[];
   parties: Party[];
@@ -234,6 +236,13 @@ export function DocumentEntryTabs({
   // Entries (the "Recent" list below is capped to 8/most recent) — see
   // page.tsx's own comment on why this needed a separate unlimited query.
   washingEntriesTotal?: { count: number; amount: number };
+  /** 2026-11-05 — OMS Settings → Measurement defaults for Purchase forms. */
+  measurementSettings?: {
+    default_dimension_unit: string;
+    default_area_unit: string;
+    default_rate_unit: string;
+    decimal_precision: number;
+  } | null;
 }) {
   const [tab, setTab] = useState<TabKey>(isTabKey(initialTab) ? initialTab : "credit-note");
   // 2026-08-12 (round 10): "JIS JIS PO RF RG NO KO SELECT KARE UNKE LIYE
@@ -241,6 +250,13 @@ export function DocumentEntryTabs({
   // has 2 modes: the original single-order form, and a new multi-order
   // picker for one vendor invoice covering several POs at once.
   const [pbMode, setPbMode] = useState<"single" | "multi" | "multi-items">("single");
+  const measurementDefaults = measurementSettings
+    ? {
+        dimensionUnit: measurementSettings.default_dimension_unit,
+        areaUnit: measurementSettings.default_area_unit,
+        rateUnit: measurementSettings.default_rate_unit,
+      }
+    : null;
 
   const tabBar = (
     <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
@@ -314,7 +330,7 @@ export function DocumentEntryTabs({
                 Printing job-work bill against a PO (cotton dhurri / rug printing etc.). Saves as a <strong>Printing</strong> bill — it
                 appears in the Printing register and posts to the Finance ledger&apos;s Printing bucket, not the Purchase one.
               </p>
-              <PurchaseBillForm parties={parties} billKind="printing" />
+              <PurchaseBillForm parties={parties} billKind="printing" measurementDefaults={measurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} />
             </div>
           )}
           {tab === "purchase-bill" && (
@@ -342,9 +358,13 @@ export function DocumentEntryTabs({
                   Multiple Items, One Invoice
                 </button>
               </div>
-              {pbMode === "single" && <PurchaseBillForm parties={parties} />}
+              {pbMode === "single" && (
+                <PurchaseBillForm parties={parties} measurementDefaults={measurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} />
+              )}
               {pbMode === "multi" && <PurchaseBillMultiForm parties={parties} />}
-              {pbMode === "multi-items" && <PurchaseBillMultiItemsForm parties={parties} />}
+              {pbMode === "multi-items" && (
+                <PurchaseBillMultiItemsForm parties={parties} measurementDefaults={measurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} />
+              )}
             </div>
           )}
           {tab === "csb-filing" && (
@@ -922,8 +942,16 @@ function PurchaseBillInvoiceList({
                   {inv.items.map((it, idx) => {
                     const edited =
                       new Date(it.updated_at).getTime() - new Date(it.created_at).getTime() >= 1000;
-                    const size =
-                      (it.qty_unit ?? "FT") === "PCS"
+                    // 2026-11-05 — measured rows show the ORIGINAL entered
+                    // dimensions and units next to the calculated area in the
+                    // chosen display unit; manual rows are unchanged.
+                    const measured =
+                      it.length_value != null && it.width_value != null && it.area_value != null;
+                    const size = measured
+                      ? `${Number(it.length_value)} ${LENGTH_UNIT_LABEL[it.length_unit as LengthUnit] ?? it.length_unit} × ` +
+                        `${Number(it.width_value)} ${LENGTH_UNIT_LABEL[it.width_unit as LengthUnit] ?? it.width_unit} × ${it.qty} ` +
+                        `= ${formatMeasurement(Number(it.area_value) * Number(it.qty), 4)} ${AREA_UNIT_LABEL[it.area_display_unit as AreaUnit] ?? it.area_display_unit}`
+                      : (it.qty_unit ?? "FT") === "PCS"
                         ? `${it.qty} pcs`
                         : `${it.qty} × ${Number(it.sq_feet)} ${it.qty_unit ?? "FT"}`;
                     return (

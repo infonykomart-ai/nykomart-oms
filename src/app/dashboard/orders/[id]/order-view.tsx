@@ -3,6 +3,7 @@ import { PrintArea, PrintButton } from "@/components/print-view";
 import type { OrderStatusSummary } from "@/lib/orders/order-status-summary";
 import type { VendorAssignmentCycle } from "../vendor-assignment-actions";
 import { VendorAssignmentSection } from "./vendor-assignment-section";
+import { RefundEntryActions } from "@/app/dashboard/returns/refund-entry-actions";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
 import { FlagErrorButton } from "./flag-error-button";
 import { ShippingDetailsForm } from "./shipping-details-form";
@@ -88,10 +89,23 @@ export type Invoice = {
 export type OrderDebitNote = { id: string; debit_note_no: string | null; debit_note_date: string; debit_amount: number };
 export type OrderCreditNote = { id: string; cn_no: string | null; credit_note_date: string; refund_amount: number };
 export type OrderRefund = {
+  id: string;
   refund_amount: number;
   refund_currency: string;
   refund_date: string;
   reason: string | null;
+  // 2026-11-05 — refund edit/delete: the detail the dialog edits and the
+  // history it shows.
+  refund_qty: number | null;
+  payment_mode: string | null;
+  reference_no: string | null;
+  remarks: string | null;
+  refund_basis_percent: number | null;
+  order_value_refund_amount: number | null;
+  shipping_refund_amount: number | null;
+  duty_refund_amount: number | null;
+  created_at: string;
+  updated_at: string;
 };
 
 // 2026-10-26 — one row per real AWB/package set (order_shipments +
@@ -603,10 +617,35 @@ export function OrderView({
         <div className="mb-4 rounded-lg border border-teal-200 bg-teal-50/40 p-3 text-xs print:hidden">
           <p className="mb-1.5 font-semibold text-teal-800">Refunds on this order</p>
           <ul className="space-y-1">
-            {refunds.map((r, i) => (
-              <li key={i} className="text-slate-700">
-                💸 {r.refund_amount.toFixed(2)} {r.refund_currency} on {r.refund_date}
-                {r.reason ? <span className="text-slate-500"> · {r.reason}</span> : null}
+            {refunds.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+                <span>
+                  💸 {r.refund_amount.toFixed(2)} {r.refund_currency} on {r.refund_date}
+                  {r.reason ? <span className="text-slate-500"> · {r.reason}</span> : null}
+                  {r.payment_mode ? <span className="text-slate-500"> · {r.payment_mode}</span> : null}
+                  {r.reference_no ? <span className="text-slate-500"> · Ref {r.reference_no}</span> : null}
+                </span>
+                <RefundEntryActions
+                  currencies={currencies.map((c) => c.code)}
+                  refund={{
+                    id: r.id,
+                    order_id: order.id,
+                    order_ref_no: order.ref_no,
+                    order_currency: order.order_currency,
+                    refund_amount: r.refund_amount,
+                    refund_currency: r.refund_currency,
+                    refund_date: r.refund_date,
+                    reason: r.reason,
+                    refund_qty: r.refund_qty,
+                    payment_mode: r.payment_mode,
+                    reference_no: r.reference_no,
+                    remarks: r.remarks,
+                    refund_basis_percent: r.refund_basis_percent,
+                    order_value_refund_amount: r.order_value_refund_amount,
+                    shipping_refund_amount: r.shipping_refund_amount,
+                    duty_refund_amount: r.duty_refund_amount,
+                  }}
+                />
               </li>
             ))}
           </ul>

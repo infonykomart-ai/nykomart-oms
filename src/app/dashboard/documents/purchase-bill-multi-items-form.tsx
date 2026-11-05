@@ -13,7 +13,7 @@
 // No./Date/GST are shared. Not order-linked (general-stock purchase, same
 // as leaving the order lookup blank on the Single Order form) — each item
 // becomes its own purchase_bills row with order_id NULL.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useActionState } from "react";
 import { savePurchaseBillMultiItems, type PurchaseBillMultiItemsState } from "./actions";
 import { groupPartyOptions, type PartyOption } from "./party-options";
@@ -22,6 +22,16 @@ import type { PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { RoundOffField } from "./round-off-field";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
+import { PurchaseDimensionFields } from "@/components/purchase-dimension-fields";
+import { AREA_UNIT_LABEL, formatMeasurement } from "@/lib/measurement";
+import {
+  derivePurchaseMeasurement,
+  purchaseDimensionDefaults,
+  purchaseMeasurementPayload,
+  type PurchaseDimensionState,
+  type PurchaseMeasurementDefaults,
+  type PurchaseMeasurementDerived,
+} from "@/lib/purchase-measurement";
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -37,9 +47,11 @@ type ItemLine = {
   sqFeetUnit: PurchaseQtyUnit;
   sqFeetInput: string;
   unitRateInput: string;
+  /** 2026-11-05 — optional length × width panel (mixed units allowed). */
+  dimensions: PurchaseDimensionState;
 };
 
-function newItemLine(): ItemLine {
+function newItemLine(defaults?: PurchaseDimensionState): ItemLine {
   return {
     clientId: nextClientId++,
     workDescription: "",
@@ -47,14 +59,59 @@ function newItemLine(): ItemLine {
     sqFeetUnit: "FT",
     sqFeetInput: "",
     unitRateInput: "",
+    dimensions: defaults ?? purchaseDimensionDefaults(),
   };
 }
 
-export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[] }) {
+export function PurchaseBillMultiItemsForm({
+  parties,
+  measurementDefaults,
+  measurementPrecision = 2,
+}: {
+  parties: PartyOption[];
+  measurementDefaults?: PurchaseMeasurementDefaults | null;
+  measurementPrecision?: number;
+}) {
   const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(savePurchaseBillMultiItems, initialState);
-  const [items, setItems] = useState<ItemLine[]>([newItemLine()]);
+  // Depend on the primitive values, not the object identity — the parent
+  // rebuilds the defaults object every render.
+  const defaultDimensionUnit = measurementDefaults?.dimensionUnit;
+  const defaultAreaUnit = measurementDefaults?.areaUnit;
+  const defaultRateUnit = measurementDefaults?.rateUnit;
+  const defaultsForNewLine = useMemo(
+    () =>
+      purchaseDimensionDefaults({
+        dimensionUnit: defaultDimensionUnit,
+        areaUnit: defaultAreaUnit,
+        rateUnit: defaultRateUnit,
+      }),
+    [defaultDimensionUnit, defaultAreaUnit, defaultRateUnit]
+  );
+  const [items, setItems] = useState<ItemLine[]>(() => [newItemLine(defaultsForNewLine)]);
   const formRef = useRef<HTMLFormElement>(null);
+
+  function measurementFor(item: ItemLine): PurchaseMeasurementDerived {
+    return derivePurchaseMeasurement(
+      item.dimensions,
+      Number(item.qty) || 0,
+      item.unitRateInput,
+      measurementPrecision
+    );
+  }
+
+  /** Area/rate actually used for the amount — derived when the size is given. */
+  function effectiveLine(item: ItemLine) {
+    const m = measurementFor(item);
+    const measured = m.active && !m.error ? m : null;
+    return {
+      m,
+      measured,
+      area: measured ? measured.area : Number(item.sqFeetInput) || 0,
+      qtyUnit: measured ? measured.qtyUnit : item.sqFeetUnit,
+      rate: measured ? measured.unitRate : Number(item.unitRateInput) || 0,
+    };
+  }
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
@@ -76,19 +133,19 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
     // warning for a direct setState call inside an effect.
     const t = setTimeout(() => {
       formRef.current?.reset();
-      setItems([newItemLine()]);
+      setItems([newItemLine(defaultsForNewLine)]);
       setGstRatePct(null);
       setGstType("CGST_SGST");
     }, 0);
     return () => clearTimeout(t);
-  }, [state.results]);
+  }, [state.results, defaultsForNewLine]);
 
   function updateItem(clientId: number, patch: Partial<ItemLine>) {
     setItems((prev) => prev.map((it) => (it.clientId === clientId ? { ...it, ...patch } : it)));
   }
 
   function addItem() {
-    setItems((prev) => [...prev, newItemLine()]);
+    setItems((prev) => [...prev, newItemLine(defaultsForNewLine)]);
   }
 
   function removeItem(clientId: number) {
@@ -99,34 +156,38 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
   // GST pick is "No GST" (saved as 0%), so the preview equals the stored total.
   const invoiceGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
   const invoicePreRoundTotal = items.reduce((sum, it) => {
-    const amount =
-      (Number(it.qty) || 0) *
-      (it.sqFeetUnit === "PCS" ? 1 : Number(it.sqFeetInput) || 0) *
-      (Number(it.unitRateInput) || 0);
+    const eff = effectiveLine(it);
+    const area = eff.qtyUnit === "PCS" ? 1 : eff.area;
+    const amount = (Number(it.qty) || 0) * area * eff.rate;
     return sum + amount + Math.round(amount * invoiceGstPct) / 100;
   }, 0);
   // 2026-10-31 — same split as the Multiple-Orders form, for the round-off
   // control's full working (Amount without GST / GST / Total / Round off / Net).
   const invoicePreRoundBase = items.reduce((sum, it) => {
-    const amount =
-      (Number(it.qty) || 0) *
-      (it.sqFeetUnit === "PCS" ? 1 : Number(it.sqFeetInput) || 0) *
-      (Number(it.unitRateInput) || 0);
-    return sum + amount;
+    const eff = effectiveLine(it);
+    const area = eff.qtyUnit === "PCS" ? 1 : eff.area;
+    return sum + (Number(it.qty) || 0) * area * eff.rate;
   }, 0);
 
   const itemsJson = JSON.stringify(
-    items.map((it) => ({
-      workDescription: it.workDescription || null,
-      qty: Number(it.qty) || 1,
-      // 2026-08-27 — PCS items always send sq_feet = 1 (piece count, not a
-      // size) so the existing total_amount formula (qty * sq_feet *
-      // unit_rate) collapses to qty * rate-per-piece — see
-      // db/2026-08-27-purchase-bills-pcs-unit.sql.
-      sqFeet: it.sqFeetUnit === "PCS" ? 1 : Number(it.sqFeetInput) || 0,
-      qtyUnit: it.sqFeetUnit,
-      unitRate: Number(it.unitRateInput) || 0,
-    }))
+    items.map((it) => {
+      const eff = effectiveLine(it);
+      return {
+        workDescription: it.workDescription || null,
+        qty: Number(it.qty) || 1,
+        // 2026-08-27 — PCS items always send sq_feet = 1 (piece count, not a
+        // size) so the existing total_amount formula (qty * sq_feet *
+        // unit_rate) collapses to qty * rate-per-piece — see
+        // db/2026-08-27-purchase-bills-pcs-unit.sql.
+        sqFeet: eff.qtyUnit === "PCS" ? 1 : eff.measured ? eff.measured.storedArea : Number(it.sqFeetInput) || 0,
+        qtyUnit: eff.qtyUnit,
+        unitRate: eff.rate,
+        // Server re-runs the engine on these raw numbers (authoritative area,
+        // unit and rate); the values above are only the pending-migration
+        // fallback.
+        measurement: purchaseMeasurementPayload(it.dimensions, Number(it.qty) || 0, it.unitRateInput, measurementPrecision),
+      };
+    })
   );
 
   return (
@@ -165,60 +226,96 @@ export function PurchaseBillMultiItemsForm({ parties }: { parties: PartyOption[]
               />
             </div>
 
-            {/* 2026-08-27 — hidden for PCS items: no size to derive a rate
-                from, the vendor bill already states rate-per-piece directly. */}
-            {it.sqFeetUnit !== "PCS" && (
-              <div className="mt-1.5">
-                <PurchaseBillRateHelper
-                  qty={Number(it.qty) || 0}
-                  unitIsFt={it.sqFeetUnit === "FT"}
-                  onApply={(sqFeet, unitRate) =>
-                    updateItem(it.clientId, { sqFeetInput: String(sqFeet), unitRateInput: String(unitRate) })
-                  }
-                  idPrefix={`pbmi_${it.clientId}`}
-                />
-              </div>
-            )}
+            {(() => {
+              const eff = effectiveLine(it);
+              const isPcs = eff.qtyUnit === "PCS";
+              return (
+                <>
+                  <PurchaseDimensionFields
+                    value={it.dimensions}
+                    onChange={(dimensions) => updateItem(it.clientId, { dimensions })}
+                    derived={eff.m}
+                    qty={Number(it.qty) || 0}
+                    rateInput={it.unitRateInput}
+                    precision={measurementPrecision}
+                    idPrefix={`pbmi_${it.clientId}`}
+                  />
 
-            <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <label className="mb-0.5 block text-[11px] text-slate-400">Qty {it.sqFeetUnit === "PCS" && "(Pcs)"}</label>
-                <input
-                  type="number"
-                  value={it.qty}
-                  onChange={(e) => updateItem(it.clientId, { qty: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label className="mb-0.5 block text-[11px] text-slate-400">{it.sqFeetUnit === "PCS" ? "Unit" : "Sq. Feet"}</label>
-                <div className="flex gap-1">
-                  {it.sqFeetUnit !== "PCS" && (
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={it.sqFeetInput}
-                      onChange={(e) => updateItem(it.clientId, { sqFeetInput: e.target.value })}
-                      className={inputClass}
-                    />
+                  {/* 2026-08-27 — hidden for PCS items and whenever the size
+                      panel is driving the area: the vendor bill already states
+                      a rate-per-piece, and the area is already calculated. */}
+                  {!isPcs && !eff.measured && (
+                    <div className="mt-1.5">
+                      <PurchaseBillRateHelper
+                        qty={Number(it.qty) || 0}
+                        unitIsFt={it.sqFeetUnit === "FT"}
+                        onApply={(sqFeet, unitRate) =>
+                          updateItem(it.clientId, { sqFeetInput: String(sqFeet), unitRateInput: String(unitRate) })
+                        }
+                        idPrefix={`pbmi_${it.clientId}`}
+                      />
+                    </div>
                   )}
-                  <PurchaseQtyUnitSelect value={it.sqFeetUnit} onChange={(u) => updateItem(it.clientId, { sqFeetUnit: u })} />
-                </div>
-              </div>
-              <div>
-                <label className="mb-0.5 block text-[11px] text-slate-400">
-                  {it.sqFeetUnit === "PCS" ? "Rate per Pcs" : "Unit Rate"}{" "}
-                  {it.sqFeetUnit !== "FT" && it.sqFeetUnit !== "PCS" && <span className="text-slate-400">(per {it.sqFeetUnit})</span>}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={it.unitRateInput}
-                  onChange={(e) => updateItem(it.clientId, { unitRateInput: e.target.value })}
-                  className={inputClass}
-                />
-              </div>
-            </div>
+
+                  <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <label className="mb-0.5 block text-[11px] text-slate-400">Qty {isPcs && "(Pcs)"}</label>
+                      <input
+                        type="number"
+                        value={it.qty}
+                        onChange={(e) => updateItem(it.clientId, { qty: e.target.value })}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-0.5 block text-[11px] text-slate-400">
+                        {eff.measured
+                          ? `Area (${AREA_UNIT_LABEL[it.dimensions.areaUnit]})`
+                          : isPcs
+                            ? "Unit"
+                            : "Sq. Feet"}
+                      </label>
+                      <div className="flex gap-1">
+                        {!isPcs && (
+                          <input
+                            type="number"
+                            step="0.01"
+                            readOnly={!!eff.measured}
+                            value={eff.measured ? formatMeasurement(eff.measured.storedArea, 4) : it.sqFeetInput}
+                            onChange={(e) => updateItem(it.clientId, { sqFeetInput: e.target.value })}
+                            className={`${inputClass} ${eff.measured ? "bg-slate-50 text-slate-500" : ""}`}
+                          />
+                        )}
+                        {eff.measured ? (
+                          <span className="shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-1.5 py-1.5 text-xs text-slate-600">
+                            {AREA_UNIT_LABEL[it.dimensions.areaUnit]}
+                          </span>
+                        ) : (
+                          <PurchaseQtyUnitSelect value={it.sqFeetUnit} onChange={(u) => updateItem(it.clientId, { sqFeetUnit: u })} />
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-0.5 block text-[11px] text-slate-400">
+                        {isPcs ? "Rate per Pcs" : "Unit Rate"}{" "}
+                        {!isPcs && eff.qtyUnit !== "FT" && (
+                          <span className="text-slate-400">
+                            (per {eff.measured ? AREA_UNIT_LABEL[it.dimensions.rateUnit] : it.sqFeetUnit})
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={it.unitRateInput}
+                        onChange={(e) => updateItem(it.clientId, { unitRateInput: e.target.value })}
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         ))}
       </div>

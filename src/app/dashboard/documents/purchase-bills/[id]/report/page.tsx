@@ -52,6 +52,13 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { PrintArea, PrintButton } from "@/components/print-view";
 import { loadOrderShippingFigures } from "@/lib/orders/shipping-figures";
 import { purchaseAreaSqFt } from "@/lib/length-units";
+import {
+  AREA_UNIT_LABEL,
+  LENGTH_UNIT_LABEL,
+  convertArea,
+  type AreaUnit,
+  type LengthUnit,
+} from "@/lib/measurement";
 import type { Database } from "@/types/database";
 
 type Client = SupabaseClient<Database>;
@@ -180,6 +187,17 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
 
   const rows = await loadInvoiceRows(supabase, seed);
 
+  // 2026-11-05 — report display unit from OMS Settings → Measurement. Only
+  // measured rows use it; manual/legacy rows keep their historical rendering.
+  const { data: measurementSettings } = seed.company_id
+    ? await supabase
+        .from("company_measurement_settings")
+        .select("default_report_unit")
+        .eq("company_id", seed.company_id)
+        .maybeSingle()
+    : { data: null };
+  const reportUnit = (measurementSettings?.default_report_unit as AreaUnit) ?? "SQ_FT";
+
   const orderIds = Array.from(new Set(rows.map((r) => r.order_id).filter((v): v is string => !!v)));
   const companyIds = Array.from(new Set(rows.map((r) => r.company_id).filter((v): v is string => !!v)));
 
@@ -277,6 +295,8 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
     const gstAmount = Math.round(amount * totalRatePct) / 100;
     const fig = r.order_id ? figures.get(r.order_id) : undefined;
     const orderValue = fig?.orderValueInr ?? 0;
+    const measured = r.length_value != null && r.width_value != null && r.area_value != null;
+    const areaUnit = (r.area_display_unit as AreaUnit) ?? "SQ_FT";
     return {
       sr: i + 1,
       id: r.id,
@@ -301,6 +321,13 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
       asBilled: (r.size_mode ?? "area") === "as_billed",
       sizeSqFt: purchaseAreaSqFt(size, r.qty_unit),
       sizeUnit: r.qty_unit ?? "FT",
+      // Original entry + the calculated area in the company's report unit.
+      measured,
+      originalSize: measured
+        ? `${Number(r.length_value)} ${LENGTH_UNIT_LABEL[r.length_unit as LengthUnit] ?? r.length_unit} × ${Number(r.width_value)} ${LENGTH_UNIT_LABEL[r.width_unit as LengthUnit] ?? r.width_unit}`
+        : null,
+      reportArea: measured ? convertArea(Number(r.area_value), areaUnit, reportUnit) : null,
+      reportAreaUnit: reportUnit,
       rate,
       amount,
       gstRatePct: storedRate,
@@ -517,17 +544,26 @@ async function PurchaseBillReportInner({ id }: { id: string }) {
                   <td className="py-1 pr-2 text-right">{r.qty}</td>
                   <td className="py-1 pr-2">{r.unit}</td>
                   <td className="py-1 pr-2 text-right">
-                    {r.asBilled ? (
+                    {r.measured ? (
+                      money(r.reportArea ?? 0)
+                    ) : r.asBilled ? (
                       `${money(r.size)} ${SQ_UNIT_WORD[r.sizeUnit] ?? r.sizeUnit}`
                     ) : r.sizeSqFt != null ? (
                       money(r.sizeSqFt)
                     ) : (
                       "—"
                     )}
-                    {!r.asBilled && r.sizeSqFt != null && r.sizeUnit !== "FT" && (
+                    {r.measured ? (
                       <div className="text-[9px] font-normal text-slate-400">
-                        ({money(r.size)} sq {SQ_UNIT_WORD[r.sizeUnit] ?? r.sizeUnit})
+                        {AREA_UNIT_LABEL[r.reportAreaUnit as AreaUnit]}
+                        {r.originalSize ? ` · ${r.originalSize}` : ""}
                       </div>
+                    ) : (
+                      !r.asBilled && r.sizeSqFt != null && r.sizeUnit !== "FT" && (
+                        <div className="text-[9px] font-normal text-slate-400">
+                          ({money(r.size)} sq {SQ_UNIT_WORD[r.sizeUnit] ?? r.sizeUnit})
+                        </div>
+                      )
                     )}
                   </td>
                   <td className="py-1 pr-2 text-right">{money(r.rate)}</td>

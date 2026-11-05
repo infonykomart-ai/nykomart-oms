@@ -7,6 +7,12 @@ import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
+import { PurchaseDimensionFields } from "@/components/purchase-dimension-fields";
+import { AREA_UNIT_LABEL, formatMeasurement, type AreaUnit, type LengthUnit as MeasurementLengthUnit } from "@/lib/measurement";
+import {
+  derivePurchaseMeasurement,
+  type PurchaseDimensionState,
+} from "@/lib/purchase-measurement";
 import { RoundOffField } from "./round-off-field";
 
 const initialState: DocEditState = { error: null, success: false };
@@ -29,6 +35,16 @@ export type EditablePurchaseBill = {
   round_off_amt: number;
   /** 2026-10-24b — 'area' (default) or 'as_billed'; absent on pre-migration rows. */
   size_mode?: string | null;
+  /** 2026-11-05 — original dimensions, when the row was entered with them. */
+  length_value?: number | null;
+  length_unit?: string | null;
+  width_value?: number | null;
+  width_unit?: string | null;
+  area_value?: number | null;
+  area_display_unit?: string | null;
+  rate_input_value?: number | null;
+  rate_input_unit?: string | null;
+  measurement_precision?: number | null;
 };
 
 export function PurchaseBillEditForm({
@@ -51,13 +67,10 @@ export function PurchaseBillEditForm({
   // its own saved value as-is, not re-interpreted as feet.
   const [sqFeetInput, setSqFeetInput] = useState(String(bill.sq_feet));
   const [sqFeetUnit, setSqFeetUnit] = useState<PurchaseQtyUnit>((bill.qty_unit as PurchaseQtyUnit) || "FT");
-  const isPcs = sqFeetUnit === "PCS";
   // 2026-08-27 — see purchase-bill-form.tsx's identical comment: PCS is a
   // piece count, not a length, so there's no feet-equivalent to show.
   // 2026-10-24 — see that same comment for why this is areaToSqFt (squared
   // factor) and not toFeet: the entered number is an AREA in its unit.
-  const sqFeetConverted =
-    sqFeetInput && !isPcs ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit) : 0;
   // 2026-10-24b — see purchase-bill-form.tsx: an area and a linear length are
   // different things, so the bill carries which one it is.
   const [sizeMode, setSizeMode] = useState<"area" | "as_billed">(bill.size_mode === "as_billed" ? "as_billed" : "area");
@@ -69,7 +82,40 @@ export function PurchaseBillEditForm({
   // before. See purchase-bill-form.tsx for the same addition on the New
   // Purchase Bill form.
   const [qtyInput, setQtyInput] = useState(String(bill.qty));
-  const [unitRateInput, setUnitRateInput] = useState(String(bill.unit_rate));
+  const [unitRateInput, setUnitRateInput] = useState(
+    String(bill.rate_input_value != null ? bill.rate_input_value : bill.unit_rate)
+  );
+
+  // 2026-11-05 — a bill saved with raw dimensions reopens with them, so an
+  // edit recalculates the area from the ORIGINAL size (and can change either
+  // unit) instead of editing a pre-converted number. Bills entered before
+  // this feature have no dimensions and keep the manual area field.
+  const precision = bill.measurement_precision ?? 2;
+  const [dimensions, setDimensions] = useState<PurchaseDimensionState>(() => {
+    const areaUnit = (bill.area_display_unit as AreaUnit) || "SQ_FT";
+    return {
+      length: bill.length_value != null ? String(bill.length_value) : "",
+      lengthUnit: (bill.length_unit as MeasurementLengthUnit) || "FT",
+      width: bill.width_value != null ? String(bill.width_value) : "",
+      widthUnit: (bill.width_unit as MeasurementLengthUnit) || "FT",
+      areaUnit,
+      rateUnit: (bill.rate_input_unit as AreaUnit) || areaUnit,
+    };
+  });
+  const measurement = derivePurchaseMeasurement(
+    dimensions,
+    Number(qtyInput) || 0,
+    unitRateInput,
+    precision
+  );
+  const measured = measurement.active && !measurement.error ? measurement : null;
+  const effectiveQtyUnit: PurchaseQtyUnit = measured ? measured.qtyUnit : sqFeetUnit;
+  const effectiveRate = measured ? measured.unitRate : Number(unitRateInput) || 0;
+  const isPcs = !measured && sqFeetUnit === "PCS";
+  const sqFeetConverted =
+    !measured && sqFeetInput && !isPcs
+      ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit)
+      : 0;
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(bill.gst_rate_pct);
   const [gstType, setGstType] = useState<GstType>((bill.gst_type as GstType) || "CGST_SGST");
@@ -83,7 +129,7 @@ export function PurchaseBillEditForm({
   // roundoff sabhi": the same three numbers the save action derives, so the
   // edit form can show Amount (without GST) → GST → Total with GST → round
   // off → NET PAYABLE instead of one opaque "payable" figure.
-  const editBaseAmount = Math.round((Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0) * 100) / 100;
+  const editBaseAmount = Math.round((Number(qtyInput) || 0) * (measured ? measured.area : Number(sqFeetInput) || 0) * effectiveRate * 100) / 100;
   const editGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
   const editGstAmount = Math.round(editBaseAmount * editGstPct) / 100;
 
@@ -128,7 +174,7 @@ export function PurchaseBillEditForm({
             className={inputClass}
           />
         </div>
-        {!isPcs && (
+        {!isPcs && !measured && (
           <PurchaseBillRateHelper
             qty={Number(qtyInput) || 0}
             unitIsFt={sqFeetUnit === "FT"}
@@ -139,27 +185,45 @@ export function PurchaseBillEditForm({
             idPrefix={`pb_edit_${bill.id}`}
           />
         )}
+        <PurchaseDimensionFields
+          value={dimensions}
+          onChange={setDimensions}
+          derived={measurement}
+          qty={Number(qtyInput) || 0}
+          rateInput={unitRateInput}
+          precision={precision}
+          idPrefix={`pb_edit_${bill.id}`}
+        />
         <div>
-          <label className={labelClass} htmlFor={`pb_sqfeet_${bill.id}`}>{isPcs ? "Unit" : "Sq. Feet"}</label>
+          <label className={labelClass} htmlFor={`pb_sqfeet_${bill.id}`}>
+            {measured ? `Area (${AREA_UNIT_LABEL[dimensions.areaUnit]})` : isPcs ? "Unit" : "Sq. Feet"}
+          </label>
           <div className="flex gap-1.5">
             {!isPcs && (
               <input
                 id={`pb_sqfeet_${bill.id}`}
                 type="number"
                 step="0.01"
-                value={sqFeetInput}
+                readOnly={!!measured}
+                value={measured ? formatMeasurement(measured.storedArea, 4) : sqFeetInput}
                 onChange={(e) => setSqFeetInput(e.target.value)}
-                className={inputClass}
+                className={`${inputClass} ${measured ? "bg-slate-50 text-slate-500" : ""}`}
               />
             )}
-            <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+            {measured ? (
+              <span className="shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-1.5 py-1.5 text-xs text-slate-600">
+                {AREA_UNIT_LABEL[dimensions.areaUnit]}
+              </span>
+            ) : (
+              <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+            )}
           </div>
-          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
+          {!measured && !isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
             <p className="mt-0.5 text-[11px] text-slate-400">
               ≈ {sqFeetConverted.toFixed(2)} Sq. Ft (area) — reference only, saved as entered in {sqFeetUnit}
             </p>
           )}
-          {!isPcs && sqFeetUnit !== "FT" && (
+          {!measured && !isPcs && sqFeetUnit !== "FT" && (
             <label className="mt-1 flex items-start gap-1.5 text-[11px] text-slate-500">
               <input
                 type="checkbox"
@@ -176,20 +240,37 @@ export function PurchaseBillEditForm({
           {isPcs && (
             <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
           )}
-          <input type="hidden" name="sq_feet" value={isPcs ? "1" : sqFeetInput} />
-          <input type="hidden" name="qty_unit" value={sqFeetUnit} />
+          <input type="hidden" name="sq_feet" value={isPcs ? "1" : measured ? String(measured.storedArea) : sqFeetInput} />
+          <input type="hidden" name="qty_unit" value={effectiveQtyUnit} />
+          {measured && (
+            <>
+              <input type="hidden" name="length_value" value={dimensions.length} />
+              <input type="hidden" name="length_unit" value={dimensions.lengthUnit} />
+              <input type="hidden" name="width_value" value={dimensions.width} />
+              <input type="hidden" name="width_unit" value={dimensions.widthUnit} />
+              <input type="hidden" name="area_display_unit" value={dimensions.areaUnit} />
+              <input type="hidden" name="rate_input_value" value={unitRateInput} />
+              <input type="hidden" name="rate_input_unit" value={dimensions.rateUnit} />
+              <input type="hidden" name="measurement_precision" value={precision} />
+            </>
+          )}
         </div>
         <div>
-          <label className={labelClass} htmlFor={`pb_rate_${bill.id}`}>{isPcs ? "Rate per Pcs" : "Unit Rate"} {!isPcs && sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
+          <label className={labelClass} htmlFor={`pb_rate_${bill.id}`}>
+            {isPcs ? "Rate per Pcs" : "Unit Rate"}{" "}
+            {!isPcs && effectiveQtyUnit !== "FT" && (
+              <span className="text-slate-400">(per {measured ? AREA_UNIT_LABEL[dimensions.rateUnit] : sqFeetUnit})</span>
+            )}
+          </label>
           <input
             id={`pb_rate_${bill.id}`}
-            name="unit_rate"
             type="number"
             step="0.01"
             value={unitRateInput}
             onChange={(e) => setUnitRateInput(e.target.value)}
             className={inputClass}
           />
+          <input type="hidden" name="unit_rate" value={measured ? effectiveRate : unitRateInput} />
         </div>
         <div className="col-span-2">
           <label className={labelClass} htmlFor={`pb_desc_${bill.id}`}>Work Description</label>

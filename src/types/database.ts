@@ -3245,6 +3245,63 @@ export type Database = {
           },
         ];
       };
+      // 2026-11-05 — OMS Settings → Measurement
+      // (db/2026-11-05-refund-edit-delete-and-measurement.sql). One row per
+      // company; an absent row means the engine defaults (FT / SQ FT / 2 dp).
+      company_measurement_settings: {
+        Row: {
+          id: string;
+          company_id: string;
+          default_dimension_unit: "MM" | "CM" | "MTR" | "INCH" | "FT";
+          default_area_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          default_rate_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          decimal_precision: number;
+          allow_per_transaction_unit: boolean;
+          default_report_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          updated_by_employee_id: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          default_dimension_unit?: "MM" | "CM" | "MTR" | "INCH" | "FT";
+          default_area_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          default_rate_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          decimal_precision?: number;
+          allow_per_transaction_unit?: boolean;
+          default_report_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          updated_by_employee_id?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          default_dimension_unit?: "MM" | "CM" | "MTR" | "INCH" | "FT";
+          default_area_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          default_rate_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          decimal_precision?: number;
+          allow_per_transaction_unit?: boolean;
+          default_report_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          updated_by_employee_id?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "company_measurement_settings_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: true;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "company_measurement_settings_updated_by_employee_id_fkey";
+            columns: ["updated_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       company_profiles: {
         Row: {
           company_id: string;
@@ -7861,6 +7918,15 @@ export type Database = {
           refund_amount_inr: number | null;
           refund_amount_usd: number | null;
           created_at: string;
+          // 2026-11-05 — editable refund detail + edit history
+          // (db/2026-11-05-refund-edit-delete-and-measurement.sql). NULL =
+          // not recorded (every refund entered before this round).
+          refund_qty: number | null;
+          payment_mode: string | null;
+          reference_no: string | null;
+          remarks: string | null;
+          updated_at: string;
+          updated_by_employee_id: string | null;
         };
         Insert: {
           id?: string;
@@ -7878,6 +7944,12 @@ export type Database = {
           refund_amount_inr?: number | null;
           refund_amount_usd?: number | null;
           created_at?: string;
+          refund_qty?: number | null;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          remarks?: string | null;
+          updated_at?: string;
+          updated_by_employee_id?: string | null;
         };
         Update: {
           id?: string;
@@ -7895,6 +7967,12 @@ export type Database = {
           refund_amount_inr?: number | null;
           refund_amount_usd?: number | null;
           created_at?: string;
+          refund_qty?: number | null;
+          payment_mode?: string | null;
+          reference_no?: string | null;
+          remarks?: string | null;
+          updated_at?: string;
+          updated_by_employee_id?: string | null;
         };
         Relationships: [
           {
@@ -7924,6 +8002,13 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "currencies";
             referencedColumns: ["code"];
+          },
+          {
+            foreignKeyName: "order_refunds_updated_by_employee_id_fkey";
+            columns: ["updated_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
           },
         ];
       };
@@ -8598,7 +8683,7 @@ export type Database = {
           vendor_invoice_date: string | null;
           qty: number;
           sq_feet: number;
-          qty_unit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+          qty_unit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
           work_description: string | null;
           unit_rate: number;
           order_id: string | null;
@@ -8618,6 +8703,18 @@ export type Database = {
           // every bill entered before that round (unknown, never guessed).
           entered_by_employee_id: string | null;
           entered_by_name: string | null;
+          // 2026-11-05 — universal measurement engine input/output
+          // (db/2026-11-05-refund-edit-delete-and-measurement.sql). NULL on
+          // every manually-entered bill, which keeps its exact old meaning.
+          length_value: number | null;
+          length_unit: "MM" | "CM" | "MTR" | "INCH" | "FT" | null;
+          width_value: number | null;
+          width_unit: "MM" | "CM" | "MTR" | "INCH" | "FT" | null;
+          area_value: number | null;
+          area_display_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
+          rate_input_value: number | null;
+          rate_input_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
+          measurement_precision: number | null;
         };
         Insert: {
           id?: string;
@@ -8626,7 +8723,7 @@ export type Database = {
           vendor_invoice_date?: string | null;
           qty?: number;
           sq_feet?: number;
-          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
           work_description?: string | null;
           unit_rate?: number;
           order_id?: string | null;
@@ -8643,6 +8740,15 @@ export type Database = {
           updated_at?: string;
           entered_by_employee_id?: string | null;
           entered_by_name?: string | null;
+          length_value?: number | null;
+          length_unit?: "MM" | "CM" | "MTR" | "INCH" | "FT" | null;
+          width_value?: number | null;
+          width_unit?: "MM" | "CM" | "MTR" | "INCH" | "FT" | null;
+          area_value?: number | null;
+          area_display_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
+          rate_input_value?: number | null;
+          rate_input_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
+          measurement_precision?: number | null;
         };
         Update: {
           id?: string;
@@ -8651,7 +8757,7 @@ export type Database = {
           vendor_invoice_date?: string | null;
           qty?: number;
           sq_feet?: number;
-          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
           work_description?: string | null;
           unit_rate?: number;
           order_id?: string | null;
@@ -8668,6 +8774,15 @@ export type Database = {
           updated_at?: string;
           entered_by_employee_id?: string | null;
           entered_by_name?: string | null;
+          length_value?: number | null;
+          length_unit?: "MM" | "CM" | "MTR" | "INCH" | "FT" | null;
+          width_value?: number | null;
+          width_unit?: "MM" | "CM" | "MTR" | "INCH" | "FT" | null;
+          area_value?: number | null;
+          area_display_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
+          rate_input_value?: number | null;
+          rate_input_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
+          measurement_precision?: number | null;
         };
         Relationships: [
           {
@@ -8699,7 +8814,7 @@ export type Database = {
           chalan_id: string;
           description: string;
           qty: number;
-          qty_unit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+          qty_unit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
           rate: number | null;
           remark: string | null;
           created_at: string;
@@ -8709,7 +8824,7 @@ export type Database = {
           chalan_id: string;
           description: string;
           qty: number;
-          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
           rate?: number | null;
           remark?: string | null;
           created_at?: string;
@@ -8719,7 +8834,7 @@ export type Database = {
           chalan_id?: string;
           description?: string;
           qty?: number;
-          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+          qty_unit?: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
           rate?: number | null;
           remark?: string | null;
           created_at?: string;
@@ -10810,6 +10925,34 @@ export type Database = {
       };
     };
     Functions: {
+      // 2026-11-05 — atomic refund mutations
+      // (db/2026-11-05-refund-edit-delete-and-measurement.sql).
+      apply_order_refund_delete: {
+        Args: { p_refund_id: string; p_employee_id: string };
+        Returns: Json;
+      };
+      apply_order_refund_update: {
+        Args: {
+          p_refund_id: string;
+          p_employee_id: string;
+          p_amount: number;
+          p_currency: string;
+          p_date: string;
+          p_reason: string | null;
+          p_qty: number | null;
+          p_payment_mode: string | null;
+          p_reference_no: string | null;
+          p_remarks: string | null;
+          p_basis: number | null;
+          p_order_value: number;
+          p_shipping: number;
+          p_duty: number;
+          p_inr: number | null;
+          p_usd: number | null;
+          p_refund_type: "PARTIAL REFUND" | "FULL REFUND" | "A TO Z CLAIM" | "NO REFUND" | "CUSTOM TAX";
+        };
+        Returns: string;
+      };
       add_task_daily_time: {
         Args: {
           p_task_id: string;

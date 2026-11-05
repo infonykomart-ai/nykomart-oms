@@ -1988,3 +1988,61 @@ M  src/app/dashboard/agreements/new/page.tsx        (registry read + banner)
 M  src/app/dashboard/agreements/templates/page.tsx  (registry read)
 M  src/app/dashboard/agreements/[id]/page.tsx       (sab agreement_* reads)
 M  src/app/dashboard/agreements/letterhead/page.tsx (settings read)
+
+REFUND EDIT / DELETE + UNIVERSAL MEASUREMENT ENGINE (2026-11-05)
+======================================================================
+
+A) REFUND ENTRY — ab Edit aur Delete dono hain
+   - Pehle refund sirf create ho sakta tha. Ab Returns/Refunds register aur
+     order ke refund list dono par ✏ Edit / 🗑 Delete.
+   - Edit se WAHI row update hoti hai (naya refund nahi banta), credit note
+     bhi sync hota hai, order-value cap teeno caps (order value / % / qty)
+     dobara check hoti hai — edited row khud apne total me count nahi hoti.
+   - Delete confirmation exact text: "Are you sure you want to delete this
+     refund entry?" Delete refund + credit note ek hi DB transaction me karta
+     hai, pehle restock net of prior reversals ko reverse karta hai, double
+     reversal nahi hota, aur agar credit note finance ledger me use ho chuka
+     hai to delete saaf mana kar deta hai.
+   - Refund detail fields: qty, payment mode, reference no., remarks;
+     updated_at / updated_by + audit_log history.
+   - SQL: apply_order_refund_update / apply_order_refund_delete
+     (SECURITY DEFINER, service_role only).
+
+B) PURCHASE MEASUREMENT — ek hi engine sab jagah
+   - src/lib/measurement.ts: Length MM/CM/MTR/INCH/FT, Area SQ MM/SQ CM/
+     SQ MTR/SQ INCH/SQ FT; exact constants 1 FT=30.48 CM, 1 INCH=2.54 CM,
+     1 MTR=100 CM, 1 SQ FT=0.09290304 SQ MTR, 1 SQ INCH=6.4516 SQ CM.
+   - Length aur Width ke alag unit selectors — 30 INCH × 5 FT jaisa mixed
+     input common base (CM) me convert hone ke BAAD multiply hota hai.
+   - Area = Length × Width × Qty; output unit selectable; rate kisi bhi area
+     unit me quote ho sakta hai, amount ke liye convert hota hai.
+   - Server hi authoritative calculation karta hai (client sirf preview).
+   - purchase_bills me original length/width/units, precise area_value
+     (numeric 18,6), area_display_unit, rate_input_* aur precision save hote
+     hain. sq_feet / unit_rate ka purana matlab wahi hai; generated totals
+     ab area_value prefer karte hain, manual/historical rows bilkul unchanged.
+   - Qty unit me MM add; Purchase Bill single / multi-items / edit forms me
+     Size panel; list me original dimensions + calculated area; purchase bill
+     report me company ke default report unit me area.
+   - OMS Settings → Measurement (/dashboard/settings/measurement): default
+     dimension/area/rate/report units, 2/3/4 dp precision, per-transaction
+     override on/off. Defaults sirf naye entries par lagte hain.
+   - Tests: src/lib/measurement.test.ts (mixed units, all constants, qty
+     semantics, rate conversion, invalid input).
+
+FILES
+-----
+N  db/2026-11-05-refund-edit-delete-and-measurement.sql
+N  src/lib/measurement.ts / measurement.test.ts / purchase-measurement.ts
+N  src/components/purchase-dimension-fields.tsx
+N  src/app/dashboard/returns/refund-entry-actions.tsx
+N  src/app/dashboard/settings/measurement/{page.tsx,actions.ts,measurement-settings-panel.tsx}
+M  db/schema.sql
+M  src/types/database.ts
+M  src/lib/length-units.ts / length-units.test.ts
+M  src/app/dashboard/orders/actions.ts
+M  src/app/dashboard/orders/[id]/order-view.tsx / order-detail-loader.ts
+M  src/app/dashboard/returns/page.tsx / returns-report-tables.tsx
+M  src/app/dashboard/documents/actions.ts / page.tsx / document-entry-tabs.tsx
+M  src/app/dashboard/documents/purchase-bill-{form,edit-form,multi-items-form}.tsx
+M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx

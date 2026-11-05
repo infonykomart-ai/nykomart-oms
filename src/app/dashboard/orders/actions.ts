@@ -11,6 +11,7 @@ import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
+import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 
@@ -344,6 +345,12 @@ export type OrderRefundParams = {
   orderValueRefundAmount?: number;
   shippingRefundAmount?: number;
   dutyRefundAmount?: number;
+  // 2026-11-05 — editable refund detail (optional, so every existing caller
+  // keeps compiling and saving exactly as before).
+  refundQty?: number | null;
+  paymentMode?: string | null;
+  referenceNo?: string | null;
+  remarks?: string | null;
 };
 
 /**
@@ -370,6 +377,10 @@ export async function saveOrderRefundCore(
     orderValueRefundAmount = 0,
     shippingRefundAmount = 0,
     dutyRefundAmount = 0,
+    refundQty = null,
+    paymentMode = null,
+    referenceNo = null,
+    remarks = null,
   } = p;
 
   if (!orderId) return { error: "Order missing.", success: null };
@@ -582,7 +593,37 @@ export async function saveOrderRefundCore(
     creditNoteNo = creditNote.cn_no;
   }
 
-  const { error } = await supabase.from("order_refunds").insert({
+  // 2026-11-05 — accidental DOUBLE-SUBMIT guard (a second click, a page
+  // resubmit): the exact same refund for the same order, currency, date,
+  // amount and reason entered in the last ten minutes is treated as the same
+  // entry, not a new one. Legitimate repeat refunds (different reason/date,
+  // or later in the day) are never blocked — the cap above remains the real
+  // financial rule.
+  const { data: recentSame } = await supabase
+    .from("order_refunds")
+    .select("id, created_at, reason")
+    .eq("order_id", order.id)
+    .eq("refund_amount", refundAmount)
+    .eq("refund_currency", refundCurrency)
+    .eq("refund_date", refundDate)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (recentSame) {
+    const ageMs = Date.now() - new Date(recentSame.created_at).getTime();
+    if (ageMs >= 0 && ageMs < 10 * 60 * 1000 && (recentSame.reason ?? "") === (reason ?? "")) {
+      return {
+        error: "This exact refund was just saved for this order. Edit the existing entry instead of adding it twice.",
+        success: null,
+      };
+    }
+  }
+
+  // 2026-11-05 — the four optional detail fields live in the same migration
+  // as refund edit/delete. A pending migration must never block the existing
+  // create-refund workflow, so an unknown-column rejection retries without
+  // them exactly like the purchase-bill attribution fallback.
+  const refundRow = {
     order_id: order.id,
     refund_amount: refundAmount,
     refund_currency: refundCurrency,
@@ -596,7 +637,17 @@ export async function saveOrderRefundCore(
     duty_refund_amount: dutyRefundAmount,
     refund_amount_inr: conversion.inr,
     refund_amount_usd: conversion.usd,
-  });
+  };
+  const refundDetail = {
+    refund_qty: refundQty,
+    payment_mode: paymentMode,
+    reference_no: referenceNo,
+    remarks,
+  };
+  let { error } = await supabase.from("order_refunds").insert({ ...refundRow, ...refundDetail });
+  if (error && /refund_qty|payment_mode|reference_no|remarks/i.test(error.message)) {
+    ({ error } = await supabase.from("order_refunds").insert(refundRow));
+  }
   if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
 
   // Inventory — every processed return/refund puts the item back into
@@ -677,6 +728,10 @@ export async function saveOrderRefund(_prev: OrderRefundState, formData: FormDat
     orderValueRefundAmount: numOrZero(formData, "order_value_refund_amount"),
     shippingRefundAmount: numOrZero(formData, "shipping_refund_amount"),
     dutyRefundAmount: numOrZero(formData, "duty_refund_amount"),
+    refundQty: numOrNull(formData, "refund_qty"),
+    paymentMode: strOrNull(formData, "payment_mode"),
+    referenceNo: strOrNull(formData, "reference_no"),
+    remarks: strOrNull(formData, "remarks"),
   });
 
   if (result.error) return result;
@@ -762,4 +817,348 @@ export async function getRefundFxPreview(orderId: string, currency: string, refu
       : null,
     source: refundConversion?.source ?? orderConversion.source,
   };
+}
+
+// ============================================================================
+// REFUND EDIT / UPDATE / DELETE (2026-11-05)
+//
+// "refund entry ... usko edit update ya delete karne ka koi option nahi hai":
+// every refund row can now be corrected or removed. The financial rules are
+// the SAME three caps saveOrderRefundCore enforces on creation, re-run with
+// the row being edited EXCLUDED from its own total (otherwise editing ₹100 to
+// ₹100 would look like a duplicate ₹100 and fail against the cap).
+//
+// All writes go through the two SQL functions in
+// db/2026-11-05-refund-edit-delete-and-measurement.sql so the refund row and
+// the credit note it generated (or, on delete, the restock it caused) move in
+// ONE transaction. No calculation happens in SQL — this file computes the
+// exchange conversion and the refund type, exactly like creation does.
+// ============================================================================
+
+const REFUND_EDIT_MIGRATION_FILE = "db/2026-11-05-refund-edit-delete-and-measurement.sql";
+
+function refundEditPending(error: { code?: string | null; message?: string | null } | null): boolean {
+  if (!error) return false;
+  if (error.code === "PGRST202" || error.code === "PGRST204") return true;
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    message.includes("apply_order_refund_") ||
+    message.includes("refund_qty") ||
+    message.includes("payment_mode") ||
+    message.includes("reference_no") ||
+    message.includes("could not find the 'remarks'")
+  );
+}
+
+const REFUND_EDIT_PENDING_HINT = `Run ${REFUND_EDIT_MIGRATION_FILE} in the Supabase SQL editor to enable refund edit / delete.`;
+
+export type OrderRefundEditState = { error: string | null; success: { orderId: string } | null };
+
+type RefundCapOrder = {
+  order_currency: string;
+  order_value_original: number | null;
+  order_value_inr: number | null;
+  order_date: string | null;
+};
+
+type RefundCapRow = { refund_amount: number; refund_currency: string; refund_amount_inr: number | null };
+
+/**
+ * The creation caps, applied to an EDIT. `existingRefunds` must already have
+ * the edited row filtered out. Returns the refund-date INR basis as well, so
+ * the credit note's FULL/PARTIAL label uses the same number the cap did.
+ */
+async function refundCapError(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  order: RefundCapOrder,
+  refundCurrency: string,
+  refundDate: string,
+  refundAmount: number,
+  conversionInr: number | null,
+  existingRefunds: RefundCapRow[]
+): Promise<{ error: string | null; orderValueInrAtRefundRate: number | null }> {
+  const orderValueOriginal = Number(order.order_value_original ?? 0);
+  let orderValueInr = Number(order.order_value_inr ?? 0);
+  if (!(orderValueInr > 0) && orderValueOriginal > 0) {
+    const conversion = await computeCurrencyConversion(
+      supabase,
+      order.order_currency,
+      order.order_date ?? refundDate,
+      orderValueOriginal
+    );
+    orderValueInr = conversion.inr ?? 0;
+  }
+
+  if (refundCurrency === order.order_currency && orderValueOriginal > 0) {
+    const existing = existingRefunds
+      .filter((r) => r.refund_currency === order.order_currency)
+      .reduce((sum, r) => sum + Number(r.refund_amount), 0);
+    const total = existing + refundAmount;
+    if (total > orderValueOriginal + 0.01) {
+      return {
+        error: `This refund would bring total refunds on this order to ${total.toFixed(2)} ${order.order_currency}, which exceeds the order's value of ${orderValueOriginal.toFixed(2)} ${order.order_currency}.`,
+        orderValueInrAtRefundRate: null,
+      };
+    }
+  }
+
+  let orderValueInrAtRefundRate: number | null = null;
+  if (refundCurrency !== order.order_currency && orderValueOriginal > 0) {
+    const conversion = await computeCurrencyConversion(supabase, order.order_currency, refundDate, orderValueOriginal);
+    orderValueInrAtRefundRate = conversion.inr ?? (orderValueInr > 0 ? orderValueInr : null);
+  }
+
+  if (refundCurrency !== order.order_currency && orderValueInrAtRefundRate != null) {
+    const refundRateToInr =
+      conversionInr != null && refundAmount > 0
+        ? conversionInr / refundAmount
+        : refundCurrency === "INR"
+          ? 1
+          : null;
+    if (refundRateToInr != null && refundRateToInr > 0) {
+      const orderValueInRefundCurrency = orderValueInrAtRefundRate / refundRateToInr;
+      const existing = existingRefunds
+        .filter((r) => r.refund_currency === refundCurrency)
+        .reduce((sum, r) => sum + Number(r.refund_amount), 0);
+      const total = existing + refundAmount;
+      if (total > orderValueInRefundCurrency + 0.01) {
+        return {
+          error: `This refund would bring total refunds on this order to ${total.toFixed(2)} ${refundCurrency}, which exceeds the order's value of ${orderValueInRefundCurrency.toFixed(2)} ${refundCurrency} (the order's value converted at the ${refundDate} rate).`,
+          orderValueInrAtRefundRate,
+        };
+      }
+    }
+  }
+
+  if (refundCurrency !== order.order_currency && orderValueInrAtRefundRate != null && conversionInr != null) {
+    const existingInr = existingRefunds.reduce((sum, r) => sum + Number(r.refund_amount_inr ?? 0), 0);
+    const totalInr = existingInr + conversionInr;
+    if (totalInr > orderValueInrAtRefundRate + 1) {
+      return {
+        error: `This refund would bring total refunds on this order to ₹${totalInr.toFixed(2)} (converted), which exceeds the order's value of ₹${orderValueInrAtRefundRate.toFixed(2)} (converted at the same refund-date rate).`,
+        orderValueInrAtRefundRate,
+      };
+    }
+  }
+
+  return { error: null, orderValueInrAtRefundRate };
+}
+
+/** Same FULL / PARTIAL label rule saveOrderRefundCore applies on creation. */
+function refundTypeFor(
+  orderCurrency: string,
+  orderValueOriginal: number,
+  refundCurrency: string,
+  refundAmount: number,
+  conversionInr: number | null,
+  orderValueInrAtRefundRate: number | null
+): "FULL REFUND" | "PARTIAL REFUND" {
+  if (refundCurrency === orderCurrency) {
+    return orderValueOriginal > 0 && refundAmount >= orderValueOriginal - 0.01 ? "FULL REFUND" : "PARTIAL REFUND";
+  }
+  if (conversionInr != null && orderValueInrAtRefundRate != null) {
+    return conversionInr >= orderValueInrAtRefundRate - 1 ? "FULL REFUND" : "PARTIAL REFUND";
+  }
+  return orderValueOriginal > 0 && refundAmount >= orderValueOriginal ? "FULL REFUND" : "PARTIAL REFUND";
+}
+
+export async function updateOrderRefund(
+  _prev: OrderRefundEditState,
+  formData: FormData
+): Promise<OrderRefundEditState> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const refundId = str(formData, "refund_id");
+  if (!refundId) return { error: "Missing refund entry.", success: null };
+
+  const refundAmount = Number(str(formData, "refund_amount"));
+  const refundCurrency = str(formData, "refund_currency").toUpperCase();
+  const refundDate = str(formData, "refund_date");
+  const reason = strOrNull(formData, "reason");
+  const refundQty = numOrNull(formData, "refund_qty");
+  const paymentMode = strOrNull(formData, "payment_mode");
+  const referenceNo = strOrNull(formData, "reference_no");
+  const remarks = strOrNull(formData, "remarks");
+
+  if (!Number.isFinite(refundAmount) || refundAmount < 0) {
+    return { error: "Refund amount must be a valid number.", success: null };
+  }
+  if (!refundCurrency) return { error: "Refund currency is required.", success: null };
+  if (!refundDate) return { error: "Refund date is required.", success: null };
+  if (refundQty != null && (!Number.isFinite(refundQty) || refundQty < 0)) {
+    return { error: "Refund quantity must be a valid number.", success: null };
+  }
+
+  const { data: refund, error: refundError } = await supabase
+    .from("order_refunds")
+    .select("id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, refund_qty, payment_mode, reference_no, remarks, refund_amount_inr")
+    .eq("id", refundId)
+    .maybeSingle();
+  if (refundError) {
+    if (refundEditPending(refundError)) return { error: REFUND_EDIT_PENDING_HINT, success: null };
+    return { error: refundError.message, success: null };
+  }
+  if (!refund) return { error: "Refund not found.", success: null };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, ref_no, company_id, order_currency, order_value_original, order_value_inr, order_date")
+    .eq("id", refund.order_id)
+    .single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This refund's order was not found, or you don't have access to its company.", success: null };
+  }
+
+  const conversion = await computeCurrencyConversion(supabase, refundCurrency, refundDate, refundAmount);
+
+  const { data: otherRefunds } = await supabase
+    .from("order_refunds")
+    .select("id, refund_amount, refund_currency, refund_amount_inr")
+    .eq("order_id", order.id)
+    .neq("id", refund.id);
+
+  const cap = await refundCapError(
+    supabase,
+    order,
+    refundCurrency,
+    refundDate,
+    refundAmount,
+    conversion.inr,
+    (otherRefunds ?? []).map((r) => ({
+      refund_amount: Number(r.refund_amount),
+      refund_currency: r.refund_currency,
+      refund_amount_inr: r.refund_amount_inr != null ? Number(r.refund_amount_inr) : null,
+    }))
+  );
+  if (cap.error) return { error: cap.error, success: null };
+
+  const refundType = refundTypeFor(
+    order.order_currency,
+    Number(order.order_value_original ?? 0),
+    refundCurrency,
+    refundAmount,
+    conversion.inr,
+    cap.orderValueInrAtRefundRate
+  );
+
+  const { error: updateError } = await supabase.rpc("apply_order_refund_update", {
+    p_refund_id: refund.id,
+    p_employee_id: employee.id,
+    p_amount: refundAmount,
+    p_currency: refundCurrency,
+    p_date: refundDate,
+    p_reason: reason,
+    p_qty: refundQty,
+    p_payment_mode: paymentMode,
+    p_reference_no: referenceNo,
+    p_remarks: remarks,
+    p_basis: numOrNull(formData, "refund_basis_percent"),
+    p_order_value: numOrZero(formData, "order_value_refund_amount"),
+    p_shipping: numOrZero(formData, "shipping_refund_amount"),
+    p_duty: numOrZero(formData, "duty_refund_amount"),
+    p_inr: conversion.inr,
+    p_usd: conversion.usd,
+    p_refund_type: refundType,
+  });
+  if (updateError) {
+    if (refundEditPending(updateError)) return { error: REFUND_EDIT_PENDING_HINT, success: null };
+    return { error: `Failed to update the refund: ${updateError.message}`, success: null };
+  }
+
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "order_refund.updated",
+    entityType: "order_refund",
+    entityId: refund.id,
+    entityLabel: order.ref_no,
+    changes: {
+      refund_amount: { from: Number(refund.refund_amount), to: refundAmount },
+      refund_currency: { from: refund.refund_currency, to: refundCurrency },
+      refund_date: { from: refund.refund_date, to: refundDate },
+      reason: { from: refund.reason, to: reason },
+      refund_qty: { from: refund.refund_qty, to: refundQty },
+      payment_mode: { from: refund.payment_mode, to: paymentMode },
+      reference_no: { from: refund.reference_no, to: referenceNo },
+      remarks: { from: refund.remarks, to: remarks },
+      refund_amount_inr: { from: refund.refund_amount_inr, to: conversion.inr },
+    },
+  });
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath(`/dashboard/orders/${order.id}`);
+  revalidatePath("/dashboard/returns");
+  revalidatePath("/dashboard/documents");
+  return { error: null, success: { orderId: order.id } };
+}
+
+export type OrderRefundDeleteState = { error: string | null; success: boolean };
+
+export async function deleteOrderRefund(refundId: string): Promise<OrderRefundDeleteState> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+  if (!refundId) return { error: "Missing refund entry.", success: false };
+
+  const { data: refund, error: refundError } = await supabase
+    .from("order_refunds")
+    .select("id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, refund_qty, payment_mode, reference_no, remarks")
+    .eq("id", refundId)
+    .maybeSingle();
+  if (refundError) {
+    if (refundEditPending(refundError)) return { error: REFUND_EDIT_PENDING_HINT, success: false };
+    return { error: refundError.message, success: false };
+  }
+  if (!refund) return { error: "Refund not found.", success: false };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, ref_no, company_id")
+    .eq("id", refund.order_id)
+    .single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This refund's order was not found, or you don't have access to its company.", success: false };
+  }
+
+  const { data, error } = await supabase.rpc("apply_order_refund_delete", {
+    p_refund_id: refund.id,
+    p_employee_id: employee.id,
+  });
+  if (error) {
+    if (refundEditPending(error)) return { error: REFUND_EDIT_PENDING_HINT, success: false };
+    return { error: `Failed to delete the refund: ${error.message}`, success: false };
+  }
+
+  const result = (data ?? {}) as { ok?: boolean; error?: string; reversed_qty?: number };
+  if (!result.ok) return { error: result.error ?? "The refund could not be deleted.", success: false };
+
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "order_refund.deleted",
+    entityType: "order_refund",
+    entityId: refund.id,
+    entityLabel: order.ref_no,
+    changes: {
+      refund_amount: refund.refund_amount,
+      refund_currency: refund.refund_currency,
+      refund_date: refund.refund_date,
+      reason: refund.reason,
+      refund_qty: refund.refund_qty,
+      payment_mode: refund.payment_mode,
+      reference_no: refund.reference_no,
+      remarks: refund.remarks,
+      credit_note_id: refund.credit_note_id,
+      restock_reversed: Number(result.reversed_qty ?? 0),
+    },
+  });
+
+  revalidatePath("/dashboard/orders");
+  revalidatePath(`/dashboard/orders/${order.id}`);
+  revalidatePath("/dashboard/returns");
+  revalidatePath("/dashboard/documents");
+  revalidatePath("/dashboard/inventory");
+  return { error: null, success: true };
 }

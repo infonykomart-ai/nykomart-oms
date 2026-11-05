@@ -11,7 +11,7 @@
 // conversion table (kept identical on purpose — don't let the two drift
 // apart), plus YARD, which size-parser.ts has never needed since no real
 // historical order Size value has ever used yards.
-export const LENGTH_UNITS = ["FT", "MTR", "INCH", "YARD", "CM"] as const;
+export const LENGTH_UNITS = ["FT", "MTR", "INCH", "YARD", "CM", "MM"] as const;
 export type LengthUnit = (typeof LENGTH_UNITS)[number];
 
 export const FT_PER_UNIT: Record<LengthUnit, number> = {
@@ -20,6 +20,8 @@ export const FT_PER_UNIT: Record<LengthUnit, number> = {
   INCH: 1 / 12,
   YARD: 3,
   CM: 1 / 30.48,
+  // 2026-11-05 — universal measurement system: 1 FT = 304.8 MM.
+  MM: 1 / 304.8,
 };
 
 export function toFeet(value: number, unit: LengthUnit): number {

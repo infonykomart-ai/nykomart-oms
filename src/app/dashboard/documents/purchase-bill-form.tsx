@@ -7,8 +7,16 @@ import { OrderLookupBox } from "./order-lookup-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
+import { AREA_UNIT_LABEL, formatMeasurement } from "@/lib/measurement";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
+import { PurchaseDimensionFields } from "@/components/purchase-dimension-fields";
+import {
+  derivePurchaseMeasurement,
+  purchaseDimensionDefaults,
+  type PurchaseDimensionState,
+  type PurchaseMeasurementDefaults,
+} from "@/lib/purchase-measurement";
 import { RoundOffField } from "./round-off-field";
 
 const initialState: DocFormState = { error: null, success: null };
@@ -29,6 +37,8 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 export function PurchaseBillForm({
   parties,
   billKind = "purchase",
+  measurementDefaults,
+  measurementPrecision = 2,
 }: {
   parties: PartyOption[];
   /**
@@ -40,6 +50,9 @@ export function PurchaseBillForm({
    * register.
    */
   billKind?: "purchase" | "printing";
+  /** OMS Settings → Measurement (company defaults). Optional. */
+  measurementDefaults?: PurchaseMeasurementDefaults | null;
+  measurementPrecision?: number;
 }) {
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
@@ -63,7 +76,6 @@ export function PurchaseBillForm({
   // src/lib/length-units.ts.
   const [sqFeetInput, setSqFeetInput] = useState("");
   const [sqFeetUnit, setSqFeetUnit] = useState<PurchaseQtyUnit>("FT");
-  const isPcs = sqFeetUnit === "PCS";
   // 2026-10-24b — "AGAR KISI VENDOR NE MTR ME LINEAR METRES BILL KIYA HAI TO
   // US NUMBER KO AREA MAAN KAR SQUARE KARNA MEANING NAHI RAKHTA": the
   // Sq. Ft normalisation assumes the number is an AREA. Fabric rolls are
@@ -80,14 +92,35 @@ export function PurchaseBillForm({
   // AREA in the chosen unit (9 with MTR = 9 sq m), so the squared factor is
   // the correct one: 9 sq m = 9 × 3.28084² = 96.88 sq ft, not 29.53. Fixed
   // via areaToSqFt so the reference line can't understate the area 3.28x.
-  const sqFeetConverted =
-    sqFeetInput && !isPcs ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit) : 0;
+  // (the reference conversion itself is computed below, once the measurement
+  // panel has decided whether the manual area field is even in play)
 
   // 2026-08-26 — controlled (not defaultValue) so the rate-from-size helper
   // below can fill both in directly; still freely editable by hand same as
   // before.
   const [qtyInput, setQtyInput] = useState("1");
   const [unitRateInput, setUnitRateInput] = useState("");
+
+  // 2026-11-05 — length × width with independent units. When both are filled
+  // this takes over the area/unit/rate fields below; both blank keeps the old
+  // manual area entry exactly as it was.
+  const [dimensions, setDimensions] = useState<PurchaseDimensionState>(() =>
+    purchaseDimensionDefaults(measurementDefaults)
+  );
+  const measurement = derivePurchaseMeasurement(
+    dimensions,
+    Number(qtyInput) || 0,
+    unitRateInput,
+    measurementPrecision
+  );
+  const measured = measurement.active && !measurement.error ? measurement : null;
+  const effectiveQtyUnit: PurchaseQtyUnit = measured ? measured.qtyUnit : sqFeetUnit;
+  const effectiveRate = measured ? measured.unitRate : Number(unitRateInput) || 0;
+  const isPcs = !measured && sqFeetUnit === "PCS";
+  const sqFeetConverted =
+    !measured && sqFeetInput && !isPcs
+      ? areaToSqFt(Number(sqFeetInput) || 0, sqFeetUnit as LengthUnit)
+      : 0;
 
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
   const [gstType, setGstType] = useState<GstType>("CGST_SGST");
@@ -97,7 +130,7 @@ export function PurchaseBillForm({
   // 0% (2026-10-20 rule) — the preview must not add the old 5% default.
   // Passed to the shared round-off control, which owns round_off_amt itself.
   const preRoundAmount =
-    (Number(qtyInput) || 0) * (Number(sqFeetInput) || 0) * (Number(unitRateInput) || 0);
+    (Number(qtyInput) || 0) * (measured ? measured.area : Number(sqFeetInput) || 0) * effectiveRate;
   const totalGstPct = gstRatePct == null ? 0 : gstType === "IGST" ? gstRatePct : gstRatePct * 2;
   const preRoundPayable = preRoundAmount + Math.round(preRoundAmount * totalGstPct) / 100;
 
@@ -174,7 +207,7 @@ export function PurchaseBillForm({
             rate from an item's size (e.g. "3X90 FT"), which doesn't apply to
             a piece-count purchase — a PCS bill already states its rate per
             piece directly (e.g. "16 PCS @ Rs.260/pc"), nothing to derive. */}
-        {!isPcs && (
+        {!isPcs && !measured && (
           <PurchaseBillRateHelper
             qty={Number(qtyInput) || 0}
             unitIsFt={sqFeetUnit === "FT"}
@@ -185,27 +218,45 @@ export function PurchaseBillForm({
             idPrefix="pb"
           />
         )}
+        <PurchaseDimensionFields
+          value={dimensions}
+          onChange={setDimensions}
+          derived={measurement}
+          qty={Number(qtyInput) || 0}
+          rateInput={unitRateInput}
+          precision={measurementPrecision}
+          idPrefix="pb"
+        />
         <div>
-          <label className={labelClass} htmlFor="pb_sqfeet">{isPcs ? "Unit" : "Sq. Feet"}</label>
+          <label className={labelClass} htmlFor="pb_sqfeet">
+            {measured ? `Area (${AREA_UNIT_LABEL[dimensions.areaUnit]})` : isPcs ? "Unit" : "Sq. Feet"}
+          </label>
           <div className="flex gap-1.5">
             {!isPcs && (
               <input
                 id="pb_sqfeet"
                 type="number"
                 step="0.01"
-                value={sqFeetInput}
+                readOnly={!!measured}
+                value={measured ? formatMeasurement(measured.storedArea, 4) : sqFeetInput}
                 onChange={(e) => setSqFeetInput(e.target.value)}
-                className={inputClass}
+                className={`${inputClass} ${measured ? "bg-slate-50 text-slate-500" : ""}`}
               />
             )}
-            <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+            {measured ? (
+              <span className="shrink-0 rounded-lg border border-slate-300 bg-slate-50 px-1.5 py-1.5 text-xs text-slate-600">
+                {AREA_UNIT_LABEL[dimensions.areaUnit]}
+              </span>
+            ) : (
+              <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+            )}
           </div>
-          {!isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
+          {!measured && !isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
             <p className="mt-0.5 text-[11px] text-slate-400">
               ≈ {sqFeetConverted.toFixed(2)} Sq. Ft (area) — reference only, saved as entered in {sqFeetUnit}
             </p>
           )}
-          {!isPcs && sqFeetUnit !== "FT" && (
+          {!measured && !isPcs && sqFeetUnit !== "FT" && (
             <label className="mt-1 flex items-start gap-1.5 text-[11px] text-slate-500">
               <input
                 type="checkbox"
@@ -223,20 +274,39 @@ export function PurchaseBillForm({
           {isPcs && (
             <p className="mt-0.5 text-[11px] text-slate-400">Purchased by piece count — Qty × Rate per Pcs is used directly, no size needed.</p>
           )}
-          <input type="hidden" name="sq_feet" value={isPcs ? "1" : sqFeetInput} />
-          <input type="hidden" name="qty_unit" value={sqFeetUnit} />
+          <input type="hidden" name="sq_feet" value={isPcs ? "1" : measured ? String(measured.storedArea) : sqFeetInput} />
+          <input type="hidden" name="qty_unit" value={effectiveQtyUnit} />
+          {measured && (
+            <>
+              <input type="hidden" name="length_value" value={dimensions.length} />
+              <input type="hidden" name="length_unit" value={dimensions.lengthUnit} />
+              <input type="hidden" name="width_value" value={dimensions.width} />
+              <input type="hidden" name="width_unit" value={dimensions.widthUnit} />
+              <input type="hidden" name="area_display_unit" value={dimensions.areaUnit} />
+              <input type="hidden" name="rate_input_value" value={unitRateInput} />
+              <input type="hidden" name="rate_input_unit" value={dimensions.rateUnit} />
+              <input type="hidden" name="measurement_precision" value={measurementPrecision} />
+            </>
+          )}
         </div>
         <div>
-          <label className={labelClass} htmlFor="pb_rate">{isPcs ? "Rate per Pcs" : "Unit Rate"} {!isPcs && sqFeetUnit !== "FT" && <span className="text-slate-400">(per {sqFeetUnit})</span>}</label>
+          <label className={labelClass} htmlFor="pb_rate">
+            {isPcs ? "Rate per Pcs" : "Unit Rate"}{" "}
+            {!isPcs && effectiveQtyUnit !== "FT" && (
+              <span className="text-slate-400">(per {measured ? AREA_UNIT_LABEL[dimensions.rateUnit] : sqFeetUnit})</span>
+            )}
+          </label>
           <input
             id="pb_rate"
-            name="unit_rate"
             type="number"
             step="0.01"
             value={unitRateInput}
             onChange={(e) => setUnitRateInput(e.target.value)}
             className={inputClass}
           />
+          {/* Server reads the EFFECTIVE per-area-unit rate; in manual mode that
+              is the typed figure, in measured mode it is the converted one. */}
+          <input type="hidden" name="unit_rate" value={measured ? effectiveRate : unitRateInput} />
         </div>
         <div className="col-span-2">
           <label className={labelClass} htmlFor="pb_desc">Work Description</label>

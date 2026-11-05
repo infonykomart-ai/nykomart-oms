@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireCapability, ForbiddenError, UnauthorizedError } from "@/lib/auth/require-capability";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { DocumentEntryTabs } from "./document-entry-tabs";
 import { listRelatedNotesForBills } from "./actions";
 import { groupPurchaseBillInvoices } from "@/lib/bill-grouping";
@@ -534,6 +534,19 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
       .map((it) => ({ description: it.description, qty: Number(it.qty), qty_unit: it.qty_unit })),
   }));
 
+  // 2026-11-05 — Measurement Settings (OMS Settings → Measurement): the
+  // purchase forms open on the company's default dimension/area/rate units
+  // and precision. A database that has not run the migration has no row, so
+  // the form falls back to FT / SQ FT / 2dp — nothing else changes.
+  // Service-role read: this table is deliberately not exposed to the anon
+  // key (no RLS policies); the capability check above already authorized the
+  // caller, and the query is hard-scoped to their current company.
+  const { data: measurementSettings } = await createServiceRoleClient()
+    .from("company_measurement_settings")
+    .select("default_dimension_unit, default_area_unit, default_rate_unit, decimal_precision")
+    .eq("company_id", employee.currentCompanyId)
+    .maybeSingle();
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -551,6 +564,12 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
             🖨️ Printing Register
           </Link>
           <Link
+            href="/dashboard/settings/measurement"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            📐 Measurement Settings
+          </Link>
+          <Link
             href="/dashboard/documents/bulk-upload"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
           >
@@ -565,6 +584,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
         stores={stores ?? []}
         currencies={currencies ?? []}
         washingEntriesTotal={washingEntriesTotal}
+        measurementSettings={measurementSettings ?? null}
         recent={{
           creditNotes: (recentCreditNotes ?? []).map((r) => ({
             ...r,

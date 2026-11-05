@@ -35,6 +35,14 @@
 import { requireCapability, requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
+import {
+  computePurchaseArea,
+  isAreaUnit,
+  isLengthUnit,
+  roundTo,
+  type AreaUnit,
+  type LengthUnit,
+} from "@/lib/measurement";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
@@ -1342,10 +1350,43 @@ export async function deleteInternalInvoice(id: string): Promise<SimpleResult> {
 // purchase_bills.qty_unit / gst_type (see db/schema.sql) are enforced by the
 // generated insert/update types, so coerce here (unknown -> documented default
 // for units; invalid gst_type -> null = "no GST split recorded").
-function qtyUnitUnion(v: string): "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS" {
-  return (["FT", "MTR", "INCH", "YARD", "CM", "PCS"] as const).includes(v as never)
-    ? (v as "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS")
+type PurchaseQtyUnitValue = "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS";
+
+function qtyUnitUnion(v: string): PurchaseQtyUnitValue {
+  return (["FT", "MTR", "INCH", "YARD", "CM", "MM", "PCS"] as const).includes(v as never)
+    ? (v as PurchaseQtyUnitValue)
     : "FT";
+}
+
+/**
+ * 2026-11-05 — reads the optional measurement block the purchase forms post.
+ * Returns null when the form was filled the old way (area typed directly), so
+ * every existing path keeps its exact behaviour. A partial entry (only one of
+ * length/width) is returned as-is with 0 for the missing side — the engine
+ * then rejects it, which is exactly what the user should see.
+ */
+function measurementFromForm(formData: FormData): PurchaseBillParams["measurement"] {
+  const lengthRaw = strOrNull(formData, "length_value");
+  const widthRaw = strOrNull(formData, "width_value");
+  if (lengthRaw == null && widthRaw == null) return null;
+
+  const lengthUnitRaw = str(formData, "length_unit") || "FT";
+  const widthUnitRaw = str(formData, "width_unit") || lengthUnitRaw;
+  const areaUnitRaw = str(formData, "area_display_unit") || "SQ_FT";
+  const rateUnitRaw = str(formData, "rate_input_unit") || areaUnitRaw;
+  const precisionRaw = Number(str(formData, "measurement_precision") || "2");
+  const rateRaw = strOrNull(formData, "rate_input_value");
+
+  return {
+    length: Number(lengthRaw ?? 0),
+    lengthUnit: isLengthUnit(lengthUnitRaw) ? lengthUnitRaw : "FT",
+    width: Number(widthRaw ?? 0),
+    widthUnit: isLengthUnit(widthUnitRaw) ? widthUnitRaw : "FT",
+    areaUnit: isAreaUnit(areaUnitRaw) ? areaUnitRaw : "SQ_FT",
+    rateUnit: isAreaUnit(rateUnitRaw) ? rateUnitRaw : "SQ_FT",
+    rate: rateRaw != null ? Number(rateRaw) : Number(str(formData, "unit_rate") || 0),
+    precision: Number.isFinite(precisionRaw) ? Math.min(6, Math.max(0, precisionRaw)) : 2,
+  };
 }
 function gstTypeUnion(v: string | null): "CGST_SGST" | "IGST" | null {
   return v === "CGST_SGST" || v === "IGST" ? v : null;
@@ -1358,7 +1399,7 @@ type PurchaseBillParams = {
   qty: number;
   sqFeet: number;
   // purchase_bills.qty_unit CHECK union — see schema.sql
-  qtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+  qtyUnit: PurchaseQtyUnitValue;
   workDescription: string | null;
   unitRate: number;
   orderId: string | null;
@@ -1379,7 +1420,87 @@ type PurchaseBillParams = {
   // 2026-10-24b — 'area' (default) normalises sq_feet to Sq Ft on the sheet;
   // 'as_billed' is a linear length billed in MTR/CM and is never squared.
   sizeMode?: "area" | "as_billed";
+  // 2026-11-05 — universal measurement engine. When present, the area/unit/
+  // rate below are IGNORED and recalculated here from the raw dimensions, so
+  // the browser can never post a wrong area for the dimensions it showed.
+  measurement?: {
+    length: number;
+    lengthUnit: LengthUnit;
+    width: number;
+    widthUnit: LengthUnit;
+    areaUnit: AreaUnit;
+    rateUnit: AreaUnit;
+    rate: number;
+    precision: number;
+  } | null;
 };
+
+/**
+ * 2026-11-05 — authoritative measurement calculation for one purchase-bill
+ * line. Returns the exact column values; a bad dimension/unit stops the save
+ * instead of silently writing a guessed area.
+ */
+type PurchaseMeasurementColumnsResult =
+  | {
+      error: string;
+    }
+  | {
+      error: null;
+      sqFeet: number;
+      qtyUnit: PurchaseQtyUnitValue;
+      unitRate: number;
+      columns: {
+        length_value: number;
+        length_unit: LengthUnit;
+        width_value: number;
+        width_unit: LengthUnit;
+        area_value: number;
+        area_display_unit: AreaUnit;
+        rate_input_value: number;
+        rate_input_unit: AreaUnit;
+        measurement_precision: number;
+      };
+    };
+
+function purchaseMeasurementColumns(
+  m: NonNullable<PurchaseBillParams["measurement"]>,
+  qty: number
+): PurchaseMeasurementColumnsResult {
+  const calc = computePurchaseArea({
+    length: m.length,
+    lengthUnit: m.lengthUnit,
+    width: m.width,
+    widthUnit: m.widthUnit,
+    qty,
+    outputUnit: m.areaUnit,
+    precision: m.precision,
+    rate: m.rate,
+    rateUnit: m.rateUnit,
+  });
+  if (!calc.ok) return { error: calc.error };
+  const r = calc.result;
+  return {
+    error: null,
+    // sq_feet is the legacy 2dp column the old formula still reads; area_value
+    // carries the precise engine result and the generated totals prefer it.
+    sqFeet: roundTo(r.area, 2),
+    qtyUnit: r.qtyUnit,
+    unitRate: r.unitRate,
+    columns: {
+      length_value: m.length,
+      length_unit: m.lengthUnit,
+      width_value: m.width,
+      width_unit: m.widthUnit,
+      // Per-piece area: total_sq_feet/total_amount multiply this by qty, so
+      // qty × area_value = Length × Width × Qty with no double count.
+      area_value: roundTo(r.area, 6),
+      area_display_unit: r.areaUnit,
+      rate_input_value: r.rateInput,
+      rate_input_unit: r.rateInputUnit,
+      measurement_precision: m.precision,
+    },
+  };
+}
 
 /**
  * 2026-09-13 — "KISI INVIOCE KI DO BAAR ENTRY NAHI AAYEGI DUPLICATE
@@ -1527,15 +1648,41 @@ async function savePurchaseBillCore(
     companyId = employee.currentCompanyId;
   }
 
+  // 2026-11-05 — when the line came from the measurement engine, the AREA,
+  // UNIT and RATE stored below are the server's own calculation from the raw
+  // dimensions; whatever the browser posted for sq_feet/unit_rate is ignored.
+  let effectiveSqFeet = p.sqFeet;
+  let effectiveQtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "MM" | "PCS" = p.qtyUnit || "FT";
+  let effectiveUnitRate = p.unitRate;
+  let measurementColumns: Partial<{
+    length_value: number;
+    length_unit: LengthUnit;
+    width_value: number;
+    width_unit: LengthUnit;
+    area_value: number;
+    area_display_unit: AreaUnit;
+    rate_input_value: number;
+    rate_input_unit: AreaUnit;
+    measurement_precision: number;
+  }> = {};
+  if (p.measurement) {
+    const measured = purchaseMeasurementColumns(p.measurement, p.qty || 1);
+    if (measured.error !== null) return { error: measured.error, id: null, docNo: null };
+    effectiveSqFeet = measured.sqFeet;
+    effectiveQtyUnit = measured.qtyUnit;
+    effectiveUnitRate = measured.unitRate;
+    measurementColumns = measured.columns;
+  }
+
   const billFields = {
     vendor_party_id: p.vendorPartyId,
     vendor_invoice_no: p.vendorInvoiceNo,
     vendor_invoice_date: p.vendorInvoiceDate,
     qty: p.qty || 1,
-    sq_feet: p.sqFeet,
-    qty_unit: p.qtyUnit || "FT",
+    sq_feet: effectiveSqFeet,
+    qty_unit: effectiveQtyUnit,
     work_description: p.workDescription,
-    unit_rate: p.unitRate,
+    unit_rate: effectiveUnitRate,
     order_id: p.orderId,
     company_id: companyId,
     // 2026-10-20 — "No GST" is stored as 0, never NULL. See
@@ -1573,6 +1720,7 @@ async function savePurchaseBillCore(
     .insert({
       ...billFields,
       ...newBillFields,
+      ...measurementColumns,
       entered_by_employee_id: employee.id,
       entered_by_name: employee.name,
     })
@@ -1581,14 +1729,24 @@ async function savePurchaseBillCore(
   if (error && /entered_by_(employee_id|name)/i.test(error.message)) {
     ({ data, error } = await supabase
       .from("purchase_bills")
-      .insert({ ...billFields, ...newBillFields })
+      .insert({ ...billFields, ...newBillFields, ...measurementColumns })
       .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
       .single());
   }
   if (error && /(bill_kind|size_mode)/i.test(error.message)) {
     ({ data, error } = await supabase
       .from("purchase_bills")
-      .insert(billFields)
+      .insert({ ...billFields, ...measurementColumns })
+      .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
+      .single());
+  }
+  // Pending measurement migration: the bill must still save (the area/rate
+  // above are already the engine's numbers, just without the extra detail
+  // columns). Same tolerant-fallback rule every other new column follows.
+  if (error && /(length_value|length_unit|width_value|width_unit|area_value|area_display_unit|rate_input_value|rate_input_unit|measurement_precision)/i.test(error.message)) {
+    ({ data, error } = await supabase
+      .from("purchase_bills")
+      .insert({ ...billFields, ...newBillFields, entered_by_employee_id: employee.id, entered_by_name: employee.name })
       .select("id, vendor_invoice_no, total_amount, g_total_plus_gst")
       .single());
   }
@@ -1671,6 +1829,7 @@ export async function savePurchaseBill(_prev: DocFormState, formData: FormData):
     roundOffAmt: numOrZero(formData, "round_off_amt"),
     billKind: str(formData, "bill_kind") === "printing" ? "printing" : "purchase",
     sizeMode: str(formData, "size_mode") === "as_billed" ? "as_billed" : "area",
+    measurement: measurementFromForm(formData),
   });
 
   if (result.error) return initialFail(result.error);
@@ -2186,7 +2345,14 @@ export async function searchOrdersForPurchaseBill(query: string): Promise<Purcha
 // already were. qty_unit stays shared (still just one FT/MTR/etc across
 // the whole invoice) — that part of the original 2026-08-17 fix (don't mix
 // units under one invoice) is unrelated to this and still holds.
-export type PurchaseBillMultiLine = { orderId: string; qty: number; sqFeet: number; unitRate: number };
+export type PurchaseBillMultiLine = {
+  orderId: string;
+  qty: number;
+  sqFeet: number;
+  unitRate: number;
+  /** 2026-11-05 — set by the dimension/area panel; recalculated server-side. */
+  measurement?: PurchaseBillParams["measurement"];
+};
 export type PurchaseBillMultiState = {
   error: string | null;
   results: { orderId: string; ok: boolean; docNo: string | null; error: string | null }[] | null;
@@ -2244,6 +2410,7 @@ export async function savePurchaseBillMulti(_prev: PurchaseBillMultiState, formD
       // 2026-10-29 — the one invoice-level round-off rides on the first row;
       // the group total (what Bill Payment posts) then includes it once.
       roundOffAmt: i === 0 ? invoiceRoundOff : 0,
+      measurement: line.measurement ?? null,
     });
     results!.push({ orderId: line.orderId, ok: !result.error, docNo: result.docNo, error: result.error });
   }
@@ -2272,8 +2439,10 @@ export type PurchaseBillMultiItemLine = {
   workDescription: string | null;
   qty: number;
   sqFeet: number;
-  qtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+  qtyUnit: PurchaseQtyUnitValue;
   unitRate: number;
+  /** 2026-11-05 — see PurchaseBillParams.measurement. */
+  measurement?: PurchaseBillParams["measurement"];
 };
 export type PurchaseBillMultiItemsState = {
   error: string | null;
@@ -2327,6 +2496,7 @@ export async function savePurchaseBillMultiItems(
       // 2026-10-29 — same rule as Multiple-Orders: the invoice's round-off
       // is stored on the first item row only.
       roundOffAmt: i === 0 ? invoiceRoundOff : 0,
+      measurement: item.measurement ?? null,
     });
     results!.push({
       index: i,
@@ -2385,15 +2555,32 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   const rawGstRate = strOrNull(formData, "gst_rate_pct");
   const gstRatePct = rawGstRate && Number(rawGstRate) > 0 ? Number(rawGstRate) : 0;
 
+  // 2026-11-05 — an edited line may carry dimensions; the area/unit/rate are
+  // then re-derived here, exactly like creation, never trusted from the form.
+  const measurement = measurementFromForm(formData);
+  const qtyValue = numOrZero(formData, "qty") || 1;
+  let sqFeetValue = numOrZero(formData, "sq_feet");
+  let qtyUnitValue = qtyUnitUnion(str(formData, "qty_unit") || "FT");
+  let unitRateValue = numOrZero(formData, "unit_rate");
+  let measurementColumns: Record<string, number | string> = {};
+  if (measurement) {
+    const measured = purchaseMeasurementColumns(measurement, qtyValue);
+    if (measured.error !== null) return { error: measured.error, success: false };
+    sqFeetValue = measured.sqFeet;
+    qtyUnitValue = measured.qtyUnit;
+    unitRateValue = measured.unitRate;
+    measurementColumns = measured.columns;
+  }
+
   const nextValues = {
     vendor_party_id: vendorPartyId,
     vendor_invoice_no: vendorInvoiceNo,
     vendor_invoice_date: strOrNull(formData, "vendor_invoice_date"),
-    qty: numOrZero(formData, "qty") || 1,
-    sq_feet: numOrZero(formData, "sq_feet"),
-    qty_unit: qtyUnitUnion(str(formData, "qty_unit") || "FT"),
+    qty: qtyValue,
+    sq_feet: sqFeetValue,
+    qty_unit: qtyUnitValue,
     work_description: strOrNull(formData, "work_description"),
-    unit_rate: numOrZero(formData, "unit_rate"),
+    unit_rate: unitRateValue,
     gst_rate_pct: gstRatePct,
     gst_type: gstRatePct > 0 ? gstTypeUnion(strOrNull(formData, "gst_type")) : null,
     round_off_amt: numOrZero(formData, "round_off_amt"),
@@ -2405,14 +2592,24 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
 
   let { data: updated, error } = await supabase
     .from("purchase_bills")
-    .update({ ...nextValues, size_mode: sizeMode })
+    .update({ ...nextValues, ...measurementColumns, size_mode: sizeMode })
     .eq("id", id)
     .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
     .single();
   if (error && /size_mode/i.test(error.message)) {
     ({ data: updated, error } = await supabase
       .from("purchase_bills")
-      .update(nextValues)
+      .update({ ...nextValues, ...measurementColumns })
+      .eq("id", id)
+      .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
+      .single());
+  }
+  // Pending measurement migration: the edit still saves the engine-derived
+  // area/rate, just without the extra detail columns.
+  if (error && /(length_value|length_unit|width_value|width_unit|area_value|area_display_unit|rate_input_value|rate_input_unit|measurement_precision)/i.test(error.message)) {
+    ({ data: updated, error } = await supabase
+      .from("purchase_bills")
+      .update({ ...nextValues, size_mode: sizeMode })
       .eq("id", id)
       .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
       .single());
@@ -4487,7 +4684,7 @@ type ReceivedChalanItemInput = {
   qty: number;
   // CHECK-constrained union on received_chalan_items.qty_unit (FT/MTR/...)
   // — the generated insert types now enforce it.
-  qtyUnit: "FT" | "MTR" | "INCH" | "YARD" | "CM" | "PCS";
+  qtyUnit: PurchaseQtyUnitValue;
   rate: number | null;
   remark: string | null;
 };

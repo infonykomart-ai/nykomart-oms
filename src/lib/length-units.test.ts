@@ -51,8 +51,10 @@ test("purchaseAreaSqFt treats PCS as 'no area' and defaults unknown units to FT"
 });
 
 test("the two conversion tables stay in sync and cover the expected units", () => {
-  assert.deepEqual([...PURCHASE_QTY_UNITS], ["FT", "MTR", "INCH", "YARD", "CM", "PCS"]);
-  assert.deepEqual(Object.keys(FT_PER_UNIT).sort(), ["CM", "FT", "INCH", "MTR", "YARD"]);
+  // 2026-11-05 — MM joined the universal measurement units (1 FT = 304.8 MM).
+  assert.deepEqual([...PURCHASE_QTY_UNITS], ["FT", "MTR", "INCH", "YARD", "CM", "MM", "PCS"]);
+  assert.deepEqual(Object.keys(FT_PER_UNIT).sort(), ["CM", "FT", "INCH", "MM", "MTR", "YARD"]);
+  assert.equal(FT_PER_UNIT.MM, 1 / 304.8);
   // Every factor must be a real, positive, finite number
   for (const [unit, factor] of Object.entries(FT_PER_UNIT)) {
     assert.ok(Number.isFinite(factor) && factor > 0, `${unit} factor must be positive`);

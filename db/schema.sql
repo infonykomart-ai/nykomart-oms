@@ -1125,8 +1125,11 @@ CREATE TABLE purchase_bills (
   -- 'PCS', so the existing total_amount formula below (qty * sq_feet *
   -- unit_rate) collapses to qty * rate-per-piece with no formula change —
   -- see db/2026-08-27-purchase-bills-pcs-unit.sql.
+  -- 2026-11-05 — 'MM' added for the universal measurement engine's sq mm
+  -- output (db/2026-11-05-refund-edit-delete-and-measurement.sql). Like the
+  -- other non-PCS units, it names the unit of BOTH sq_feet and unit_rate.
   qty_unit                     text NOT NULL DEFAULT 'FT'
-                                  CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM', 'PCS')),
+                                  CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM', 'MM', 'PCS')),
   work_description             text,        -- "WORK1" in the source — general purpose confirmed 2026-08-04, see SCHEMA_NOTES.md #6
   unit_rate                     numeric(14,2) NOT NULL DEFAULT 0,
   order_id                       uuid REFERENCES orders(id),   -- optional make-to-order reference (added 2026-08 round)
@@ -1166,14 +1169,36 @@ CREATE TABLE purchase_bills (
   -- exactly as entered. See the same migration.
   size_mode                       text NOT NULL DEFAULT 'area'
                                      CHECK (size_mode IN ('area', 'as_billed')),
-  -- TOTAL SQ FEET = QTY * SQ FEET, then TOTAL AMOUNT = TOTAL SQ FEET * UNIT
-  -- RATE — inlined fully (qty * sq_feet * unit_rate) since a generated
-  -- column can't reference another generated column.
-  total_sq_feet                   numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet) STORED,
-  total_amount                     numeric(14,2) GENERATED ALWAYS AS (qty * sq_feet * unit_rate) STORED,
+  -- 2026-11-05 — UNIVERSAL MEASUREMENT ENGINE input/output
+  -- (db/2026-11-05-refund-edit-delete-and-measurement.sql). ALL NULLABLE: a
+  -- bill entered the old way (area typed directly) leaves these NULL and
+  -- behaves exactly as before. A measured line stores what the user typed
+  -- (length/width + their independent units) beside the normalized result
+  -- (area_value, in qty_unit) and the unit they chose to see it in
+  -- (area_display_unit). rate_input_* keeps the vendor's quote exactly as
+  -- given; unit_rate is always normalized to qty_unit.
+  length_value                    numeric(14,3) CHECK (length_value IS NULL OR length_value > 0),
+  length_unit                     text CHECK (length_unit IS NULL OR length_unit IN ('MM', 'CM', 'MTR', 'INCH', 'FT')),
+  width_value                     numeric(14,3) CHECK (width_value IS NULL OR width_value > 0),
+  width_unit                      text CHECK (width_unit IS NULL OR width_unit IN ('MM', 'CM', 'MTR', 'INCH', 'FT')),
+  -- numeric(18,6) on purpose: the "2 / 3 / 4 decimal places" display choice
+  -- must not be lost in storage. sq_feet stays the 2dp legacy column.
+  area_value                      numeric(18,6) CHECK (area_value IS NULL OR area_value > 0),
+  area_display_unit               text CHECK (area_display_unit IS NULL OR area_display_unit IN ('SQ_MM', 'SQ_CM', 'SQ_MTR', 'SQ_INCH', 'SQ_FT')),
+  rate_input_value                numeric(14,2) CHECK (rate_input_value IS NULL OR rate_input_value >= 0),
+  rate_input_unit                 text CHECK (rate_input_unit IS NULL OR rate_input_unit IN ('SQ_MM', 'SQ_CM', 'SQ_MTR', 'SQ_INCH', 'SQ_FT')),
+  measurement_precision           integer CHECK (measurement_precision IS NULL OR (measurement_precision >= 0 AND measurement_precision <= 6)),
+  -- TOTAL SQ FEET = QTY * area, then TOTAL AMOUNT = TOTAL SQ FEET * UNIT
+  -- RATE — inlined fully since a generated column can't reference another
+  -- generated column. area_value (the precise engine result) wins when the
+  -- line was measured; manual bills keep using sq_feet exactly as before.
+  -- total_sq_feet is 4dp now so a sq-mtr area (2.9729) is not rounded to
+  -- 2.97 before it is multiplied by the rate.
+  total_sq_feet                   numeric(14,4) GENERATED ALWAYS AS (qty * COALESCE(area_value, sq_feet)) STORED,
+  total_amount                     numeric(14,2) GENERATED ALWAYS AS (qty * COALESCE(area_value, sq_feet) * unit_rate) STORED,
   g_total_plus_gst                  numeric(14,2) GENERATED ALWAYS AS (
-                                       (qty * sq_feet * unit_rate)
-                                       + (qty * sq_feet * unit_rate) * (CASE WHEN gst_rate_pct IS NOT NULL THEN gst_rate_pct * 2 ELSE 5 END / 100)
+                                       (qty * COALESCE(area_value, sq_feet) * unit_rate)
+                                       + (qty * COALESCE(area_value, sq_feet) * unit_rate) * (CASE WHEN gst_rate_pct IS NOT NULL THEN gst_rate_pct * 2 ELSE 5 END / 100)
                                        + round_off_amt
                                      ) STORED,
   created_at                          timestamptz NOT NULL DEFAULT now(),
@@ -1221,6 +1246,31 @@ CREATE TRIGGER trg_purchase_bills_updated_at
   BEFORE UPDATE ON purchase_bills
   FOR EACH ROW
   EXECUTE FUNCTION set_purchase_bills_updated_at();
+
+-- 2026-11-05 — per-company measurement preferences (OMS Settings →
+-- Measurement). See db/2026-11-05-refund-edit-delete-and-measurement.sql.
+
+-- Per-company measurement preferences (OMS Settings → Measurement). One row
+-- per company; absent = the engine defaults (FT in, SQ FT out, 2 decimals).
+-- No RLS, same as purchase_bills/orders: these are read and written through
+-- the service-role client after a capability check, never from the browser.
+CREATE TABLE IF NOT EXISTS company_measurement_settings (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                uuid NOT NULL UNIQUE REFERENCES companies(id) ON DELETE CASCADE,
+  default_dimension_unit    text NOT NULL DEFAULT 'FT'
+                              CHECK (default_dimension_unit IN ('MM', 'CM', 'MTR', 'INCH', 'FT')),
+  default_area_unit         text NOT NULL DEFAULT 'SQ_FT'
+                              CHECK (default_area_unit IN ('SQ_MM', 'SQ_CM', 'SQ_MTR', 'SQ_INCH', 'SQ_FT')),
+  default_rate_unit         text NOT NULL DEFAULT 'SQ_FT'
+                              CHECK (default_rate_unit IN ('SQ_MM', 'SQ_CM', 'SQ_MTR', 'SQ_INCH', 'SQ_FT')),
+  decimal_precision         integer NOT NULL DEFAULT 2
+                              CHECK (decimal_precision >= 0 AND decimal_precision <= 6),
+  allow_per_transaction_unit boolean NOT NULL DEFAULT true,
+  default_report_unit       text NOT NULL DEFAULT 'SQ_FT'
+                              CHECK (default_report_unit IN ('SQ_MM', 'SQ_CM', 'SQ_MTR', 'SQ_INCH', 'SQ_FT')),
+  updated_by_employee_id    uuid REFERENCES employees(id) ON DELETE SET NULL,
+  updated_at                timestamptz NOT NULL DEFAULT now()
+);
 
 -- Inventory / Stock for finished goods (pending item 4, 2026-08-08) — see
 -- db/2026-08-08-inventory-finished-stock.sql for the full design. A
@@ -1911,6 +1961,28 @@ CREATE TABLE order_refunds (
 );
 CREATE INDEX idx_order_refunds_order ON order_refunds(order_id);
 
+-- 2026-11-05 — REFUND EDIT / DELETE (folded from
+-- db/2026-11-05-refund-edit-delete-and-measurement.sql). A refund is no
+-- longer write-once: it can be corrected or removed, so the row needs to say
+-- when/who last changed it (created_at stays the original entry time and is
+-- never rewritten). The optional qty/payment/reference/remarks fields are
+-- the "all previously entered refund details" the owner asked to be
+-- editable; NULL on every historical row = not recorded, never guessed.
+-- order_refunds is hard-deleted on confirmation (the credit note created
+-- with it is removed and the restock reversed in the same action); the
+-- audit_log keeps the who/what/why of every edit and delete.
+ALTER TABLE order_refunds
+  ADD COLUMN IF NOT EXISTS refund_qty    numeric(14,2)
+    CHECK (refund_qty IS NULL OR refund_qty >= 0),
+  ADD COLUMN IF NOT EXISTS payment_mode  text,
+  ADD COLUMN IF NOT EXISTS reference_no  text,
+  ADD COLUMN IF NOT EXISTS remarks       text,
+  ADD COLUMN IF NOT EXISTS updated_at    timestamptz,
+  ADD COLUMN IF NOT EXISTS updated_by_employee_id uuid REFERENCES employees(id) ON DELETE SET NULL;
+UPDATE order_refunds SET updated_at = created_at WHERE updated_at IS NULL;
+ALTER TABLE order_refunds ALTER COLUMN updated_at SET DEFAULT now();
+ALTER TABLE order_refunds ALTER COLUMN updated_at SET NOT NULL;
+
 -- Old sheet: Internal Invoice — one company billing another for goods/
 -- services moved between them. from_company <> to_company enforced by CHECK.
 CREATE TABLE internal_invoices (
@@ -2282,7 +2354,7 @@ CREATE TABLE received_chalan_items (
   description     text NOT NULL,
   qty               numeric(14,2) NOT NULL,
   qty_unit            text NOT NULL DEFAULT 'FT'
-                          CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM', 'PCS')),
+                          CHECK (qty_unit IN ('FT', 'MTR', 'INCH', 'YARD', 'CM', 'MM', 'PCS')),
   rate                  numeric(14,2),
   remark                  text,
   created_at                timestamptz NOT NULL DEFAULT now()
@@ -7336,3 +7408,190 @@ ON CONFLICT (role_id, capability_code) DO NOTHING;
 --                                         + b2b_quotations + b2b_payments
 -- (CRM Dashboard alerts, getAlerts_)  -> data_quality_alerts_view
 -- =============================================================================
+
+-- =============================================================================
+-- 2026-11-05 — REFUND UPDATE / DELETE, ATOMIC
+-- =============================================================================
+-- A refund edit touches TWO rows (order_refunds + the credit note it
+-- generated); a delete touches up to FOUR (refund, credit note, finished
+-- stock, its movement) plus the return request that released it. PostgREST
+-- cannot span those in one client-side transaction, so the writes live in
+-- these two functions and every effect either lands or none does. The app
+-- validates capability, the refund cap and currency conversion first, then
+-- passes the already-computed values in — no financial maths happens here.
+-- See db/2026-11-05-refund-edit-delete-and-measurement.sql.
+
+CREATE OR REPLACE FUNCTION apply_order_refund_update(
+  p_refund_id uuid,
+  p_employee_id uuid,
+  p_amount numeric,
+  p_currency varchar,
+  p_date date,
+  p_reason text,
+  p_qty numeric,
+  p_payment_mode text,
+  p_reference_no text,
+  p_remarks text,
+  p_basis numeric,
+  p_order_value numeric,
+  p_shipping numeric,
+  p_duty numeric,
+  p_inr numeric,
+  p_usd numeric,
+  p_refund_type refund_type
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_order_id uuid;
+  v_cn_id uuid;
+BEGIN
+  UPDATE order_refunds SET
+    refund_amount = p_amount,
+    refund_currency = p_currency,
+    refund_date = p_date,
+    reason = p_reason,
+    refund_qty = p_qty,
+    payment_mode = p_payment_mode,
+    reference_no = p_reference_no,
+    remarks = p_remarks,
+    refund_basis_percent = p_basis,
+    order_value_refund_amount = coalesce(p_order_value, 0),
+    shipping_refund_amount = coalesce(p_shipping, 0),
+    duty_refund_amount = coalesce(p_duty, 0),
+    refund_amount_inr = p_inr,
+    refund_amount_usd = p_usd,
+    updated_at = now(),
+    updated_by_employee_id = p_employee_id
+  WHERE id = p_refund_id
+  RETURNING order_id, credit_note_id INTO v_order_id, v_cn_id;
+
+  IF v_order_id IS NULL THEN
+    RAISE EXCEPTION 'Refund % not found', p_refund_id;
+  END IF;
+
+  -- The auto-generated Credit Note is part of the same financial record —
+  -- amount, date, currency split and FULL/PARTIAL label move with the
+  -- refund. A credit note belonging to a DIFFERENT order is never touched.
+  IF v_cn_id IS NOT NULL THEN
+    UPDATE credit_notes SET
+      credit_note_date = p_date,
+      refund_amount = p_amount,
+      refund_amt_usd = CASE WHEN p_currency = 'USD' THEN p_amount ELSE NULL END,
+      refund_amt_inr = CASE WHEN p_currency = 'INR' THEN p_amount ELSE NULL END,
+      refund_type = p_refund_type,
+      remark = p_reason
+    WHERE id = v_cn_id AND order_id = v_order_id;
+  END IF;
+
+  RETURN v_order_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION apply_order_refund_delete(
+  p_refund_id uuid,
+  p_employee_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_refund order_refunds%ROWTYPE;
+  v_order orders%ROWTYPE;
+  v_cn_in_use integer := 0;
+  v_restock numeric := 0;
+  v_net_restocked numeric := 0;
+  v_reverse numeric := 0;
+  v_stock_id uuid;
+  v_cn_id uuid;
+BEGIN
+  SELECT * INTO v_refund FROM order_refunds WHERE id = p_refund_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Refund not found.');
+  END IF;
+
+  SELECT * INTO v_order FROM orders WHERE id = v_refund.order_id;
+
+  -- Deleting the credit note would silently pull a document the finance
+  -- ledger already uses. Refuse instead of cascading money away; the user
+  -- removes that linkage first, then deletes the refund.
+  IF v_refund.credit_note_id IS NOT NULL THEN
+    SELECT
+      (SELECT count(*) FROM bill_pass_register WHERE credit_note_id = v_refund.credit_note_id)
+      + (SELECT count(*) FROM bill_pass_register_adjustments WHERE credit_note_id = v_refund.credit_note_id)
+      + (SELECT count(*) FROM refunds WHERE credit_note_id = v_refund.credit_note_id)
+    INTO v_cn_in_use;
+    IF v_cn_in_use > 0 THEN
+      RETURN jsonb_build_object(
+        'ok', false,
+        'error', 'This refund''s credit note is already linked in the finance ledger. Remove that linkage first, then delete the refund.'
+      );
+    END IF;
+  END IF;
+
+  -- Undo exactly what the refund put into stock, and only once: net of any
+  -- earlier reversal for this order. The creation path restocks the purchased
+  -- qty when there is one, else the order's own qty (see saveOrderRefundCore).
+  SELECT coalesce(sum(qty), 0) INTO v_restock FROM purchase_bills WHERE order_id = v_order.id;
+  IF v_restock <= 0 THEN
+    v_restock := coalesce(v_order.qty, 0);
+  END IF;
+  SELECT coalesce(sum(
+           CASE
+             WHEN reason = 'auto_restock_return_refund' THEN qty_change
+             WHEN reason = 'auto_restock_reversal_refund_deleted' THEN -qty_change
+             ELSE 0
+           END), 0)
+    INTO v_net_restocked
+    FROM finished_stock_movements
+   WHERE order_id = v_order.id;
+  v_reverse := least(greatest(v_net_restocked, 0), v_restock);
+
+  IF v_reverse > 0 THEN
+    SELECT id INTO v_stock_id FROM finished_stock
+     WHERE item_category_id = v_order.item_category_id
+       AND sku_label = coalesce(v_order.sku_label, '')
+       AND size_label = coalesce(v_order.size_label, '')
+     LIMIT 1;
+    IF v_stock_id IS NOT NULL THEN
+      UPDATE finished_stock
+         SET qty = greatest(qty - v_reverse::integer, 0), updated_at = now()
+       WHERE id = v_stock_id;
+    END IF;
+    INSERT INTO finished_stock_movements
+      (item_category_id, sku_label, size_label, qty_change, reason, order_id, entry_by_employee_id)
+    VALUES
+      (v_order.item_category_id, coalesce(v_order.sku_label, ''), coalesce(v_order.size_label, ''),
+       -v_reverse::integer, 'auto_restock_reversal_refund_deleted', v_order.id, p_employee_id);
+  END IF;
+
+  -- A return request that released this refund keeps its Approved status and
+  -- decision trail; only the dangling pointer is removed (it is a RESTRICT
+  -- foreign key, so the refund row cannot go otherwise).
+  UPDATE return_requests SET applied_refund_id = NULL WHERE applied_refund_id = p_refund_id;
+
+  v_cn_id := v_refund.credit_note_id;
+  IF v_cn_id IS NOT NULL THEN
+    DELETE FROM credit_notes WHERE id = v_cn_id;
+  END IF;
+  DELETE FROM order_refunds WHERE id = p_refund_id;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'order_id', v_order.id,
+    'order_ref_no', v_order.ref_no,
+    'reversed_qty', v_reverse,
+    'credit_note_id', v_cn_id
+  );
+END;
+$$;
+
+-- Service-role only: these are financial mutations and the app already
+-- enforces the capability check before calling them.
+REVOKE ALL ON FUNCTION apply_order_refund_update(uuid, uuid, numeric, varchar, date, text, numeric, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, refund_type) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION apply_order_refund_delete(uuid, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION apply_order_refund_update(uuid, uuid, numeric, varchar, date, text, numeric, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, refund_type) TO service_role;
+GRANT EXECUTE ON FUNCTION apply_order_refund_delete(uuid, uuid) TO service_role;

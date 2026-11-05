@@ -60,7 +60,7 @@ export async function loadOrderDetail(id: string) {
         .maybeSingle(),
       supabase
         .from("order_refunds")
-        .select("refund_amount, refund_currency, refund_date, reason")
+        .select("id, refund_amount, refund_currency, refund_date, reason, refund_qty, payment_mode, reference_no, remarks, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, created_at, updated_at")
         .eq("order_id", id)
         .order("refund_date", { ascending: false }),
       supabase.from("currencies").select("code, name").order("code"),

@@ -127,7 +127,7 @@ export default async function ReturnsPage({
   let refundBundlesQuery = supabase
     .from("orders")
     .select(
-      "id, ref_no, store_id, status, marketplace_order_no, buyer_name_address, order_date, order_value_original, order_value_inr, order_currency, order_refunds!inner(id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, refund_amount_inr, refund_amount_usd, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount)"
+      "id, ref_no, store_id, status, marketplace_order_no, buyer_name_address, order_date, order_value_original, order_value_inr, order_currency, order_refunds!inner(id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, refund_amount_inr, refund_amount_usd, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, refund_qty, payment_mode, reference_no, remarks, created_at, updated_at)"
     )
     .in("company_id", scopedCompanyIds)
     .order("order_date", { ascending: false })
@@ -200,6 +200,13 @@ export default async function ReturnsPage({
       order_value_refund_amount: number | null;
       shipping_refund_amount: number | null;
       duty_refund_amount: number | null;
+      // 2026-11-05 — editable detail + history (refund edit/delete round).
+      refund_qty: number | null;
+      payment_mode: string | null;
+      reference_no: string | null;
+      remarks: string | null;
+      created_at: string;
+      updated_at: string;
     }[];
   };
 
@@ -286,6 +293,15 @@ export default async function ReturnsPage({
       order_value_refund_amount: r.order_value_refund_amount != null ? Number(r.order_value_refund_amount) : null,
       shipping_refund_amount: r.shipping_refund_amount != null ? Number(r.shipping_refund_amount) : null,
       duty_refund_amount: r.duty_refund_amount != null ? Number(r.duty_refund_amount) : null,
+      // 2026-11-05 — the Edit/Delete dialog and the history columns read
+      // these straight off the row.
+      order_ref_no: r.order.ref_no,
+      refund_qty: r.refund_qty != null ? Number(r.refund_qty) : null,
+      payment_mode: r.payment_mode,
+      reference_no: r.reference_no,
+      remarks: r.remarks,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
       value_check: valueCheck,
     };
   });
@@ -669,7 +685,7 @@ export default async function ReturnsPage({
       {hasReports ? (
         <>
           <StoreRateReportTable rows={storeRateRows} />
-          <OrderRefundsReportTable rows={orderRefundRows} />
+          <OrderRefundsReportTable rows={orderRefundRows} currencies={(currencies ?? []).map((row) => row.code)} />
           <HistoricalRefundsReportTable rows={historicalRefundRows} />
         </>
       ) : null}

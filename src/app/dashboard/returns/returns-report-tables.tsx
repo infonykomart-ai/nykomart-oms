@@ -7,6 +7,7 @@ import type { ExportColumn } from "@/lib/export/export-table";
 import { useColumnVisibility } from "@/lib/export/use-column-visibility";
 import { PrintArea } from "@/components/print-view";
 import { DocStatementDialog } from "@/components/doc-statement-dialog";
+import { RefundEntryActions } from "./refund-entry-actions";
 
 // 2026-11-02 — "RETURN REFUND PAGE BHI ISI PARKAR SE BANAO ... SS ORDER PAGE
 // KA HAI OR RETURN REFUND VALA PAGE BHI ESA HI BANE, SAB KUCH SAHI SE SAMJH
@@ -72,6 +73,7 @@ function FilterableSheet<T extends { id: string }>({
   searchPlaceholder,
   minWidthClass = "min-w-[1400px]",
   rowAction,
+  actionLabel = "Statement",
 }: {
   areaId: string;
   title: string;
@@ -86,6 +88,8 @@ function FilterableSheet<T extends { id: string }>({
    *  column/export set on purpose, print:hidden, same as the Orders page's
    *  "Actions" column. */
   rowAction?: (row: T) => ReactNode;
+  /** Header of the fixed right-hand column ("Statement" by default). */
+  actionLabel?: string;
 }) {
   // useColumnVisibility() types its result as ExportColumn<T>[] (it is shared
   // with every report in the app), which would erase the extra SheetColumn
@@ -206,7 +210,7 @@ function FilterableSheet<T extends { id: string }>({
                     {c.label}
                   </th>
                 ))}
-                {rowAction && <th className={HEAD_CELL}>Statement</th>}
+                {rowAction && <th className={HEAD_CELL}>{actionLabel}</th>}
               </tr>
               <tr>
                 {visibleColumns.map((c) => (
@@ -356,6 +360,14 @@ export type OrderRefundRow = {
   order_value_refund_amount: number | null;
   shipping_refund_amount: number | null;
   duty_refund_amount: number | null;
+  // 2026-11-05 — editable refund detail + history (refund edit/delete round).
+  order_ref_no: string;
+  refund_qty: number | null;
+  payment_mode: string | null;
+  reference_no: string | null;
+  remarks: string | null;
+  created_at: string;
+  updated_at: string;
   /** "OK" / "OVER" / "N/A" — every refund on this order (in ₹) vs the
    *  order's own value in ₹. Computed in page.tsx from ALL of the order's
    *  refunds, not just the rows visible under the current date filter. */
@@ -518,21 +530,75 @@ const ORDER_REFUND_COLUMNS: SheetColumn<OrderRefundRow>[] = [
   },
   { key: "category", label: "Category", filter: "select", value: (r) => r.category },
   { key: "reason", label: "Reason", filter: "text", value: (r) => r.reason },
+  // 2026-11-05 — the "all previously entered refund details" the owner asked
+  // to see and edit: quantity, how it was paid, its transaction reference and
+  // free remarks. NULL on rows that predate this round (shown as —).
+  {
+    key: "refund_qty",
+    label: "Qty",
+    filter: "text",
+    value: (r) => r.refund_qty,
+    tdClass: "text-right",
+    cell: (r) => (r.refund_qty != null ? r.refund_qty.toFixed(2) : "—"),
+  },
+  { key: "payment_mode", label: "Payment Mode", filter: "text", value: (r) => r.payment_mode },
+  { key: "reference_no", label: "Reference No.", filter: "text", value: (r) => r.reference_no },
+  { key: "remarks", label: "Remarks", filter: "text", value: (r) => r.remarks },
+  {
+    key: "created_at",
+    label: "Created",
+    filter: "text",
+    value: (r) => r.created_at,
+    cell: (r) => (r.created_at ? r.created_at.slice(0, 16).replace("T", " ") : "—"),
+  },
+  {
+    key: "updated_at",
+    label: "Last Updated",
+    filter: "text",
+    value: (r) => r.updated_at,
+    cell: (r) => (r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "—"),
+  },
 ];
 
-export function OrderRefundsReportTable({ rows }: { rows: OrderRefundRow[] }) {
+export function OrderRefundsReportTable({ rows, currencies }: { rows: OrderRefundRow[]; currencies: string[] }) {
   return (
     <FilterableSheet
       areaId="order-refunds-print-area"
       title="Refunds recorded in OMS"
-      subtitle="One row per refund entered against an order. PO No. opens that order, Order No. / Buyer jump to it on the Orders page. Value Check compares EVERY refund on that order (in ₹) with the order's own value (in ₹): ✓ OK = within the order's value, ⚠ OVER = more refunded than the order was worth (the refund screen blocks this), — = the order has no recorded value to compare against."
+      subtitle="One row per refund entered against an order. PO No. opens that order, Order No. / Buyer jump to it on the Orders page. Value Check compares EVERY refund on that order (in ₹) with the order's own value (in ₹): ✓ OK = within the order's value, ⚠ OVER = more refunded than the order was worth (the refund screen blocks this), — = the order has no recorded value to compare against. Edit updates the same entry (and its credit note) after re-checking the cap; Delete asks for confirmation, then removes the entry, its credit note and the restock it caused, all in one transaction."
       filenameBase="order-refunds-report"
       columns={ORDER_REFUND_COLUMNS}
       rows={rows}
       emptyText="No order refunds match the current search / column filters."
       searchPlaceholder="Search anything — PO, order no, buyer, store, amount…"
-      minWidthClass="min-w-[2200px]"
-      rowAction={(r) => <DocStatementDialog type="order_refund" id={r.id} />}
+      minWidthClass="min-w-[2600px]"
+      actionLabel="Statement / Actions"
+      rowAction={(r) => (
+        <div className="flex items-center justify-end gap-1">
+          <DocStatementDialog type="order_refund" id={r.id} />
+          <RefundEntryActions
+            currencies={currencies}
+            refund={{
+              id: r.id,
+              order_id: r.order_id,
+              order_ref_no: r.order_ref_no,
+              order_currency: r.order_currency,
+              refund_amount: r.refund_amount,
+              refund_currency: r.refund_currency,
+              refund_date: r.refund_date,
+              reason: r.reason,
+              refund_qty: r.refund_qty,
+              payment_mode: r.payment_mode,
+              reference_no: r.reference_no,
+              remarks: r.remarks,
+              refund_basis_percent: r.refund_basis_percent,
+              order_value_refund_amount: r.order_value_refund_amount,
+              shipping_refund_amount: r.shipping_refund_amount,
+              duty_refund_amount: r.duty_refund_amount,
+            }}
+          />
+        </div>
+      )}
     />
   );
 }
