@@ -565,7 +565,7 @@ export function OrderRefundsReportTable({ rows, currencies }: { rows: OrderRefun
     <FilterableSheet
       areaId="order-refunds-print-area"
       title="Refunds recorded in OMS"
-      subtitle="One row per refund entered against an order. PO No. opens that order, Order No. / Buyer jump to it on the Orders page. Value Check compares EVERY refund on that order (in ₹) with the order's own value (in ₹): ✓ OK = within the order's value, ⚠ OVER = more refunded than the order was worth (the refund screen blocks this), — = the order has no recorded value to compare against. Edit updates the same entry (and its credit note) after re-checking the cap; Delete asks for confirmation, then removes the entry, its credit note and the restock it caused, all in one transaction."
+      subtitle="One row per refund entered against an order. PO No. opens that order, Order No. / Buyer jump to it on the Orders page. Value Check compares EVERY refund on that order with the order's value in the same currency (₹ only when refunds are in mixed currencies): ✓ OK = within the order's value, ⚠ OVER = more refunded than the order was worth (the refund screen blocks this), — = the order has no recorded value to compare against. Edit updates the same entry (and its credit note) after re-checking the cap; Delete asks for confirmation, then removes the entry, its credit note and the restock it caused, all in one transaction."
       filenameBase="order-refunds-report"
       columns={ORDER_REFUND_COLUMNS}
       rows={rows}

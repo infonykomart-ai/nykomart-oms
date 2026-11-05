@@ -220,29 +220,67 @@ export default async function ReturnsPage({
 
   const historicalRefunds = historicalRefundsRaw ?? [];
 
-  // 2026-11-02 — Value Check ke liye har order ke SARE refunds (₹ me), sirf
-  // is date-window me dikhne wale nahi: agar From/To filter ne us order ka
+  // 2026-11-02 — Value Check ke liye har order ke SARE refunds, sirf is
+  // date-window me dikhne wale nahi: agar From/To filter ne us order ka
   // pehla refund bahar kar diya, tab bhi total sahi rehna chahiye. Isliye
-  // ek alag query, bina date/store/search filter ke, poori company par — aur
-  // har refund row pehle se hi refund_amount_inr me apna ₹ conversion store
-  // rakhti hai, is liye yahan koi nayi conversion nahi chalti (currency ka
-  // farq nahi aata: dono taraf wahi stored ₹ numbers hain).
+  // ek alag query, bina date/store/search filter ke, poori company par.
+  //
+  // 2026-11-05 — pehle yahan har refund ka ₹ conversion order ki order-date
+  // ₹ value se compare hota tha. USD (ya kisi bhi non-INR) order ka 100%
+  // refund refund-date ke FX rate se convert hone par ₹ me thoda zyada/kom
+  // banta hai, is liye ek valid full refund bhi "OVER" dikh jata tha. Ab
+  // wahi rule jo create/edit cap use karta hai: agar refund order ki hi
+  // currency me hai to seedha us currency ke amounts compare hote hain
+  // (order_value_original vs refund_amount, ₹0.01 rounding tolerance);
+  // sirf mixed-currency orders ke liye stored ₹ totals fallback hain.
   //
   // Company ke hisaab se hi maanga jaata hai (wahi `orders!inner` +
   // .in("orders.company_id") pattern jo is page ka purana main query use
   // karta tha), order-id list is liye NAHI: 800+ order ki id-list ek 30KB
   // ka URL banati hai jo HTTP layer database ko dekhne se pehle hi 400 me
   // reject kar deti hai (supabase/postgrest-js#423).
-  const refundsInrByOrder = new Map<string, number>();
+  type RefundTotals = {
+    inr: number;
+    sameCurrency: number;
+    hasMismatchedCurrency: boolean;
+    orderValueOriginal: number;
+    orderValueInr: number;
+  };
+  const refundTotalsByOrder = new Map<string, RefundTotals>();
   if (orderRefunds.length > 0) {
     const { data: allCompanyRefunds } = await supabase
       .from("order_refunds")
-      .select("order_id, refund_amount_inr, orders!inner(company_id)")
+      .select(
+        "order_id, refund_amount, refund_currency, refund_amount_inr, orders!inner(company_id, order_currency, order_value_original, order_value_inr)"
+      )
       .in("orders.company_id", scopedCompanyIds)
       .limit(10000);
-    for (const r of allCompanyRefunds ?? []) {
-      if (r.refund_amount_inr == null) continue;
-      refundsInrByOrder.set(r.order_id, (refundsInrByOrder.get(r.order_id) ?? 0) + Number(r.refund_amount_inr));
+    for (const r of (allCompanyRefunds ?? []) as unknown as Array<{
+      order_id: string;
+      refund_amount: number;
+      refund_currency: string;
+      refund_amount_inr: number | null;
+      orders: {
+        order_currency: string | null;
+        order_value_original: number | null;
+        order_value_inr: number | null;
+      } | null;
+    }>) {
+      const order = r.orders;
+      const totals = refundTotalsByOrder.get(r.order_id) ?? {
+        inr: 0,
+        sameCurrency: 0,
+        hasMismatchedCurrency: false,
+        orderValueOriginal: Number(order?.order_value_original ?? 0),
+        orderValueInr: Number(order?.order_value_inr ?? 0),
+      };
+      if (r.refund_amount_inr != null) totals.inr += Number(r.refund_amount_inr);
+      if (order?.order_currency && r.refund_currency === order.order_currency) {
+        totals.sameCurrency += Number(r.refund_amount);
+      } else {
+        totals.hasMismatchedCurrency = true;
+      }
+      refundTotalsByOrder.set(r.order_id, totals);
     }
   }
 
@@ -263,13 +301,20 @@ export default async function ReturnsPage({
   const noDispatchRefundCount = orderRefunds.length - dispatchRefundCount;
 
   const orderRefundRows = orderRefunds.map((r, i) => {
-    // "Order value se jyada refund nahi hoga" — ka rule ka on-screen result.
-    // Dono taraf ₹: refund side unke stored refund_amount_inr total se, order
-    // side order_value_inr se. Value hi na ho to "N/A" (compare karna hi
-    // possible nahi), warna total ≤ value → OK, warna OVER.
-    const orderValueInr = r.order.order_value_inr != null ? Number(r.order.order_value_inr) : 0;
-    const totalRefundedInr = refundsInrByOrder.get(r.order_id) ?? 0;
-    const valueCheck = orderValueInr > 0 ? (totalRefundedInr <= orderValueInr + 1 ? "OK" : "OVER") : "N/A";
+    // "Order value se jyada refund nahi hoga" — same-currency-first, exactly
+    // like saveOrderRefundCore/refundCapError. Same-currency sums get the
+    // ₹0.01 float tolerance; only mixed-currency orders fall back to the
+    // stored ₹ totals (₹1 tolerance). No value recorded → "N/A".
+    const totals = refundTotalsByOrder.get(r.order_id);
+    const orderValueOriginal = Number(totals?.orderValueOriginal ?? r.order.order_value_original ?? 0);
+    const orderValueInr = Number(totals?.orderValueInr ?? r.order.order_value_inr ?? 0);
+    const totalRefundedInr = totals?.inr ?? (r.refund_amount_inr != null ? Number(r.refund_amount_inr) : 0);
+    let valueCheck = "N/A";
+    if (totals && !totals.hasMismatchedCurrency && orderValueOriginal > 0) {
+      valueCheck = totals.sameCurrency <= orderValueOriginal + 0.01 ? "OK" : "OVER";
+    } else if (orderValueInr > 0) {
+      valueCheck = totalRefundedInr <= orderValueInr + 1 ? "OK" : "OVER";
+    }
 
     return {
       id: r.id,
