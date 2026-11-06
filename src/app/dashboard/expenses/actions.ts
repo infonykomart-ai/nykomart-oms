@@ -51,6 +51,7 @@ import { EXPENSE_CATEGORIES } from "./categories";
 import { validateBusinessDate } from "@/lib/fy-date";
 import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 import { randomUUID } from "node:crypto";
+import { isAreaUnit, isLengthUnit, isQuantityUnit, isWeightUnit } from "@/lib/measurement";
 
 // NOTE: EXPENSE_CATEGORIES itself now lives in ./categories.ts, not here —
 // see that file's header note (a "use server" file may only export async
@@ -77,7 +78,35 @@ type ExpenseItemInput = {
   category?: string;
   description?: string | null;
   amount?: number | string | null;
+  // 2026-11-06 — optional quantity × unit rate for measured expense lines.
+  qty?: number | string | null;
+  qtyUnit?: string | null;
+  unitRate?: number | string | null;
 };
+
+/** The validated shape returned by parseItems — numbers, never raw strings. */
+type ParsedExpenseItem = {
+  id: string | null;
+  category: string;
+  description: string | null;
+  amount: number;
+  qty: number | null;
+  qtyUnit: string | null;
+  unitRate: number | null;
+};
+
+function isKnownMeasurementUnit(unit: string): boolean {
+  return isQuantityUnit(unit) || isWeightUnit(unit) || isLengthUnit(unit) || isAreaUnit(unit);
+}
+
+function measurementModeForUnit(unit: string | null): "COUNT" | "WEIGHT" | "AREA" | "LENGTH" | null {
+  if (!unit) return null;
+  if (isWeightUnit(unit)) return "WEIGHT";
+  if (isAreaUnit(unit)) return "AREA";
+  if (isLengthUnit(unit)) return "LENGTH";
+  if (isQuantityUnit(unit)) return "COUNT";
+  return null;
+}
 
 type ParsedHeader = {
   companyId: string;
@@ -117,7 +146,7 @@ function parseHeader(formData: FormData): { error: string | null; header: Parsed
 }
 
 /** Parses + validates the `items` JSON field. Returns only valid lines. */
-function parseItems(formData: FormData): ExpenseItemInput[] {
+function parseItems(formData: FormData): ParsedExpenseItem[] {
   let raw: unknown;
   try {
     raw = JSON.parse(str(formData, "items") || "[]");
@@ -125,10 +154,19 @@ function parseItems(formData: FormData): ExpenseItemInput[] {
     return [];
   }
   if (!Array.isArray(raw)) return [];
-  const out: ExpenseItemInput[] = [];
+  const out: ParsedExpenseItem[] = [];
   for (const r of raw as ExpenseItemInput[]) {
     const category = String(r?.category ?? "").trim();
-    const amount = Number(r?.amount ?? 0);
+    const qty = r?.qty != null && r.qty !== "" ? Number(r.qty) : null;
+    const unitRate = r?.unitRate != null && r.unitRate !== "" ? Number(r.unitRate) : null;
+    const rawUnit = String(r?.qtyUnit ?? "").trim().slice(0, 12);
+    const qtyUnit = rawUnit && isKnownMeasurementUnit(rawUnit) ? rawUnit : null;
+    // The rate is authoritative when both quantity and rate are present;
+    // otherwise the manually entered amount is used exactly as before.
+    const amount =
+      qty != null && qty > 0 && unitRate != null && unitRate >= 0
+        ? Math.round(qty * unitRate * 100) / 100
+        : Number(r?.amount ?? 0);
     if (!category || !Number.isFinite(amount) || amount <= 0) continue;
     if (!EXPENSE_CATEGORIES.includes(category as (typeof EXPENSE_CATEGORIES)[number])) continue;
     out.push({
@@ -136,6 +174,9 @@ function parseItems(formData: FormData): ExpenseItemInput[] {
       category,
       description: String(r?.description ?? "").trim() || null,
       amount: Math.round(amount * 100) / 100,
+      qty: qty != null && Number.isFinite(qty) && qty > 0 ? qty : null,
+      qtyUnit: qty != null && qty > 0 ? qtyUnit : null,
+      unitRate: unitRate != null && Number.isFinite(unitRate) && unitRate >= 0 ? unitRate : null,
     });
   }
   return out;
@@ -320,6 +361,10 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
     invoice_date: header.invoiceDate,
     description: item.description ?? null,
     entry_group_id: entryGroupId,
+    qty: item.qty ?? null,
+    qty_unit: item.qtyUnit ?? null,
+    unit_rate: item.unitRate ?? null,
+    measurement_mode: measurementModeForUnit(item.qtyUnit ?? null),
   }));
 
   const { error } = await supabase.from("internal_expenses").insert(payload);
@@ -455,6 +500,10 @@ export async function updateExpenseAction(_prev: ExpenseFormState, formData: For
       category: item.category!,
       amount_inr: Number(item.amount),
       description: item.description ?? null,
+      qty: item.qty ?? null,
+      qty_unit: item.qtyUnit ?? null,
+      unit_rate: item.unitRate ?? null,
+      measurement_mode: measurementModeForUnit(item.qtyUnit ?? null),
     };
     const legacyLineFields = {
       ...legacyHeaderFields,

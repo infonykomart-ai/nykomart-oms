@@ -543,7 +543,7 @@ async function DocumentsPageInner(searchParamsPromise: Promise<{ [key: string]: 
   // caller, and the query is hard-scoped to their current company.
   const { data: measurementSettings } = await createServiceRoleClient()
     .from("company_measurement_settings")
-    .select("default_dimension_unit, default_area_unit, default_rate_unit, decimal_precision")
+    .select("default_dimension_unit, default_area_unit, default_rate_unit, decimal_precision, rounding_mode, enabled_length_units, enabled_area_units, enabled_quantity_units, module_defaults")
     .eq("company_id", employee.currentCompanyId)
     .maybeSingle();
 

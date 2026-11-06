@@ -12,6 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { todayIST, nowISOInstant, nowISTTime } from "./ist-date";
 import { notifyCompanion } from "@/lib/companion/notify";
+import { tolerateMissingColumns } from "@/lib/db/missing-column";
 // 2026-09-29 — best-effort punch confirmation, fired AFTER the DB write
 // below succeeds, never blocks or fails the punch itself. 2026-09-30 —
 // channel switched from WhatsApp to a personal Telegram DM (see
@@ -60,45 +61,62 @@ export async function recordPunchIn(
   geo: PunchGeo | null = null
 ): Promise<{ ok: true; alreadyPunchedIn: boolean; status?: string } | { ok: false; error: string }> {
   const date = todayIST();
+  // `*` so a database that has not run the 2026-11-06 file yet can still
+  // punch in: naming oms_punch_in in the select would reject the whole read.
   const { data: existing, error: selectError } = await supabase
     .from("attendance")
-    .select("id, punch_in")
+    .select("*")
     .eq("employee_id", employeeId)
     .eq("attendance_date", date)
     .maybeSingle();
   if (selectError) return { ok: false, error: selectError.message };
 
+  // 2026-11-06 — when a biometric punch already owns the day, a login/web
+  // punch must NOT overwrite it, including a one-sided day where biometric IN
+  // is still missing. Keep the OMS event as evidence only; the physical
+  // punch and its Missing IN/OUT label stay authoritative.
+  if (existing?.source === "Biometric") {
+    if (!existing.oms_punch_in) {
+      await supabase.from("attendance").update({ oms_punch_in: nowISOInstant() }).eq("id", existing.id);
+    }
+    return { ok: true, alreadyPunchedIn: true };
+  }
   if (existing?.punch_in) return { ok: true, alreadyPunchedIn: true };
 
   // Late cutoff is purely a punch-IN-time check — an employee who's already
   // punched in for the day keeps whatever status was set then, even if this
   // function somehow ran again later; the `existing?.punch_in` check above
   // already returns early in that case, so this only ever runs once/day.
-  const status = nowISTTime() > LATE_CUTOFF_HHMM ? "Late" : "Present";
+  const status: "Present" | "Late" = nowISTTime() > LATE_CUTOFF_HHMM ? "Late" : "Present";
 
+  const punchPayload = {
+    punch_in: nowISOInstant(),
+    status,
+    oms_punch_in: nowISOInstant(),
+    // An OMS punch alone is never biometric-verified.
+    attendance_verification: "OMS Only" as const,
+    // 2026-10-02c — a captured GPS fix starts the Approve/Pending/Rejected
+    // review workflow (admin decides on the GPS Approvals screen). No geo →
+    // status untouched ('None' = nothing to review).
+    ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng, gps_status: "Pending" as const } : {}),
+  };
   if (existing) {
-    const { error } = await supabase
-      .from("attendance")
-      .update({
-        punch_in: nowISOInstant(),
-        status,
-        // 2026-10-02c — a captured GPS fix starts the Approve/Pending/
-        // Rejected review workflow (admin decides on the GPS Approvals
-        // screen). No geo → status untouched ('None' = nothing to review).
-        ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng, gps_status: "Pending" as const } : {}),
-      })
-      .eq("id", existing.id);
+    const { error } = await tolerateMissingColumns(punchPayload, ["oms_punch_in", "attendance_verification"], (payload) =>
+      supabase.from("attendance").update(payload).eq("id", existing.id)
+    );
     if (error) return { ok: false, error: error.message };
   } else {
-    const { error } = await supabase.from("attendance").insert({
-      employee_id: employeeId,
-      company_id: companyId,
-      attendance_date: date,
-      punch_in: nowISOInstant(),
-      status,
-      source,
-      ...(geo ? { punch_in_lat: geo.lat, punch_in_lng: geo.lng, gps_status: "Pending" as const } : {}),
-    });
+    const { error } = await tolerateMissingColumns(
+      {
+        employee_id: employeeId,
+        company_id: companyId,
+        attendance_date: date,
+        source,
+        ...punchPayload,
+      },
+      ["oms_punch_in", "attendance_verification"],
+      (payload) => supabase.from("attendance").insert(payload)
+    );
     if (error) return { ok: false, error: error.message };
   }
 
@@ -140,31 +158,48 @@ export async function recordPunchOut(
   // reports the day's total work duration (punch_out − punch_in).
   const { data: existing, error: selectError } = await supabase
     .from("attendance")
-    .select("id, punch_in, punch_out, gps_status")
+    .select("*")
     .eq("employee_id", employeeId)
     .eq("attendance_date", date)
     .maybeSingle();
   if (selectError) return { ok: false, error: selectError.message };
   if (!existing) return { ok: true, noPunchInFound: true, alreadyPunchedOut: false };
+
+  // A biometric day is NEVER completed by an OMS logout, whether it is
+  // missing IN, missing OUT or already complete. OMS logout is evidence only;
+  // the dashboard/report keeps alerting until a real device punch or an
+  // authorised correction arrives.
+  if (existing.source === "Biometric") {
+    if (!existing.oms_punch_out) {
+      await supabase.from("attendance").update({ oms_punch_out: nowISOInstant() }).eq("id", existing.id);
+    }
+    return {
+      ok: true,
+      noPunchInFound: false,
+      alreadyPunchedOut: Boolean(existing.biometric_out_at || existing.punch_out),
+    };
+  }
   if (existing.punch_out) return { ok: true, noPunchInFound: false, alreadyPunchedOut: true };
 
-  const { error } = await supabase
-    .from("attendance")
-    .update({
-      punch_out: nowISOInstant(),
-      // 2026-10-02c — punch-out GPS joins the review workflow too, but only
-      // when the IN side had nothing to review ('None'): an already
-      // Approved/Rejected IN decision is never silently re-opened by the
-      // evening punch.
-      ...(geo
-        ? {
-            punch_out_lat: geo.lat,
-            punch_out_lng: geo.lng,
-            ...(existing.gps_status === "None" ? { gps_status: "Pending" as const } : {}),
-          }
-        : {}),
-    })
-    .eq("id", existing.id);
+  const outPayload = {
+    punch_out: nowISOInstant(),
+    oms_punch_out: nowISOInstant(),
+    attendance_verification: "OMS Only" as const,
+    // 2026-10-02c — punch-out GPS joins the review workflow too, but only
+    // when the IN side had nothing to review ('None'): an already
+    // Approved/Rejected IN decision is never silently re-opened by the
+    // evening punch.
+    ...(geo
+      ? {
+          punch_out_lat: geo.lat,
+          punch_out_lng: geo.lng,
+          ...(existing.gps_status === "None" ? { gps_status: "Pending" as const } : {}),
+        }
+      : {}),
+  };
+  const { error } = await tolerateMissingColumns(outPayload, ["oms_punch_out", "attendance_verification"], (payload) =>
+    supabase.from("attendance").update(payload).eq("id", existing.id)
+  );
   if (error) return { ok: false, error: error.message };
 
   // 2026-09-29 — punch-out confirmation, same best-effort contract as the

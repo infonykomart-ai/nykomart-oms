@@ -28,6 +28,7 @@ const ENTRIES: Entry[] = [
   { href: "/dashboard/attendance/admin/periodic-report", label: "🗓️ Periodic" },
   { href: "/dashboard/attendance/admin/yearly-report", label: "📈 Yearly" },
   { href: "/dashboard/attendance/admin/import", label: "⬆️ Import" },
+  { href: "/dashboard/attendance/biometric", label: "🔐 Biometric" },
   { href: "/dashboard/attendance/admin/month-summary", label: "📒 Month Summary" },
   { href: "/dashboard/attendance/admin/location-report", label: "📍 Location" },
   { href: "/dashboard/attendance/admin/gps-report", label: "📡 GPS" },

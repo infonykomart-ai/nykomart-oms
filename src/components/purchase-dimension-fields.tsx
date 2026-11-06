@@ -34,6 +34,8 @@ export function PurchaseDimensionFields({
   rateInput,
   precision,
   idPrefix,
+  enabledLengthUnits,
+  enabledAreaUnits,
 }: {
   value: PurchaseDimensionState;
   onChange: (next: PurchaseDimensionState) => void;
@@ -42,12 +44,21 @@ export function PurchaseDimensionFields({
   rateInput: string;
   precision: number;
   idPrefix: string;
+  /** 2026-11-06 — admin's enabled units; current value is always kept visible. */
+  enabledLengthUnits?: string[] | null;
+  enabledAreaUnits?: string[] | null;
 }) {
   function patch(next: Partial<PurchaseDimensionState>) {
     onChange({ ...value, ...next });
   }
 
   const label = AREA_UNIT_LABEL[value.areaUnit];
+  const lengthUnitOptions = LENGTH_UNITS.filter(
+    (u) => (!enabledLengthUnits || enabledLengthUnits.length === 0 || enabledLengthUnits.includes(u)) || value.lengthUnit === u || value.widthUnit === u
+  );
+  const areaUnitOptions = AREA_UNITS.filter(
+    (u) => (!enabledAreaUnits || enabledAreaUnits.length === 0 || enabledAreaUnits.includes(u)) || value.areaUnit === u || value.rateUnit === u
+  );
 
   return (
     <div className="col-span-2 rounded-lg border border-dashed border-amber-300 bg-amber-50/40 p-2.5 text-xs">
@@ -92,7 +103,7 @@ export function PurchaseDimensionFields({
               onChange={(e) => patch({ lengthUnit: e.target.value as LengthUnit })}
               className={unitClass}
             >
-              {LENGTH_UNITS.map((u) => (
+              {lengthUnitOptions.map((u) => (
                 <option key={u} value={u}>
                   {LENGTH_UNIT_LABEL[u]}
                 </option>
@@ -121,7 +132,7 @@ export function PurchaseDimensionFields({
               onChange={(e) => patch({ widthUnit: e.target.value as LengthUnit })}
               className={unitClass}
             >
-              {LENGTH_UNITS.map((u) => (
+              {lengthUnitOptions.map((u) => (
                 <option key={u} value={u}>
                   {LENGTH_UNIT_LABEL[u]}
                 </option>
@@ -139,7 +150,7 @@ export function PurchaseDimensionFields({
             onChange={(e) => patch({ areaUnit: e.target.value as AreaUnit, rateUnit: e.target.value as AreaUnit })}
             className={inputClass}
           >
-            {AREA_UNITS.map((u) => (
+            {areaUnitOptions.map((u) => (
               <option key={u} value={u}>
                 {AREA_UNIT_LABEL[u]}
               </option>
@@ -156,7 +167,7 @@ export function PurchaseDimensionFields({
             onChange={(e) => patch({ rateUnit: e.target.value as AreaUnit })}
             className={inputClass}
           >
-            {AREA_UNITS.map((u) => (
+            {areaUnitOptions.map((u) => (
               <option key={u} value={u}>
                 {AREA_UNIT_LABEL[u]}
               </option>

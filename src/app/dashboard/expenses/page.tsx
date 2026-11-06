@@ -42,6 +42,28 @@ export default async function ExpensesPage({
     supabase.from("parties").select("id, name").order("name"),
   ]);
 
+  // 2026-11-06 — the expense line's unit dropdown follows OMS Settings →
+  // Measurement. Missing row/columns = every unit (the pre-settings list).
+  const { data: measurementSettings } = await supabase
+    .from("company_measurement_settings")
+    .select("enabled_length_units, enabled_area_units, enabled_weight_units, enabled_quantity_units, default_quantity_unit, module_defaults")
+    .eq("company_id", employee.currentCompanyId)
+    .maybeSingle();
+  const unitSettings = {
+    enabledUnits: measurementSettings
+      ? [
+          ...(measurementSettings.enabled_length_units ?? []),
+          ...(measurementSettings.enabled_area_units ?? []),
+          ...(measurementSettings.enabled_weight_units ?? []),
+          ...(measurementSettings.enabled_quantity_units ?? []),
+        ]
+      : undefined,
+    defaultQuantityUnit:
+      (measurementSettings?.module_defaults as { expenseQtyUnit?: string } | null)?.expenseQtyUnit ??
+      measurementSettings?.default_quantity_unit ??
+      "PCS",
+  };
+
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const partyName = new Map((parties ?? []).map((p) => [p.id, p.name]));
 
@@ -58,13 +80,16 @@ export default async function ExpensesPage({
     invoice_date?: string | null;
     description?: string | null;
     entry_group_id?: string | null;
+    qty?: number | null;
+    qty_unit?: string | null;
+    unit_rate?: number | null;
   };
 
   let recentBills: ExpenseBill[] = [];
 
   if (tab === "entry") {
     const BASE = "id, company_id, expense_date, category, amount_inr, payment_mode, remark";
-    const FULL = `${BASE}, party_id, invoice_no, invoice_date, description, entry_group_id`;
+    const FULL = `${BASE}, party_id, invoice_no, invoice_date, description, entry_group_id, qty, qty_unit, unit_rate`;
 
     let rows: BillRow[] = [];
     const full = await supabase
@@ -137,6 +162,9 @@ export default async function ExpensesPage({
             category: l.category,
             description: l.description ?? null,
             amount: Number(l.amount_inr ?? 0),
+            qty: l.qty != null ? Number(l.qty) : null,
+            qtyUnit: l.qty_unit ?? null,
+            unitRate: l.unit_rate != null ? Number(l.unit_rate) : null,
           })),
           total: lines.reduce((s, l) => s + Number(l.amount_inr ?? 0), 0),
           financeBillId: financeByGroup.get(key)?.billId ?? null,
@@ -234,6 +262,7 @@ export default async function ExpensesPage({
           companies={companies ?? []}
           parties={parties ?? []}
           recentBills={recentBills}
+          unitSettings={unitSettings}
         />
       ) : tab === "recurring" ? (
         <RecurringDebitsSection registry={recurringRows} companies={companies ?? []} currentMonth={currentMonth} />

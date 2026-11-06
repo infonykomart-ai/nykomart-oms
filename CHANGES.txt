@@ -2046,3 +2046,101 @@ M  src/app/dashboard/returns/page.tsx / returns-report-tables.tsx
 M  src/app/dashboard/documents/actions.ts / page.tsx / document-entry-tabs.tsx
 M  src/app/dashboard/documents/purchase-bill-{form,edit-form,multi-items-form}.tsx
 M  src/app/dashboard/documents/purchase-bills/[id]/report/page.tsx
+
+RETURN LIFECYCLE + WEIGHT/COUNT MEASUREMENT + BIOMETRIC ATTENDANCE (2026-11-06)
+================================================================================
+
+A) RETURN / REFUND — MY REQUESTS
+   - Returns page par ab teen tabs hain: All Requests, My Requests aur Pending
+     Approvals. Return aur Refund alag type ke rows hain (refund pehle ki tarah
+     turant post hota hai).
+   - Employee apni PENDING return ko Edit ya Delete kar sakta hai. Edit me
+     galat PO/order number bhi sahi kar sakta hai (same company + pending
+     duplicate checks server par). Delete soft cancel hai (status=Cancelled) —
+     row aur audit history rehti hai. Exact confirmation: "Are you sure you want
+     to delete this return request? This action cannot be undone."
+   - Approved/Rejected/Cancelled rows read-only hain. Approved return ka
+     financial transaction is screen se kabhi silently change/delete nahi hota.
+   - Status colours: Pending orange, Approved green, Rejected red,
+     Deleted/Cancelled grey. Search + Order/Buyer/Employee/Date/Company/Store/
+     Status filters.
+   - Race-safe: edit/cancel UPDATE sirf status='Pending' AND client ke load kiye
+     hue updated_at par lagta hai; approve bhi Pending claim karta hai. Isliye
+     2 approver ya edit-vs-approve race me double refund nahi hota.
+   - One pending return per order partial unique index se guaranteed.
+   - Audit: return_request.created / updated / cancelled / approved / rejected;
+     har request ke saamne expandable History (kisne, kab, kya kiya) dikhti
+     hai. Rejected request ka decision note creator ko dikhta hai.
+
+B) MEASUREMENT
+   - Washing Entry (create + edit) me Length/Width + alag units, area/rate unit,
+     converted quantity aur live amount; original dimensions aur converted area
+     dono save hote hain, purane sq_mtr_ft ka matlab wahi hai.
+   - Office Expense lines me optional Qty + Unit + Rate; qty×rate se amount
+     server par derive hota hai. Quantity/weight/length/area units available.
+   - OMS Settings → Measurement me enabled unit lists, default weight/quantity
+     unit, rounding mode aur per-module billing defaults (Purchase/Printing/
+     Washing/Other) configurable. Rounding rule ab naye Purchase/Printing/
+     Washing calculations me actually apply hota hai. Purchase Bill aur Washing
+     apna precision + rounding apne row par save karte hain, is liye baad me
+     settings badalne ya sirf description edit karne se saved amount silently
+     re-round nahi hota.
+   - Multi-PO Purchase form ki purani size-conversion bug fix: "95x370cm" ab
+     37.835 SQ FT hai, pehle 1153.215 aa raha tha. Unit badalne par auto-filled
+     qty same area me convert hoti hai (manual values untouched).
+   - Preferred source order ke structured dimensions hain; warna size label.
+     Historical bills unchanged.
+
+C) BIOMETRIC ATTENDANCE
+   - Naya device-agnostic HTTP PUSH endpoint: POST /api/biometric/punch,
+     per-device Bearer token (DB me sirf SHA-256 hash + last4).
+   - Admin page /dashboard/attendance/biometric: Today dashboard, device add/
+     disable/rotate token, shift setup, employee↔device mapping, sync log,
+     retry failed/unmapped events, audited attendance correction, CSV/Excel/
+     Word/PDF export.
+   - Monthly employee + department summary page with the same export; payroll
+     classification same categorizeMonth() se aati hai.
+   - Punch rules: duplicate event DB unique index se block; AUTO direction
+     punch history + shift dekhti hai (evening-only first punch OUT + Missing
+     IN, near-duplicate second punch IN, normal second punch OUT); explicit
+     IN/OUT device value wins. OMS web punch original oms_punch_in/out me
+     preserve hota hai, biometric time authoritative banta hai. OMS logout
+     kabhi physical OUT nahi banata, aur one-sided biometric day ko OMS
+     login/logout overwrite nahi kar sakta.
+   - Missing IN/OUT, late, early departure, overtime, half-day shift rules;
+     unverified OMS-only rows NEVER Biometric Verified mark hote hain.
+   - Retry same event row update karta hai (naya attendance duplicate nahi).
+   - Existing TeamOffice Excel import fallback waise hi kaam karta hai.
+
+DB / API
+--------
+N  db/2026-11-06-return-lifecycle-measurement-biometric.sql  (idempotent)
+M  db/schema.sql
+N  src/app/api/biometric/punch/route.ts
+N  src/lib/biometric/attendance.ts + process.ts
+N  src/app/dashboard/attendance/biometric/{page,biometric-dashboard,actions}.tsx/ts
+N  src/app/dashboard/attendance/biometric/monthly/page.tsx
+N  src/lib/measurement-units.test.ts / src/lib/size-parser.test.ts
+N  src/app/dashboard/returns/return-requests-workspace.tsx
+
+CONFIG / HARDWARE
+-----------------
+- Migration run karni hai: db/2026-11-06-return-lifecycle-measurement-biometric.sql
+- Device jo HTTP POST kar sakta hai (ya uska middleware) seedha use ho sakta
+  hai. Jo device sirf SDK/pull/USB export support karta hai uske liye vendor/
+  model ka API document chahiye — tab adapter likhna padega; Excel import
+  fallback already available hai.
+- Token device me daalte waqt copy karein; page sirf ek baar dikhata hai.
+  Rotate karne par purana token turant invalid ho jata hai.
+
+TESTS
+-----
+- npm test: 148 pass (biometric direction/shift, weight/quantity/rounding
+  including 1.005/2.675 half-up, size parser, existing measurement suite).
+- Focused tsc clean; full-repo tsc is host par OOM hota hai (exit 137), isliye
+  changed-file typecheck + platform check use hua.
+- Local Postgres 14: poora schema load + naya migration do baar chalaya — dono
+  runs exit 0 (idempotent). Purani lifecycle/measurement/biometric tables ko
+  drop karke upgrade simulation bhi exit 0 raha; naye biometric tables par RLS
+  force + anon/authenticated grants revoked verify hue.
+- ESLint changed files clean.

@@ -31,6 +31,49 @@ export type LengthUnit = (typeof LENGTH_UNITS)[number];
 export const AREA_UNITS = ["SQ_MM", "SQ_CM", "SQ_MTR", "SQ_INCH", "SQ_FT"] as const;
 export type AreaUnit = (typeof AREA_UNITS)[number];
 
+// 2026-11-06 — weight and count units for the non-area entry screens. They
+// share the same engine/settings contract as length and area, but never
+// convert into an area: a kg is not a dimension.
+export const WEIGHT_UNITS = ["G", "KG", "TON"] as const;
+export type WeightUnit = (typeof WEIGHT_UNITS)[number];
+
+export const QUANTITY_UNITS = ["PCS", "SET", "BOX", "UNIT"] as const;
+export type QuantityUnit = (typeof QUANTITY_UNITS)[number];
+
+/** Kilograms per one weight unit. Exact by definition (1 TON = 1,000 KG). */
+export const KG_PER_WEIGHT_UNIT: Record<WeightUnit, number> = {
+  G: 0.001,
+  KG: 1,
+  TON: 1000,
+};
+
+export const WEIGHT_UNIT_LABEL: Record<WeightUnit, string> = {
+  G: "Gram",
+  KG: "KG",
+  TON: "Ton",
+};
+
+export const QUANTITY_UNIT_LABEL: Record<QuantityUnit, string> = {
+  PCS: "Pieces",
+  SET: "Sets",
+  BOX: "Boxes",
+  UNIT: "Units",
+};
+
+export type RoundingMode = "HALF_UP" | "UP" | "DOWN";
+
+export function isWeightUnit(value: unknown): value is WeightUnit {
+  return typeof value === "string" && (WEIGHT_UNITS as readonly string[]).includes(value);
+}
+
+export function isQuantityUnit(value: unknown): value is QuantityUnit {
+  return typeof value === "string" && (QUANTITY_UNITS as readonly string[]).includes(value);
+}
+
+export function isRoundingMode(value: unknown): value is RoundingMode {
+  return value === "HALF_UP" || value === "UP" || value === "DOWN";
+}
+
 /** How many centimetres one unit of length is. Exact by definition. */
 export const CM_PER_LENGTH_UNIT: Record<LengthUnit, number> = {
   MM: 0.1,
@@ -73,11 +116,21 @@ export function isAreaUnit(value: unknown): value is AreaUnit {
   return typeof value === "string" && (AREA_UNITS as readonly string[]).includes(value);
 }
 
-/** Rounds half-up to `digits` decimals without the usual 1.005 float trap. */
-export function roundTo(value: number, digits = 2): number {
+/** Rounds to `digits` decimals without the usual 1.005 float trap. */
+export function roundTo(value: number, digits = 2, mode: RoundingMode = "HALF_UP"): number {
   if (!Number.isFinite(value)) return 0;
   const factor = 10 ** digits;
-  return Math.round((value + Number.EPSILON) * factor) / factor;
+  // Add the epsilon BEFORE scaling. `scaled + EPSILON` is far too small at
+  // 2 decimals (100.49999999999999 + 2.2e-16 is still below 100.5), which is
+  // exactly how 1.005 used to round down to 1.00.
+  const scaled = (value + (value >= 0 ? Number.EPSILON : -Number.EPSILON)) * factor;
+  const rounded =
+    mode === "UP"
+      ? Math.ceil(scaled - Number.EPSILON)
+      : mode === "DOWN"
+        ? Math.floor(scaled + Number.EPSILON)
+        : Math.round(scaled + Number.EPSILON);
+  return rounded / factor;
 }
 
 /** Grouped, fixed-precision display string (e.g. "29,728.97"). */
@@ -99,6 +152,29 @@ export function lengthToCm(value: number, unit: LengthUnit): number {
   const factor = CM_PER_LENGTH_UNIT[unit];
   if (factor == null || !Number.isFinite(value)) return NaN;
   return value * factor;
+}
+
+export function weightToKg(value: number, unit: WeightUnit): number {
+  const factor = KG_PER_WEIGHT_UNIT[unit];
+  if (factor == null || !Number.isFinite(value)) return NaN;
+  return value * factor;
+}
+
+export function convertWeight(value: number, from: WeightUnit, to: WeightUnit): number {
+  const kg = weightToKg(value, from);
+  const factor = KG_PER_WEIGHT_UNIT[to];
+  if (!Number.isFinite(kg) || factor == null) return NaN;
+  return kg / factor;
+}
+
+/**
+ * Quantity units are labels, not convertible dimensions. Validation is the
+ * only operation that makes sense; the total is simply value × rate.
+ */
+export function quantityAmount(quantity: number, unit: QuantityUnit, rate: number): number {
+  if (!isQuantityUnit(unit) || !Number.isFinite(quantity) || quantity < 0) return NaN;
+  if (!Number.isFinite(rate) || rate < 0) return NaN;
+  return roundTo(quantity * rate, 2);
 }
 
 export function convertLength(value: number, from: LengthUnit, to: LengthUnit): number {
@@ -153,6 +229,8 @@ export type DimensionInput = {
   outputUnit?: AreaUnit;
   /** Display precision (2, 3 or 4 decimals in OMS Settings). */
   precision?: number;
+  /** OMS Settings → Measurement rounding rule for stored money/area values. */
+  rounding?: RoundingMode;
 };
 
 export type AreaBreakdown = Record<AreaUnit, number>;
@@ -307,6 +385,7 @@ export function computePurchaseArea(input: DimensionInput & { rate: number; rate
 } | { ok: false; error: string } {
   const measured = measureDimensions(input);
   if (!measured.ok) return measured;
+  const rounding = input.rounding ?? "HALF_UP";
 
   const rate = input.rate;
   if (!Number.isFinite(rate) || rate < 0) return { ok: false, error: "Rate must be a valid number." };
@@ -322,13 +401,13 @@ export function computePurchaseArea(input: DimensionInput & { rate: number; rate
   return {
     ok: true,
     result: {
-      area: roundTo(unitArea, 4),
-      totalArea: roundTo(measured.result.area, 6),
+      area: roundTo(unitArea, 4, rounding),
+      totalArea: roundTo(measured.result.area, 6, rounding),
       qtyUnit: areaUnitToQtyUnit(measured.result.outputUnit),
       areaUnit: measured.result.outputUnit,
       // unit_rate is numeric(14,2) — round here so the amount the form shows
       // is exactly the amount the generated column computes.
-      unitRate: roundTo(convertAreaRate(rate, rateInputUnit, measured.result.outputUnit), 2),
+      unitRate: roundTo(convertAreaRate(rate, rateInputUnit, measured.result.outputUnit), 2, rounding),
       rateInput: rate,
       rateInputUnit,
       measurement: measured.result,

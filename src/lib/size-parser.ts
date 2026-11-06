@@ -52,7 +52,12 @@ const FT_PER_UNIT: Record<string, number> = {
 };
 
 const CLOTHING_CODE_RE = /^(XXXL|XXL|XL|S|M|L)\b/i;
-const UNIT_WORD_RE = /\b(FT|FEET|FOOT|IN|INCH|INCHES|CM|MTR|MT|M|METER|METERS|METRE|METRES)\b/gi;
+// 2026-11-06 — a size like "95x370cm" attaches the unit to the number, so a
+// pure \b scan found no global unit and treated 95 as FEET while 370 was CM
+// — producing 1153.215 "sq ft" instead of 37.835. Match a number followed by
+// an optional space and a unit; longest-first keeps METER from matching M,
+// and requiring the digit avoids matching letters inside a descriptive word.
+const UNIT_WORD_RE = /\d\s*(METERS|METER|METRES|METRE|INCHES|INCH|FEET|FOOT|FT|CM|MTR|MT|M|IN)(?![A-Z])/gi;
 
 export type SizeParseResult = {
   sqFt: number | null;

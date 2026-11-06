@@ -39,9 +39,12 @@ import {
   computePurchaseArea,
   isAreaUnit,
   isLengthUnit,
+  isRoundingMode,
+  measureDimensions,
   roundTo,
   type AreaUnit,
   type LengthUnit,
+  type RoundingMode,
 } from "@/lib/measurement";
 import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import { logAudit } from "@/lib/audit/log-audit";
@@ -953,6 +956,7 @@ export async function saveDebitNote(_prev: DocFormState, formData: FormData): Pr
 }
 
 type WashingEntryParams = {
+  formData: FormData;
   companyId: string;
   partyId: string;
   chalanDate: string;
@@ -980,6 +984,11 @@ async function saveWashingEntryCore(
   const weDateError = validateDateFields([{ value: p.chalanDate, label: "Chalan date" }]);
   if (weDateError) return { error: weDateError, id: null, docNo: null };
 
+  const measurement = washingMeasurementColumns(p.formData, p.pcs, p.rate);
+  if (measurement.error) return { error: measurement.error, id: null, docNo: null };
+  const effectiveQty = measurement.qty ?? p.sqMtrFt;
+  const effectiveRate = measurement.unitRate ?? p.rate;
+
   const { data, error } = await supabase
     .from("washing_entries")
     .insert({
@@ -989,11 +998,12 @@ async function saveWashingEntryCore(
       order_id: p.orderId,
       item_size: p.itemSize,
       pcs: p.pcs,
-      sq_mtr_ft: p.sqMtrFt,
-      rate: p.rate,
+      sq_mtr_ft: effectiveQty,
+      rate: effectiveRate,
       debit_charges: p.debitCharges,
       store_id: p.storeId,
       round_off_amt: p.roundOffAmt ?? 0,
+      ...measurement.columns,
     })
     .select("id, chalan_no")
     .single();
@@ -1007,6 +1017,7 @@ export async function saveWashingEntry(_prev: DocFormState, formData: FormData):
   const supabase = createServiceRoleClient();
 
   const result = await saveWashingEntryCore(employee, supabase, {
+    formData,
     companyId: str(formData, "company_id"),
     partyId: str(formData, "party_id"),
     chalanDate: str(formData, "chalan_date"),
@@ -1243,18 +1254,24 @@ export async function updateWashingEntry(_prev: DocEditState, formData: FormData
   if (!partyId) return { error: "Select a party.", success: false };
   if (!chalanDate) return { error: "Chalan Date is required.", success: false };
 
+  const pcs = numOrNull(formData, "pcs");
+  const rate = numOrNull(formData, "rate");
+  const measurement = washingMeasurementColumns(formData, pcs, rate);
+  if (measurement.error) return { error: measurement.error, success: false };
+
   const { error } = await supabase
     .from("washing_entries")
     .update({
       party_id: partyId,
       chalan_date: chalanDate,
       item_size: strOrNull(formData, "item_size"),
-      pcs: numOrNull(formData, "pcs"),
-      sq_mtr_ft: numOrNull(formData, "sq_mtr_ft"),
-      rate: numOrNull(formData, "rate"),
+      pcs,
+      sq_mtr_ft: measurement.qty ?? numOrNull(formData, "sq_mtr_ft"),
+      rate: measurement.unitRate ?? rate,
       debit_charges: numOrNull(formData, "debit_charges"),
       store_id: strOrNull(formData, "store_id"),
       round_off_amt: numOrZero(formData, "round_off_amt"),
+      ...measurement.columns,
     })
     .eq("id", id);
 
@@ -1375,6 +1392,8 @@ function measurementFromForm(formData: FormData): PurchaseBillParams["measuremen
   const areaUnitRaw = str(formData, "area_display_unit") || "SQ_FT";
   const rateUnitRaw = str(formData, "rate_input_unit") || areaUnitRaw;
   const precisionRaw = Number(str(formData, "measurement_precision") || "2");
+  const roundingRaw = str(formData, "measurement_rounding") || "HALF_UP";
+  if (!isRoundingMode(roundingRaw)) return null;
   const rateRaw = strOrNull(formData, "rate_input_value");
 
   return {
@@ -1386,6 +1405,7 @@ function measurementFromForm(formData: FormData): PurchaseBillParams["measuremen
     rateUnit: isAreaUnit(rateUnitRaw) ? rateUnitRaw : "SQ_FT",
     rate: rateRaw != null ? Number(rateRaw) : Number(str(formData, "unit_rate") || 0),
     precision: Number.isFinite(precisionRaw) ? Math.min(6, Math.max(0, precisionRaw)) : 2,
+    rounding: roundingRaw as RoundingMode,
   };
 }
 function gstTypeUnion(v: string | null): "CGST_SGST" | "IGST" | null {
@@ -1432,6 +1452,7 @@ type PurchaseBillParams = {
     rateUnit: AreaUnit;
     rate: number;
     precision: number;
+    rounding: RoundingMode;
   } | null;
 };
 
@@ -1459,13 +1480,94 @@ type PurchaseMeasurementColumnsResult =
         rate_input_value: number;
         rate_input_unit: AreaUnit;
         measurement_precision: number;
+        measurement_rounding: RoundingMode;
       };
     };
+
+/**
+ * 2026-11-06 — Washing Entry bridge. Dimensions are optional (legacy manual
+ * Sq. Mtr/Ft entry stays exactly as it was); when present, the server derives
+ * the billable TOTAL area and the rate in the selected display unit, and
+ * stores the original dimensions alongside them.
+ */
+function washingMeasurementColumns(
+  formData: FormData,
+  pcs: number | null,
+  rate: number | null
+):
+  | {
+      error: string | null;
+      columns: Partial<{
+        length_value: number;
+        length_unit: LengthUnit;
+        width_value: number;
+        width_unit: LengthUnit;
+        area_value: number;
+        area_display_unit: AreaUnit;
+        rate_input_value: number;
+        rate_unit: AreaUnit;
+        measurement_precision: number;
+        measurement_rounding: string;
+      }>;
+      qty: number | null;
+      unitRate: number | null;
+    }
+  | { error: string; columns?: never; qty?: never; unitRate?: never } {
+  const rawLength = numOrNull(formData, "length_value");
+  const rawWidth = numOrNull(formData, "width_value");
+  if (rawLength == null && rawWidth == null) return { error: null, columns: {}, qty: null, unitRate: null };
+  if (rawLength == null || rawWidth == null) return { error: "Enter BOTH Length and Width (or clear both)." };
+
+  const lengthUnit = str(formData, "length_unit") || "FT";
+  const widthUnit = str(formData, "width_unit") || lengthUnit;
+  const areaUnit = str(formData, "area_unit") || "SQ_FT";
+  const rateUnit = str(formData, "rate_unit") || areaUnit;
+  const precision = Math.max(0, Math.min(6, numOrNull(formData, "measurement_precision") ?? 2));
+  const roundingRaw = str(formData, "measurement_rounding") || "HALF_UP";
+  const rounding: RoundingMode = isRoundingMode(roundingRaw) ? roundingRaw : "HALF_UP";
+  if (!isLengthUnit(lengthUnit) || !isLengthUnit(widthUnit)) return { error: "Unknown length unit." };
+  if (!isAreaUnit(areaUnit) || !isAreaUnit(rateUnit)) return { error: "Unknown area/rate unit." };
+  if (!pcs || pcs <= 0) return { error: "Pcs must be greater than zero when dimensions are entered." };
+  if (rate == null) return { error: "Rate is required when dimensions are entered." };
+
+  const calc = computePurchaseArea({
+    length: rawLength,
+    lengthUnit,
+    width: rawWidth,
+    widthUnit,
+    qty: pcs,
+    outputUnit: areaUnit,
+    precision,
+    rate,
+    rateUnit,
+    rounding,
+  });
+  if (!calc.ok) return { error: calc.error };
+
+  return {
+    error: null,
+    qty: roundTo(calc.result.totalArea, 6, rounding),
+    unitRate: calc.result.unitRate,
+    columns: {
+      length_value: rawLength,
+      length_unit: lengthUnit,
+      width_value: rawWidth,
+      width_unit: widthUnit,
+      area_value: roundTo(calc.result.area, 6, rounding),
+      area_display_unit: areaUnit,
+      rate_input_value: rate,
+      rate_unit: rateUnit,
+      measurement_precision: precision,
+      measurement_rounding: rounding,
+    },
+  };
+}
 
 function purchaseMeasurementColumns(
   m: NonNullable<PurchaseBillParams["measurement"]>,
   qty: number
 ): PurchaseMeasurementColumnsResult {
+  const rounding: RoundingMode = isRoundingMode(m.rounding) ? m.rounding : "HALF_UP";
   const calc = computePurchaseArea({
     length: m.length,
     lengthUnit: m.lengthUnit,
@@ -1476,6 +1578,7 @@ function purchaseMeasurementColumns(
     precision: m.precision,
     rate: m.rate,
     rateUnit: m.rateUnit,
+    rounding,
   });
   if (!calc.ok) return { error: calc.error };
   const r = calc.result;
@@ -1483,7 +1586,7 @@ function purchaseMeasurementColumns(
     error: null,
     // sq_feet is the legacy 2dp column the old formula still reads; area_value
     // carries the precise engine result and the generated totals prefer it.
-    sqFeet: roundTo(r.area, 2),
+    sqFeet: roundTo(r.area, 2, rounding),
     qtyUnit: r.qtyUnit,
     unitRate: r.unitRate,
     columns: {
@@ -1493,11 +1596,12 @@ function purchaseMeasurementColumns(
       width_unit: m.widthUnit,
       // Per-piece area: total_sq_feet/total_amount multiply this by qty, so
       // qty × area_value = Length × Width × Qty with no double count.
-      area_value: roundTo(r.area, 6),
+      area_value: roundTo(r.area, 6, rounding),
       area_display_unit: r.areaUnit,
       rate_input_value: r.rateInput,
       rate_input_unit: r.rateInputUnit,
       measurement_precision: m.precision,
+      measurement_rounding: rounding,
     },
   };
 }
@@ -1664,6 +1768,7 @@ async function savePurchaseBillCore(
     rate_input_value: number;
     rate_input_unit: AreaUnit;
     measurement_precision: number;
+    measurement_rounding: RoundingMode;
   }> = {};
   if (p.measurement) {
     const measured = purchaseMeasurementColumns(p.measurement, p.qty || 1);
@@ -1743,7 +1848,7 @@ async function savePurchaseBillCore(
   // Pending measurement migration: the bill must still save (the area/rate
   // above are already the engine's numbers, just without the extra detail
   // columns). Same tolerant-fallback rule every other new column follows.
-  if (error && /(length_value|length_unit|width_value|width_unit|area_value|area_display_unit|rate_input_value|rate_input_unit|measurement_precision)/i.test(error.message)) {
+  if (error && /(length_value|length_unit|width_value|width_unit|area_value|area_display_unit|rate_input_value|rate_input_unit|measurement_precision|measurement_rounding)/i.test(error.message)) {
     ({ data, error } = await supabase
       .from("purchase_bills")
       .insert({ ...billFields, ...newBillFields, entered_by_employee_id: employee.id, entered_by_name: employee.name })
@@ -2256,7 +2361,7 @@ export async function lookupOrderForPurchaseBill(refNo: string): Promise<Purchas
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, ref_no, company_id, size_label, qty, item_categories(name)")
+    .select("id, ref_no, company_id, size_label, qty, dimension_length, dimension_width, dimension_unit, item_categories(name)")
     .eq("id", match.id)
     .maybeSingle();
 
@@ -2269,7 +2374,29 @@ export async function lookupOrderForPurchaseBill(refNo: string): Promise<Purchas
 
   const category = order.item_categories as unknown as { name: string } | { name: string }[] | null;
   const categoryName = Array.isArray(category) ? category[0]?.name ?? null : category?.name ?? null;
-  const { sqFt } = parseSizeToSqFt(order.size_label);
+  // 2026-11-06 — prefer the order's own structured dimensions (the same
+  // engine the purchase size panel uses) over parsing the free-text size
+  // label. This is what fixes a 95 × 370 CM order showing a nonsense
+  // "sq ft" figure in the multi-PO form.
+  const parsed = parseSizeToSqFt(order.size_label);
+  let sqFt = parsed.sqFt;
+  const dimUnit = (order.dimension_unit ?? "").toUpperCase();
+  if (
+    order.dimension_length != null &&
+    order.dimension_width != null &&
+    Number(order.dimension_length) > 0 &&
+    Number(order.dimension_width) > 0 &&
+    isLengthUnit(dimUnit)
+  ) {
+    const measured = measureDimensions({
+      length: Number(order.dimension_length),
+      lengthUnit: dimUnit,
+      width: Number(order.dimension_width),
+      widthUnit: dimUnit,
+      outputUnit: "SQ_FT",
+    });
+    if (measured.ok) sqFt = measured.result.area;
+  }
 
   return {
     error: null,
@@ -2606,7 +2733,7 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   }
   // Pending measurement migration: the edit still saves the engine-derived
   // area/rate, just without the extra detail columns.
-  if (error && /(length_value|length_unit|width_value|width_unit|area_value|area_display_unit|rate_input_value|rate_input_unit|measurement_precision)/i.test(error.message)) {
+  if (error && /(length_value|length_unit|width_value|width_unit|area_value|area_display_unit|rate_input_value|rate_input_unit|measurement_precision|measurement_rounding)/i.test(error.message)) {
     ({ data: updated, error } = await supabase
       .from("purchase_bills")
       .update({ ...nextValues, size_mode: sizeMode })
@@ -5214,6 +5341,7 @@ export async function bulkSaveWashingEntries(_prev: BulkDocState, formData: Form
     const storeId = storeName ? (storeIdByName.get(storeName.trim().toLowerCase()) ?? null) : null;
 
     const result = await saveWashingEntryCore(employee, supabase, {
+      formData: new FormData(),
       companyId,
       partyId,
       chalanDate: sheetDate(raw, byHeader, "Chalan Date") ?? "",

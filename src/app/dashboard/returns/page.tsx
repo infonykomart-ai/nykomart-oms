@@ -6,6 +6,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { OrderRefundsReportTable, HistoricalRefundsReportTable, StoreRateReportTable } from "./returns-report-tables";
 import { RefundOrderPicker, type RefundPickerOrder } from "./refund-order-picker";
 import { ReturnRequestPanel, type MyReturnRow, type PendingReturnRow } from "./return-request-panel";
+import { ReturnRequestsWorkspace, type RequestRow } from "./return-requests-workspace";
 import { isMissingAgreementSchema } from "@/lib/agreements/migration";
 
 // 2026-08-17 — dedicated Returns/Refunds report. Gap identified in a
@@ -127,7 +128,7 @@ export default async function ReturnsPage({
   let refundBundlesQuery = supabase
     .from("orders")
     .select(
-      "id, ref_no, store_id, status, marketplace_order_no, buyer_name_address, order_date, order_value_original, order_value_inr, order_currency, order_refunds!inner(id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, refund_amount_inr, refund_amount_usd, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, refund_qty, payment_mode, reference_no, remarks, created_at, updated_at)"
+      "id, ref_no, company_id, store_id, status, marketplace_order_no, buyer_name_address, order_date, order_value_original, order_value_inr, order_currency, order_refunds!inner(id, order_id, refund_amount, refund_currency, refund_date, reason, credit_note_id, refund_amount_inr, refund_amount_usd, refund_basis_percent, order_value_refund_amount, shipping_refund_amount, duty_refund_amount, refund_qty, payment_mode, reference_no, remarks, entry_by_employee_id, created_at, updated_at)"
     )
     .in("company_id", scopedCompanyIds)
     .order("order_date", { ascending: false })
@@ -179,6 +180,7 @@ export default async function ReturnsPage({
   type RefundBundle = {
     id: string;
     ref_no: string;
+    company_id: string;
     store_id: string | null;
     status: string;
     marketplace_order_no: string | null;
@@ -207,6 +209,7 @@ export default async function ReturnsPage({
       remarks: string | null;
       created_at: string;
       updated_at: string;
+      entry_by_employee_id: string;
     }[];
   };
 
@@ -430,11 +433,18 @@ export default async function ReturnsPage({
   // policies, so it is read with the service-role client AFTER the capability
   // gate above; the same company scope as the refund sheet applies.
   const serviceDb = createServiceRoleClient();
+  // Check a column only the 2026-11-06 file adds: an older database has the
+  // table but no updated_at, so probing just `id` would falsely look ready and
+  // the workspace would silently render empty instead of showing the hint.
   const returnMigrationPending = await serviceDb
     .from("return_requests")
-    .select("id")
+    .select("id, updated_at")
     .limit(1)
-    .then(({ error }) => Boolean(error) && isMissingAgreementSchema(error));
+    .then(
+      ({ error }) =>
+        Boolean(error) &&
+        (isMissingAgreementSchema(error) || /return_requests|updated_at|does not exist/i.test(error?.message ?? ""))
+    );
 
   type PendingRow = {
     id: string;
@@ -449,7 +459,7 @@ export default async function ReturnsPage({
   };
   type MyRow = {
     id: string;
-    status: "Pending" | "Approved" | "Rejected";
+    status: "Pending" | "Approved" | "Rejected" | "Cancelled";
     reason: string;
     refund_amount: number | null;
     requested_at: string;
@@ -457,11 +467,40 @@ export default async function ReturnsPage({
     decision_note: string | null;
     orders: { ref_no: string | null } | null;
   };
+  type AllRow = {
+    id: string;
+    order_id: string;
+    status: "Pending" | "Approved" | "Rejected" | "Cancelled";
+    request_type: "Return" | "Refund";
+    reason: string;
+    note: string | null;
+    refund_amount: number | null;
+    refund_currency: string | null;
+    refund_date: string | null;
+    requested_at: string;
+    updated_at: string;
+    requested_by: string | null;
+    decided_at: string | null;
+    decision_note: string | null;
+    orders: { ref_no: string | null; buyer_name_address: string | null; store_id: string | null; company_id: string } | null;
+  };
 
   let pendingReturnRows: PendingRow[] = [];
   let myReturnRows: MyRow[] = [];
+  let allReturnRows: AllRow[] = [];
   if (!returnMigrationPending) {
-    const [pendingResult, mineResult] = await Promise.all([
+    let allQuery = serviceDb
+      .from("return_requests")
+      .select(
+        "id, order_id, status, request_type, reason, note, refund_amount, refund_currency, refund_date, requested_at, updated_at, requested_by, decided_at, decision_note, orders!inner(ref_no, buyer_name_address, store_id, company_id)"
+      )
+      .in("company_id", scopedCompanyIds)
+      .order("requested_at", { ascending: false })
+      .limit(500);
+    if (fromDate) allQuery = allQuery.gte("requested_at", fromDate);
+    if (toDate) allQuery = allQuery.lte("requested_at", `${toDate}T23:59:59`);
+
+    const [pendingResult, mineResult, allResult] = await Promise.all([
       canApproveReturns
         ? serviceDb
             .from("return_requests")
@@ -479,12 +518,20 @@ export default async function ReturnsPage({
         .eq("requested_by", employee.id)
         .order("requested_at", { ascending: false })
         .limit(20),
+      allQuery,
     ]);
     pendingReturnRows = (pendingResult.data ?? []) as unknown as PendingRow[];
     myReturnRows = (mineResult.data ?? []) as unknown as MyRow[];
+    allReturnRows = (allResult.data ?? []) as unknown as AllRow[];
   }
 
-  const requesterIds = Array.from(new Set(pendingReturnRows.map((row) => row.requested_by).filter(Boolean))) as string[];
+  const requesterIds = Array.from(
+    new Set([
+      ...pendingReturnRows.map((row) => row.requested_by),
+      ...allReturnRows.map((row) => row.requested_by),
+      ...orderRefunds.map((row) => row.entry_by_employee_id),
+    ].filter(Boolean))
+  ) as string[];
   const { data: requesterNames } = requesterIds.length
     ? await serviceDb.from("employees").select("id, name").in("id", requesterIds)
     : { data: [] as { id: string; name: string }[] };
@@ -522,6 +569,92 @@ export default async function ReturnsPage({
     };
   });
 
+  // Per-request audit trail. The log is written by every lifecycle action;
+  // surface it beside the request so an approver can see corrections and
+  // failed approval attempts without leaving the workspace.
+  const returnRequestIds = allReturnRows.map((row) => row.id);
+  const { data: returnAuditRaw } = returnRequestIds.length
+    ? await serviceDb
+        .from("audit_log")
+        .select("entity_id, action, employee_name, created_at")
+        .eq("entity_type", "return_request")
+        .in("entity_id", returnRequestIds)
+        .order("created_at", { ascending: true })
+        .limit(2000)
+    : { data: [] as { entity_id: string | null; action: string; employee_name: string | null; created_at: string }[] };
+  const returnAuditById = new Map<string, RequestRow["history"]>();
+  for (const entry of returnAuditRaw ?? []) {
+    if (!entry.entity_id) continue;
+    const list = returnAuditById.get(entry.entity_id) ?? [];
+    list.push({
+      action: entry.action,
+      employeeName: entry.employee_name,
+      at: entry.created_at,
+    });
+    returnAuditById.set(entry.entity_id, list);
+  }
+
+  const companyNameById = new Map((companies ?? []).map((c) => [c.id, c.name]));
+  const returnRequestRows: RequestRow[] = allReturnRows.map((row) => {
+    const order = (row.orders ?? {}) as {
+      ref_no?: string | null;
+      buyer_name_address?: string | null;
+      store_id?: string | null;
+      company_id?: string;
+    };
+    return {
+      id: row.id,
+      orderId: row.order_id,
+      kind: "Return",
+      refNo: order.ref_no ?? "—",
+      buyer: order.buyer_name_address ?? null,
+      company: companyNameById.get(order.company_id ?? "") ?? "—",
+      store: order.store_id ? (storeName.get(order.store_id) ?? null) : null,
+      reason: row.reason,
+      note: row.note,
+      amount: row.refund_amount != null ? Number(row.refund_amount) : null,
+      currency: row.refund_currency,
+      refundDate: row.refund_date,
+      status: row.status,
+      requestedAt: row.requested_at,
+      updatedAt: row.updated_at,
+      requestedBy: row.requested_by,
+      requestedByName: row.requested_by ? (requesterNameById.get(row.requested_by) ?? null) : null,
+      decidedAt: row.decided_at,
+      decisionNote: row.decision_note,
+      mine: row.requested_by === employee.id,
+      refundId: null,
+      history: returnAuditById.get(row.id) ?? [],
+    };
+  });
+  const refundRequestRows: RequestRow[] = orderRefunds.map((r) => ({
+    id: r.id,
+    orderId: r.order_id,
+    kind: "Refund",
+    refNo: r.order.ref_no,
+    buyer: r.order.buyer_name_address,
+    company: companyNameById.get(r.order.company_id) ?? "—",
+    store: r.order.store_id ? (storeName.get(r.order.store_id) ?? null) : null,
+    reason: r.reason ?? "Refund posted",
+    note: r.remarks,
+    amount: Number(r.refund_amount),
+    currency: r.refund_currency,
+    refundDate: r.refund_date,
+    status: "Approved",
+    requestedAt: r.created_at,
+    updatedAt: r.updated_at ?? r.created_at,
+    requestedBy: r.entry_by_employee_id,
+    requestedByName: requesterNameById.get(r.entry_by_employee_id) ?? null,
+    decidedAt: r.created_at,
+    decisionNote: null,
+    mine: r.entry_by_employee_id === employee.id,
+    refundId: r.id,
+    history: [],
+  }));
+  const requestRows: RequestRow[] = [...returnRequestRows, ...refundRequestRows].sort((a, b) =>
+    a.requestedAt < b.requestedAt ? 1 : a.requestedAt > b.requestedAt ? -1 : 0
+  );
+
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-amber-500";
   const selectedCompany = companyId ? companies?.find((c) => c.id === companyId)?.name ?? "selected company" : "all companies";
@@ -540,9 +673,9 @@ export default async function ReturnsPage({
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Returns &amp; Refunds</h1>
           <p className="mt-1 text-sm text-slate-500">
-            One page for every refund: what was refunded, which store is cancelling or returning the most, and the
-            old marketplace refund sheets. Every sheet below has its own search box, a filter under each column and a
-            Columns picker — exactly like the Orders page.
+            One register for returns and refunds: All Requests, My Requests and Pending Approvals. A pending return can
+            still be edited or deleted by the employee who raised it; after MD/Admin approval it is read-only and the
+            financial transaction cannot be changed silently. Refunds post immediately under the existing rules.
           </p>
           <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
             <span className="relative flex h-2 w-2">
@@ -617,6 +750,13 @@ export default async function ReturnsPage({
         </Link>
       </form>
 
+      <ReturnRequestsWorkspace
+        rows={requestRows}
+        currentEmployeeId={employee.id}
+        canApprove={canApproveReturns}
+        currencies={(currencies ?? []).map((row) => row.code)}
+      />
+
       {/* 2026-11-03 — new refund straight from this page: type the PO /
           marketplace order no (or buyer), pick the order, and its read-only
           A4 refund sheet opens — only reason + amount (and date / currency)
@@ -662,7 +802,8 @@ export default async function ReturnsPage({
           mine={myReturns}
           currencies={(currencies ?? []).map((row) => row.code)}
           migrationPending={returnMigrationPending}
-          migrationFile="db/2026-11-03b-return-approval.sql"
+          migrationFile="db/2026-11-06-return-lifecycle-measurement-biometric.sql"
+          hideQueues
         />
       </div>
 

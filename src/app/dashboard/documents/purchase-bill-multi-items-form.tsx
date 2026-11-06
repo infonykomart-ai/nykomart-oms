@@ -23,6 +23,7 @@ import { GstSelect, type GstType } from "@/components/gst-select";
 import { RoundOffField } from "./round-off-field";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 import { PurchaseDimensionFields } from "@/components/purchase-dimension-fields";
+import { isRoundingMode, type RoundingMode } from "@/lib/measurement";
 import { AREA_UNIT_LABEL, formatMeasurement } from "@/lib/measurement";
 import {
   derivePurchaseMeasurement,
@@ -67,11 +68,14 @@ export function PurchaseBillMultiItemsForm({
   parties,
   measurementDefaults,
   measurementPrecision = 2,
+  measurementRounding = "HALF_UP",
 }: {
   parties: PartyOption[];
   measurementDefaults?: PurchaseMeasurementDefaults | null;
   measurementPrecision?: number;
+  measurementRounding?: string;
 }) {
+  const rounding: RoundingMode = isRoundingMode(measurementRounding) ? measurementRounding : "HALF_UP";
   const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(savePurchaseBillMultiItems, initialState);
   // Depend on the primitive values, not the object identity — the parent
@@ -96,7 +100,8 @@ export function PurchaseBillMultiItemsForm({
       item.dimensions,
       Number(item.qty) || 0,
       item.unitRateInput,
-      measurementPrecision
+      measurementPrecision,
+      rounding
     );
   }
 
@@ -185,7 +190,7 @@ export function PurchaseBillMultiItemsForm({
         // Server re-runs the engine on these raw numbers (authoritative area,
         // unit and rate); the values above are only the pending-migration
         // fallback.
-        measurement: purchaseMeasurementPayload(it.dimensions, Number(it.qty) || 0, it.unitRateInput, measurementPrecision),
+        measurement: purchaseMeasurementPayload(it.dimensions, Number(it.qty) || 0, it.unitRateInput, measurementPrecision, rounding),
       };
     })
   );
@@ -239,6 +244,8 @@ export function PurchaseBillMultiItemsForm({
                     rateInput={it.unitRateInput}
                     precision={measurementPrecision}
                     idPrefix={`pbmi_${it.clientId}`}
+                    enabledLengthUnits={measurementDefaults?.enabledLengthUnits}
+                    enabledAreaUnits={measurementDefaults?.enabledAreaUnits}
                   />
 
                   {/* 2026-08-27 — hidden for PCS items and whenever the size
@@ -291,7 +298,12 @@ export function PurchaseBillMultiItemsForm({
                             {AREA_UNIT_LABEL[it.dimensions.areaUnit]}
                           </span>
                         ) : (
-                          <PurchaseQtyUnitSelect value={it.sqFeetUnit} onChange={(u) => updateItem(it.clientId, { sqFeetUnit: u })} />
+                          <PurchaseQtyUnitSelect
+                            value={it.sqFeetUnit}
+                            onChange={(u) => updateItem(it.clientId, { sqFeetUnit: u })}
+                            enabledAreaUnits={measurementDefaults?.enabledAreaUnits}
+                            enabledQuantityUnits={measurementDefaults?.enabledQuantityUnits}
+                          />
                         )}
                       </div>
                     </div>

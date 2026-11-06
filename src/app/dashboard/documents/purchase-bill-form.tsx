@@ -7,7 +7,7 @@ import { OrderLookupBox } from "./order-lookup-box";
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-units";
-import { AREA_UNIT_LABEL, formatMeasurement } from "@/lib/measurement";
+import { AREA_UNIT_LABEL, formatMeasurement, isRoundingMode, type RoundingMode } from "@/lib/measurement";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 import { PurchaseDimensionFields } from "@/components/purchase-dimension-fields";
@@ -39,6 +39,7 @@ export function PurchaseBillForm({
   billKind = "purchase",
   measurementDefaults,
   measurementPrecision = 2,
+  measurementRounding = "HALF_UP",
 }: {
   parties: PartyOption[];
   /**
@@ -53,7 +54,9 @@ export function PurchaseBillForm({
   /** OMS Settings → Measurement (company defaults). Optional. */
   measurementDefaults?: PurchaseMeasurementDefaults | null;
   measurementPrecision?: number;
+  measurementRounding?: string;
 }) {
+  const rounding: RoundingMode = isRoundingMode(measurementRounding) ? measurementRounding : "HALF_UP";
   const [state, formAction, pending] = useActionState(savePurchaseBill, initialState);
   const [orderId, setOrderId] = useState("");
   // 2026-08-20 — Gap 2: pre-filled (not locked) from the looked-up order's
@@ -111,7 +114,8 @@ export function PurchaseBillForm({
     dimensions,
     Number(qtyInput) || 0,
     unitRateInput,
-    measurementPrecision
+    measurementPrecision,
+    rounding
   );
   const measured = measurement.active && !measurement.error ? measurement : null;
   const effectiveQtyUnit: PurchaseQtyUnit = measured ? measured.qtyUnit : sqFeetUnit;
@@ -226,6 +230,8 @@ export function PurchaseBillForm({
           rateInput={unitRateInput}
           precision={measurementPrecision}
           idPrefix="pb"
+          enabledLengthUnits={measurementDefaults?.enabledLengthUnits}
+          enabledAreaUnits={measurementDefaults?.enabledAreaUnits}
         />
         <div>
           <label className={labelClass} htmlFor="pb_sqfeet">
@@ -248,7 +254,12 @@ export function PurchaseBillForm({
                 {AREA_UNIT_LABEL[dimensions.areaUnit]}
               </span>
             ) : (
-              <PurchaseQtyUnitSelect value={sqFeetUnit} onChange={setSqFeetUnit} />
+              <PurchaseQtyUnitSelect
+                value={sqFeetUnit}
+                onChange={setSqFeetUnit}
+                enabledAreaUnits={measurementDefaults?.enabledAreaUnits}
+                enabledQuantityUnits={measurementDefaults?.enabledQuantityUnits}
+              />
             )}
           </div>
           {!measured && !isPcs && sqFeetUnit !== "FT" && sqFeetInput && sizeMode === "area" && (
@@ -286,6 +297,7 @@ export function PurchaseBillForm({
               <input type="hidden" name="rate_input_value" value={unitRateInput} />
               <input type="hidden" name="rate_input_unit" value={dimensions.rateUnit} />
               <input type="hidden" name="measurement_precision" value={measurementPrecision} />
+              <input type="hidden" name="measurement_rounding" value={rounding} />
             </>
           )}
         </div>

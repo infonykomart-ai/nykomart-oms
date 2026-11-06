@@ -242,6 +242,11 @@ export function DocumentEntryTabs({
     default_area_unit: string;
     default_rate_unit: string;
     decimal_precision: number;
+    rounding_mode?: string | null;
+    enabled_length_units?: string[] | null;
+    enabled_area_units?: string[] | null;
+    enabled_quantity_units?: string[] | null;
+    module_defaults?: Record<string, unknown> | null;
   } | null;
 }) {
   const [tab, setTab] = useState<TabKey>(isTabKey(initialTab) ? initialTab : "credit-note");
@@ -250,12 +255,31 @@ export function DocumentEntryTabs({
   // has 2 modes: the original single-order form, and a new multi-order
   // picker for one vendor invoice covering several POs at once.
   const [pbMode, setPbMode] = useState<"single" | "multi" | "multi-items">("single");
-  const measurementDefaults = measurementSettings
+  const baseMeasurementDefaults = measurementSettings
     ? {
         dimensionUnit: measurementSettings.default_dimension_unit,
-        areaUnit: measurementSettings.default_area_unit,
         rateUnit: measurementSettings.default_rate_unit,
+        enabledLengthUnits: measurementSettings.enabled_length_units ?? null,
+        enabledAreaUnits: measurementSettings.enabled_area_units ?? null,
+        enabledQuantityUnits: measurementSettings.enabled_quantity_units ?? null,
       }
+    : null;
+  const moduleDefaults = measurementSettings?.module_defaults as
+    | { purchaseAreaUnit?: string; printingAreaUnit?: string; washingAreaUnit?: string }
+    | undefined
+    | null;
+  const moduleArea = (key: "purchaseAreaUnit" | "printingAreaUnit" | "washingAreaUnit") =>
+    moduleDefaults?.[key] ?? measurementSettings?.default_area_unit ?? "SQ_FT";
+  // 2026-11-06 — each module opens on its own configured billing unit; the
+  // dimension/rate/enabled-unit defaults stay shared.
+  const purchaseMeasurementDefaults = baseMeasurementDefaults
+    ? { ...baseMeasurementDefaults, areaUnit: moduleArea("purchaseAreaUnit") }
+    : null;
+  const printingMeasurementDefaults = baseMeasurementDefaults
+    ? { ...baseMeasurementDefaults, areaUnit: moduleArea("printingAreaUnit") }
+    : null;
+  const washingMeasurementDefaults = baseMeasurementDefaults
+    ? { ...baseMeasurementDefaults, areaUnit: moduleArea("washingAreaUnit") }
     : null;
 
   const tabBar = (
@@ -322,7 +346,16 @@ export function DocumentEntryTabs({
           {tab === "debit-note" && (
             <DebitNoteForm companies={companies} parties={parties} defaults={debitNoteDefaults} />
           )}
-          {tab === "washing-entry" && <WashingEntryForm companies={companies} parties={parties} stores={stores} />}
+          {tab === "washing-entry" && (
+            <WashingEntryForm
+              companies={companies}
+              parties={parties}
+              stores={stores}
+              measurementDefaults={washingMeasurementDefaults}
+              measurementPrecision={measurementSettings?.decimal_precision}
+              measurementRounding={measurementSettings?.rounding_mode ?? "HALF_UP"}
+            />
+          )}
           {tab === "internal-invoice" && <InternalInvoiceForm companies={companies} />}
           {tab === "printing-bill" && (
             <div>
@@ -330,7 +363,7 @@ export function DocumentEntryTabs({
                 Printing job-work bill against a PO (cotton dhurri / rug printing etc.). Saves as a <strong>Printing</strong> bill — it
                 appears in the Printing register and posts to the Finance ledger&apos;s Printing bucket, not the Purchase one.
               </p>
-              <PurchaseBillForm parties={parties} billKind="printing" measurementDefaults={measurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} />
+              <PurchaseBillForm parties={parties} billKind="printing" measurementDefaults={printingMeasurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} measurementRounding={measurementSettings?.rounding_mode ?? "HALF_UP"} />
             </div>
           )}
           {tab === "purchase-bill" && (
@@ -359,11 +392,11 @@ export function DocumentEntryTabs({
                 </button>
               </div>
               {pbMode === "single" && (
-                <PurchaseBillForm parties={parties} measurementDefaults={measurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} />
+                <PurchaseBillForm parties={parties} measurementDefaults={purchaseMeasurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} measurementRounding={measurementSettings?.rounding_mode ?? "HALF_UP"} />
               )}
-              {pbMode === "multi" && <PurchaseBillMultiForm parties={parties} />}
+              {pbMode === "multi" && <PurchaseBillMultiForm parties={parties} measurementDefaults={purchaseMeasurementDefaults} />}
               {pbMode === "multi-items" && (
-                <PurchaseBillMultiItemsForm parties={parties} measurementDefaults={measurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} />
+                <PurchaseBillMultiItemsForm parties={parties} measurementDefaults={purchaseMeasurementDefaults} measurementPrecision={measurementSettings?.decimal_precision} measurementRounding={measurementSettings?.rounding_mode ?? "HALF_UP"} />
               )}
             </div>
           )}
@@ -539,7 +572,15 @@ export function DocumentEntryTabs({
             />
           )}
           renderEdit={(r, onDone) => (
-            <WashingEntryEditForm entry={r} parties={parties} stores={stores.filter((s) => s.company_id === r.company_id)} onDone={onDone} />
+            <WashingEntryEditForm
+              entry={r}
+              parties={parties}
+              stores={stores.filter((s) => s.company_id === r.company_id)}
+              measurementDefaults={washingMeasurementDefaults}
+              measurementPrecision={measurementSettings?.decimal_precision}
+              measurementRounding={measurementSettings?.rounding_mode ?? "HALF_UP"}
+              onDone={onDone}
+            />
           )}
         />
         </div>

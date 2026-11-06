@@ -10,7 +10,21 @@ import { createClient } from "@/lib/supabase/server";
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500";
 
-const ENTITY_TYPES = ["order", "purchase_bill", "freight_bill", "duty_tax_bill", "internal_expense", "order_shipment"];
+const ENTITY_TYPES = [
+  "order",
+  "order_refund",
+  "return_request",
+  "purchase_bill",
+  "freight_bill",
+  "duty_tax_bill",
+  "internal_expense",
+  "order_shipment",
+  "attendance",
+  "biometric_device",
+  "biometric_employee_map",
+  "attendance_shift",
+  "biometric_punch_event",
+];
 
 export default async function AuditLogPage({
   searchParams,

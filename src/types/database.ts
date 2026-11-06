@@ -721,7 +721,7 @@ export type Database = {
           punch_out: string | null;
           work_hours: number | null;
           status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+          source: "Web Punch" | "TeamOffice Import" | "Manual Entry" | "Biometric";
           device_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           device_punch_in: string | null;
           device_punch_out: string | null;
@@ -739,6 +739,19 @@ export type Database = {
           gps_decided_by_employee_id: string | null;
           gps_decided_at: string | null;
           gps_decision_remark: string | null;
+          // 2026-11-06 — biometric attendance provenance. punch_in/out stay
+          // authoritative; oms_punch_* preserve the original web punch.
+          attendance_verification: string | null;
+          biometric_device_id: string | null;
+          biometric_in_at: string | null;
+          biometric_out_at: string | null;
+          oms_punch_in: string | null;
+          oms_punch_out: string | null;
+          late_minutes: number | null;
+          early_departure_minutes: number | null;
+          overtime_minutes: number | null;
+          missing_punch: "IN" | "OUT" | null;
+          biometric_synced_at: string | null;
         };
         Insert: {
           id?: string;
@@ -750,7 +763,7 @@ export type Database = {
           punch_out?: string | null;
           work_hours?: number | null;
           status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+          source: "Web Punch" | "TeamOffice Import" | "Manual Entry" | "Biometric";
           device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           device_punch_in?: string | null;
           device_punch_out?: string | null;
@@ -768,6 +781,17 @@ export type Database = {
           gps_decided_by_employee_id?: string | null;
           gps_decided_at?: string | null;
           gps_decision_remark?: string | null;
+          attendance_verification?: string | null;
+          biometric_device_id?: string | null;
+          biometric_in_at?: string | null;
+          biometric_out_at?: string | null;
+          oms_punch_in?: string | null;
+          oms_punch_out?: string | null;
+          late_minutes?: number | null;
+          early_departure_minutes?: number | null;
+          overtime_minutes?: number | null;
+          missing_punch?: "IN" | "OUT" | null;
+          biometric_synced_at?: string | null;
         };
         Update: {
           id?: string;
@@ -779,7 +803,7 @@ export type Database = {
           punch_out?: string | null;
           work_hours?: number | null;
           status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
-          source?: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+          source?: "Web Punch" | "TeamOffice Import" | "Manual Entry" | "Biometric";
           device_status?: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday" | null;
           device_punch_in?: string | null;
           device_punch_out?: string | null;
@@ -797,6 +821,17 @@ export type Database = {
           gps_decided_by_employee_id?: string | null;
           gps_decided_at?: string | null;
           gps_decision_remark?: string | null;
+          attendance_verification?: string | null;
+          biometric_device_id?: string | null;
+          biometric_in_at?: string | null;
+          biometric_out_at?: string | null;
+          oms_punch_in?: string | null;
+          oms_punch_out?: string | null;
+          late_minutes?: number | null;
+          early_departure_minutes?: number | null;
+          overtime_minutes?: number | null;
+          missing_punch?: "IN" | "OUT" | null;
+          biometric_synced_at?: string | null;
         };
         Relationships: [
           {
@@ -3248,6 +3283,192 @@ export type Database = {
       // 2026-11-05 — OMS Settings → Measurement
       // (db/2026-11-05-refund-edit-delete-and-measurement.sql). One row per
       // company; an absent row means the engine defaults (FT / SQ FT / 2 dp).
+      attendance_shifts: {
+        Row: {
+          id: string;
+          company_id: string;
+          name: string;
+          start_time: string;
+          end_time: string;
+          grace_minutes: number;
+          half_day_minutes: number;
+          overtime_after_minutes: number;
+          active: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          name: string;
+          start_time?: string;
+          end_time?: string;
+          grace_minutes?: number;
+          half_day_minutes?: number;
+          overtime_after_minutes?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          name?: string;
+          start_time?: string;
+          end_time?: string;
+          grace_minutes?: number;
+          half_day_minutes?: number;
+          overtime_after_minutes?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      biometric_devices: {
+        Row: {
+          id: string;
+          company_id: string;
+          device_key: string;
+          name: string;
+          vendor: string | null;
+          model: string | null;
+          mode: "PUSH" | "PULL";
+          endpoint_url: string | null;
+          api_key_hash: string;
+          api_key_last4: string;
+          active: boolean;
+          last_event_at: string | null;
+          last_sync_at: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          device_key: string;
+          name: string;
+          vendor?: string | null;
+          model?: string | null;
+          mode?: "PUSH" | "PULL";
+          endpoint_url?: string | null;
+          api_key_hash: string;
+          api_key_last4: string;
+          active?: boolean;
+          last_event_at?: string | null;
+          last_sync_at?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          device_key?: string;
+          name?: string;
+          vendor?: string | null;
+          model?: string | null;
+          mode?: "PUSH" | "PULL";
+          endpoint_url?: string | null;
+          api_key_hash?: string;
+          api_key_last4?: string;
+          active?: boolean;
+          last_event_at?: string | null;
+          last_sync_at?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      biometric_employee_map: {
+        Row: {
+          id: string;
+          company_id: string;
+          device_id: string;
+          employee_id: string;
+          device_employee_id: string;
+          shift_id: string | null;
+          active: boolean;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          device_id: string;
+          employee_id: string;
+          device_employee_id: string;
+          shift_id?: string | null;
+          active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          device_id?: string;
+          employee_id?: string;
+          device_employee_id?: string;
+          shift_id?: string | null;
+          active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      biometric_punch_events: {
+        Row: {
+          id: string;
+          company_id: string;
+          device_id: string;
+          device_employee_id: string;
+          employee_id: string | null;
+          mapping_id: string | null;
+          punch_at: string;
+          direction: "IN" | "OUT" | "AUTO";
+          source_event_id: string | null;
+          raw_payload: Record<string, unknown> | null;
+          status: "Processed" | "Duplicate" | "Failed" | "Unmapped";
+          error: string | null;
+          attendance_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          company_id: string;
+          device_id: string;
+          device_employee_id: string;
+          employee_id?: string | null;
+          mapping_id?: string | null;
+          punch_at: string;
+          direction?: "IN" | "OUT" | "AUTO";
+          source_event_id?: string | null;
+          raw_payload?: Record<string, unknown> | null;
+          status?: "Processed" | "Duplicate" | "Failed" | "Unmapped";
+          error?: string | null;
+          attendance_id?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          company_id?: string;
+          device_id?: string;
+          device_employee_id?: string;
+          employee_id?: string | null;
+          mapping_id?: string | null;
+          punch_at?: string;
+          direction?: "IN" | "OUT" | "AUTO";
+          source_event_id?: string | null;
+          raw_payload?: Record<string, unknown> | null;
+          status?: "Processed" | "Duplicate" | "Failed" | "Unmapped";
+          error?: string | null;
+          attendance_id?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       company_measurement_settings: {
         Row: {
           id: string;
@@ -3258,6 +3479,14 @@ export type Database = {
           decimal_precision: number;
           allow_per_transaction_unit: boolean;
           default_report_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          enabled_length_units: string[];
+          enabled_area_units: string[];
+          enabled_weight_units: string[];
+          enabled_quantity_units: string[];
+          default_weight_unit: string;
+          default_quantity_unit: string;
+          rounding_mode: "HALF_UP" | "UP" | "DOWN";
+          module_defaults: Record<string, unknown>;
           updated_by_employee_id: string | null;
           updated_at: string;
         };
@@ -3270,6 +3499,14 @@ export type Database = {
           decimal_precision?: number;
           allow_per_transaction_unit?: boolean;
           default_report_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          enabled_length_units?: string[];
+          enabled_area_units?: string[];
+          enabled_weight_units?: string[];
+          enabled_quantity_units?: string[];
+          default_weight_unit?: string;
+          default_quantity_unit?: string;
+          rounding_mode?: "HALF_UP" | "UP" | "DOWN";
+          module_defaults?: Record<string, unknown>;
           updated_by_employee_id?: string | null;
           updated_at?: string;
         };
@@ -3282,6 +3519,14 @@ export type Database = {
           decimal_precision?: number;
           allow_per_transaction_unit?: boolean;
           default_report_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT";
+          enabled_length_units?: string[];
+          enabled_area_units?: string[];
+          enabled_weight_units?: string[];
+          enabled_quantity_units?: string[];
+          default_weight_unit?: string;
+          default_quantity_unit?: string;
+          rounding_mode?: "HALF_UP" | "UP" | "DOWN";
+          module_defaults?: Record<string, unknown>;
           updated_by_employee_id?: string | null;
           updated_at?: string;
         };
@@ -7038,6 +7283,10 @@ export type Database = {
           description: string | null;
           entry_group_id: string | null;
           updated_at: string | null;
+          qty: number | null;
+          qty_unit: string | null;
+          unit_rate: number | null;
+          measurement_mode: "COUNT" | "WEIGHT" | "AREA" | "LENGTH" | null;
         };
         Insert: {
           id?: string;
@@ -7057,6 +7306,10 @@ export type Database = {
           description?: string | null;
           entry_group_id?: string | null;
           updated_at?: string | null;
+          qty?: number | null;
+          qty_unit?: string | null;
+          unit_rate?: number | null;
+          measurement_mode?: "COUNT" | "WEIGHT" | "AREA" | "LENGTH" | null;
         };
         Update: {
           id?: string;
@@ -7076,6 +7329,10 @@ export type Database = {
           description?: string | null;
           entry_group_id?: string | null;
           updated_at?: string | null;
+          qty?: number | null;
+          qty_unit?: string | null;
+          unit_rate?: number | null;
+          measurement_mode?: "COUNT" | "WEIGHT" | "AREA" | "LENGTH" | null;
         };
         Relationships: [
           {
@@ -8715,6 +8972,7 @@ export type Database = {
           rate_input_value: number | null;
           rate_input_unit: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
           measurement_precision: number | null;
+          measurement_rounding: "HALF_UP" | "UP" | "DOWN" | null;
         };
         Insert: {
           id?: string;
@@ -8749,6 +9007,7 @@ export type Database = {
           rate_input_value?: number | null;
           rate_input_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
           measurement_precision?: number | null;
+          measurement_rounding?: "HALF_UP" | "UP" | "DOWN" | null;
         };
         Update: {
           id?: string;
@@ -8783,6 +9042,7 @@ export type Database = {
           rate_input_value?: number | null;
           rate_input_unit?: "SQ_MM" | "SQ_CM" | "SQ_MTR" | "SQ_INCH" | "SQ_FT" | null;
           measurement_precision?: number | null;
+          measurement_rounding?: "HALF_UP" | "UP" | "DOWN" | null;
         };
         Relationships: [
           {
@@ -9106,11 +9366,16 @@ export type Database = {
           refund_amount: number | null;
           refund_currency: string | null;
           refund_date: string | null;
-          status: "Pending" | "Approved" | "Rejected";
+          status: "Pending" | "Approved" | "Rejected" | "Cancelled";
           decided_by: string | null;
           decided_at: string | null;
           decision_note: string | null;
           applied_refund_id: string | null;
+          request_type: "Return" | "Refund";
+          updated_at: string;
+          updated_by: string | null;
+          cancelled_at: string | null;
+          cancelled_by: string | null;
           created_at: string;
         };
         Insert: {
@@ -9124,11 +9389,16 @@ export type Database = {
           refund_amount?: number | null;
           refund_currency?: string | null;
           refund_date?: string | null;
-          status?: "Pending" | "Approved" | "Rejected";
+          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
           decided_by?: string | null;
           decided_at?: string | null;
           decision_note?: string | null;
           applied_refund_id?: string | null;
+          request_type?: "Return" | "Refund";
+          updated_at?: string;
+          updated_by?: string | null;
+          cancelled_at?: string | null;
+          cancelled_by?: string | null;
           created_at?: string;
         };
         Update: {
@@ -9142,11 +9412,16 @@ export type Database = {
           refund_amount?: number | null;
           refund_currency?: string | null;
           refund_date?: string | null;
-          status?: "Pending" | "Approved" | "Rejected";
+          status?: "Pending" | "Approved" | "Rejected" | "Cancelled";
           decided_by?: string | null;
           decided_at?: string | null;
           decision_note?: string | null;
           applied_refund_id?: string | null;
+          request_type?: "Return" | "Refund";
+          updated_at?: string;
+          updated_by?: string | null;
+          cancelled_at?: string | null;
+          cancelled_by?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -10473,6 +10748,16 @@ export type Database = {
           round_off_amt: number;
           store_id: string | null;
           created_at: string;
+          length_value: number | null;
+          length_unit: string | null;
+          width_value: number | null;
+          width_unit: string | null;
+          area_value: number | null;
+          area_display_unit: string | null;
+          rate_input_value: number | null;
+          rate_unit: string | null;
+          measurement_precision: number | null;
+          measurement_rounding: string | null;
         };
         Insert: {
           id?: string;
@@ -10491,6 +10776,16 @@ export type Database = {
           round_off_amt?: number;
           store_id?: string | null;
           created_at?: string;
+          length_value?: number | null;
+          length_unit?: string | null;
+          width_value?: number | null;
+          width_unit?: string | null;
+          area_value?: number | null;
+          area_display_unit?: string | null;
+          rate_input_value?: number | null;
+          rate_unit?: string | null;
+          measurement_precision?: number | null;
+          measurement_rounding?: string | null;
         };
         Update: {
           id?: string;
@@ -10509,6 +10804,16 @@ export type Database = {
           round_off_amt?: number;
           store_id?: string | null;
           created_at?: string;
+          length_value?: number | null;
+          length_unit?: string | null;
+          width_value?: number | null;
+          width_unit?: string | null;
+          area_value?: number | null;
+          area_display_unit?: string | null;
+          rate_input_value?: number | null;
+          rate_unit?: string | null;
+          measurement_precision?: number | null;
+          measurement_rounding?: string | null;
         };
         Relationships: [
           {
@@ -11089,7 +11394,7 @@ export type Database = {
     };
     Enums: {
       address_type: "Residential" | "Commercial";
-      attendance_source: "Web Punch" | "TeamOffice Import" | "Manual Entry";
+      attendance_source: "Web Punch" | "TeamOffice Import" | "Manual Entry" | "Biometric";
       attendance_status: "Present" | "Absent" | "Week Off" | "Half Day" | "Leave" | "Late" | "Holiday";
       bank_status: "Pending" | "Realized" | "Partially Realized";
       bill_approval_status: "Pending" | "Approved L1" | "Approved L2" | "Rejected";

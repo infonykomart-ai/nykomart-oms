@@ -196,6 +196,23 @@ export async function probeMigrations(
       "Returns cannot be handed in for approval — order-entry staff would have to change the order directly, with no approval trail.",
       [{ name: "return_requests table", promise: hasColumn(client, "return_requests", "status") }]),
 
+    // 2026-11-06 — pending return edit/cancel, measurement extensions and the
+    // biometric bridge. The app checks these pieces individually, so a
+    // database that only ran 2026-11-03b keeps its old (working) behaviour.
+    probe("db/2026-11-06-return-lifecycle-measurement-biometric.sql", "Return lifecycle, weight/count measurement and biometric attendance",
+      "Pending returns cannot be edited/cancelled by their creator, washing/expense entries cannot store weight or quantity units, and biometric punches cannot be received.",
+      [
+        { name: "return_requests.updated_at", promise: hasColumn(client, "return_requests", "updated_at") },
+        { name: "company_measurement_settings.rounding_mode", promise: hasColumn(client, "company_measurement_settings", "rounding_mode") },
+        { name: "washing_entries.area_value", promise: hasColumn(client, "washing_entries", "area_value") },
+        { name: "purchase_bills.measurement_rounding", promise: hasColumn(client, "purchase_bills", "measurement_rounding") },
+        { name: "internal_expenses.qty_unit", promise: hasColumn(client, "internal_expenses", "qty_unit") },
+        { name: "biometric_devices table", promise: hasColumn(client, "biometric_devices", "device_key") },
+        { name: "biometric_employee_map table", promise: hasColumn(client, "biometric_employee_map", "device_employee_id") },
+        { name: "biometric_punch_events table", promise: hasColumn(client, "biometric_punch_events", "source_event_id") },
+        { name: "attendance.attendance_verification", promise: hasColumn(client, "attendance", "attendance_verification") },
+      ]),
+
     // 2026-11-03 — Vendor Agreements (Legal & Compliance → Agreement Generator).
     // Without the file: the generator shows a "run this migration" banner and
     // refuses to create documents, because numbering, the template registry and

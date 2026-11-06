@@ -30,7 +30,7 @@ export type PendingReturnRow = {
 export type MyReturnRow = {
   id: string;
   refNo: string;
-  status: "Pending" | "Approved" | "Rejected";
+  status: "Pending" | "Approved" | "Rejected" | "Cancelled";
   reason: string;
   refundAmount: number | null;
   requestedAt: string;
@@ -51,6 +51,7 @@ export function ReturnRequestPanel({
   currencies,
   migrationPending,
   migrationFile,
+  hideQueues = false,
 }: {
   canApprove: boolean;
   pending: PendingReturnRow[];
@@ -58,6 +59,8 @@ export function ReturnRequestPanel({
   currencies: string[];
   migrationPending: boolean;
   migrationFile: string;
+  /** 2026-11-06 — the unified requests workspace renders the queues + tabs. */
+  hideQueues?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ReturnOrderOption[]>([]);
@@ -305,7 +308,7 @@ export function ReturnRequestPanel({
         ) : null}
       </div>
 
-      {canApprove ? (
+      {canApprove && !hideQueues ? (
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-900">Pending return approvals</h2>
           {pending.length === 0 ? (
@@ -366,7 +369,7 @@ export function ReturnRequestPanel({
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
+      {!hideQueues ? <div className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="text-sm font-semibold text-slate-900">My recent return requests</h2>
         {mine.length === 0 ? (
           <p className="mt-2 text-xs text-slate-400">You have not raised any return requests yet.</p>
@@ -392,7 +395,7 @@ export function ReturnRequestPanel({
             ))}
           </ul>
         )}
-      </div>
+      </div> : null}
     </div>
   );
 }

@@ -34,6 +34,13 @@ import {
 import { groupPartyOptions, type PartyOption } from "./party-options";
 import { PurchaseQtyUnitSelect } from "@/components/purchase-qty-unit-select";
 import type { PurchaseQtyUnit } from "@/lib/length-units";
+import {
+  areaUnitToQtyUnit,
+  convertArea,
+  qtyUnitToAreaUnit,
+  type AreaUnit,
+} from "@/lib/measurement";
+import type { PurchaseMeasurementDefaults } from "@/lib/purchase-measurement";
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { RoundOffField } from "./round-off-field";
 
@@ -54,7 +61,13 @@ type PickedOrder = {
   alreadyBilled: number;
 };
 
-export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
+export function PurchaseBillMultiForm({
+  parties,
+  measurementDefaults,
+}: {
+  parties: PartyOption[];
+  measurementDefaults?: PurchaseMeasurementDefaults | null;
+}) {
   const partyGroups = groupPartyOptions(parties);
   const [state, formAction, pending] = useActionState(savePurchaseBillMulti, initialState);
   const [query, setQuery] = useState("");
@@ -70,7 +83,9 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
   // invoice silently produced wrong totals before this was shared (real bug
   // found live, see db/2026-08-17-purchase-bills-qty-unit.sql). Unit Rate
   // itself is no longer shared (2026-08-26) — only the unit is.
-  const [sharedUnit, setSharedUnit] = useState<PurchaseQtyUnit>("FT");
+  const defaultAreaUnit = (measurementDefaults?.areaUnit ?? "SQ_FT") as AreaUnit;
+  const defaultQtyUnit = areaUnitToQtyUnit(defaultAreaUnit);
+  const [sharedUnit, setSharedUnit] = useState<PurchaseQtyUnit>(defaultQtyUnit);
   const isPcs = sharedUnit === "PCS";
   // GST is also shared across the whole invoice, same reasoning as unit.
   const [gstRatePct, setGstRatePct] = useState<number | null>(null);
@@ -93,11 +108,11 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
       setOrders([]);
       setGstRatePct(null);
       setGstType("CGST_SGST");
-      setSharedUnit("FT");
+      setSharedUnit(defaultQtyUnit);
       setBulkRate("");
     }, 0);
     return () => clearTimeout(t);
-  }, [state.results]);
+  }, [state.results, defaultQtyUnit]);
 
   function addOrder(order: {
     id: string;
@@ -113,7 +128,11 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
     // not a safe auto-fill (the vendor's MTR/INCH/etc figure isn't the
     // same number as the order's feet-parsed size), so leave it blank
     // for a manual entry instead of quietly suggesting the wrong unit.
-    const suggestedSqFeet = sharedUnit === "FT" ? order.suggested_sq_feet ?? 0 : 0;
+    const targetArea = qtyUnitToAreaUnit(sharedUnit);
+    const suggested = targetArea && order.suggested_sq_feet != null
+      ? convertArea(order.suggested_sq_feet, "SQ_FT", targetArea)
+      : 0;
+    const suggestedSqFeet = Number.isFinite(suggested) ? suggested : 0;
     setOrders((prev) => [
       ...prev,
       {
@@ -122,7 +141,7 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
         sizeLabel: order.size_label,
         categoryName: order.item_category_name,
         qty: order.qty || 1,
-        sqFeetAuto: sharedUnit === "FT" && order.suggested_sq_feet != null,
+        sqFeetAuto: targetArea != null && order.suggested_sq_feet != null,
         sqFeetDisplay: suggestedSqFeet ? String(suggestedSqFeet) : "",
         unitRateInput: "",
         alreadyBilled: existingBillCount,
@@ -231,7 +250,27 @@ export function PurchaseBillMultiForm({ parties }: { parties: PartyOption[] }) {
           <label className="block text-xs font-medium text-slate-500">Add PO/RF/RG orders covered by this one vendor invoice</label>
           <div className="flex items-center gap-1 text-[11px] text-slate-500">
             Unit for all orders below
-            <PurchaseQtyUnitSelect value={sharedUnit} onChange={setSharedUnit} />
+            <PurchaseQtyUnitSelect
+              value={sharedUnit}
+              enabledAreaUnits={measurementDefaults?.enabledAreaUnits}
+              enabledQuantityUnits={measurementDefaults?.enabledQuantityUnits}
+              onChange={(next) => {
+                // Keep auto-filled quantities equivalent when the invoice's
+                // unit changes; manually typed values stay as typed.
+                const from = qtyUnitToAreaUnit(sharedUnit);
+                const to = qtyUnitToAreaUnit(next);
+                if (from && to && from !== to) {
+                  setOrders((prev) =>
+                    prev.map((o) =>
+                      o.sqFeetAuto && o.sqFeetDisplay
+                        ? { ...o, sqFeetDisplay: String(convertArea(Number(o.sqFeetDisplay) || 0, from, to)) }
+                        : o
+                    )
+                  );
+                }
+                setSharedUnit(next);
+              }}
+            />
           </div>
         </div>
         <div className="relative flex gap-2">

@@ -191,7 +191,7 @@ CREATE TYPE refund_source AS ENUM ('DISPATCH', 'FBA', 'NO_DISPATCH');
 -- treats both identically (never Absent, never deducted).
 CREATE TYPE attendance_status AS ENUM ('Present', 'Absent', 'Week Off', 'Half Day', 'Leave', 'Late', 'Holiday');
 
-CREATE TYPE attendance_source AS ENUM ('Web Punch', 'TeamOffice Import', 'Manual Entry');
+CREATE TYPE attendance_source AS ENUM ('Web Punch', 'TeamOffice Import', 'Manual Entry', 'Biometric');
 
 -- 2026-08-07: Employee Master expansion — see employees table below.
 CREATE TYPE employee_gender AS ENUM ('Male', 'Female');
@@ -1188,6 +1188,7 @@ CREATE TABLE purchase_bills (
   rate_input_value                numeric(14,2) CHECK (rate_input_value IS NULL OR rate_input_value >= 0),
   rate_input_unit                 text CHECK (rate_input_unit IS NULL OR rate_input_unit IN ('SQ_MM', 'SQ_CM', 'SQ_MTR', 'SQ_INCH', 'SQ_FT')),
   measurement_precision           integer CHECK (measurement_precision IS NULL OR (measurement_precision >= 0 AND measurement_precision <= 6)),
+  measurement_rounding            text CHECK (measurement_rounding IS NULL OR measurement_rounding IN ('HALF_UP', 'UP', 'DOWN')),
   -- TOTAL SQ FEET = QTY * area, then TOTAL AMOUNT = TOTAL SQ FEET * UNIT
   -- RATE — inlined fully since a generated column can't reference another
   -- generated column. area_value (the precise engine result) wins when the
@@ -7333,6 +7334,7 @@ CREATE TABLE return_requests (
 CREATE INDEX idx_return_requests_company_status ON return_requests(company_id, status, requested_at DESC);
 CREATE INDEX idx_return_requests_order ON return_requests(order_id);
 CREATE INDEX idx_return_requests_requested_by ON return_requests(requested_by, status);
+CREATE UNIQUE INDEX idx_return_requests_one_pending ON return_requests(order_id) WHERE status = 'Pending';
 
 ALTER TABLE return_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE return_requests FORCE ROW LEVEL SECURITY;
@@ -7595,3 +7597,168 @@ REVOKE ALL ON FUNCTION apply_order_refund_update(uuid, uuid, numeric, varchar, d
 REVOKE ALL ON FUNCTION apply_order_refund_delete(uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION apply_order_refund_update(uuid, uuid, numeric, varchar, date, text, numeric, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, refund_type) TO service_role;
 GRANT EXECUTE ON FUNCTION apply_order_refund_delete(uuid, uuid) TO service_role;
+
+
+-- =============================================================================
+-- 2026-11-06 — RETURN LIFECYCLE, MEASUREMENT EXTENSIONS, BIOMETRIC ATTENDANCE
+-- (folded from db/2026-11-06-return-lifecycle-measurement-biometric.sql)
+-- =============================================================================
+ALTER TABLE return_requests
+  ADD COLUMN IF NOT EXISTS request_type text NOT NULL DEFAULT 'Return',
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS updated_by uuid REFERENCES employees(id),
+  ADD COLUMN IF NOT EXISTS cancelled_at timestamptz,
+  ADD COLUMN IF NOT EXISTS cancelled_by uuid REFERENCES employees(id);
+ALTER TABLE return_requests DROP CONSTRAINT IF EXISTS return_requests_status_check;
+ALTER TABLE return_requests
+  ADD CONSTRAINT return_requests_status_check
+  CHECK (status IN ('Pending', 'Approved', 'Rejected', 'Cancelled'));
+ALTER TABLE return_requests DROP CONSTRAINT IF EXISTS return_requests_request_type_check;
+ALTER TABLE return_requests
+  ADD CONSTRAINT return_requests_request_type_check
+  CHECK (request_type IN ('Return', 'Refund'));
+CREATE OR REPLACE FUNCTION set_return_requests_updated_at() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS return_requests_set_updated_at ON return_requests;
+CREATE TRIGGER return_requests_set_updated_at
+  BEFORE UPDATE ON return_requests
+  FOR EACH ROW EXECUTE FUNCTION set_return_requests_updated_at();
+CREATE INDEX IF NOT EXISTS idx_return_requests_mine
+  ON return_requests(requested_by, requested_at DESC);
+
+ALTER TABLE company_measurement_settings
+  ADD COLUMN IF NOT EXISTS enabled_length_units text[] NOT NULL DEFAULT ARRAY['MM','CM','MTR','INCH','FT'],
+  ADD COLUMN IF NOT EXISTS enabled_area_units text[] NOT NULL DEFAULT ARRAY['SQ_MM','SQ_CM','SQ_MTR','SQ_INCH','SQ_FT'],
+  ADD COLUMN IF NOT EXISTS enabled_weight_units text[] NOT NULL DEFAULT ARRAY['G','KG','TON'],
+  ADD COLUMN IF NOT EXISTS enabled_quantity_units text[] NOT NULL DEFAULT ARRAY['PCS','SET','BOX','UNIT'],
+  ADD COLUMN IF NOT EXISTS default_weight_unit text NOT NULL DEFAULT 'KG',
+  ADD COLUMN IF NOT EXISTS default_quantity_unit text NOT NULL DEFAULT 'PCS',
+  ADD COLUMN IF NOT EXISTS rounding_mode text NOT NULL DEFAULT 'HALF_UP'
+    CHECK (rounding_mode IN ('HALF_UP', 'UP', 'DOWN')),
+  ADD COLUMN IF NOT EXISTS module_defaults jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE washing_entries
+  ADD COLUMN IF NOT EXISTS length_value numeric(14,4),
+  ADD COLUMN IF NOT EXISTS length_unit text,
+  ADD COLUMN IF NOT EXISTS width_value numeric(14,4),
+  ADD COLUMN IF NOT EXISTS width_unit text,
+  ADD COLUMN IF NOT EXISTS area_value numeric(18,6),
+  ADD COLUMN IF NOT EXISTS area_display_unit text,
+  ADD COLUMN IF NOT EXISTS rate_input_value numeric(14,2),
+  ADD COLUMN IF NOT EXISTS rate_unit text,
+  ADD COLUMN IF NOT EXISTS measurement_precision integer,
+  ADD COLUMN IF NOT EXISTS measurement_rounding text;
+
+ALTER TABLE internal_expenses
+  ADD COLUMN IF NOT EXISTS qty numeric(14,3),
+  ADD COLUMN IF NOT EXISTS qty_unit text,
+  ADD COLUMN IF NOT EXISTS unit_rate numeric(14,2),
+  ADD COLUMN IF NOT EXISTS measurement_mode text
+    CHECK (measurement_mode IS NULL OR measurement_mode IN ('COUNT', 'WEIGHT', 'AREA', 'LENGTH'));
+
+ALTER TABLE attendance
+  ADD COLUMN IF NOT EXISTS attendance_verification text,
+  ADD COLUMN IF NOT EXISTS biometric_device_id uuid,
+  ADD COLUMN IF NOT EXISTS biometric_in_at timestamptz,
+  ADD COLUMN IF NOT EXISTS biometric_out_at timestamptz,
+  ADD COLUMN IF NOT EXISTS oms_punch_in timestamptz,
+  ADD COLUMN IF NOT EXISTS oms_punch_out timestamptz,
+  ADD COLUMN IF NOT EXISTS late_minutes integer,
+  ADD COLUMN IF NOT EXISTS early_departure_minutes integer,
+  ADD COLUMN IF NOT EXISTS overtime_minutes integer,
+  ADD COLUMN IF NOT EXISTS missing_punch text
+    CHECK (missing_punch IS NULL OR missing_punch IN ('IN', 'OUT')),
+  ADD COLUMN IF NOT EXISTS biometric_synced_at timestamptz;
+CREATE INDEX IF NOT EXISTS idx_attendance_verification
+  ON attendance(attendance_date, attendance_verification);
+
+CREATE TABLE IF NOT EXISTS biometric_devices (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  device_key        text NOT NULL UNIQUE,
+  name              text NOT NULL,
+  vendor            text,
+  model             text,
+  mode              text NOT NULL DEFAULT 'PUSH' CHECK (mode IN ('PUSH', 'PULL')),
+  endpoint_url      text,
+  api_key_hash      text NOT NULL,
+  api_key_last4     text NOT NULL,
+  active            boolean NOT NULL DEFAULT true,
+  last_event_at     timestamptz,
+  last_sync_at      timestamptz,
+  created_by        uuid REFERENCES employees(id),
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, name)
+);
+CREATE TABLE IF NOT EXISTS attendance_shifts (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id             uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name                   text NOT NULL,
+  start_time             time NOT NULL DEFAULT '09:30',
+  end_time               time NOT NULL DEFAULT '18:30',
+  grace_minutes          integer NOT NULL DEFAULT 15 CHECK (grace_minutes >= 0 AND grace_minutes <= 240),
+  half_day_minutes       integer NOT NULL DEFAULT 240 CHECK (half_day_minutes > 0),
+  overtime_after_minutes integer NOT NULL DEFAULT 0 CHECK (overtime_after_minutes >= 0),
+  active                 boolean NOT NULL DEFAULT true,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, name)
+);
+CREATE TABLE IF NOT EXISTS biometric_employee_map (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  device_id         uuid NOT NULL REFERENCES biometric_devices(id) ON DELETE CASCADE,
+  employee_id       uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  device_employee_id text NOT NULL,
+  shift_id          uuid REFERENCES attendance_shifts(id) ON DELETE SET NULL,
+  active            boolean NOT NULL DEFAULT true,
+  created_by        uuid REFERENCES employees(id),
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (device_id, device_employee_id),
+  UNIQUE (device_id, employee_id)
+);
+CREATE TABLE IF NOT EXISTS biometric_punch_events (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id         uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  device_id          uuid NOT NULL REFERENCES biometric_devices(id) ON DELETE CASCADE,
+  device_employee_id text NOT NULL,
+  employee_id        uuid REFERENCES employees(id) ON DELETE SET NULL,
+  mapping_id         uuid REFERENCES biometric_employee_map(id) ON DELETE SET NULL,
+  punch_at           timestamptz NOT NULL,
+  direction          text NOT NULL DEFAULT 'AUTO' CHECK (direction IN ('IN', 'OUT', 'AUTO')),
+  source_event_id    text,
+  raw_payload        jsonb,
+  status             text NOT NULL DEFAULT 'Processed'
+                       CHECK (status IN ('Processed', 'Duplicate', 'Failed', 'Unmapped')),
+  error              text,
+  attendance_id      uuid REFERENCES attendance(id) ON DELETE SET NULL,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_biometric_events_punch_unique
+  ON biometric_punch_events(device_id, device_employee_id, punch_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_biometric_events_source_unique
+  ON biometric_punch_events(device_id, source_event_id)
+  WHERE source_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_biometric_events_date
+  ON biometric_punch_events(company_id, punch_at DESC);
+CREATE INDEX IF NOT EXISTS idx_biometric_events_status
+  ON biometric_punch_events(status, created_at DESC);
+
+-- Server-only biometric tables (service role bypasses RLS).
+ALTER TABLE biometric_devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE biometric_devices FORCE ROW LEVEL SECURITY;
+ALTER TABLE attendance_shifts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attendance_shifts FORCE ROW LEVEL SECURITY;
+ALTER TABLE biometric_employee_map ENABLE ROW LEVEL SECURITY;
+ALTER TABLE biometric_employee_map FORCE ROW LEVEL SECURITY;
+ALTER TABLE biometric_punch_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE biometric_punch_events FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON biometric_devices FROM anon, authenticated;
+REVOKE ALL ON attendance_shifts FROM anon, authenticated;
+REVOKE ALL ON biometric_employee_map FROM anon, authenticated;
+REVOKE ALL ON biometric_punch_events FROM anon, authenticated;

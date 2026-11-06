@@ -10,6 +10,7 @@ import {
   type AreaUnit,
   type AreaQtyUnit,
   type LengthUnit,
+  type RoundingMode,
 } from "./measurement";
 
 export type PurchaseDimensionState = {
@@ -27,6 +28,10 @@ export type PurchaseMeasurementDefaults = {
   dimensionUnit?: string | null;
   areaUnit?: string | null;
   rateUnit?: string | null;
+  /** 2026-11-06 — units enabled in OMS Settings → Measurement. */
+  enabledLengthUnits?: string[] | null;
+  enabledAreaUnits?: string[] | null;
+  enabledQuantityUnits?: string[] | null;
 };
 
 /** Form defaults: OMS Settings → Measurement when configured, else FT / SQ FT. */
@@ -74,7 +79,8 @@ export function derivePurchaseMeasurement(
   state: PurchaseDimensionState,
   qty: number,
   rateInput: string,
-  precision = 2
+  precision = 2,
+  rounding: RoundingMode = "HALF_UP"
 ): PurchaseMeasurementDerived {
   const hasLength = state.length.trim() !== "";
   const hasWidth = state.width.trim() !== "";
@@ -104,6 +110,7 @@ export function derivePurchaseMeasurement(
     precision,
     rate: Number(rateInput) || 0,
     rateUnit: state.rateUnit,
+    rounding,
   });
   if (!calc.ok) {
     return {
@@ -142,7 +149,8 @@ export function purchaseMeasurementPayload(
   state: PurchaseDimensionState,
   qty: number,
   rateInput: string,
-  precision = 2
+  precision = 2,
+  rounding: RoundingMode = "HALF_UP"
 ): {
   length: number;
   lengthUnit: LengthUnit;
@@ -152,8 +160,9 @@ export function purchaseMeasurementPayload(
   rateUnit: AreaUnit;
   rate: number;
   precision: number;
+  rounding: RoundingMode;
 } | null {
-  const derived = derivePurchaseMeasurement(state, qty, rateInput, precision);
+  const derived = derivePurchaseMeasurement(state, qty, rateInput, precision, rounding);
   if (!derived.active) return null;
   return {
     length: Number(state.length),
@@ -164,6 +173,7 @@ export function purchaseMeasurementPayload(
     rateUnit: state.rateUnit,
     rate: Number(rateInput) || 0,
     precision,
+    rounding,
   };
 }
 

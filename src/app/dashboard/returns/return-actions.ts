@@ -19,12 +19,13 @@ import { requireAnyCapability, requireCapability } from "@/lib/auth/require-capa
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { saveOrderRefundCore } from "@/app/dashboard/orders/actions";
 import { isMissingAgreementSchema } from "@/lib/agreements/migration";
+import { logAudit } from "@/lib/audit/log-audit";
 
 // NOT exported: a "use server" module may only export async functions, and a
 // const here fails the production build (Turbopack: "Only async functions are
 // allowed to be exported in a \"use server\" file"). The Returns page passes
 // the same path to the panel as a prop.
-const RETURN_MIGRATION_FILE = "db/2026-11-03b-return-approval.sql";
+const RETURN_MIGRATION_FILE = "db/2026-11-06-return-lifecycle-measurement-biometric.sql";
 
 function schemaPending(error: { code?: string | null; message?: string | null } | null): boolean {
   if (!error) return false;
@@ -128,6 +129,7 @@ export async function createReturnRequest(
       order_id: order.id,
       company_id: order.company_id,
       requested_by: employee.id,
+      request_type: "Return",
       reason: input.reason.trim().slice(0, 2000),
       note: input.note?.trim().slice(0, 2000) || null,
       refund_amount: wantsRefund ? Number(input.refundAmount) : null,
@@ -140,8 +142,22 @@ export async function createReturnRequest(
 
   if (error || !data) {
     if (schemaPending(error)) return { ok: false, error: PENDING_HINT };
+    if (error?.code === "23505") {
+      return { ok: false, error: "A return request for this order is already pending approval." };
+    }
     return { ok: false, error: error?.message ?? "Could not submit the return request." };
   }
+
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "return_request.created",
+    entityType: "return_request",
+    entityId: data.id,
+    entityLabel: order.id,
+    changes: { reason: input.reason.trim(), refund_amount: wantsRefund ? Number(input.refundAmount) : null },
+  });
 
   revalidatePath("/dashboard/returns");
   return { ok: true, id: data.id };
@@ -188,18 +204,31 @@ export async function decideReturnRequest(input: {
     })
     .eq("id", request.id)
     .eq("status", "Pending")
-    .select("id");
+    // Return the values AFTER the claim so an edit that committed between our
+    // first read and this update is what gets approved/refunded, never a stale
+    // amount from the pre-claim snapshot.
+    .select("id, order_id, reason, refund_amount, refund_currency, refund_date, updated_at");
 
   if (claimError) return { ok: false, error: claimError.message };
   if (!claimed || claimed.length === 0) return { ok: false, error: "This return request was already decided by someone else." };
+  const effective = claimed[0];
 
   if (input.decision === "Rejected") {
+    await logAudit(supabase, {
+      companyId: request.company_id,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      action: "return_request.rejected",
+      entityType: "return_request",
+      entityId: request.id,
+      changes: { note: input.note?.trim() || null, order_id: effective.order_id },
+    });
     revalidatePath("/dashboard/returns");
     return { ok: true, refundApplied: false };
   }
 
   // Approval is the ONLY place a return takes effect.
-  const { data: orderRow } = await supabase.from("orders").select("status").eq("id", request.order_id).maybeSingle();
+  const { data: orderRow } = await supabase.from("orders").select("status").eq("id", effective.order_id).maybeSingle();
   const previousStatus = orderRow?.status ?? "Pending";
 
   const reopen = async (error: string) => {
@@ -207,34 +236,45 @@ export async function decideReturnRequest(input: {
       .from("return_requests")
       .update({ status: "Pending", decided_by: null, decided_at: null, decision_note: null })
       .eq("id", request.id);
+    // The request is pending again, so it must not leave an "approved" audit
+    // behind. Record the failed attempt separately for the audit trail.
+    await logAudit(supabase, {
+      companyId: request.company_id,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      action: "return_request.approval_failed",
+      entityType: "return_request",
+      entityId: request.id,
+      changes: { order_id: effective.order_id, error },
+    });
     return { ok: false as const, error };
   };
 
-  const { error: orderError } = await supabase.from("orders").update({ status: "Returned" }).eq("id", request.order_id);
+  const { error: orderError } = await supabase.from("orders").update({ status: "Returned" }).eq("id", effective.order_id);
   if (orderError) return reopen(`Could not mark the order Returned: ${orderError.message}`);
 
   let appliedRefundId: string | null = null;
   let refundApplied = false;
 
-  if (request.refund_amount != null && Number(request.refund_amount) > 0) {
+  if (effective.refund_amount != null && Number(effective.refund_amount) > 0) {
     const refundResult = await saveOrderRefundCore(employee, supabase, {
-      orderId: request.order_id,
-      refundAmount: Number(request.refund_amount),
-      refundCurrency: request.refund_currency ?? "INR",
-      refundDate: request.refund_date ?? new Date().toISOString().slice(0, 10),
-      reason: request.reason,
+      orderId: effective.order_id,
+      refundAmount: Number(effective.refund_amount),
+      refundCurrency: effective.refund_currency ?? "INR",
+      refundDate: effective.refund_date ?? new Date().toISOString().slice(0, 10),
+      reason: effective.reason,
     });
     if (refundResult.error) {
       // Nothing is half-applied: the order status goes back to what it was and
       // the request returns to Pending so the amount can be corrected.
-      await supabase.from("orders").update({ status: previousStatus }).eq("id", request.order_id);
+      await supabase.from("orders").update({ status: previousStatus }).eq("id", effective.order_id);
       return reopen(`Return approved, but the refund was rejected: ${refundResult.error}`);
     }
     refundApplied = true;
     const { data: latestRefund } = await supabase
       .from("order_refunds")
       .select("id")
-      .eq("order_id", request.order_id)
+      .eq("order_id", effective.order_id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -245,7 +285,195 @@ export async function decideReturnRequest(input: {
     }
   }
 
+  await logAudit(supabase, {
+    companyId: request.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "return_request.approved",
+    entityType: "return_request",
+    entityId: request.id,
+    changes: {
+      note: input.note?.trim() || null,
+      order_id: effective.order_id,
+      refund_amount: effective.refund_amount != null ? Number(effective.refund_amount) : null,
+      refund_currency: effective.refund_currency,
+      refund_date: effective.refund_date,
+      applied_refund_id: appliedRefundId,
+    },
+  });
+
   revalidatePath("/dashboard/returns");
   revalidatePath("/dashboard/orders");
   return { ok: true, refundApplied };
+}
+
+// ---------------------------------------------------------------------------
+// 2026-11-06 — MY REQUESTS: the creator may correct or cancel ONLY a still
+// Pending return. Both writes are conditional on status='Pending' AND the
+// updated_at version the editor loaded, so an approve/reject that lands in
+// another tab can never be overwritten. The audit log is written after the
+// successful write; a failed audit insert never rolls back the correction.
+// ---------------------------------------------------------------------------
+
+export type UpdateReturnInput = {
+  id: string;
+  expectedUpdatedAt: string;
+  /** Correct a mistyped order before approval. Empty = keep the current one. */
+  orderId?: string | null;
+  reason: string;
+  note?: string;
+  refundAmount?: number | null;
+  refundCurrency?: string | null;
+  refundDate?: string | null;
+};
+
+export async function updateReturnRequest(
+  input: UpdateReturnInput
+): Promise<{ ok: true; updatedAt: string } | { ok: false; error: string }> {
+  const employee = await requireAnyCapability("order_entry", "reports", "return_approval");
+  if (!input.id) return { ok: false, error: "Missing return request." };
+  if (!input.reason?.trim()) return { ok: false, error: "A return reason is required." };
+  const wantsRefund = input.refundAmount != null && Number(input.refundAmount) > 0;
+  if (wantsRefund && (!input.refundCurrency || !input.refundDate)) {
+    return { ok: false, error: "Refund currency and date are required when a refund amount is entered." };
+  }
+
+  const supabase = createServiceRoleClient();
+  const { data: request, error } = await supabase
+    .from("return_requests")
+    .select("id, company_id, requested_by, status, updated_at, order_id")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (error) {
+    if (schemaPending(error)) return { ok: false, error: PENDING_HINT };
+    return { ok: false, error: error.message };
+  }
+  if (!request) return { ok: false, error: "Return request not found." };
+  if (!employee.companyIds.includes(request.company_id)) return { ok: false, error: "You do not have access to this company." };
+  if (request.requested_by !== employee.id) return { ok: false, error: "You can only edit a request you raised yourself." };
+  if (request.status !== "Pending") return { ok: false, error: "Only a pending request can be edited. Approved/rejected requests are read-only." };
+
+  const nextOrderId = input.orderId?.trim() || request.order_id;
+  let orderChanged = false;
+  if (nextOrderId !== request.order_id) {
+    const { data: nextOrder, error: nextOrderError } = await supabase
+      .from("orders")
+      .select("id, company_id, status")
+      .eq("id", nextOrderId)
+      .maybeSingle();
+    if (nextOrderError) return { ok: false, error: nextOrderError.message };
+    if (!nextOrder) return { ok: false, error: "The corrected order was not found." };
+    if (nextOrder.company_id !== request.company_id) {
+      return { ok: false, error: "The return request and the corrected order must belong to the same company." };
+    }
+    if (nextOrder.status === "Returned") return { ok: false, error: "That order is already marked Returned." };
+    const { data: clash } = await supabase
+      .from("return_requests")
+      .select("id")
+      .eq("order_id", nextOrderId)
+      .eq("status", "Pending")
+      .neq("id", request.id)
+      .limit(1)
+      .maybeSingle();
+    if (clash) return { ok: false, error: "A return request for the corrected order is already pending approval." };
+    orderChanged = true;
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from("return_requests")
+    .update({
+      ...(orderChanged ? { order_id: nextOrderId } : {}),
+      reason: input.reason.trim().slice(0, 2000),
+      note: input.note?.trim().slice(0, 2000) || null,
+      refund_amount: wantsRefund ? Number(input.refundAmount) : null,
+      refund_currency: wantsRefund ? input.refundCurrency : null,
+      refund_date: wantsRefund ? input.refundDate : null,
+      updated_by: employee.id,
+    })
+    .eq("id", request.id)
+    .eq("status", "Pending")
+    .eq("updated_at", input.expectedUpdatedAt)
+    .select("updated_at")
+    .maybeSingle();
+
+  if (updateError) {
+    if ((updateError as { code?: string }).code === "23505") {
+      return { ok: false, error: "A return request for the corrected order is already pending approval." };
+    }
+    return { ok: false, error: updateError.message };
+  }
+  if (!updated) {
+    return { ok: false, error: "This request changed or was decided while you were editing. Reload it before trying again." };
+  }
+
+  await logAudit(supabase, {
+    companyId: request.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "return_request.updated",
+    entityType: "return_request",
+    entityId: request.id,
+    changes: {
+      ...(orderChanged ? { previous_order_id: request.order_id, order_id: nextOrderId } : {}),
+      reason: input.reason.trim(),
+      refund_amount: wantsRefund ? Number(input.refundAmount) : null,
+      refund_currency: wantsRefund ? input.refundCurrency : null,
+      refund_date: wantsRefund ? input.refundDate : null,
+    },
+  });
+
+  revalidatePath("/dashboard/returns");
+  return { ok: true, updatedAt: updated.updated_at };
+}
+
+export async function cancelReturnRequest(input: {
+  id: string;
+  expectedUpdatedAt: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const employee = await requireAnyCapability("order_entry", "reports", "return_approval");
+  const supabase = createServiceRoleClient();
+  const { data: request, error } = await supabase
+    .from("return_requests")
+    .select("id, company_id, requested_by, status, updated_at")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (error) {
+    if (schemaPending(error)) return { ok: false, error: PENDING_HINT };
+    return { ok: false, error: error.message };
+  }
+  if (!request) return { ok: false, error: "Return request not found." };
+  if (!employee.companyIds.includes(request.company_id)) return { ok: false, error: "You do not have access to this company." };
+  if (request.requested_by !== employee.id) return { ok: false, error: "You can only delete a request you raised yourself." };
+  if (request.status !== "Pending") return { ok: false, error: "Only a pending request can be deleted. Approved requests need an authorised correction." };
+
+  const { data: cancelled, error: cancelError } = await supabase
+    .from("return_requests")
+    .update({
+      status: "Cancelled",
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: employee.id,
+      updated_by: employee.id,
+    })
+    .eq("id", request.id)
+    .eq("status", "Pending")
+    .eq("updated_at", input.expectedUpdatedAt)
+    .select("id")
+    .maybeSingle();
+  if (cancelError) return { ok: false, error: cancelError.message };
+  if (!cancelled) {
+    return { ok: false, error: "This request changed or was decided while you were deleting it. Reload it before trying again." };
+  }
+
+  await logAudit(supabase, {
+    companyId: request.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "return_request.cancelled",
+    entityType: "return_request",
+    entityId: request.id,
+    changes: { previous_status: "Pending" },
+  });
+
+  revalidatePath("/dashboard/returns");
+  return { ok: true };
 }

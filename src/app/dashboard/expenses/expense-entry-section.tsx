@@ -9,6 +9,16 @@ import {
   type ExpenseFormState,
 } from "./actions";
 import { EXPENSE_CATEGORIES } from "./categories";
+import {
+  AREA_UNITS,
+  AREA_UNIT_LABEL,
+  LENGTH_UNITS,
+  LENGTH_UNIT_LABEL,
+  QUANTITY_UNITS,
+  QUANTITY_UNIT_LABEL,
+  WEIGHT_UNITS,
+  WEIGHT_UNIT_LABEL,
+} from "@/lib/measurement";
 
 const initialState: ExpenseFormState = { error: null, success: false };
 const inputClass =
@@ -23,6 +33,9 @@ export type ExpenseBillItem = {
   category: string;
   description: string | null;
   amount: number;
+  qty?: number | null;
+  qtyUnit?: string | null;
+  unitRate?: number | null;
 };
 
 /** One expense bill — the shape page.tsx builds from entry_group_id rows. */
@@ -46,12 +59,35 @@ export type ExpenseBill = {
   balanceDue?: number;
 };
 
-type DraftItem = { key: string; id: string | null; category: string; description: string; amount: string };
+type DraftItem = {
+  key: string;
+  id: string | null;
+  category: string;
+  description: string;
+  amount: string;
+  qty: string;
+  qtyUnit: string;
+  unitRate: string;
+};
+
+// 2026-11-06 — every measurement family is available on an expense line;
+// OMS Settings → Measurement decides which units the dropdown offers.
+const EXPENSE_UNITS = [
+  ...QUANTITY_UNITS.map((value) => ({ value: String(value), label: QUANTITY_UNIT_LABEL[value] })),
+  ...WEIGHT_UNITS.map((value) => ({ value: String(value), label: WEIGHT_UNIT_LABEL[value] })),
+  ...LENGTH_UNITS.map((value) => ({ value: String(value), label: LENGTH_UNIT_LABEL[value] })),
+  ...AREA_UNITS.map((value) => ({ value: String(value), label: AREA_UNIT_LABEL[value] })),
+];
+
+export type ExpenseUnitSettings = {
+  enabledUnits?: string[];
+  defaultQuantityUnit?: string;
+};
 
 let draftSeq = 0;
-function newDraft(): DraftItem {
+function newDraft(defaultUnit = "PCS"): DraftItem {
   draftSeq += 1;
-  return { key: `d${draftSeq}`, id: null, category: "", description: "", amount: "" };
+  return { key: `d${draftSeq}`, id: null, category: "", description: "", amount: "", qty: "", qtyUnit: defaultUnit, unitRate: "" };
 }
 
 function todayISO(): string {
@@ -66,10 +102,12 @@ export function ExpenseEntrySection({
   companies,
   parties,
   recentBills,
+  unitSettings,
 }: {
   companies: Company[];
   parties: Party[];
   recentBills: ExpenseBill[];
+  unitSettings?: ExpenseUnitSettings;
 }) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [previewBill, setPreviewBill] = useState<ExpenseBill | null>(null);
@@ -83,6 +121,7 @@ export function ExpenseEntrySection({
           key={`new-${newFormKey}`}
           companies={companies}
           parties={parties}
+          unitSettings={unitSettings}
           onSaved={() => setNewFormKey((k) => k + 1)}
         />
       </div>
@@ -106,6 +145,7 @@ export function ExpenseEntrySection({
                 <ExpenseBillForm
                   companies={companies}
                   parties={parties}
+                  unitSettings={unitSettings}
                   initial={bill}
                   onSaved={() => {
                     setEditingKey(null);
@@ -267,7 +307,14 @@ function BillPreviewDialog({ bill, onClose }: { bill: ExpenseBill; onClose: () =
                   <tr key={it.id} className="border-b border-slate-100">
                     <td className="py-1 pr-2">{i + 1}</td>
                     <td className="py-1 pr-2">{it.category}</td>
-                    <td className="py-1 pr-2 text-slate-500">{it.description ?? "—"}</td>
+                    <td className="py-1 pr-2 text-slate-500">
+                      {it.description ?? "—"}
+                      {it.qty != null ? (
+                        <span className="block text-[10px] text-slate-400">
+                          {it.qty} {it.qtyUnit ?? ""}{it.unitRate != null ? ` × ₹${it.unitRate.toFixed(2)}` : ""}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="py-1 pr-2 text-right">₹{it.amount.toFixed(2)}</td>
                   </tr>
                 ))}
@@ -299,13 +346,19 @@ function ExpenseBillForm({
   companies,
   parties,
   initial,
+  unitSettings,
   onSaved,
 }: {
   companies: Company[];
   parties: Party[];
   initial?: ExpenseBill;
+  unitSettings?: ExpenseUnitSettings;
   onSaved?: () => void;
 }) {
+  const defaultUnit = unitSettings?.defaultQuantityUnit ?? "PCS";
+  const allowedUnits = unitSettings?.enabledUnits?.length
+    ? EXPENSE_UNITS.filter((u) => unitSettings.enabledUnits!.includes(u.value))
+    : EXPENSE_UNITS;
   const isEdit = Boolean(initial);
   const [state, formAction, pending] = useActionState(
     isEdit ? updateExpenseAction : saveExpenseAction,
@@ -327,8 +380,11 @@ function ExpenseBillForm({
           category: it.category,
           description: it.description ?? "",
           amount: String(it.amount),
+          qty: it.qty != null ? String(it.qty) : "",
+          qtyUnit: it.qtyUnit ?? "PCS",
+          unitRate: it.unitRate != null ? String(it.unitRate) : "",
         }))
-      : [newDraft()]
+      : [newDraft(defaultUnit)]
   );
 
   // A save clears the form only once the server has actually accepted it —
@@ -338,14 +394,25 @@ function ExpenseBillForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.success]);
 
-  const total = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  const lineAmount = (it: DraftItem) => {
+    const qty = Number(it.qty);
+    const rate = Number(it.unitRate);
+    if (it.qty.trim() && Number.isFinite(qty) && qty > 0 && it.unitRate.trim() && Number.isFinite(rate) && rate >= 0) {
+      return Math.round(qty * rate * 100) / 100;
+    }
+    return Number(it.amount) || 0;
+  };
+  const total = items.reduce((s, it) => s + lineAmount(it), 0);
   const payload = items
-    .filter((it) => it.category && Number(it.amount) > 0)
+    .filter((it) => it.category && lineAmount(it) > 0)
     .map((it) => ({
       id: it.id,
       category: it.category,
       description: it.description.trim() || null,
-      amount: Number(it.amount),
+      amount: lineAmount(it),
+      qty: it.qty.trim() ? Number(it.qty) : null,
+      qtyUnit: it.qty.trim() ? it.qtyUnit : null,
+      unitRate: it.unitRate.trim() ? Number(it.unitRate) : null,
     }));
 
   function updateItem(key: string, patch: Partial<DraftItem>) {
@@ -471,7 +538,7 @@ function ExpenseBillForm({
           <p className="text-xs font-semibold text-slate-700">Items</p>
           <button
             type="button"
-            onClick={() => setItems((prev) => [...prev, newDraft()])}
+            onClick={() => setItems((prev) => [...prev, newDraft(defaultUnit)])}
             className="rounded border border-amber-400 bg-white px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-50"
           >
             + Add item
@@ -493,7 +560,7 @@ function ExpenseBillForm({
                   ))}
                 </select>
               </div>
-              <div className="col-span-5">
+              <div className="col-span-3">
                 <label className={labelClass}>Description</label>
                 <input
                   value={it.description}
@@ -502,15 +569,33 @@ function ExpenseBillForm({
                   className={inputClass}
                 />
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1">
+                <label className={labelClass}>Qty</label>
+                <input type="number" step="0.001" min="0" value={it.qty} onChange={(e) => updateItem(it.key, { qty: e.target.value })} className={inputClass} />
+              </div>
+              <div className="col-span-1">
+                <label className={labelClass}>Unit</label>
+                <select value={it.qtyUnit} onChange={(e) => updateItem(it.key, { qtyUnit: e.target.value })} className={inputClass}>
+                  {(allowedUnits.some((u) => u.value === it.qtyUnit)
+                    ? allowedUnits
+                    : [...allowedUnits, { value: it.qtyUnit, label: it.qtyUnit }]
+                  ).map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                </select>
+              </div>
+              <div className="col-span-1">
+                <label className={labelClass}>Rate</label>
+                <input type="number" step="0.01" min="0" value={it.unitRate} onChange={(e) => updateItem(it.key, { unitRate: e.target.value })} className={inputClass} />
+              </div>
+              <div className="col-span-1">
                 <label className={labelClass}>Amount *</label>
                 <input
                   type="number"
                   step="0.01"
                   min="0.01"
-                  value={it.amount}
+                  value={it.qty.trim() && it.unitRate.trim() ? String(lineAmount(it)) : it.amount}
                   onChange={(e) => updateItem(it.key, { amount: e.target.value })}
-                  className={inputClass}
+                  readOnly={Boolean(it.qty.trim() && it.unitRate.trim())}
+                  className={`${inputClass} ${it.qty.trim() && it.unitRate.trim() ? "bg-slate-50 text-slate-500" : ""}`}
                 />
               </div>
               <div className="col-span-1 pb-1.5">

@@ -8,7 +8,14 @@ import { areaToSqFt, type LengthUnit, type PurchaseQtyUnit } from "@/lib/length-
 import { GstSelect, type GstType } from "@/components/gst-select";
 import { PurchaseBillRateHelper } from "@/components/purchase-bill-rate-helper";
 import { PurchaseDimensionFields } from "@/components/purchase-dimension-fields";
-import { AREA_UNIT_LABEL, formatMeasurement, type AreaUnit, type LengthUnit as MeasurementLengthUnit } from "@/lib/measurement";
+import {
+  AREA_UNIT_LABEL,
+  formatMeasurement,
+  isRoundingMode,
+  type AreaUnit,
+  type LengthUnit as MeasurementLengthUnit,
+  type RoundingMode,
+} from "@/lib/measurement";
 import {
   derivePurchaseMeasurement,
   type PurchaseDimensionState,
@@ -45,6 +52,7 @@ export type EditablePurchaseBill = {
   rate_input_value?: number | null;
   rate_input_unit?: string | null;
   measurement_precision?: number | null;
+  measurement_rounding?: string | null;
 };
 
 export function PurchaseBillEditForm({
@@ -91,6 +99,9 @@ export function PurchaseBillEditForm({
   // unit) instead of editing a pre-converted number. Bills entered before
   // this feature have no dimensions and keep the manual area field.
   const precision = bill.measurement_precision ?? 2;
+  // Preserve the rounding rule the bill was originally calculated with; a
+  // description-only edit must not silently re-round the saved area/rate.
+  const rounding: RoundingMode = isRoundingMode(bill.measurement_rounding) ? bill.measurement_rounding : "HALF_UP";
   const [dimensions, setDimensions] = useState<PurchaseDimensionState>(() => {
     const areaUnit = (bill.area_display_unit as AreaUnit) || "SQ_FT";
     return {
@@ -106,7 +117,8 @@ export function PurchaseBillEditForm({
     dimensions,
     Number(qtyInput) || 0,
     unitRateInput,
-    precision
+    precision,
+    rounding
   );
   const measured = measurement.active && !measurement.error ? measurement : null;
   const effectiveQtyUnit: PurchaseQtyUnit = measured ? measured.qtyUnit : sqFeetUnit;
@@ -252,6 +264,7 @@ export function PurchaseBillEditForm({
               <input type="hidden" name="rate_input_value" value={unitRateInput} />
               <input type="hidden" name="rate_input_unit" value={dimensions.rateUnit} />
               <input type="hidden" name="measurement_precision" value={precision} />
+              <input type="hidden" name="measurement_rounding" value={rounding} />
             </>
           )}
         </div>
