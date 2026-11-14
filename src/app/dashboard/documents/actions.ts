@@ -35,6 +35,7 @@
 import { requireCapability, requireAnyCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { parseSizeToSqFt } from "@/lib/size-parser";
+import { allocateTotal, debitNoteTotal, money2, resolveDebitNoteAdjustmentAmount } from "@/lib/notes/gst-allocation";
 import {
   computePurchaseArea,
   isAreaUnit,
@@ -787,8 +788,11 @@ async function saveDebitNoteCore(
   ]);
   if (dnDateError) return { error: dnDateError, id: null, docNo: null };
   if (!p.partyId) return { error: "Select a party.", id: null, docNo: null };
-  if (p.adjustTargetBillPassRegisterId && (!p.adjustAmount || p.adjustAmount <= 0)) {
-    return { error: "Enter a positive adjustment amount, or clear the target invoice.", id: null, docNo: null };
+  // 2026-11-14 — a blank adjustment amount now means "the whole note", so it
+  // defaults to the GST-inclusive total (see resolveDebitNoteAdjustmentAmount).
+  // Only a negative figure is invalid.
+  if (p.adjustTargetBillPassRegisterId && p.adjustAmount != null && p.adjustAmount < 0) {
+    return { error: "The adjustment amount cannot be negative.", id: null, docNo: null };
   }
 
   // 2026-10-29 — multi-invoice support. Validated against the REAL ledger rows
@@ -856,19 +860,35 @@ async function saveDebitNoteCore(
       remark: p.remark,
   };
   const { data, error } = await tolerateMissingColumn(payload, "round_off_amt", (row) =>
-    supabase.from("debit_notes").insert(row).select("id, debit_note_no").single()
+    supabase.from("debit_notes").insert(row).select("id, debit_note_no, total_amount").single()
   );
 
   if (error || !data) return { error: `Failed to save Debit Note: ${error?.message ?? "unknown error"}`, id: null, docNo: null };
+
+  // 2026-11-14 — what the note is actually WORTH, read back from the DB's
+  // generated total_amount (base × 1.05 + round_off). Every adjustment below
+  // must net to exactly this, or the vendor's bill is credited only the
+  // pre-GST base and the GST stays payable forever (reported as
+  // "debit note 4140 + 5% = 4347, but payment adjust shows 4140").
+  const noteTotal = money2(
+    Number((data as { total_amount?: number | string }).total_amount ?? debitNoteTotal(debitAmount, p.roundOffAmt ?? 0))
+  );
 
   // Multi-invoice note: one adjustment row per listed invoice (the table is
   // built for exactly this — "one note can split across several target
   // bills", see db/2026-08-27-note-linking-and-adjustments.sql).
   if (lines.length > 0) {
-    const adjRows = lines.map((l) => ({
+    // Each invoice line was typed as a pre-GST amount; scale every line by the
+    // note's own 5% GST and allocate the rounding + round-off so the rows sum
+    // to EXACTLY noteTotal (same rule as the multi-AWB credit-note fix).
+    const grossLines = allocateTotal(
+      lines.map((l) => money2(l.amount * 1.05)),
+      noteTotal
+    );
+    const adjRows = lines.map((l, idx) => ({
       bill_pass_register_id: l.billId,
       debit_note_id: data.id,
-      amount: l.amount,
+      amount: grossLines[idx],
       remark: `Debit Note ${data.debit_note_no ?? ""} against ${lineInvoiceNo.get(l.billId) ?? l.invoiceNo}`,
       created_by_employee_id: employee.id,
     }));
@@ -883,14 +903,24 @@ async function saveDebitNoteCore(
     return { error: null, id: data.id, docNo: data.debit_note_no ?? "" };
   }
 
-  if (p.adjustTargetBillPassRegisterId && p.adjustAmount) {
-    const { error: adjError } = await supabase.from("bill_pass_register_adjustments").insert({
-      bill_pass_register_id: p.adjustTargetBillPassRegisterId,
-      debit_note_id: data.id,
-      amount: p.adjustAmount,
-      remark: p.adjustRemark,
-      created_by_employee_id: employee.id,
+  if (p.adjustTargetBillPassRegisterId) {
+    // A figure equal to the pre-GST Debit Amount shown on the form (the
+    // reported 4140 case) is grossed up to noteTotal; any other figure is the
+    // GST-inclusive adjustment the user deliberately entered.
+    const adjustValue = resolveDebitNoteAdjustmentAmount({
+      requested: p.adjustAmount,
+      debitAmount,
+      noteTotal,
     });
+    const { error: adjError } = adjustValue > 0
+      ? await supabase.from("bill_pass_register_adjustments").insert({
+          bill_pass_register_id: p.adjustTargetBillPassRegisterId,
+          debit_note_id: data.id,
+          amount: adjustValue,
+          remark: p.adjustRemark,
+          created_by_employee_id: employee.id,
+        })
+      : { error: null };
     if (adjError) {
       // Debit Note itself is saved and valid — surface the adjustment
       // failure distinctly rather than losing the note behind a generic
@@ -1180,7 +1210,11 @@ export async function updateDebitNote(_prev: DocEditState, formData: FormData): 
 
   const id = str(formData, "id");
   if (!id) return { error: "Missing Debit Note.", success: false };
-  const { data: existing } = await supabase.from("debit_notes").select("id, company_id").eq("id", id).single();
+  const { data: existing } = await supabase
+    .from("debit_notes")
+    .select("id, company_id, debit_amount, round_off_amt, total_amount")
+    .eq("id", id)
+    .single();
   if (!existing || !employee.companyIds.includes(existing.company_id)) {
     return { error: "Debit Note not found or you don't have access to this company.", success: false };
   }
@@ -1210,6 +1244,48 @@ export async function updateDebitNote(_prev: DocEditState, formData: FormData): 
   );
 
   if (error) return { error: error.message, success: false };
+
+  // 2026-11-14 — keep the bill adjustment in step with the edited note.
+  //
+  // The adjustment rows are what reduce the vendor's payable (adj_amt is the
+  // trigger-maintained SUM of this table). Editing the note used to leave them
+  // at the OLD figure — which is how a 4,347 note ended up crediting only
+  // 4,140. Only rows that were mirroring this note's value are rescaled; a
+  // deliberately partial adjustment is left exactly as the user set it.
+  const { data: updated } = await supabase.from("debit_notes").select("total_amount").eq("id", id).single();
+  const newTotal = money2(Number(updated?.total_amount ?? 0));
+  const { data: adjustments } = await supabase
+    .from("bill_pass_register_adjustments")
+    .select("id, amount")
+    .eq("debit_note_id", id)
+    .order("created_at", { ascending: true });
+
+  if (newTotal > 0 && adjustments && adjustments.length > 0) {
+    const oldTotal = money2(
+      Number(
+        existing.total_amount ??
+          Number(existing.debit_amount) * 1.05 + Number(existing.round_off_amt ?? 0)
+      )
+    );
+    const adjustmentTotal = money2(adjustments.reduce((sum, a) => sum + Number(a.amount), 0));
+    const mirrorsNote =
+      Math.abs(adjustmentTotal - oldTotal) < 0.01 ||
+      Math.abs(adjustmentTotal - Number(existing.debit_amount)) < 0.01;
+
+    if (mirrorsNote && Math.abs(adjustmentTotal - newTotal) >= 0.01) {
+      const shares = allocateTotal(
+        adjustments.map((a) => Number(a.amount)),
+        newTotal
+      );
+      for (let i = 0; i < adjustments.length; i++) {
+        await supabase
+          .from("bill_pass_register_adjustments")
+          .update({ amount: shares[i] })
+          .eq("id", adjustments[i].id);
+      }
+    }
+  }
+
   revalidatePath("/dashboard/documents");
   return { error: null, success: true };
 }

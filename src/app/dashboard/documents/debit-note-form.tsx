@@ -339,15 +339,20 @@ export function DebitNoteForm({
               onClear={() => setAdjustTargetBill(null)}
             />
             <div>
-              <label className={labelClass}>Adjustment amount *</label>
+              <label className={labelClass}>Adjustment amount (incl. GST)</label>
               <input
                 type="number"
                 step="0.01"
                 value={adjustAmount}
                 onChange={(e) => setAdjustAmount(e.target.value)}
+                placeholder="Leave blank = the full Debit Note value"
                 className={inputClass}
-                required={applyAdjustment}
               />
+              <p className="mt-0.5 text-[10px] text-slate-500">
+                This reduces the invoice&apos;s payable, so it must include the note&apos;s 5% GST
+                (e.g. Debit Amount 4,140 + GST 207 = <strong>4,347</strong>). Leave it blank to apply the whole
+                note; entering the pre-GST 4,140 is also treated as the note amount and posted as 4,347.
+              </p>
             </div>
             <div>
               <label className={labelClass}>Adjustment remark</label>
