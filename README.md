@@ -451,6 +451,24 @@ src/
 - Current audit state: **0 high/critical advisories in production dependencies**; 16 moderate
   remain in the dev toolchain. Full inventory in [`AUDIT_REPORT.md`](AUDIT_REPORT.md).
 
+## Indian Customs exchange rates
+
+A dedicated module keeps official CBIC/ICEGATE customs conversion rates as an
+effective-dated register (import and export stored separately), with
+verification, history, audit and a conversion calculator.
+
+- Dashboard: `/dashboard/customs-rates` (capabilities `customs_rate_view` /
+  `customs_rate_admin`)
+- API: `GET /api/customs-rates?currency=USD&date=YYYY-MM-DD`
+- Migration: `db/2026-11-14-customs-exchange-rate-module.sql`
+- Full design, ingestion rules, CSV format and scheduling:
+  [docs/customs-exchange-rates.md](docs/customs-exchange-rates.md)
+
+ICEGATE publishes rates on its website but offers no documented public
+machine-readable API, so the module imports the official notification
+(CSV/PDF) with administrator approval instead of scraping or substituting
+market/RBI rates.
+
 ## Conventions
 
 - Keep business rules in app code (server actions) or Postgres functions — documented in

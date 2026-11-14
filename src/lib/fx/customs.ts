@@ -15,6 +15,9 @@
 //     missing/older than 12h it re-fetches and writes it back. A failed
 //     refresh never breaks the page — the last saved rates are returned
 //     with `stale: true`.
+//   * 2026-11-14: the snapshot table is `customs_rate_snapshot`; the permanent
+//     effective-dated register is `customs_exchange_rates` and belongs to the
+//     customs rate module (src/lib/customs/), which this page does not write.
 //   * The EXPORT rate is what gets stored into `exchange_rates`
 //     (rate_to_inr), because that is the rate an exporter actually
 //     invoices/values at, and exchange_rates is what every invoice and
@@ -350,10 +353,38 @@ export async function loadCustomsRates(
   }
   // The migration may not have been run yet — treat a missing table exactly
   // like an empty one so the feature still works (live, uncached).
-  const { data: storedRaw, error: readError } = await supabase
-    .from("customs_exchange_rates")
+  // 2026-11-14 — the snapshot table was renamed to customs_rate_snapshot when
+  // customs_exchange_rates became the permanent rate register (see
+  // db/2026-11-14-customs-exchange-rate-module.sql). Workspaces that have not
+  // run that patch yet still have the old table name, so fall back to it
+  // rather than breaking this page in the meantime.
+  const primary = await supabase
+    .from("customs_rate_snapshot")
     .select("currency_code, currency_name, import_rate, export_rate, effective_date, notification_no, source, fetched_at")
     .order("currency_code");
+
+  let storedRaw = (primary.data ?? null) as StoredRow[] | null;
+  let readError: { message: string } | null = primary.error ? { message: primary.error.message } : null;
+
+  if (readError) {
+    const legacy = await supabase.from("customs_exchange_rates").select("*").order("currency_code");
+    if (!legacy.error) {
+      storedRaw = (legacy.data ?? []).map((r) => {
+        const legacyRow = r as unknown as { effective_date?: string | null };
+        return {
+          currency_code: r.currency_code,
+          currency_name: r.currency_name,
+          import_rate: r.import_rate,
+          export_rate: r.export_rate,
+          effective_date: legacyRow.effective_date ?? null,
+          notification_no: r.notification_no,
+          source: r.source,
+          fetched_at: r.fetched_at,
+        };
+      });
+      readError = null;
+    }
+  }
 
   const stored = (readError ? [] : (storedRaw ?? [])) as StoredRow[];
   const newest = stored.reduce<string | null>((acc, r) => (!acc || r.fetched_at > acc ? r.fetched_at : acc), null);
@@ -410,7 +441,7 @@ export async function loadCustomsRates(
       "Live rates loaded, but the saved snapshot table is missing — run db/2026-10-17-customs-exchange-rates.sql to keep them cached between visits.";
   }
   if (upserts.length > 0 && !readError) {
-    const { error } = await supabase.from("customs_exchange_rates").upsert(upserts, { onConflict: "currency_code" });
+    const { error } = await supabase.from("customs_rate_snapshot").upsert(upserts, { onConflict: "currency_code" });
     if (error) warning = `Live rates loaded, but saving the snapshot failed: ${error.message}`;
   }
 

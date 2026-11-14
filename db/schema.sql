@@ -668,7 +668,13 @@ CREATE TABLE fx_rate_cache (
 -- 2026-10-17 — automatic customs/export rates (DGFT → ICEGATE → eximin.net)
 -- snapshot, refreshed by src/lib/fx/customs.ts when older than 12 hours. See
 -- db/2026-10-17-customs-exchange-rates.sql for the full rationale.
-CREATE TABLE customs_exchange_rates (
+--
+-- 2026-11-14: RENAMED from customs_exchange_rates to customs_rate_snapshot.
+-- The name customs_exchange_rates now belongs to the permanent effective-dated
+-- rate register (SECTION 17k at the end of this file) that the customs module
+-- reads. This table stays exactly what it always was — the disposable cache
+-- behind the Exchange Rate Master page.
+CREATE TABLE customs_rate_snapshot (
   currency_code    varchar(3) PRIMARY KEY,
   currency_name    text,
   import_rate      numeric(14,6) CHECK (import_rate IS NULL OR import_rate > 0),
@@ -7762,3 +7768,219 @@ REVOKE ALL ON biometric_devices FROM anon, authenticated;
 REVOKE ALL ON attendance_shifts FROM anon, authenticated;
 REVOKE ALL ON biometric_employee_map FROM anon, authenticated;
 REVOKE ALL ON biometric_punch_events FROM anon, authenticated;
+
+-- =============================================================================
+-- SECTION 17k — 2026-11-14: INDIAN CUSTOMS EXCHANGE RATE MODULE
+-- (folded from db/2026-11-14-customs-exchange-rate-module.sql — the dated file
+--  also renames the pre-existing snapshot table, which a fresh database never
+--  has; here `customs_rate_snapshot` is already created above.)
+--
+-- Permanent, effective-dated customs rate register with separate import/export
+-- rates, source document reference + checksum, verification workflow, an
+-- append-only audit trail and a sync log. The module reads it through
+-- get_customs_exchange_rate_as_of() and src/lib/customs/.
+-- =============================================================================
+CREATE TABLE customs_exchange_rates (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  currency_code          varchar(3) NOT NULL REFERENCES currencies(code),
+  currency_name          text,
+  currency_unit          integer NOT NULL DEFAULT 1 CHECK (currency_unit IN (1, 10, 100, 1000)),
+  import_rate            numeric(18,8) CHECK (import_rate IS NULL OR import_rate > 0),
+  export_rate            numeric(18,8) NOT NULL CHECK (export_rate > 0),
+  effective_start_date   date NOT NULL,
+  effective_end_date     date,
+  notification_no        text,
+  notification_date      date,
+  verification_status    text NOT NULL DEFAULT 'pending'
+                           CHECK (verification_status IN
+                             ('pending', 'verified', 'rejected', 'source_unavailable',
+                              'extraction_failed', 'superseded')),
+  source                 text NOT NULL DEFAULT 'manual'
+                           CHECK (source IN ('icegate', 'cbic', 'admin_csv',
+                                             'admin_document', 'manual', 'mirror')),
+  source_url             text,
+  source_document_ref    text,
+  source_checksum        text,
+  extraction_confidence  numeric(5,2) CHECK (extraction_confidence IS NULL
+                             OR (extraction_confidence >= 0 AND extraction_confidence <= 100)),
+  validation_notes       text,
+  raw_payload            jsonb,
+  fetched_at             timestamptz NOT NULL DEFAULT now(),
+  verified_by            uuid REFERENCES employees(id),
+  verified_by_name       text,
+  verified_at            timestamptz,
+  created_by             uuid REFERENCES employees(id),
+  supersedes_id          uuid REFERENCES customs_exchange_rates(id),
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT customs_rates_date_range
+    CHECK (effective_end_date IS NULL OR effective_end_date >= effective_start_date)
+);
+COMMENT ON TABLE customs_exchange_rates IS
+  'Permanent Indian Customs exchange-rate register: one effective-dated row per currency per notification, import and export rates stored separately and never rounded, with source document reference + checksum and verification status. Verified rows are immutable (see customs_exchange_rates_guard).';
+
+CREATE UNIQUE INDEX idx_customs_rates_verified_unique
+  ON customs_exchange_rates (currency_code, effective_start_date)
+  WHERE verification_status = 'verified';
+CREATE UNIQUE INDEX idx_customs_rates_checksum_unique
+  ON customs_exchange_rates (source_checksum, currency_code)
+  WHERE source_checksum IS NOT NULL;
+CREATE INDEX idx_customs_rates_lookup
+  ON customs_exchange_rates (currency_code, effective_start_date DESC, effective_end_date);
+CREATE INDEX idx_customs_rates_status
+  ON customs_exchange_rates (verification_status, effective_start_date DESC);
+CREATE INDEX idx_customs_rates_notification
+  ON customs_exchange_rates (notification_no);
+
+CREATE TABLE customs_exchange_rate_audit (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  rate_id            uuid REFERENCES customs_exchange_rates(id) ON DELETE CASCADE,
+  action             text NOT NULL CHECK (action IN
+                       ('insert', 'update', 'approve', 'reject', 'supersede',
+                        'delete', 'sync', 'upload')),
+  actor_employee_id  uuid REFERENCES employees(id),
+  actor_name         text,
+  changes            jsonb,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_customs_rate_audit_rate
+  ON customs_exchange_rate_audit (rate_id, created_at DESC);
+CREATE INDEX idx_customs_rate_audit_created
+  ON customs_exchange_rate_audit (created_at DESC);
+
+CREATE OR REPLACE FUNCTION customs_exchange_rates_guard() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.verification_status IN ('verified', 'superseded') THEN
+      RAISE EXCEPTION
+        'Customs rate % (%) is % and cannot be deleted — insert a corrected row instead.',
+        OLD.id, OLD.currency_code, OLD.verification_status;
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF OLD.verification_status = 'verified' THEN
+    IF NEW.currency_code        IS DISTINCT FROM OLD.currency_code
+       OR NEW.currency_unit     IS DISTINCT FROM OLD.currency_unit
+       OR NEW.import_rate       IS DISTINCT FROM OLD.import_rate
+       OR NEW.export_rate       IS DISTINCT FROM OLD.export_rate
+       OR NEW.effective_start_date IS DISTINCT FROM OLD.effective_start_date
+       OR NEW.notification_no   IS DISTINCT FROM OLD.notification_no
+       OR NEW.source_checksum   IS DISTINCT FROM OLD.source_checksum THEN
+      RAISE EXCEPTION
+        'A verified customs rate is immutable. Insert a corrected row that supersedes %, do not edit it.',
+        OLD.id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_customs_exchange_rates_guard
+  BEFORE UPDATE OR DELETE ON customs_exchange_rates
+  FOR EACH ROW EXECUTE FUNCTION customs_exchange_rates_guard();
+
+CREATE OR REPLACE FUNCTION customs_exchange_rates_touch() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_customs_exchange_rates_touch
+  BEFORE UPDATE ON customs_exchange_rates
+  FOR EACH ROW EXECUTE FUNCTION customs_exchange_rates_touch();
+
+CREATE TABLE customs_rate_sync_log (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  started_at     timestamptz NOT NULL DEFAULT now(),
+  finished_at    timestamptz,
+  trigger_source text NOT NULL DEFAULT 'manual'
+                   CHECK (trigger_source IN ('cron', 'manual', 'upload')),
+  status         text NOT NULL DEFAULT 'running'
+                   CHECK (status IN ('running', 'success', 'partial', 'failed',
+                                     'source_unavailable')),
+  provider       text,
+  source_url     text,
+  rows_extracted integer NOT NULL DEFAULT 0,
+  rows_verified  integer NOT NULL DEFAULT 0,
+  rows_pending   integer NOT NULL DEFAULT 0,
+  message        text,
+  details        jsonb,
+  actor_employee_id uuid REFERENCES employees(id),
+  actor_name     text
+);
+CREATE INDEX idx_customs_sync_started ON customs_rate_sync_log (started_at DESC);
+CREATE INDEX idx_customs_sync_status  ON customs_rate_sync_log (status, started_at DESC);
+
+CREATE OR REPLACE FUNCTION get_customs_exchange_rate_as_of(
+  p_currency_code varchar(3),
+  p_as_of date
+)
+RETURNS TABLE (
+  id                  uuid,
+  currency_code       varchar(3),
+  currency_name       text,
+  currency_unit       integer,
+  import_rate         numeric(18,8),
+  export_rate         numeric(18,8),
+  effective_start_date date,
+  effective_end_date  date,
+  notification_no     text,
+  notification_date   date,
+  source              text,
+  source_url          text,
+  source_document_ref text,
+  verification_status text,
+  verified_at         timestamptz
+)
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT r.id, r.currency_code, r.currency_name, r.currency_unit,
+         r.import_rate, r.export_rate, r.effective_start_date,
+         r.effective_end_date, r.notification_no, r.notification_date,
+         r.source, r.source_url, r.source_document_ref,
+         r.verification_status, r.verified_at
+  FROM customs_exchange_rates r
+  WHERE r.currency_code = upper(p_currency_code)
+    AND r.verification_status = 'verified'
+    AND r.effective_start_date <= p_as_of
+    AND (r.effective_end_date IS NULL OR r.effective_end_date >= p_as_of)
+  ORDER BY r.effective_start_date DESC, r.verified_at DESC NULLS LAST
+  LIMIT 1;
+$$;
+REVOKE ALL ON FUNCTION get_customs_exchange_rate_as_of(varchar, date) FROM PUBLIC;
+
+ALTER TABLE customs_exchange_rates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customs_exchange_rates FORCE ROW LEVEL SECURITY;
+ALTER TABLE customs_exchange_rate_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customs_exchange_rate_audit FORCE ROW LEVEL SECURITY;
+ALTER TABLE customs_rate_sync_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customs_rate_sync_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE customs_rate_snapshot ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON customs_exchange_rates, customs_exchange_rate_audit, customs_rate_sync_log FROM anon, authenticated;
+
+INSERT INTO capabilities (code, description) VALUES
+  ('customs_rate_view',  'View Indian Customs exchange rates (current + historical) and use the customs conversion calculator'),
+  ('customs_rate_admin', 'Sync, upload and approve/reject Indian Customs exchange rate data — Admin/MD only')
+ON CONFLICT (code) DO UPDATE SET description = EXCLUDED.description;
+
+INSERT INTO role_capabilities (role_id, capability_code)
+SELECT r.id, x.cap
+FROM roles r
+JOIN (VALUES
+  ('Admin',     'customs_rate_view'),
+  ('MD',        'customs_rate_view'),
+  ('Finance',   'customs_rate_view'),
+  ('Logistics', 'customs_rate_view'),
+  ('Admin',     'customs_rate_admin'),
+  ('MD',        'customs_rate_admin')
+) AS x(role_name, cap) ON x.role_name = r.name
+ON CONFLICT DO NOTHING;

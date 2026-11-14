@@ -6668,11 +6668,184 @@ export type Database = {
         };
         Relationships: [];
       };
+      // 2026-11-14 — the Indian Customs exchange-rate register. One row per
+      // currency per notification, import and export stored separately, with
+      // source document reference + checksum and a verification workflow.
+      // See db/2026-11-14-customs-exchange-rate-module.sql and
+      // src/lib/customs/. Verified rows are immutable at the DB level.
+      customs_exchange_rates: {
+        Row: {
+          id: string;
+          currency_code: string;
+          currency_name: string | null;
+          currency_unit: number;
+          import_rate: number | null;
+          export_rate: number;
+          effective_start_date: string;
+          effective_end_date: string | null;
+          notification_no: string | null;
+          notification_date: string | null;
+          verification_status: "pending" | "verified" | "rejected" | "source_unavailable" | "extraction_failed" | "superseded";
+          source: "icegate" | "cbic" | "admin_csv" | "admin_document" | "manual" | "mirror";
+          source_url: string | null;
+          source_document_ref: string | null;
+          source_checksum: string | null;
+          extraction_confidence: number | null;
+          validation_notes: string | null;
+          raw_payload: Json | null;
+          fetched_at: string;
+          verified_by: string | null;
+          verified_by_name: string | null;
+          verified_at: string | null;
+          created_by: string | null;
+          supersedes_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          currency_code: string;
+          currency_name?: string | null;
+          currency_unit?: number;
+          import_rate?: number | null;
+          export_rate: number;
+          effective_start_date: string;
+          effective_end_date?: string | null;
+          notification_no?: string | null;
+          notification_date?: string | null;
+          verification_status?: "pending" | "verified" | "rejected" | "source_unavailable" | "extraction_failed" | "superseded";
+          source?: "icegate" | "cbic" | "admin_csv" | "admin_document" | "manual" | "mirror";
+          source_url?: string | null;
+          source_document_ref?: string | null;
+          source_checksum?: string | null;
+          extraction_confidence?: number | null;
+          validation_notes?: string | null;
+          raw_payload?: Json | null;
+          fetched_at?: string;
+          verified_by?: string | null;
+          verified_by_name?: string | null;
+          verified_at?: string | null;
+          created_by?: string | null;
+          supersedes_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          currency_code?: string;
+          currency_name?: string | null;
+          currency_unit?: number;
+          import_rate?: number | null;
+          export_rate?: number;
+          effective_start_date?: string;
+          effective_end_date?: string | null;
+          notification_no?: string | null;
+          notification_date?: string | null;
+          verification_status?: "pending" | "verified" | "rejected" | "source_unavailable" | "extraction_failed" | "superseded";
+          source?: "icegate" | "cbic" | "admin_csv" | "admin_document" | "manual" | "mirror";
+          source_url?: string | null;
+          source_document_ref?: string | null;
+          source_checksum?: string | null;
+          extraction_confidence?: number | null;
+          validation_notes?: string | null;
+          raw_payload?: Json | null;
+          fetched_at?: string;
+          verified_by?: string | null;
+          verified_by_name?: string | null;
+          verified_at?: string | null;
+          created_by?: string | null;
+          supersedes_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      customs_exchange_rate_audit: {
+        Row: {
+          id: string;
+          rate_id: string | null;
+          action: "insert" | "update" | "approve" | "reject" | "supersede" | "delete" | "sync" | "upload";
+          actor_employee_id: string | null;
+          actor_name: string | null;
+          changes: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          rate_id?: string | null;
+          action: "insert" | "update" | "approve" | "reject" | "supersede" | "delete" | "sync" | "upload";
+          actor_employee_id?: string | null;
+          actor_name?: string | null;
+          changes?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          rate_id?: string | null;
+          action?: "insert" | "update" | "approve" | "reject" | "supersede" | "delete" | "sync" | "upload";
+          actor_employee_id?: string | null;
+          actor_name?: string | null;
+          changes?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      customs_rate_sync_log: {
+        Row: {
+          id: string;
+          started_at: string;
+          finished_at: string | null;
+          trigger_source: "cron" | "manual" | "upload";
+          status: "running" | "success" | "partial" | "failed" | "source_unavailable";
+          provider: string | null;
+          source_url: string | null;
+          rows_extracted: number;
+          rows_verified: number;
+          rows_pending: number;
+          message: string | null;
+          details: Json | null;
+          actor_employee_id: string | null;
+          actor_name: string | null;
+        };
+        Insert: {
+          id?: string;
+          started_at?: string;
+          finished_at?: string | null;
+          trigger_source?: "cron" | "manual" | "upload";
+          status?: "running" | "success" | "partial" | "failed" | "source_unavailable";
+          provider?: string | null;
+          source_url?: string | null;
+          rows_extracted?: number;
+          rows_verified?: number;
+          rows_pending?: number;
+          message?: string | null;
+          details?: Json | null;
+          actor_employee_id?: string | null;
+          actor_name?: string | null;
+        };
+        Update: {
+          id?: string;
+          started_at?: string;
+          finished_at?: string | null;
+          trigger_source?: "cron" | "manual" | "upload";
+          status?: "running" | "success" | "partial" | "failed" | "source_unavailable";
+          provider?: string | null;
+          source_url?: string | null;
+          rows_extracted?: number;
+          rows_verified?: number;
+          rows_pending?: number;
+          message?: string | null;
+          details?: Json | null;
+          actor_employee_id?: string | null;
+          actor_name?: string | null;
+        };
+        Relationships: [];
+      };
       // 2026-10-17 — automatic customs/export exchange rates (DGFT → ICEGATE
       // → eximin.net chain). See db/2026-10-17-customs-exchange-rates.sql and
-      // src/lib/fx/customs.ts. Kept apart from exchange_rates so an API feed
-      // can never rewrite a manually entered CBIC notification.
-      customs_exchange_rates: {
+      // src/lib/fx/customs.ts. Renamed 2026-11-14 (the register above now owns
+      // the customs_exchange_rates name).
+      customs_rate_snapshot: {
         Row: {
           currency_code: string;
           currency_name: string | null;
@@ -11336,6 +11509,29 @@ export type Database = {
           p_date: string;
         };
         Returns: string;
+      };
+      get_customs_exchange_rate_as_of: {
+        Args: {
+          p_currency_code: string;
+          p_as_of: string;
+        };
+        Returns: {
+          id: string;
+          currency_code: string;
+          currency_name: string | null;
+          currency_unit: number;
+          import_rate: number | null;
+          export_rate: number;
+          effective_start_date: string;
+          effective_end_date: string | null;
+          notification_no: string | null;
+          notification_date: string | null;
+          source: string;
+          source_url: string | null;
+          source_document_ref: string | null;
+          verification_status: string;
+          verified_at: string | null;
+        }[];
       };
       get_official_rate_as_of: {
         Args: {

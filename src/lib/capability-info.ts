@@ -55,6 +55,13 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Add / update vendor (Party Master) records." },
   { code: "exchange_rate_admin", label: "Exchange Rates", icon: "💱", href: "/dashboard/exchange-rates",
     description: "Maintain the Exchange Rate Master." },
+  // 2026-11-14 — Indian Customs Exchange Rate module (history, verification,
+  // calculator). Two entries point at the same page because the tile list is
+  // one-per-capability and rate approval is deliberately split from viewing.
+  { code: "customs_rate_view", label: "Customs Exchange Rates", icon: "🛃", href: "/dashboard/customs-rates",
+    description: "Official Indian Customs import/export rates — current, historical by date, with the customs conversion calculator." },
+  { code: "customs_rate_admin", label: "Customs Rate Admin", icon: "✅", href: "/dashboard/customs-rates",
+    description: "Sync official sources, upload the notification/CSV, and approve or reject extracted customs rates — Admin/MD only." },
   { code: "attendance_punch", label: "Attendance", icon: "🕒", href: "/dashboard/attendance",
     description: "Punch In / Punch Out." },
   { code: "attendance_admin", label: "Attendance Admin", icon: "🗓️", href: "/dashboard/attendance/admin",

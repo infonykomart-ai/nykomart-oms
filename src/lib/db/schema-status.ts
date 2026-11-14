@@ -42,6 +42,20 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-14 — the customs rate register. Without it the module's API,
+    // dashboard and calculator have nothing to read (and the old per-currency
+    // snapshot is renamed in the same patch, so this is the one to run first).
+    file: "2026-11-14-customs-exchange-rate-module.sql",
+    title: "Indian Customs exchange rate module (history, verification, sync log)",
+    probe: { table: "customs_exchange_rates", column: "verification_status" },
+    features: [
+      "Customs Exchange Rates page: only the placeholder / no verified rates",
+      "GET /api/customs-rates returns 503 until this SQL is applied",
+      "Customs conversion calculator cannot resolve any official rate",
+      "Scheduled/manual sync has nowhere to record what it checked",
+    ],
+  },
+  {
     // 2026-10-28 — office expenses became vendor-bill shaped (party, invoice
     // no/date, multiple line items). Without the columns the screen still
     // works but falls back to one flat line per expense (no bill header, no
