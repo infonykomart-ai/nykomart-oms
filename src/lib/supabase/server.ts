@@ -39,6 +39,21 @@ export async function createClient() {
 // re-check on every privileged Code.gs call, and must not be skipped.
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
+// 2026-11-14 — same service-role client, but WITHOUT the generated Database
+// generic. Only the Inventory module uses this: its tables/views/functions
+// come from db/2026-11-14c-inventory-management-module.sql and are not in
+// src/types/database.ts yet (that file is regenerated, and hand-annotating
+// 15 tables + 8 RPCs there would be churn that the next regeneration wipes).
+// Same trust boundary as createServiceRoleClient: never call it before
+// requireCapability()/getAuthedEmployee() has verified the caller.
+export function createServiceRoleClientUnchecked() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
+
 export function createServiceRoleClient() {
   return createSupabaseClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

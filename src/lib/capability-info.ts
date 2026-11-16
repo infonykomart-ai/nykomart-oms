@@ -135,8 +135,24 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders." },
   { code: "ad_spend_entry", label: "Store Ad Spend", icon: "📈", href: "/dashboard/ad-spend",
     description: "Enter daily Budget/Spend per store and view the combined Orders + Ad Spend report." },
-  { code: "finished_stock_view", label: "Inventory", icon: "📦", href: "/dashboard/inventory",
+  // 2026-11-14 — finished-goods Inventory became a full module. The legacy
+  // auto-restock view that used to own /dashboard/inventory now lives one
+  // level down, so its tile keeps working unchanged.
+  { code: "finished_stock_view", label: "Inventory (legacy view)", icon: "♻️", href: "/dashboard/inventory/finished-goods",
     description: "Finished-goods Stock — auto-restocked from cancelled+refunded+already-purchased orders." },
+  // 2026-11-14 — Inventory Management module (see
+  // db/2026-11-14c-inventory-management-module.sql). Four capabilities share
+  // one module: viewing is company-wide, the other three are split because
+  // moving stock, issuing a challan and changing SKU masters are different
+  // jobs done by different people.
+  { code: "inventory_view", label: "Inventory Management", icon: "📦", href: "/dashboard/inventory",
+    description: "Live finished-goods stock by stage (raw, printing, washing, QC, ready), PCS and SQ FT, reservations, ledger and reports." },
+  { code: "inventory_manage", label: "Stock Operations", icon: "📥", href: "/dashboard/inventory/stock",
+    description: "Stock inward, audited corrections, reservations, and printing/washing/manufacturing updates." },
+  { code: "inventory_dispatch", label: "Challan & Dispatch", icon: "🚚", href: "/dashboard/inventory/challans",
+    description: "Create, issue and cancel customer challans — issuing is what deducts READY stock." },
+  { code: "inventory_settings", label: "Inventory Settings", icon: "⚙️", href: "/dashboard/inventory/settings",
+    description: "Products, variant SKUs with size/colour and SQ FT per piece, warehouses, and each category's workflow." },
   // 2026-08-14: Help Center itself (the 🤖 chat bubble) and Messages (the
   // header 💬 icon) are open to EVERY signed-in employee and are NOT
   // capability-gated tiles — they don't appear here, same reasoning as My
