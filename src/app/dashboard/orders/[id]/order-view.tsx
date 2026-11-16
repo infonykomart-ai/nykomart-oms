@@ -202,7 +202,11 @@ export function OrderPrintSheet({
 
   return (
     <div
-      className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-xs text-slate-900 print:border-0 print:p-0"
+      // 2026-11-16 — print:max-w-none/print:w-full: max-w-3xl (768px) is
+      // wider than A4's printable width (~703px at the sheet's margins), so
+      // keeping the cap in print forced the browser to scale the whole sheet
+      // down. On paper the sheet should simply fill the page width.
+      className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-8 text-xs text-slate-900 print:mx-0 print:w-full print:max-w-none print:border-0 print:p-0"
       style={{ fontFamily: "Arial, sans-serif", pageBreakAfter: pageBreakAfter ? "always" : "auto" }}
     >
           <div className="mb-4 flex items-start justify-between border-b-2 border-slate-800 pb-3">

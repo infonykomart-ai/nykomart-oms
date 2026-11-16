@@ -139,15 +139,47 @@ export function PrintArea({
           margin: 14mm 12mm 16mm 12mm;
         }
         @media print {
-          html, body { height: auto !important; overflow: visible !important; }
+          /* 2026-11-16 — "print sahi nahi ho raha": the printed document came
+             out at roughly half size, centred, with half an A4 sheet blank.
+             Root cause is the dashboard SHELL, not the sheet: on screen the
+             shell is a fixed-height flex ROW ([data-theme] → sidebar + a
+             flex-col column), and h-dvh / overflow-hidden survive into print
+             because body:has([data-theme]) (globals.css) is more specific
+             than the plain body rule that used to sit here. The browser then
+             laid the page out wider than A4 and scaled the whole document to
+             fit. In print the shell must be an ordinary block of page width.
+             aside / header are display:none rather than merely invisible so
+             the sidebar's w-72 column can never reserve width either. */
+          html, body {
+            width: auto !important;
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+          }
+          body:has([data-theme]),
+          div[data-theme] {
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            overflow: visible !important;
+          }
+          div[data-theme] > div { width: auto !important; }
+          /* Only the dashboard chrome — NOT <header>/<aside> elements that
+             belong to the document being printed (refund sheet, B2B entry
+             panels, etc.), which must stay visible. */
+          div[data-theme] > aside,
+          div[data-theme] > div > header { display: none !important; }
           .h-screen, .h-dvh, .min-h-screen, .min-h-dvh, .overflow-hidden, .overflow-y-auto {
             height: auto !important;
+            min-height: 0 !important;
             max-height: none !important;
             overflow: visible !important;
           }
           body * { visibility: hidden; }
           #${id}, #${id} * { visibility: visible; }
-          #${id} { position: static; width: 100%; }
+          #${id} { position: static; width: 100%; max-width: 100%; }
         }
       `}</style>
       <div id={id}>

@@ -196,7 +196,7 @@ export function ModuleTabBar() {
   if (!mounted) return null;
 
   return (
-    <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] px-2 py-1">
+    <div className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-[var(--oms-sidebar-border)] bg-[var(--oms-sidebar-bg)] px-2 py-1 print:hidden">
       {tabs.map((t) => {
         const active = t.href === activeHref;
         const closable = t.href !== HOME_TAB.href;
