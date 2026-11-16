@@ -6,7 +6,8 @@
 // in ../new/actions.ts (still imported from there — the file boundary is
 // just where each action was first written, not a hard module wall).
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createServiceRoleClientUnchecked } from "@/lib/supabase/server";
+import { releaseOrderStock, reserveOrderStockOnConfirm } from "@/lib/inventory/order-stock";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { notifyCompanion } from "@/lib/companion/notify";
@@ -88,7 +89,11 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const orderId = str(formData, "order_id");
   if (!orderId) return { error: "Order missing.", success: false };
 
-  const { data: existing } = await supabase.from("orders").select("id, company_id, order_date").eq("id", orderId).single();
+  const { data: existing } = await supabase
+    .from("orders")
+    .select("id, company_id, order_date, status, ref_no, sku_label, size_label, qty, item_category_id")
+    .eq("id", orderId)
+    .single();
   if (!existing || !employee.companyIds.includes(existing.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
@@ -125,11 +130,13 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const buyerNameAddress = strOrNull(formData, "buyer_name_address");
   const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
 
+  const nextStatus = str(formData, "status");
+
   const { error } = await supabase
     .from("orders")
     .update({
       order_date: orderDate,
-      status: str(formData, "status") as never,
+      status: nextStatus as never,
       dispatch_date: strOrNull(formData, "dispatch_date"),
       marketplace_order_no: strOrNull(formData, "marketplace_order_no"),
       po_date: strOrNull(formData, "po_date"),
@@ -173,6 +180,39 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
     .eq("id", orderId);
 
   if (error) return { error: error.message, success: false };
+
+  // Phase 4 (2026-11-16) — keep stock in step with the order lifecycle.
+  // Best effort on purpose: the edit is already saved, so an Inventory module
+  // with no matching SKU or warehouse configured must never turn a saved order
+  // into an error. Confirming reserves what READY can cover and raises a
+  // purchase requirement for the rest; Hold/Cancel/Return releases it again.
+  if (nextStatus && nextStatus !== existing.status) {
+    const inventoryDb = createServiceRoleClientUnchecked();
+    try {
+      if (nextStatus === "Confirmed" && qty > 0) {
+        await reserveOrderStockOnConfirm(inventoryDb, {
+          companyId: existing.company_id,
+          orderId,
+          orderRef: existing.ref_no,
+          itemCategoryId,
+          skuLabel: strOrNull(formData, "sku_label"),
+          sizeLabel: strOrNull(formData, "size_label"),
+          qty,
+          actorId: employee.id,
+        });
+      } else if (["Hold", "Cancelled", "Returned"].includes(nextStatus)) {
+        await releaseOrderStock(inventoryDb, {
+          orderId,
+          actorId: employee.id,
+          reason: `Order set to ${nextStatus}`,
+        });
+      }
+      revalidatePath("/dashboard/inventory");
+    } catch {
+      // Inventory not configured yet, or a transient failure — the order edit
+      // itself stays saved. The requirements list is the visible record.
+    }
+  }
 
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/orders/new");
@@ -265,7 +305,19 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   const { error } = await supabase.from("orders").update({ status: "Hold" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
 
+  // Phase 4 — a held order no longer needs its stock promised.
+  try {
+    await releaseOrderStock(createServiceRoleClientUnchecked(), {
+      orderId,
+      actorId: employee.id,
+      reason: "Order put on hold",
+    });
+  } catch {
+    // Inventory not configured — nothing to release.
+  }
+
   revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/inventory");
   // 2026-10-17 — the order's own page now has these controls too.
   revalidatePath(`/dashboard/orders/${orderId}`);
   return { error: null, success: true };
@@ -284,7 +336,19 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   const { error } = await supabase.from("orders").update({ status: "Cancelled" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
 
+  // Phase 4 — release the cancelled order's reservation and open requirements.
+  try {
+    await releaseOrderStock(createServiceRoleClientUnchecked(), {
+      orderId,
+      actorId: employee.id,
+      reason: "Order cancelled",
+    });
+  } catch {
+    // Inventory not configured — nothing to release.
+  }
+
   revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/inventory");
   revalidatePath(`/dashboard/orders/${orderId}`);
   revalidatePath("/dashboard/invoices");
   return { error: null, success: true };
@@ -316,7 +380,19 @@ export async function returnOrder(orderId: string): Promise<SimpleResult> {
   const { error } = await supabase.from("orders").update({ status: "Returned" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
 
+  // Phase 4 — a returned order's promised stock is free again.
+  try {
+    await releaseOrderStock(createServiceRoleClientUnchecked(), {
+      orderId,
+      actorId: employee.id,
+      reason: "Order returned",
+    });
+  } catch {
+    // Inventory not configured — nothing to release.
+  }
+
   revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/inventory");
   revalidatePath(`/dashboard/orders/${orderId}`);
   revalidatePath("/dashboard/invoices");
   return { error: null, success: true };

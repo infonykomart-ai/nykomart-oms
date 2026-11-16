@@ -12,6 +12,7 @@ import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import {
   adjustStock,
   cancelChallan,
+  closePurchaseRequirement,
   completeManufacturing,
   completeProcessing,
   createChallan,
@@ -382,6 +383,27 @@ export async function manufacturingCompleteAction(formData: FormData): Promise<v
   if (result.error) failed(target, result.error);
   revalidatePath(BASE, "layout");
   done(target, "Production recorded — accepted pieces moved to READY.");
+}
+
+// ---------------------------------------------------------------------------
+// Purchase requirements (Phase 4)
+// ---------------------------------------------------------------------------
+
+/** Closes an open requirement raised when a confirmed order was short of stock. */
+export async function closeRequirementAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_manage");
+  const target = safeTarget(formData, BASE);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await closePurchaseRequirement(db, {
+    companyId: employee.currentCompanyId,
+    requirementId: str(formData, "requirement_id"),
+    actorId: employee.id,
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, "Purchase requirement closed.");
 }
 
 // ---------------------------------------------------------------------------

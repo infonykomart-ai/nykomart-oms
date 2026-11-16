@@ -337,6 +337,72 @@ export async function getDashboard(
   };
 }
 
+export type RequirementLine = {
+  id: string;
+  orderId: string | null;
+  orderRef: string | null;
+  variantId: string;
+  meta: VariantMeta;
+  requiredPcs: number;
+  status: string;
+  neededBy: string | null;
+  remarks: string | null;
+  createdAt: string;
+};
+
+/**
+ * Phase 4 — open purchase requirements raised when a confirmed order could not
+ * be covered by READY stock. Newest first; closed rows stay out of the way.
+ */
+export async function listPurchaseRequirements(
+  db: InventoryDb,
+  companyId: string,
+  lookups: InventoryLookups,
+  limit = 50
+): Promise<RequirementLine[]> {
+  const { data } = await db
+    .from("inventory_purchase_requirements")
+    .select("id, order_id, variant_id, required_pcs, status, needed_by, remarks, created_at")
+    .eq("company_id", companyId)
+    .eq("status", "OPEN")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  const rows = (data ?? []) as {
+    id: string;
+    order_id: string | null;
+    variant_id: string;
+    required_pcs: number;
+    status: string;
+    needed_by: string | null;
+    remarks: string | null;
+    created_at: string;
+  }[];
+  if (rows.length === 0) return [];
+
+  const meta = variantMetaMap(lookups);
+  const orderIds = [...new Set(rows.map((r) => r.order_id).filter((id): id is string => !!id))];
+  const { data: orders } = orderIds.length
+    ? await db.from("orders").select("id, ref_no").in("id", orderIds)
+    : { data: [] };
+  const refByOrder = new Map(((orders ?? []) as { id: string; ref_no: string }[]).map((o) => [o.id, o.ref_no]));
+
+  return rows
+    .filter((r) => meta.has(r.variant_id))
+    .map((r) => ({
+      id: r.id,
+      orderId: r.order_id,
+      orderRef: r.order_id ? refByOrder.get(r.order_id) ?? null : null,
+      variantId: r.variant_id,
+      meta: meta.get(r.variant_id)!,
+      requiredPcs: Number(r.required_pcs),
+      status: r.status,
+      neededBy: r.needed_by,
+      remarks: r.remarks,
+      createdAt: r.created_at,
+    }));
+}
+
 export type LedgerLine = {
   id: string;
   createdAt: string;

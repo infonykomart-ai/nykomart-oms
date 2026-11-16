@@ -252,6 +252,82 @@ export async function releaseReservation(
   return { error: null, data: null };
 }
 
+// Phase 4 — confirmation reserves only what READY can cover and turns the rest
+// into a purchase requirement, in one transaction. Unlike reserveStock() above
+// this never fails on short stock: a confirmed order is a promise to the buyer
+// even when the goods still have to be bought or produced.
+export type OrderReserveInput = {
+  orderId: string;
+  variantId: string;
+  warehouseId: string;
+  pcs: number;
+  sqft: number;
+  actorId: string;
+};
+
+export async function reserveOrderStock(
+  db: InventoryDb,
+  input: OrderReserveInput
+): Promise<InventoryResult<{ reservedPcs: number; shortfallPcs: number; requirementId: string | null; availableBefore: number }>> {
+  const { data, error } = await db.rpc("inventory_reserve_order", {
+    p_order_id: input.orderId,
+    p_variant_id: input.variantId,
+    p_warehouse_id: input.warehouseId,
+    p_pcs: roundQty(input.pcs),
+    p_sqft: roundQty(input.sqft),
+    p_actor: input.actorId,
+  });
+  if (error) return { error: friendlyDbError(error.message), data: null };
+  return {
+    error: null,
+    data: {
+      reservedPcs: Number(data?.reserved_pcs ?? 0),
+      shortfallPcs: Number(data?.shortfall_pcs ?? 0),
+      requirementId: data?.requirement_id ?? null,
+      availableBefore: Number(data?.available_before ?? 0),
+    },
+  };
+}
+
+export async function releaseOrderReservations(
+  db: InventoryDb,
+  input: { orderId: string; actorId: string; reason: string }
+): Promise<InventoryResult<{ released: number; cancelled: number }>> {
+  const { data, error } = await db.rpc("inventory_release_order", {
+    p_order_id: input.orderId,
+    p_actor: input.actorId,
+    p_reason: input.reason,
+  });
+  if (error) return { error: friendlyDbError(error.message), data: null };
+  return {
+    error: null,
+    data: {
+      released: Number(data?.released_reservations ?? 0),
+      cancelled: Number(data?.cancelled_requirements ?? 0),
+    },
+  };
+}
+
+/** Closes an open purchase requirement once the goods were bought or the need ended. */
+export async function closePurchaseRequirement(
+  db: InventoryDb,
+  input: { companyId: string; requirementId: string; actorId: string }
+): Promise<InventoryResult<null>> {
+  const { data: row } = await db
+    .from("inventory_purchase_requirements")
+    .select("id, company_id, status")
+    .eq("id", input.requirementId)
+    .maybeSingle();
+  if (!row || row.company_id !== input.companyId) return { error: "Purchase requirement not found.", data: null };
+  if (row.status !== "OPEN") return { error: "That requirement is already closed.", data: null };
+  const { error } = await db
+    .from("inventory_purchase_requirements")
+    .update({ status: "FULFILLED", updated_at: new Date().toISOString() })
+    .eq("id", input.requirementId);
+  if (error) return { error: friendlyDbError(error.message), data: null };
+  return { error: null, data: null };
+}
+
 // ---------------------------------------------------------------------------
 // Challans
 // ---------------------------------------------------------------------------

@@ -16,6 +16,10 @@ SQL editor (it is also folded into `db/schema.sql` as Section 32). It is
 re-runnable: tables are `IF NOT EXISTS`, functions `OR REPLACE`, policies are
 recreated, and capability grants use `ON CONFLICT DO NOTHING`.
 
+Then run **`db/2026-11-16-phase4-order-stock.sql`** (Section 33 of
+`db/schema.sql`) — it adds the order-confirmation reservation and the purchase
+requirements table. Also additive and re-runnable.
+
 Afterwards, in **Inventory → Settings**, add at least one warehouse, a product,
 and its variant SKUs (with length × width for rug-like products). Nothing can be
 stocked until a variant exists.
@@ -47,6 +51,29 @@ a reason and remarks. Products without dimensions use PCS only (SQ FT stays 0).
 row, sums active reservations and refuses a quantity it cannot cover, so two
 people cannot promise the same pieces. Cancelling an order is done by releasing
 its reservation; the stock never leaves the warehouse until a challan is issued.
+
+## Order confirmation (Phase 4)
+
+Order entry stores SKU and size as free text, so the link to inventory is the SKU
+text itself (`inventory_product_variants.sku`, unique) inside the same company
+and item category.
+
+- **Order entry badge** — typing a SKU/size/quantity shows `READY − reserved`
+  for that variant and how many pieces are short. Informational only; it never
+  blocks saving. A SKU inventory does not know falls back to the legacy
+  `finished_stock` count.
+- **Confirming an order** (status → `Confirmed`) reserves the available quantity
+  from the fullest active warehouse and writes the remainder into
+  `inventory_purchase_requirements`, in one transaction. Confirmation never
+  fails because stock is short — the shortfall is the requirement.
+- **Hold / Cancelled / Returned** releases that order's live reservations and
+  cancels its open requirements, so the stock is free immediately.
+- Changing the quantity of an already-confirmed order does not re-reserve; use
+  the Reservations screen (reserve/release) for that adjustment.
+
+Requirements for the same order + SKU are topped up rather than duplicated, and
+the dashboard lists every open one with a **Close** button (once the goods were
+bought or the need ended).
 
 ## Challans
 
@@ -112,14 +139,16 @@ same key applies the movement once.
 `inventory_ledger`, `inventory_reservations`, `inventory_processing_jobs`,
 `inventory_processing_movements`, `inventory_manufacturing_jobs`,
 `inventory_challans`, `inventory_challan_lines`, `inventory_adjustments`,
-`inventory_audit_logs`, `inventory_idempotency`.
+`inventory_audit_logs`, `inventory_idempotency`,
+`inventory_purchase_requirements`.
 
 Functions: `inventory_apply_movement`, `inventory_transfer_stage`,
 `inventory_reserve`, `inventory_release_reservation`, `inventory_issue_challan`,
 `inventory_cancel_challan`, `inventory_mark_dispatched`,
 `inventory_start_processing`, `inventory_complete_processing`,
 `inventory_start_manufacturing`, `inventory_complete_manufacturing`,
-`inventory_move_qc`, `inventory_reconcile`.
+`inventory_move_qc`, `inventory_reconcile`, `inventory_reserve_order`,
+`inventory_release_order`.
 
 `inventory_reconcile()` lists any balance that disagrees with the sum of its
 ledger entries. The dashboard surfaces the count as an alert.
@@ -135,12 +164,14 @@ ledger entries. The dashboard surfaces the count as an alert.
 
 ## Known gaps / next steps
 
-- **Purchase orders are not modelled.** The app records purchase bills and
-  received chalans, not POs, so "purchase pending" (ordered − received) cannot
-  be computed honestly yet; the dashboard says so instead of showing a number.
-  Wiring a PO table (or purchase-bill lines) into inward is the next step.
-- **Order entry does not yet show an in-stock badge.** Reservations can be made
-  from Inventory by PO/RF/RG reference; the order form itself is unchanged.
+- **Purchase orders are still not modelled.** Requirements (what to buy) are
+  raised automatically, but there is no PO entry, so "ordered − received"
+  cannot be computed; closing a requirement is manual once goods arrive.
+- **One order row = one SKU.** A batch/bulk order creates several rows; each row
+  reserves its own quantity, so a multi-item order is covered by several
+  reservations rather than one.
+- `purchased_pcs` on a requirement exists for a future PO/bill link but is not
+  written yet.
 - Date-range filtering on the dashboard currently scopes the dispatched KPI and
   the recent-movement feed; stage totals are always as-of now.
 - No email/WhatsApp alert delivery yet — alerts are computed and shown in-app.

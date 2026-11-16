@@ -1,7 +1,7 @@
 "use server";
 
 import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { buyerMatchKey } from "@/lib/orders/buyer-match";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
 import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/currency";
@@ -9,6 +9,7 @@ import { notifyCompanion } from "@/lib/companion/notify";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { validateDateFields } from "@/lib/fy-date";
 import { tolerateMissingColumns } from "@/lib/db/missing-column";
+import { orderSkuAvailability, summarizeAvailability } from "@/lib/inventory/order-stock";
 import {
   isStairDimensionUnit,
   normalizeCount,
@@ -931,23 +932,57 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
 // stock_in/stock_out module, per that module's own schema comment).
 // ============================================================================
 
-export type StockCheckResult = { qty: number };
+export type StockCheckResult = {
+  // Legacy finished_stock figure (the old informational popup), kept so an
+  // order whose SKU inventory does not track still shows what it used to.
+  qty: number;
+  // Phase 4 — true when the typed SKU matches an inventory variant. Only then
+  // do the availability numbers below mean anything.
+  inventoryTracked: boolean;
+  readyPcs: number;
+  reservedPcs: number;
+  availablePcs: number;
+  requestedPcs: number;
+  shortfallPcs: number;
+};
+
+const EMPTY_STOCK_CHECK: StockCheckResult = {
+  qty: 0,
+  inventoryTracked: false,
+  readyPcs: 0,
+  reservedPcs: 0,
+  availablePcs: 0,
+  requestedPcs: 0,
+  shortfallPcs: 0,
+};
 
 /**
  * Informational only — "agar stock me hai to popup dikhe, blocker nahi".
- * Keyed the same way finished_stock is: item_category_id + sku_label +
- * size_label (case-insensitive on the text fields, matching how orders
- * themselves store these as free text — see EditableOrder's sku_label/
- * size_label fallback pattern).
+ *
+ * Phase 4 (2026-11-16): the badge now reads the Inventory module first — READY
+ * on hand minus live reservations for the typed SKU — and compares it with the
+ * quantity the employee is entering, so a shortage is visible before the order
+ * is saved. If no inventory variant matches, it falls back to the legacy
+ * finished_stock figure exactly as before.
  */
 export async function checkFinishedStockAction(
   itemCategoryId: string,
   skuLabel: string,
-  sizeLabel: string
+  sizeLabel: string,
+  requestedPcs = 0
 ): Promise<StockCheckResult> {
-  await requireCapability("order_entry");
-  if (!itemCategoryId) return { qty: 0 };
+  const employee = await requireCapability("order_entry");
+  if (!itemCategoryId) return EMPTY_STOCK_CHECK;
   const supabase = createServiceRoleClient();
+
+  const requested = Number.isFinite(requestedPcs) && requestedPcs > 0 ? requestedPcs : 0;
+  const inventory = await orderSkuAvailability(
+    createServiceRoleClientUnchecked(),
+    employee.currentCompanyId,
+    itemCategoryId,
+    skuLabel,
+    sizeLabel
+  );
 
   const { data } = await supabase
     .from("finished_stock")
@@ -956,6 +991,25 @@ export async function checkFinishedStockAction(
     .ilike("sku_label", skuLabel.trim())
     .ilike("size_label", sizeLabel.trim())
     .maybeSingle();
+  const legacyQty = data ? Number(data.qty) : 0;
 
-  return { qty: data ? Number(data.qty) : 0 };
+  if (!inventory.tracked) return { ...EMPTY_STOCK_CHECK, qty: legacyQty, requestedPcs: requested };
+
+  const summary = summarizeAvailability({
+    readyPcs: inventory.readyPcs,
+    readySqft: inventory.readySqft,
+    reservedPcs: inventory.reservedPcs,
+    reservedSqft: inventory.reservedSqft,
+    requestedPcs: requested,
+  });
+
+  return {
+    qty: legacyQty,
+    inventoryTracked: true,
+    readyPcs: summary.readyPcs,
+    reservedPcs: summary.reservedPcs,
+    availablePcs: summary.availablePcs,
+    requestedPcs: summary.requestedPcs,
+    shortfallPcs: summary.shortfallPcs,
+  };
 }

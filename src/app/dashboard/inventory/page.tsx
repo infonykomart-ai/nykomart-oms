@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
-import { getDashboard, getLookups, listChallans } from "@/lib/inventory/queries";
+import { getDashboard, getLookups, listChallans, listPurchaseRequirements } from "@/lib/inventory/queries";
+import { closeRequirementAction } from "./actions";
 import { stageLabel, txTypeLabel } from "@/lib/inventory/stages";
 import { EmptyRow, InventoryTabs, MessageBanner, PageHeading, Stat, cardClass, inputClass, labelClass, td, th } from "./ui";
 
@@ -25,9 +26,10 @@ export default async function InventoryDashboardPage({
   const db = createServiceRoleClientUnchecked();
   const employee = await requireCapability("inventory_view");
   const lookups = await getLookups(db, employee.currentCompanyId);
-  const [dash, challans] = await Promise.all([
+  const [dash, challans, requirements] = await Promise.all([
     getDashboard(db, employee.currentCompanyId, lookups, { categoryId, warehouseId, stage, search }),
     listChallans(db, employee.currentCompanyId, lookups, 200),
+    listPurchaseRequirements(db, employee.currentCompanyId, lookups),
   ]);
 
   const t = dash.totals;
@@ -45,6 +47,7 @@ export default async function InventoryDashboardPage({
     dash.reconcileMismatches ? `${dash.reconcileMismatches} balance(s) disagree with the ledger — run reconciliation` : null,
     dash.pendingProcessing ? `${dash.pendingProcessing} processing job(s) open` : null,
     dash.pendingManufacturing ? `${dash.pendingManufacturing} manufacturing job(s) open` : null,
+    requirements.length ? `${requirements.length} open purchase requirement(s) from confirmed orders` : null,
   ].filter((a): a is string => Boolean(a));
 
   return (
@@ -111,7 +114,7 @@ export default async function InventoryDashboardPage({
         <Stat label="Low stock SKUs" value={dash.lowStock.length} tone="amber" />
         <Stat label="Out of stock SKUs" value={dash.outOfStock.length} tone="rose" />
         <Stat label="Processing pending" value={dash.pendingProcessing} />
-        <Stat label="Purchase pending" value="—" />
+        <Stat label="Purchase requirements" value={requirements.length} tone={requirements.length ? "amber" : "slate"} />
       </div>
 
       <div className="mb-4 grid gap-3 lg:grid-cols-3">
@@ -127,7 +130,7 @@ export default async function InventoryDashboardPage({
             </ul>
           )}
           <p className="mt-2 text-[11px] text-slate-400">
-            Purchase pending is not shown yet: this app records purchase bills and receipts, not purchase orders, so there is no “ordered but not received” quantity to read.
+            Purchase requirements are raised automatically when a confirmed order cannot be covered by READY stock. There is no purchase-order entry yet, so the list below is the “what to buy” record — close a row once the goods are received or the need is over.
           </p>
         </div>
         <div className={`${cardClass} p-3`}>
@@ -139,6 +142,46 @@ export default async function InventoryDashboardPage({
             <Link className="rounded-md bg-slate-50 px-2.5 py-1.5 hover:bg-slate-100" href="/dashboard/inventory/finished-goods">♻️ Legacy finished-goods view</Link>
           </div>
         </div>
+      </div>
+
+      <h2 className="mb-2 mt-5 text-sm font-semibold text-slate-700">Purchase requirements (open)</h2>
+      <div className={`${cardClass} mb-5 overflow-x-auto`}>
+        <table className="min-w-full divide-y divide-slate-200">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className={th()}>Order</th><th className={th()}>SKU</th><th className={th()}>Product</th>
+              <th className={th()}>Size</th><th className={th()}>To buy</th><th className={th()}>Raised</th><th className={th()}></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {requirements.map((r) => (
+              <tr key={r.id}>
+                <td className={td("font-medium")}>
+                  {r.orderId ? (
+                    <Link className="underline" href={`/dashboard/orders/${r.orderId}`}>{r.orderRef ?? "Order"}</Link>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td className={td("font-medium")}>{r.meta.sku}</td>
+                <td className={td()}>{r.meta.productName}</td>
+                <td className={td()}>{r.meta.sizeLabel || "—"}</td>
+                <td className={td("text-amber-600")}>{r.requiredPcs} PCS</td>
+                <td className={td("text-slate-500")}>{new Date(r.createdAt).toLocaleDateString("en-IN")}</td>
+                <td className={td()}>
+                  <form action={closeRequirementAction}>
+                    <input type="hidden" name="requirement_id" value={r.id} />
+                    <input type="hidden" name="return_to" value="/dashboard/inventory" />
+                    <button type="submit" className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium hover:bg-slate-50">
+                      Close
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+            {requirements.length === 0 && <EmptyRow colSpan={7} message="No open requirements — every confirmed order is covered by READY stock." />}
+          </tbody>
+        </table>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

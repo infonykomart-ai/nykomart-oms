@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useRef, useEffect, useState, type FormEvent } from "react";
-import { createOrder, checkFinishedStockAction, type OrderFormState } from "./actions";
+import { createOrder, checkFinishedStockAction, type OrderFormState, type StockCheckResult } from "./actions";
 import { PhotoUrlField } from "../photo-url-field";
 import { MultiPhotoUrls } from "../multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
@@ -47,11 +47,13 @@ function ItemBlock({
 
   // Pending item 4 (Inventory) — "stock-check popup at order entry":
   // informational only, never a blocker. Checked on blur of whichever of
-  // Category/SKU/Size the employee just finished typing, reading the other
-  // two straight off the DOM (this form is otherwise uncontrolled/DOM-read,
+  // Category/SKU/Size/Quantity the employee just finished typing, reading the
+  // rest straight off the DOM (this form is otherwise uncontrolled/DOM-read,
   // see handleSubmit below — matching that same pattern rather than lifting
-  // everything into state just for this).
-  const [stockQty, setStockQty] = useState<number | null>(null);
+  // everything into state just for this). Phase 4 (2026-11-16): the returned
+  // figure is now READY-minus-reserved for the matched inventory SKU, compared
+  // against the quantity being entered, so a shortage is visible up front.
+  const [stock, setStock] = useState<StockCheckResult | null>(null);
 
   // 2026-11-02 — Stair Rug switches this item block's Quantity box over to
   // the set-based fields (see ../stair-rug-fields.tsx). Only the selected
@@ -96,12 +98,13 @@ function ItemBlock({
     const categoryId = (document.getElementById(id("item_category_id")) as HTMLSelectElement | null)?.value ?? "";
     const sku = (document.getElementById(id("sku_label")) as HTMLInputElement | null)?.value ?? "";
     const size = (document.getElementById(id("size_label")) as HTMLInputElement | null)?.value ?? "";
+    const qty = Number((document.getElementById(id("qty")) as HTMLInputElement | null)?.value ?? 0);
     if (!categoryId) {
-      setStockQty(null);
+      setStock(null);
       return;
     }
-    const result = await checkFinishedStockAction(categoryId, sku, size);
-    setStockQty(result.qty > 0 ? result.qty : null);
+    const result = await checkFinishedStockAction(categoryId, sku, size, Number.isFinite(qty) ? qty : 0);
+    setStock(result.inventoryTracked || result.qty > 0 ? result : null);
   }
 
   return (
@@ -145,9 +148,32 @@ function ItemBlock({
             ))}
           </datalist>
         </div>
-        {stockQty !== null && (
-          <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800 sm:col-span-2">
-            ℹ️ {stockQty} unit{stockQty === 1 ? "" : "s"} of this SKU+Size already in Inventory.
+        {stock && (
+          <p
+            className={`rounded-lg px-3 py-2 text-xs sm:col-span-2 ${
+              stock.inventoryTracked
+                ? stock.shortfallPcs > 0
+                  ? "bg-amber-50 text-amber-800"
+                  : "bg-teal-50 text-teal-800"
+                : "bg-teal-50 text-teal-800"
+            }`}
+          >
+            {stock.inventoryTracked ? (
+              stock.shortfallPcs > 0 ? (
+                <>
+                  ⚠️ Only {stock.availablePcs} PCS of this SKU are available (READY {stock.readyPcs} − reserved{" "}
+                  {stock.reservedPcs}) — {stock.shortfallPcs} short of {stock.requestedPcs}. Confirming the order
+                  reserves what is available and raises a purchase requirement for the rest.
+                </>
+              ) : (
+                <>
+                  ✅ {stock.availablePcs} PCS of this SKU available (READY {stock.readyPcs} − reserved{" "}
+                  {stock.reservedPcs}){stock.requestedPcs > 0 ? ` — covers the ${stock.requestedPcs} on this order` : ""}.
+                </>
+              )
+            ) : (
+              <>ℹ️ {stock.qty} unit{stock.qty === 1 ? "" : "s"} of this SKU+Size already in Inventory.</>
+            )}
           </p>
         )}
         {!categoryIsStair && (
@@ -168,7 +194,7 @@ function ItemBlock({
         ) : (
           <div>
             <label className={labelClass} htmlFor={id("qty")}>Quantity *</label>
-            <input id={id("qty")} name={id("qty")} type="number" min={1} defaultValue={1} required className={inputClass} />
+            <input id={id("qty")} name={id("qty")} type="number" min={1} defaultValue={1} required className={inputClass} onBlur={checkStock} />
           </div>
         )}
         <div>
