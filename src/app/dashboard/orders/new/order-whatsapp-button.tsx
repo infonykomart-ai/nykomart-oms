@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { markOrderWhatsAppSent } from "./actions";
-import { isStairRugCategory, stairSizeFromRow, stairWhatsAppLines } from "@/lib/orders/stair-rug";
+
 
 /**
  * "Send on WhatsApp" / "Send on Telegram" for one order — item 4 + 5.
@@ -161,33 +161,22 @@ export function OrderWhatsAppButton({
   // unbalanced markdown characters inside free-text order fields like SKU
   // or Note, so the Telegram caption is sent as plain text with no
   // parse_mode at all, and literal asterisks here would just look broken).
-  // 2026-11-02 — Stair Rug shows the SET quantity instead of the bare QTY
-  // line, exactly as asked: Number of Sets, Pieces Per Set, Total Pieces, and
-  // the per-piece / total area. `order.qty` is still the total piece count,
-  // so nothing about the packing flow's own numbers changes. Every other
-  // product keeps the original QTY + Size lines unchanged.
-  const stair = (isStairRugCategory(order.item_category_name) || order.sets_count != null)
-    ? stairSizeFromRow(order)
-    : null;
-  const stairLines = stair ? stairWhatsAppLines({ size: stair }) : null;
-
+  // 2026-11-16 — the set-expanded Stair Rug caption was reverted. For a real
+  // set order (sets of 18, 14, …) it grew to eight extra lines (Product, Sets,
+  // Pieces Per Set, Total Pieces, Area Per Piece, two Total Area lines) and
+  // became unusable as a packing caption in WhatsApp. The message goes back to
+  // ONE compact template for every product — PO/RF/RG, QTY, Size, dispatch
+  // dates, photo, colour, tassel (cotton only), SKU, Note — with every value
+  // current. QTY is still the total piece count (sets × pieces per set), so the
+  // packer loses no information; the set/area breakdown stays on the order page
+  // and is unchanged in the database.
   function buildMessage(bold: boolean = true) {
     const wrap = (label: string) => (bold ? `*${label}*` : label);
     const lines = [
       order.is_amazon ? (bold ? "*TOP PRIORITY*\n" : "TOP PRIORITY\n") : null,
       `${wrap("PO/RF/RG:")} ${order.ref_no}`,
-      ...(stairLines
-        ? [
-            `${wrap("Product:")} ${order.item_category_name || "Stair Rug"}`,
-            `${wrap("Size:")} ${order.size_label || "-"}`,
-            `${wrap("Number of Sets:")} ${stairLines.number_of_sets}`,
-            `${wrap("Pieces Per Set:")} ${stairLines.pieces_per_set}`,
-            `${wrap("Total Pieces:")} ${stairLines.total_pieces}`,
-            `${wrap("Area Per Piece:")} ${stairLines.area_per_piece}`,
-            `${wrap("Total Area:")} ${stairLines.total_area_sq_in}`,
-            `${wrap("Total Area:")} ${stairLines.total_area_sq_ft}`,
-          ]
-        : [`${wrap("QTY:")} ${order.qty}`, `${wrap("Size:")} ${order.size_label || "-"}`]),
+      `${wrap("QTY:")} ${order.qty}`,
+      `${wrap("Size:")} ${order.size_label || "-"}`,
       `${wrap("Dispatch Date:")} ${order.dispatch_date || "-"}`,
       `${wrap("Estimated Dispatch Date:")} ${order.estimated_dispatch_date || "-"}`,
       `${wrap("Photo:")} ${order.photo_type || "-"}`,
