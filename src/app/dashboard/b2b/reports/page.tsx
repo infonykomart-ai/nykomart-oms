@@ -1,5 +1,6 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { OFFICE_ASSET_CATEGORY } from "@/app/dashboard/expenses/categories";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { BarChart, type BarDatum } from "@/components/simple-charts";
 import { dimsFromSizeSpec, fmtMoney, lineArea, round2 } from "@/lib/b2b/erp";
@@ -32,7 +33,7 @@ export default async function B2BReportsPage() {
     supabase.from("b2b_order_payments").select("order_id, amount, received_amount, due_date").eq("company_id", companyId),
     supabase.from("b2b_buyers").select("id, name, country, salesperson").eq("company_id", companyId),
     supabase.from("b2b_productions").select("status, planned_qty, produced_qty").eq("company_id", companyId),
-    supabase.from("internal_expenses").select("expense_date, amount_inr").eq("company_id", companyId).gte("expense_date", fyStart),
+    supabase.from("internal_expenses").select("expense_date, amount_inr").eq("company_id", companyId).neq("category", OFFICE_ASSET_CATEGORY).gte("expense_date", fyStart),
   ]);
 
   const orders = (ordersRes.data ?? []).filter((o) => o.status !== "Cancelled");

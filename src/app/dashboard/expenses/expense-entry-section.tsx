@@ -528,6 +528,7 @@ function ExpenseBillForm({
             name="remark"
             value={remark ?? ""}
             onChange={(e) => setRemark(e.target.value)}
+            placeholder="For Office Asset: kya banaya / kya kharida (e.g. flooring 200 sq ft, paint 4 bucket)"
             className={inputClass}
           />
         </div>

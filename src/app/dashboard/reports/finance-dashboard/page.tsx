@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
+import { OFFICE_ASSET_CATEGORY } from "@/app/dashboard/expenses/categories";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { FY_START_MONTH, fyDateWindow } from "@/lib/fy-date";
@@ -289,8 +290,10 @@ export default async function FinanceDashboardPage({
     // cost this page still can't attribute to an order/marketplace, since
     // internal_expenses has no order_id at all (nothing to link — these
     // genuinely aren't tied to any one order). Company-wide by definition.
-    finSupabase.from("internal_expenses").select("amount_inr").eq("company_id", employee.currentCompanyId).gte("expense_date", from).lte("expense_date", to),
-    finSupabase.from("internal_expenses").select("amount_inr").eq("company_id", employee.currentCompanyId).gte("expense_date", prevFrom).lte("expense_date", prevTo),
+    // Office assets are excluded here exactly as it is in
+    // the P&L views — see db/2026-11-16c-office-asset-expenses.sql.
+    finSupabase.from("internal_expenses").select("amount_inr").eq("company_id", employee.currentCompanyId).neq("category", OFFICE_ASSET_CATEGORY).gte("expense_date", from).lte("expense_date", to),
+    finSupabase.from("internal_expenses").select("amount_inr").eq("company_id", employee.currentCompanyId).neq("category", OFFICE_ASSET_CATEGORY).gte("expense_date", prevFrom).lte("expense_date", prevTo),
     // 2026-09-18 (round 8) — how much purchase/washing is NOT linked to an
     // order yet (see db/2026-09-18c-...sql). Shown as a plain "not yet
     // linked" figure rather than silently folded into anything else.

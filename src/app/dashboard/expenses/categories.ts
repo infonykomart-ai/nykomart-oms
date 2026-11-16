@@ -5,6 +5,15 @@
 // constant needs to be read by both server code (actions.ts, for
 // validation) and client components (the two forms below), so it lives in
 // its own plain module instead.
+/**
+ * Office assets — building/construction/renovation work and equipment bought
+ * for the office. Stored as a normal expense bill (party, invoice, lines,
+ * payable in Bill Payment) but kept out of both P&L views, because it is an
+ * asset, not an operating cost. Keep the literal in sync with
+ * db/2026-11-16c-office-asset-expenses.sql.
+ */
+export const OFFICE_ASSET_CATEGORY = "Office Asset" as const;
+
 export const EXPENSE_CATEGORIES = [
   "Rent",
   "Electricity",
@@ -12,6 +21,11 @@ export const EXPENSE_CATEGORIES = [
   "Internet/Phone",
   "Office Supplies",
   "Repairs & Maintenance",
+  // 2026-11-16 — building/construction/office equipment. Deliberately its own
+  // bucket (not folded into Repairs & Maintenance) because it creates an
+  // asset: the P&L views exclude this category so the spend never reduces net
+  // profit. What exactly it was goes in Description (per line) and Remark.
+  OFFICE_ASSET_CATEGORY,
   "Salary/Wages (Cash)",
   "Travel/Conveyance",
   "Bank/Card Charges",

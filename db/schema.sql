@@ -5304,7 +5304,9 @@ SELECT
 FROM combined
 LEFT JOIN (
   SELECT company_id, SUM(amount_inr) AS total_internal_expenses_inr
-  FROM internal_expenses GROUP BY company_id
+  FROM internal_expenses
+  WHERE category <> 'Office Asset'
+  GROUP BY company_id
 ) ie ON ie.company_id = combined.company_id;
 COMMENT ON VIEW pl_dashboard_by_company_view IS
   '2026-09-17 (evening): + total_sale_value_usd (appended last — same netting as the INR column, '
@@ -5314,7 +5316,7 @@ COMMENT ON VIEW pl_dashboard_by_company_view IS
 DROP VIEW IF EXISTS pl_dashboard_by_month_view;
 
 
-CREATE VIEW pl_dashboard_by_month_view AS
+CREATE OR REPLACE VIEW pl_dashboard_by_month_view AS
 WITH months AS (
   SELECT company_id, date_trunc('month', order_date)::date AS month
   FROM orders WHERE status <> 'Cancelled'
@@ -5325,7 +5327,7 @@ WITH months AS (
   UNION
   SELECT company_id, date_trunc('month', invoice_date)::date FROM sale_profit_ledger WHERE order_id IS NULL AND invoice_date IS NOT NULL
   UNION
-  SELECT company_id, date_trunc('month', expense_date)::date FROM internal_expenses
+  SELECT company_id, date_trunc('month', expense_date)::date FROM internal_expenses WHERE category <> 'Office Asset'
 ),
 order_refund_totals AS (
   SELECT order_id, SUM(refund_amount_inr) AS refund_total_inr, SUM(refund_amount_usd) AS refund_total_usd
@@ -5447,6 +5449,7 @@ historical_agg AS (
 expense_agg AS (
   SELECT company_id, date_trunc('month', expense_date)::date AS month, SUM(amount_inr) AS total_internal_expenses_inr
   FROM internal_expenses
+  WHERE category <> 'Office Asset'
   GROUP BY company_id, date_trunc('month', expense_date)
 ),
 combined AS (

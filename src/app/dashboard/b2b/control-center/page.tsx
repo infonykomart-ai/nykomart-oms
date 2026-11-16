@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { OFFICE_ASSET_CATEGORY } from "@/app/dashboard/expenses/categories";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { BarChart, DonutChart, LineChart, type BarDatum, type DonutDatum, type LineSeriesDef } from "@/components/simple-charts";
 import { dimsFromSizeSpec, fmtMoney, lineArea, round2 } from "@/lib/b2b/erp";
@@ -74,7 +75,7 @@ export default async function B2BControlCenterPage() {
     supabase.from("b2b_products").select("id, sku, name, product_type, stock_qty, min_stock_qty, cost_price, wholesale_price").eq("company_id", companyId),
     supabase.from("b2b_buyers").select("id, name, country").eq("company_id", companyId),
     supabase.from("b2b_followups").select("id, entity_type, entity_label, due_date, note").eq("company_id", companyId).eq("done", false),
-    supabase.from("internal_expenses").select("expense_date, amount_inr").eq("company_id", companyId).gte("expense_date", fyStart),
+    supabase.from("internal_expenses").select("expense_date, amount_inr").eq("company_id", companyId).neq("category", OFFICE_ASSET_CATEGORY).gte("expense_date", fyStart),
     supabase.from("stock_in").select("source_party_id, sku_code, quantity_in, total_amt"),
     supabase.from("stock_out").select("source_party_id, sku_code, quantity_out"),
   ]);

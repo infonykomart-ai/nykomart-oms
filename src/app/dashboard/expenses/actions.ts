@@ -47,7 +47,7 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit/log-audit";
-import { EXPENSE_CATEGORIES } from "./categories";
+import { EXPENSE_CATEGORIES, OFFICE_ASSET_CATEGORY } from "./categories";
 import { validateBusinessDate } from "@/lib/fy-date";
 import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 import { randomUUID } from "node:crypto";
@@ -180,6 +180,25 @@ function parseItems(formData: FormData): ParsedExpenseItem[] {
     });
   }
   return out;
+}
+
+/**
+ * "Office Asset" bills keep what the money actually created in plain words.
+ * When no remark was typed, one is built from the line descriptions (and
+ * quantities) so the bill never reads just "Office Asset". A typed remark is
+ * always left exactly as entered — and because this only runs for an empty
+ * remark, editing the bill can never pile up duplicate text.
+ */
+function officeAssetRemark(items: ParsedExpenseItem[], typed: string | null): string | null {
+  if (typed) return typed;
+  const assets = items.filter((item) => item.category === OFFICE_ASSET_CATEGORY);
+  if (assets.length === 0) return null;
+  const parts = assets.map((item) => {
+    const what = item.description?.trim() || "Office asset";
+    const qty = item.qty != null ? `${item.qty}${item.qtyUnit ? ` ${item.qtyUnit}` : ""}` : null;
+    return qty ? `${what} (${qty})` : what;
+  });
+  return `Office asset: ${parts.join("; ")}`;
 }
 
 const NEW_COLUMNS_MESSAGE =
@@ -354,7 +373,7 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
     category: item.category!,
     amount_inr: Number(item.amount),
     payment_mode: header.paymentMode,
-    remark: header.remark,
+    remark: officeAssetRemark(items, header.remark),
     created_by_employee_id: employee.id,
     party_id: party.id,
     invoice_no: header.invoiceNo,
@@ -474,7 +493,7 @@ export async function updateExpenseAction(_prev: ExpenseFormState, formData: For
     company_id: header.companyId,
     expense_date: header.expenseDate,
     payment_mode: header.paymentMode,
-    remark: header.remark,
+    remark: officeAssetRemark(items, header.remark),
     party_id: party.id,
     invoice_no: header.invoiceNo,
     invoice_date: header.invoiceDate,

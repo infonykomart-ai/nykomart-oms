@@ -2,7 +2,7 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { ExportBar } from "@/components/export-bar";
-import { EXPENSE_CATEGORIES } from "./categories";
+import { EXPENSE_CATEGORIES, OFFICE_ASSET_CATEGORY } from "./categories";
 
 export type ExpenseReportRow = {
   id: string;
@@ -28,7 +28,13 @@ export function ExpenseReportTable({
   const router = useRouter();
   const pathname = usePathname();
 
-  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  // Office assets (building/construction/office equipment) are shown
+  // separately because they never reach the P&L — see
+  // db/2026-11-16c-office-asset-expenses.sql. The running expense total
+  // excludes them, otherwise the two figures would contradict.
+  const assetRows = rows.filter((r) => r.category === OFFICE_ASSET_CATEGORY);
+  const assetTotal = assetRows.reduce((sum, r) => sum + r.amount, 0);
+  const total = rows.reduce((sum, r) => (r.category === OFFICE_ASSET_CATEGORY ? sum : sum + r.amount), 0);
 
   function applyFilters(formData: FormData) {
     const params = new URLSearchParams();
@@ -81,6 +87,11 @@ export function ExpenseReportTable({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-800">
             Expenses ({filters.from} to {filters.to}) — Total ₹{total.toFixed(2)}
+            {assetTotal > 0 && (
+              <span className="ml-2 font-normal text-slate-500">
+                + Office assets ₹{assetTotal.toFixed(2)}
+              </span>
+            )}
           </h2>
           <ExportBar
             title="Office/Cash Expenses"
@@ -117,7 +128,14 @@ export function ExpenseReportTable({
                 <tr key={r.id}>
                   <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.date}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.companyName}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.category}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                    {r.category}
+                    {r.category === OFFICE_ASSET_CATEGORY && (
+                      <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        Asset
+                      </span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right font-medium text-slate-900">{r.amount.toFixed(2)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.paymentMode ?? "—"}</td>
                   <td className="px-3 py-2 text-slate-500">{r.remark ?? ""}</td>
