@@ -1521,7 +1521,7 @@ function QuotePanel({
 
   function removeQuote() {
     if (!q) return;
-    if (!window.confirm(`Delete draft quotation ${q.quote_no}? Its item rows go too — this cannot be undone.`)) return;
+    if (!window.confirm(`Delete quotation ${q.quote_no}? Its item rows go too and every register/report total drops it — this cannot be undone.`)) return;
     startTransition(async () => {
       const res = await deleteQuotation(q.id);
       if (!res.ok) setLocalError(res.error ?? "Delete failed.");
@@ -1653,17 +1653,21 @@ function QuotePanel({
                     Draft — sharing below marks it Sent
                   </span>
                 )}
-                {q.status === "Draft" && (
+                {/* 2026-11-17 — a Sent quote can be deleted too, as long as no
+                    money or issued PI/CI/PL hangs off it (server re-checks the
+                    same rule), so a wrong quotation's amount can actually be
+                    taken out of the register and reports. */}
+                {(q.status === "Draft" || ((q.payments ?? []).length === 0 && (q.documents ?? []).length === 0)) && (
                   <button
                     type="button"
                     onClick={() => {
-                      if (!window.confirm(`Delete draft quotation ${q.quote_no}? This cannot be undone.`)) return;
+                      if (!window.confirm(`Delete quotation ${q.quote_no}? This cannot be undone.`)) return;
                       removeQuote();
                     }}
                     disabled={isPending}
                     className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-60"
                   >
-                    🗑 Delete Draft
+                    🗑 Delete Quotation
                   </button>
                 )}
                 <button

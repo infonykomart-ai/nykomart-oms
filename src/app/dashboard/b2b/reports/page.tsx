@@ -185,8 +185,12 @@ export default async function B2BReportsPage() {
         <Fin label="Revenue (FY)" value={fmtMoney(revenue)} />
         <Fin label="Cost (FY)" value={fmtMoney(cost)} />
         <Fin label="Gross profit" value={fmtMoney(grossProfit)} tone={grossProfit >= 0 ? "green" : "red"} />
-        <Fin label="Expenses (FY)" value={fmtMoney(expenseTotal)} />
-        <Fin label="Net profit" value={fmtMoney(round2(grossProfit - expenseTotal))} tone={grossProfit - expenseTotal >= 0 ? "green" : "red"} />
+        <Fin label="Company expenses (FY)" value={fmtMoney(expenseTotal)} />
+        <Fin
+          label="Net profit (after expenses)"
+          value={fmtMoney(round2(grossProfit - expenseTotal))}
+          tone={grossProfit - expenseTotal >= 0 ? "green" : "red"}
+        />
         <Fin label="Receivable" value={fmtMoney(receivable)} tone={receivable > 0 ? "amber" : "green"} />
         <Fin
           label="Area sold (FY)"
@@ -194,6 +198,17 @@ export default async function B2BReportsPage() {
           tone={areaSqFt > 0 ? "green" : undefined}
         />
       </div>
+      {/* 2026-11-17 — "JAB KOI ENQUARY DALI NAHI HAI TO YE AMMOUNT KAHA SE
+          REFLECT HO RAHA HAI": the expense figure is the company's own
+          internal_expenses for the FY (office, salary, utilities…) — it is NOT
+          derived from inquiries/quotations, which is why it stays when the
+          register is empty. Stated here so a ₹0-revenue month never looks like
+          a phantom B2B loss. */}
+      <p className="-mt-3 mb-6 text-[11px] text-slate-500">
+        Company expenses = all internal expenses booked for the FY (office, salary, utilities…), not tied to a B2B order.
+        Net profit = B2B gross profit − company expenses. Delete a quotation and the revenue/quote figures update; this
+        expense total only moves when an expense entry is added or removed.
+      </p>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

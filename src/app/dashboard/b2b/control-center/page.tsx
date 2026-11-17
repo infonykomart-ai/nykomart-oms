@@ -332,7 +332,13 @@ export default async function B2BControlCenterPage() {
           href="/dashboard/b2b/orders"
         />
         <Kpi label="Gross profit (FY)" value={fmtMoney(grossProfitYear)} tone={grossProfitYear >= 0 ? "green" : "red"} hint="Sales − order costs" href="/dashboard/b2b/reports" />
-        <Kpi label="Net profit (FY)" value={fmtMoney(netProfitYear)} tone={netProfitYear >= 0 ? "green" : "red"} hint="Gross − expenses" href="/dashboard/b2b/reports" />
+        <Kpi
+          label="Net profit (FY)"
+          value={fmtMoney(netProfitYear)}
+          tone={netProfitYear >= 0 ? "green" : "red"}
+          hint={expensesYear > 0 ? `Gross − ${fmtMoney(expensesYear)} company expenses` : "Gross − company expenses"}
+          href="/dashboard/b2b/reports"
+        />
       </KpiGroup>
 
       <KpiGroup title="Pipeline & operations" hint="Live counts from orders, production and QC">

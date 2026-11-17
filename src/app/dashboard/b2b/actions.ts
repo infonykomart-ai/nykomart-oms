@@ -201,7 +201,9 @@ export async function createInquiry(input: InquiryInput): Promise<SaveInquiryRes
     entityLabel: created.inquiry_no,
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true, id: created.id, inquiryNo: created.inquiry_no };
 }
 
@@ -308,7 +310,9 @@ export async function updateInquiry(input: UpdateInquiryInput): Promise<{ ok: bo
     });
   }
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -333,7 +337,9 @@ export async function deleteInquiry(inquiryId: string): Promise<{ ok: boolean; e
     changes: { note: `buyer "${owned.inquiry.buyer_name}" — deleted with all items/quotes/payments` },
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -601,7 +607,9 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
     changes: { inquiry: owned.inquiry.inquiry_no, total: subtotal * (1 + taxPercent / 100) + shipping },
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true, id: created.id, inquiryNo: created.quote_no };
 }
 
@@ -635,7 +643,9 @@ export async function markQuotationSent(quotationId: string): Promise<{ ok: bool
     .eq("id", quote.inquiry_id)
     .in("status", ["Open", "In Discussion"]);
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -739,7 +749,9 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
     .insert(items.map((it) => ({ ...it, quotation_id: input.quotationId })));
   if (itemError) console.error(`[b2b] quotation ${input.quotationId} line-item replace failed: ${itemError.message}`);
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -811,7 +823,9 @@ export async function addPayment(input: PaymentInput): Promise<{ ok: boolean; er
     changes: { quotation: input.quotationId, amount, date: paymentDate },
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -828,14 +842,19 @@ export async function deleteQuotation(quotationId: string): Promise<{ ok: boolea
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!quote) return { ok: false, error: "Quotation not found." };
 
-  // Guard: only Drafts delete outright. A Sent quote may have been shared
-  // with a buyer or received money — deleting it would orphan payments and
-  // issued PI/CI register rows silently; the client confirms + instructs
-  // to mark it Rejected/Lost instead.
-  if (quote.status !== "Draft") {
+  // 2026-11-17 — "AGAR QUOTATION DELETE HUI HAI TO AMMOUNT BHI REMOVE HO":
+  // a Sent quote used to be undeletable, so its total stayed in every KPI and
+  // the user had no way to take it out. What actually must not be orphaned is
+  // MONEY and ISSUED PAPER, so the guard is now about those, not the status:
+  // block only when the quote has payments or issued PI/CI/PL rows.
+  const [{ count: payCount }, { count: docCount }] = await Promise.all([
+    supabase.from("b2b_payments").select("id", { count: "exact", head: true }).eq("quotation_id", quotationId),
+    supabase.from("b2b_documents").select("id", { count: "exact", head: true }).eq("quotation_id", quotationId),
+  ]);
+  if ((payCount ?? 0) > 0 || (docCount ?? 0) > 0) {
     return {
       ok: false,
-      error: `Only Draft quotations can be deleted — this one is "${quote.status}". Mark it Rejected/Lost in the register, or contact an admin.`,
+      error: `This quotation has ${payCount ?? 0} payment(s) and ${docCount ?? 0} issued document(s) — delete those first, or mark the quotation Rejected/Lost.`,
     };
   }
 
@@ -862,7 +881,9 @@ export async function deleteQuotation(quotationId: string): Promise<{ ok: boolea
     .eq("id", quote.inquiry_id)
     .eq("status", "Quotation Sent");
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -893,7 +914,9 @@ export async function deletePayment(paymentId: string): Promise<{ ok: boolean; e
     changes: { amount: pay.amount, quotation: pay.quotation_id },
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -942,7 +965,9 @@ export async function linkConversion(inquiryId: string, orderRefNo: string): Pro
     changes: { order: order.ref_no },
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -1017,7 +1042,9 @@ export async function issueDocument(
     changes: { quotation: quote.quote_no, kind },
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true, documentId: created.id };
 }
 
@@ -1047,7 +1074,9 @@ export async function deleteDocument(documentId: string): Promise<{ ok: boolean;
     entityLabel: doc.doc_no,
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -1109,7 +1138,9 @@ export async function saveExportProfile(input: ExportProfileInput): Promise<{ ok
     entityLabel: me.name,
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
@@ -1185,7 +1216,9 @@ export async function updateCompanyExportProfile(
     entityLabel: "Seller / Exporter details",
   });
 
-  revalidatePath("/dashboard/b2b");
+  // "layout" — one write refreshes the register AND Control Center / Reports / Orders,
+  // so a deleted quotation disappears from every KPI on the next render.
+  revalidatePath("/dashboard/b2b", "layout");
   return { ok: true };
 }
 
