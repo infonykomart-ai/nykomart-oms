@@ -6,8 +6,12 @@
 // covered by src/lib/etsy/validation.test.ts.
 
 export const TITLE_MAX_CHARS = 140;
-export const TAG_MAX_CHARS = 29;
+// Etsy's published rule: "up to 13 tags per listing, each tag up to 20
+// characters" (help.etsy.com/hc/en-us/articles/360000336307). The module
+// previously allowed 29, which Etsy's listing form rejects outright.
+export const TAG_MAX_CHARS = 20;
 export const REQUIRED_TAG_COUNT = 13;
+export const ALT_TEXT_MAX_CHARS = 250;
 
 /** Character count the way Etsy counts it: spaces and punctuation included. */
 export function charCount(value: string): number {
@@ -44,7 +48,7 @@ export function dedupeTags(tags: string[]): string[] {
 
 /**
  * Clean a raw AI/client tag list into what Etsy will actually accept:
- * trimmed, deduped, over-29-character tags dropped, first 13 kept.
+ * trimmed, deduped, over-20-character tags dropped, first 13 kept.
  * Anything dropped is reported so the UI can say why.
  */
 export function normalizeTags(raw: string | string[] | null | undefined): {
@@ -95,7 +99,7 @@ export type TagValidation = {
   tooLong: string[];
   issues: TagIssue[];
   maxTagLength: number;
-  /** true only when: exactly 13 tags, each 1–29 chars, no duplicates, one line. */
+  /** true only when: exactly 13 tags, each 1–20 chars, no duplicates, one line. */
   pass: boolean;
 };
 
@@ -166,6 +170,24 @@ export function clampTitle(title: string, max = TITLE_MAX_CHARS): string {
   const cut = chars.slice(0, max).join("");
   const atSpace = cut.lastIndexOf(" ");
   return (atSpace > max * 0.6 ? cut.slice(0, atSpace) : cut).trim().replace(/[,;:\-–—]$/, "").trim();
+}
+
+export type AltTextValidation = {
+  length: number;
+  max: number;
+  valid: boolean;
+  message: string | null;
+};
+
+/** One image alt text: present and within Etsy's 250-character guidance. */
+export function validateAltText(text: string | null | undefined): AltTextValidation {
+  const value = (text ?? "").trim();
+  const length = charCount(value);
+  if (!value) return { length, max: ALT_TEXT_MAX_CHARS, valid: false, message: "Alt text is empty." };
+  if (length > ALT_TEXT_MAX_CHARS) {
+    return { length, max: ALT_TEXT_MAX_CHARS, valid: false, message: `${length - ALT_TEXT_MAX_CHARS} character(s) over the ${ALT_TEXT_MAX_CHARS} limit.` };
+  }
+  return { length, max: ALT_TEXT_MAX_CHARS, valid: true, message: null };
 }
 
 export type TranslationValidation = {
