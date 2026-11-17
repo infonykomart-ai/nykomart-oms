@@ -10,7 +10,6 @@ import { PrintArea, PrintButton } from "@/components/print-view";
 // sq ft / sq mtr / CBM figures.
 import { amountInWords, formatDocMoney } from "@/lib/b2b/money-format";
 import { computeItemDims, dimsFromSizeSpec, formatDims, lineArea, parseSizeSpec, SQFT_TO_SQM } from "@/lib/b2b/erp";
-import { loadFxSnapshot, FX_SOURCE_LABEL } from "@/lib/fx/rates";
 import { recordDocumentPrinted } from "../../actions";
 
 // 2026-09-30 — the printable A4 face of every issued B2B commercial
@@ -183,16 +182,16 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
   const total = Math.round((subtotal * (1 + quote.tax_percent / 100) + quote.shipping_amount) * 100) / 100;
   const totalQty = (items ?? []).reduce((s, it) => s + it.qty, 0);
 
-  // 2026-11-17 — "AGAR 1 USD KI VALUE 95 RUPESS HAI TO CALCULATION AAYE OR
-  // HUMESHA AUTO GOOGLE SE UPDATE HO": the document's own currency stays the
-  // contract, but every foreign-currency PI/CI now prints the rupee value at
-  // today's live market rate (12-hour cached, refreshed on read). The USD
-  // figure is never altered by a moving rate; the INR line says what it is
-  // worth right now and when that rate was last refreshed.
-  const fx = cur === "INR" ? null : await loadFxSnapshot(supabase, [cur]);
-  const inrRate = fx?.toInr[cur] ?? null;
+  // 2026-11-17 — "CONVERSION RATE FIX NAHI HOTI, CHANGE HOTI RAHTI HAI": a
+  // printed document must NOT re-convert at whatever today's market rate is —
+  // the rate is LOCKED on the quotation (b2b_quotations.exchange_rate, the
+  // snapshot saved when it was priced) and every reprint shows the same INR
+  // figure. Live rates only prefill the quotation FORM; they never touch an
+  // already-issued PI/CI. A quotation saved before this round has the column's
+  // 1:1 default, so it prints no INR line at all instead of inventing one.
+  const lockedRate = Number(quote.exchange_rate) || 0;
+  const inrRate = cur !== "INR" && lockedRate > 1 ? lockedRate : null;
   const inrTotal = inrRate ? Math.round(total * inrRate * 100) / 100 : null;
-  const inrAsOf = fx?.marketUpdatedAt ?? fx?.fetchedAt ?? null;
   // 2026-10-17b — "confirm ho sake ki kitna sq ft maal hua": the document's
   // total area, from the SAME dims maths every other surface uses (sized
   // lines via size × qty; area-unit lines with no size count their qty).
@@ -456,7 +455,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                     {inrRate !== null && inrTotal !== null && (
                       <>
                         <tr>
-                          <td className="py-1 text-slate-500">FX rate (1 {cur} = ? INR)</td>
+                          <td className="py-1 text-slate-500">FX rate — locked on quotation (1 {cur} = ? INR)</td>
                           <td className="py-1 text-right">₹{inrRate.toFixed(2)}</td>
                         </tr>
                         <tr>
@@ -475,8 +474,8 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                 </div>
                 {inrTotal !== null && (
                   <div className="w-full text-[10px] leading-4 text-slate-600">
-                    INR equivalent in words: {amountInWords(inrTotal, "INR")}
-                    {inrAsOf ? ` (converted at ${FX_SOURCE_LABEL}, rate as of ${fmtDate(inrAsOf.slice(0, 10))})` : ""}
+                    INR equivalent in words: {amountInWords(inrTotal, "INR")} — converted at the rate locked on quotation{" "}
+                    {quote.quote_no}; the {cur} amount above is the contractual value.
                   </div>
                 )}
                 <div className="w-full space-y-1 text-[11px] leading-4 text-slate-600">
