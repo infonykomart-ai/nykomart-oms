@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { OFFICE_ASSET_CATEGORY } from "@/app/dashboard/expenses/categories";
@@ -260,55 +261,153 @@ export default async function B2BControlCenterPage() {
   const enquiryMonth = inquiries.filter((i) => i.inquiry_date >= monthStart).length;
   const pendingQuotations = inquiries.filter((i) => i.status === "Quotation Sent").length;
 
+  // 2026-11-16 — alert ordering: worst first, so a red item is never buried
+  // under a green one in a two-column list.
+  const SEV_ORDER = { red: 0, yellow: 1, green: 2 } as const;
+  const sortedAlerts = [...alerts].sort((a, b) => SEV_ORDER[a.sev] - SEV_ORDER[b.sev]);
+  const alertCounts = {
+    red: alerts.filter((a) => a.sev === "red").length,
+    yellow: alerts.filter((a) => a.sev === "yellow").length,
+    green: alerts.filter((a) => a.sev === "green").length,
+  };
+  const fyLabel = `FY ${fyStart.slice(0, 4)}–${String(Number(fyStart.slice(0, 4)) + 1).slice(2)}`;
+
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
+    <main className="mx-auto max-w-7xl px-4 py-6">
       <B2BNav />
-      <header className="mb-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 text-white">
-        <h1 className="text-2xl font-bold tracking-tight">B2B EXPORT CONTROL CENTER</h1>
-        <p className="mt-1 text-sm text-slate-300">
-          Live KPIs, automatic alerts and profitability — every number recomputed from the register on each load.
-        </p>
+      <header className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 text-white shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-amber-300">B2B Export ERP</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight">Control Center</h1>
+            <p className="mt-1 max-w-2xl text-sm text-slate-300">
+              Live KPIs, automatic alerts and profitability — every number recomputed from the register on each load.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-lg border border-white/20 px-2.5 py-1.5 text-xs font-medium text-slate-200">{today}</span>
+            <Link href="/dashboard/b2b" className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-400">
+              + New inquiry
+            </Link>
+            <Link href="/dashboard/b2b/orders" className="rounded-lg border border-white/20 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-white/10">
+              Sales orders
+            </Link>
+            <Link href="/dashboard/b2b/reports" className="rounded-lg border border-white/20 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-white/10">
+              Reports
+            </Link>
+          </div>
+        </div>
       </header>
 
-      {/* ── top KPI cards (spec §30 home screen) ─────────────────────────── */}
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Sales — this month" value={fmtMoney(salesMonth)} tone="amber" />
-        <Kpi label="Sales — this quarter" value={fmtMoney(salesQuarter)} tone="slate" />
-        <Kpi label="Sales — FY to date" value={fmtMoney(salesYear)} tone="slate" />
-        <Kpi label="Receivable" value={fmtMoney(receivable)} tone={receivable > 0 ? "red" : "green"} />
-        <Kpi label="Total Orders" value={String(activeOrders.length)} tone="slate" />
-        <Kpi label="New Enquiries (month)" value={String(enquiryMonth)} tone="slate" />
-        <Kpi label="Pending Quotations" value={String(pendingQuotations)} tone={pendingQuotations > 0 ? "amber" : "slate"} />
-        <Kpi label="Overdue Payment" value={fmtMoney(overdue)} tone={overdue > 0 ? "red" : "green"} />
-        <Kpi label="Production Pending" value={String(prodPending)} tone={prodPending > 0 ? "amber" : "green"} />
-        <Kpi label="Production in Progress" value={String(prodInProgress)} tone="slate" />
-        <Kpi label="QC Pending" value={String(statusCount("QC"))} tone={statusCount("QC") > 0 ? "amber" : "green"} />
-        <Kpi label="Ready to Dispatch" value={String(readyToDispatch)} tone={readyToDispatch > 0 ? "amber" : "slate"} />
-        <Kpi label="In Transit" value={String(statusCount("In Transit") + statusCount("Booked"))} tone="slate" />
-        <Kpi label="Delivered" value={String(statusCount("Delivered") + statusCount("Closed"))} tone="green" />
-        <Kpi label="Stock Value" value={fmtMoney(stockValue)} tone="slate" />
-        <Kpi label="Raw Material Value" value={fmtMoney(rawMaterialValue)} tone="slate" />
-        <Kpi label="Gross Profit (FY)" value={fmtMoney(grossProfitYear)} tone={grossProfitYear >= 0 ? "green" : "red"} />
-        <Kpi label="Net Profit (FY)" value={fmtMoney(netProfitYear)} tone={netProfitYear >= 0 ? "green" : "red"} />
+      {/* ── KPI groups ──────────────────────────────────────────────────────
+          2026-11-16 — these used to be 19 identical cards in one 4-column
+          grid, which read as a wall of numbers and left a ragged 3-card last
+          row. Grouping by the question each number answers (am I selling /
+          what is stuck / what is in the godown) keeps every row full and
+          lets each card say what it means and link to its source page. */}
+      <KpiGroup title="Sales & profitability" hint={`INR · ${fyLabel} · from the order register`}>
+        <Kpi label="Sales — this month" value={fmtMoney(salesMonth)} tone="amber" hint="Current month" href="/dashboard/b2b/orders" />
+        <Kpi label="Sales — this quarter" value={fmtMoney(salesQuarter)} hint="Current FY quarter" href="/dashboard/b2b/orders" />
+        <Kpi label="Sales — FY to date" value={fmtMoney(salesYear)} hint={fyLabel} href="/dashboard/b2b/reports" />
         <Kpi
           label="Area sold (FY)"
           value={areaSqFtYear > 0 ? `${areaSqFtYear.toLocaleString("en-US", { maximumFractionDigits: 0 })} sq ft` : "—"}
           tone={areaSqFtYear > 0 ? "green" : "slate"}
+          hint="Sized + area lines"
         />
-      </div>
+        <Kpi
+          label="Receivable"
+          value={fmtMoney(receivable)}
+          tone={receivable > 0 ? "amber" : "green"}
+          hint={overdueCount > 0 ? `${overdueCount} payment${overdueCount > 1 ? "s" : ""} overdue` : "Nothing overdue"}
+          href="/dashboard/b2b/orders"
+        />
+        <Kpi
+          label="Overdue payment"
+          value={fmtMoney(overdue)}
+          tone={overdue > 0 ? "red" : "green"}
+          hint={overdue > 0 ? "Past due date" : "All on time"}
+          href="/dashboard/b2b/orders"
+        />
+        <Kpi label="Gross profit (FY)" value={fmtMoney(grossProfitYear)} tone={grossProfitYear >= 0 ? "green" : "red"} hint="Sales − order costs" href="/dashboard/b2b/reports" />
+        <Kpi label="Net profit (FY)" value={fmtMoney(netProfitYear)} tone={netProfitYear >= 0 ? "green" : "red"} hint="Gross − expenses" href="/dashboard/b2b/reports" />
+      </KpiGroup>
+
+      <KpiGroup title="Pipeline & operations" hint="Live counts from orders, production and QC">
+        <Kpi label="Total orders" value={String(activeOrders.length)} hint="Excluding cancelled" href="/dashboard/b2b/orders" />
+        <Kpi label="New enquiries (month)" value={String(enquiryMonth)} hint="This month" href="/dashboard/b2b" />
+        <Kpi
+          label="Pending quotations"
+          value={String(pendingQuotations)}
+          tone={pendingQuotations > 0 ? "amber" : "slate"}
+          hint="Waiting on the buyer"
+          href="/dashboard/b2b"
+        />
+        <Kpi
+          label="Ready to dispatch"
+          value={String(readyToDispatch)}
+          tone={readyToDispatch > 0 ? "amber" : "slate"}
+          hint="Packed, awaiting booking"
+          href="/dashboard/b2b/shipments"
+        />
+        <Kpi
+          label="Production pending"
+          value={String(prodPending)}
+          tone={prodPending > 0 ? "amber" : "green"}
+          hint="Planned, not started"
+          href="/dashboard/b2b/production"
+        />
+        <Kpi label="Production in progress" value={String(prodInProgress)} hint="Running or delayed" href="/dashboard/b2b/production" />
+        <Kpi
+          label="QC pending"
+          value={String(statusCount("QC"))}
+          tone={statusCount("QC") > 0 ? "amber" : "green"}
+          hint="Awaiting inspection"
+          href="/dashboard/b2b/production"
+        />
+        <Kpi label="In transit" value={String(statusCount("In Transit") + statusCount("Booked"))} hint="Booked + in transit" href="/dashboard/b2b/shipments" />
+      </KpiGroup>
+
+      <KpiGroup title="Stock & delivery" hint="Valuations at cost / average cost">
+        <Kpi label="Stock value" value={fmtMoney(stockValue)} hint="Finished goods at cost" href="/dashboard/b2b/products" />
+        <Kpi label="Raw material value" value={fmtMoney(rawMaterialValue)} hint="Average-cost valuation" href="/dashboard/b2b/products" />
+        <Kpi
+          label="Low stock items"
+          value={String(lowStock.length)}
+          tone={lowStock.length > 0 ? "red" : "green"}
+          hint={lowStock.length > 0 ? "Below minimum level" : "All above minimum"}
+          href="/dashboard/b2b/products"
+        />
+        <Kpi
+          label="Delivered"
+          value={String(statusCount("Delivered") + statusCount("Closed"))}
+          tone="green"
+          hint="Delivered + closed"
+          href="/dashboard/b2b/shipments"
+        />
+      </KpiGroup>
 
       {/* ── alerts ───────────────────────────────────────────────────────── */}
       <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">Automatic alerts</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Needs attention</h2>
+          <div className="flex flex-wrap gap-1.5">
+            {alertCounts.red > 0 && <Pill tone="red">{alertCounts.red} critical</Pill>}
+            {alertCounts.yellow > 0 && <Pill tone="amber">{alertCounts.yellow} warning</Pill>}
+            {alertCounts.green > 0 && <Pill tone="green">{alertCounts.green} ready</Pill>}
+          </div>
+        </div>
         {alerts.length === 0 ? (
-          <p className="text-sm text-slate-500">All clear — nothing needs attention right now. 🟢</p>
+          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+            🟢 All clear — nothing needs attention right now.
+          </p>
         ) : (
           <ul className="grid gap-2 md:grid-cols-2">
-            {alerts.map((a, i) => (
+            {sortedAlerts.map((a, i) => (
               <li key={i}>
                 <Link
                   href={a.href}
-                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition hover:brightness-95 ${
+                  className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-medium transition hover:brightness-95 ${
                     a.sev === "red"
                       ? "border-red-200 bg-red-50 text-red-700"
                       : a.sev === "yellow"
@@ -316,8 +415,11 @@ export default async function B2BControlCenterPage() {
                         : "border-emerald-200 bg-emerald-50 text-emerald-700"
                   }`}
                 >
-                  <span>{a.sev === "red" ? "🔴" : a.sev === "yellow" ? "🟡" : "🟢"}</span>
-                  {a.text}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span aria-hidden>{a.sev === "red" ? "🔴" : a.sev === "yellow" ? "🟡" : "🟢"}</span>
+                    <span className="truncate">{a.text}</span>
+                  </span>
+                  <span className="shrink-0 text-xs opacity-60">Open →</span>
                 </Link>
               </li>
             ))}
@@ -484,17 +586,56 @@ function valuateRawMaterial(
   return total;
 }
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone?: "slate" | "amber" | "red" | "green" }) {
-  const tones: Record<string, string> = {
-    slate: "border-slate-200 bg-white text-slate-900",
-    amber: "border-amber-200 bg-amber-50 text-amber-900",
+function KpiGroup({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  return (
+    <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">{title}</h2>
+        {hint ? <p className="text-[11px] text-slate-400">{hint}</p> : null}
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{children}</div>
+    </section>
+  );
+}
+
+function Pill({ tone, children }: { tone: "red" | "amber" | "green"; children: ReactNode }) {
+  const tones = {
     red: "border-red-200 bg-red-50 text-red-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
     green: "border-emerald-200 bg-emerald-50 text-emerald-700",
   };
-  return (
-    <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone ?? "slate"]}`}>
-      <div className="text-[11px] font-bold uppercase tracking-wide opacity-70">{label}</div>
-      <div className="mt-1 truncate text-xl font-bold">{value}</div>
+  return <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${tones[tone]}`}>{children}</span>;
+}
+
+type KpiTone = "slate" | "amber" | "red" | "green";
+
+function Kpi({ label, value, hint, tone = "slate", href }: { label: string; value: string; hint?: string; tone?: KpiTone; href?: string }) {
+  // The accent stripe + tinted surface carry the tone; the value text keeps
+  // its normal weight so a page of green/red numbers stays readable.
+  const tones: Record<KpiTone, { wrap: string; bar: string }> = {
+    slate: { wrap: "border-slate-200 bg-white text-slate-900", bar: "bg-slate-300" },
+    amber: { wrap: "border-amber-200 bg-amber-50 text-amber-900", bar: "bg-amber-400" },
+    red: { wrap: "border-red-200 bg-red-50 text-red-700", bar: "bg-red-400" },
+    green: { wrap: "border-emerald-200 bg-emerald-50 text-emerald-700", bar: "bg-emerald-400" },
+  };
+  const t = tones[tone];
+  const body = (
+    <div className={`relative h-full overflow-hidden rounded-xl border p-3.5 pl-4 ${t.wrap} ${href ? "transition hover:-translate-y-0.5 hover:shadow-md" : ""}`}>
+      <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${t.bar}`} />
+      <div className="truncate text-[11px] font-semibold uppercase tracking-wide opacity-70" title={label}>
+        {label}
+      </div>
+      <div className="mt-1 truncate text-lg font-bold tabular-nums" title={value}>
+        {value}
+      </div>
+      {hint ? <div className="mt-0.5 truncate text-[11px] opacity-60" title={hint}>{hint}</div> : null}
     </div>
+  );
+  return href ? (
+    <Link href={href} className="block h-full rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500">
+      {body}
+    </Link>
+  ) : (
+    body
   );
 }
