@@ -207,6 +207,12 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // (Cash / Bank Transfer / UPI / Cheque / Card / Advance). MD/Admin to
   // start — grant wider via the Roles & Permissions matrix, zero code
   // change (see db/2026-09-30-b2b-inquiries.sql).
+  // 2026-11-17 — Etsy Multilingual Translation & SEO module
+  // (db/2026-11-17-etsy-translations.sql). One English source listing per SKU
+  // and ten independent localized listings (title + description + exactly 13
+  // SEO tags) generated with the same GEMINI_API_KEY the AI companion uses.
+  { code: "etsy_translation", label: "Etsy Translations", icon: "🌐", href: "/dashboard/etsy-translations",
+    description: "Turn one English Etsy listing into 10 localized, SEO-optimized listings — title, description and 13 tags per language, each saved and editable independently." },
   { code: "b2b_inquiry", label: "B2B Inquiries", icon: "🤝", href: "/dashboard/b2b",
     description: "B2B export ERP end to end — inquiry register, buyer CRM, product master (auto-SKU + BOM), quotation costing engine, sales orders, production/QC, shipments, payments and the Control Center dashboard with automatic alerts." },
 ];
