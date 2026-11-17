@@ -5709,7 +5709,11 @@ COMMENT ON VIEW pl_dashboard_by_store_view IS
 -- db/2026-09-17b-pl-usd-and-company-month.sql — one row per (company,
 -- month), lets the CRM page's "P&L by Company" FY selector sum an FY's
 -- months per company.
-CREATE OR REPLACE VIEW pl_dashboard_by_company_month_view AS
+-- 2026-11-17 — same drop-first rule as pl_dashboard_by_company_view: an existing
+-- view with the same columns in a different order makes CREATE OR REPLACE fail
+-- (42P16). This view reads only base tables, so nothing depends on it.
+DROP VIEW IF EXISTS pl_dashboard_by_company_month_view CASCADE;
+CREATE VIEW pl_dashboard_by_company_month_view AS
 WITH company_months AS (
   SELECT DISTINCT company_id, date_trunc('month', order_date)::date AS month FROM orders WHERE status <> 'Cancelled'
   UNION
