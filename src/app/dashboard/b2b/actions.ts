@@ -350,6 +350,11 @@ export type QuotationInput = {
   taxPercent: string;
   shippingAmount: string;
   currency: string;
+  /** 2026-11-17 — FX snapshot: 1 quote-currency unit = X INR. The register
+   *  form now asks for this (prefilled from exchange_rates) instead of
+   *  leaving the column at its 1:1 default, so the INR figures in reports
+   *  never silently treat USD as rupees. */
+  exchangeRate?: string;
   terms: string;
   notes: string;
   // 2026-10-13 — the labeled PI/CI sections the print view was missing
@@ -468,6 +473,7 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
   const taxPercent = Math.min(100, Math.max(0, parseFloat(input.taxPercent) || 0));
   const shipping = Math.max(0, parseFloat(input.shippingAmount) || 0);
   const currency = (input.currency || "INR").trim().toUpperCase().slice(0, 3);
+  const exchangeRate = Math.max(0.000001, parseFloat(input.exchangeRate ?? "") || 1);
 
   // Line items are the source of truth for money since the documents part
   // (2026-09-30b): PI/CI print itemized tables, so the header subtotal is
@@ -524,6 +530,7 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
       tax_percent: taxPercent,
       shipping_amount: shipping,
       currency,
+      exchange_rate: exchangeRate,
       terms: input.terms.trim() || null,
       notes: input.notes.trim() || null,
       buyer_address: (input.buyerAddress ?? "").trim() || owned.inquiry.buyer_address || null,
@@ -655,6 +662,7 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
   const subtotal = Math.round(items.reduce((s, it) => s + it.line_total, 0) * 100) / 100;
   const taxPercent = Math.min(100, Math.max(0, parseFloat(input.taxPercent) || 0));
   const shipping = Math.max(0, parseFloat(input.shippingAmount) || 0);
+  const exchangeRate = Math.max(0.000001, parseFloat(input.exchangeRate ?? "") || 1);
   // Status transition only from the form's Draft/Sent choice; an edit
   // never silently resurrects an Approved/Rejected/Expired quote.
   const nextStatus: B2BQuoteStatus | null =
@@ -675,6 +683,7 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
       tax_percent: taxPercent,
       shipping_amount: shipping,
       currency: (input.currency || "INR").trim().toUpperCase().slice(0, 3),
+      exchange_rate: exchangeRate,
       terms: input.terms.trim() || null,
       notes: input.notes.trim() || null,
       buyer_address: (input.buyerAddress ?? "").trim() || null,

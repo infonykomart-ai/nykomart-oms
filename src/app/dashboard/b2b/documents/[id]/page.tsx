@@ -99,20 +99,23 @@ function splitLine(line: string): { label: string | null; value: string } {
 }
 
 function Section({ no, title, children }: { no: number; title: string; children: ReactNode }) {
+  // 2026-11-17 — "PI bhi single page me hi chahiye, double page me hori":
+  // sections print in two columns (see PAGE-ONE LAYOUT at the call site),
+  // so each block is tighter and never split across a page break.
   return (
-    <section className="mt-5 border-t border-slate-300 pt-3">
-      <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-800">
+    <section className="mt-3 break-inside-avoid border-t border-slate-300 pt-2">
+      <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-800">
         {no}. {title}
       </h3>
-      <div className="mt-2 space-y-1">{children}</div>
+      <div className="mt-1 space-y-0.5">{children}</div>
     </section>
   );
 }
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex gap-2 text-[13px] leading-5">
-      <span className="w-52 shrink-0 text-slate-500">{label}</span>
+    <div className="flex gap-2 text-[11px] leading-4">
+      <span className="w-32 shrink-0 text-slate-500">{label}</span>
       <span className="min-w-0 flex-1 whitespace-pre-line text-slate-800">{value}</span>
     </div>
   );
@@ -268,7 +271,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
       <PrintArea id={`b2b-doc-${doc.id}`} companyName={company?.name ?? undefined} companyLogoUrl={company?.logo_url}>
         {/* Compact A4 sheet — text-[10px]/[11px] + tight paddings so a
             typical 1–3 line PI with every section fits ONE page. */}
-        <div className="rounded border border-slate-300 bg-white p-5 text-[11px] leading-snug text-slate-900">
+        <div className="rounded border border-slate-300 bg-white p-4 text-[10px] leading-snug text-slate-900">
           {/* ── Letterhead + seller block ──────────────────────────────── */}
           <div className="flex items-start justify-between gap-4 border-b-2 border-slate-800 pb-2">
             <div className="flex items-start gap-2.5">
@@ -304,7 +307,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
           </div>
 
           {/* Doc meta */}
-          <div className="mt-4 grid grid-cols-2 gap-6 text-sm">
+          <div className="mt-2 grid grid-cols-2 gap-6 text-[11px]">
             <div className="space-y-0.5">
               <div>
                 <span className="text-slate-500">{isPI ? "Proforma Invoice No:" : "Document No:"}</span>{" "}
@@ -330,6 +333,9 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
             </div>
           )}
 
+          {/* PAGE-ONE LAYOUT — sections 1+2, 4+5 and 6+7 print in two
+              columns so the whole PI fits a single A4 sheet. */}
+          <div className="grid grid-cols-2 gap-x-6">
           {/* 1. SELLER / EXPORTER DETAILS */}
           <Section no={1} title="Seller / Exporter Details">
             <Row label="Company Name" value={companyName} />
@@ -352,19 +358,20 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
             {quote.buyer_email && <Row label="Email" value={quote.buyer_email} />}
             <Row label="Country of Destination" value={quote.buyer_country || TO_BE_CONFIRMED} />
           </Section>
+          </div>
 
           {/* 3. PRODUCT DESCRIPTION & PRICING (PL: packing details, no prices) */}
           <Section no={3} title={isPL ? "Packing Details" : "Product Description & Pricing"}>
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-y border-slate-800 bg-slate-50 text-left text-[11px] uppercase tracking-wide">
-                  <th className="px-2 py-1.5">#</th>
-                  <th className="px-2 py-1.5">Description &amp; Specifications</th>
-                  <th className="px-2 py-1.5">HSN Code*</th>
-                  <th className="px-2 py-1.5 text-right">Quantity</th>
-                  <th className="px-2 py-1.5">Unit</th>
-                  {!isPL && <th className="px-2 py-1.5 text-right">Unit Price</th>}
-                  {!isPL && <th className="px-2 py-1.5 text-right">Total Amount</th>}
+                  <th className="px-2 py-1">#</th>
+                  <th className="px-2 py-1">Description &amp; Specifications</th>
+                  <th className="px-2 py-1">HSN Code*</th>
+                  <th className="px-2 py-1 text-right">Quantity</th>
+                  <th className="px-2 py-1">Unit</th>
+                  {!isPL && <th className="px-2 py-1 text-right">Unit Price</th>}
+                  {!isPL && <th className="px-2 py-1 text-right">Total Amount</th>}
                 </tr>
               </thead>
               <tbody>
@@ -464,6 +471,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
             )}
           </Section>
 
+          <div className="grid grid-cols-2 gap-x-6">
           {/* 4. PAYMENT TERMS */}
           {!isPL && (
             <Section no={4} title="Payment Terms">
@@ -509,6 +517,9 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
             </Section>
           )}
 
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-6">
           {/* 6. TERMS & CONDITIONS */}
           {!isPL && (quote.terms || quote.notes || isPI) && (
             <Section no={6} title="Terms & Conditions">
@@ -576,11 +587,13 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
             </Section>
           )}
 
+          </div>
+
           {/* 8. AUTHORIZATION + buyer signature */}
-          <div className="mt-8 grid grid-cols-2 gap-8 text-xs">
+          <div className="mt-4 grid grid-cols-2 gap-8 text-[10px]">
             <div>
               <div className="border-t border-slate-400 pt-1 text-center text-slate-500">Buyer&apos;s Signature &amp; Stamp</div>
-              <div className="mt-10 space-y-4 text-slate-600">
+              <div className="mt-6 text-slate-600">
                 <div className="border-t border-slate-300 pt-1">Name / Date</div>
               </div>
             </div>
@@ -588,11 +601,9 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
               <div className="border-t border-slate-400 pt-1 text-center font-semibold text-slate-700">
                 For and on behalf of {companyName}
               </div>
-              <div className="mt-6 space-y-3 text-slate-600">
+              <div className="mt-4 space-y-2 text-slate-600">
                 <div className="border-t border-slate-300 pt-1">Authorized Signatory</div>
-                <div className="border-t border-slate-300 pt-1">Name</div>
-                <div className="border-t border-slate-300 pt-1">Designation</div>
-                <div className="border-t border-slate-300 pt-1">Date</div>
+                <div className="border-t border-slate-300 pt-1">Name / Designation / Date</div>
                 <div className="border-t border-slate-300 pt-1">Company Stamp</div>
               </div>
             </div>

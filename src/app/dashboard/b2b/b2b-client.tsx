@@ -121,6 +121,8 @@ export type B2BQuoteRow = {
   shipping_amount: number;
   total_amount: number;
   currency: string;
+  /** 2026-11-17 — FX snapshot stored with the quote (1 quote unit = X INR). */
+  exchange_rate: number;
   terms: string | null;
   notes: string | null;
   sent_at: string | null;
@@ -184,6 +186,11 @@ export type B2BInquiryRow = {
 export type B2BInquiryView = B2BInquiryRow & {
   items: B2BItemRow[];
   quote: B2BQuoteRow | null;
+  /** 2026-11-17 — the linked buyer master's default currency (prefills the
+   *  quotation form) and the latest known INR rates per currency, so a USD
+   *  quote is never silently priced at 1:1. */
+  buyerCurrency?: string | null;
+  fxRates?: Record<string, number>;
 };
 
 /** The company row's SELLER / EXPORTER DETAILS columns (2026-10-13). */
@@ -460,16 +467,22 @@ export function B2BInquiryManager({
     const won = inquiries.filter((i) => ["Won", "Converted"].includes(i.status)).length;
     const lost = inquiries.filter((i) => i.status === "Lost").length;
     const quoted = inquiries.filter((i) => i.quote).length;
-    const quotedValue = inquiries.reduce((sum, i) => sum + (i.quote?.total_amount ?? 0), 0);
+    // 2026-11-17 — "amount INR me show ho raha, sabhi enquiry ke according
+    // auto update ho": these totals span inquiries quoted in different
+    // currencies, so adding the raw numbers mixed USD into INR. Every amount
+    // is converted at the quote's own FX snapshot first, and the tiles print
+    // one currency (INR).
+    const toInr = (i: B2BInquiryView, amount: number) => amount * (i.quote?.exchange_rate || 1);
+    const quotedValue = inquiries.reduce((sum, i) => sum + toInr(i, i.quote?.total_amount ?? 0), 0);
     const received = inquiries.reduce(
-      (sum, i) => sum + (i.quote?.payments ?? []).reduce((s, p) => s + (p.realized ? p.amount : 0), 0),
+      (sum, i) => sum + (i.quote?.payments ?? []).reduce((s, p) => s + toInr(i, p.realized ? p.amount : 0), 0),
       0
     );
-    const pending = quotedValue - inquiries.reduce((sum, i) => sum + (i.quote?.payments ?? []).reduce((s, p) => s + p.amount, 0), 0);
+    const pending = quotedValue - inquiries.reduce((sum, i) => sum + (i.quote?.payments ?? []).reduce((s, p) => s + toInr(i, p.amount), 0), 0);
     const byMode = new Map<B2BPaymentMode, number>();
     for (const i of inquiries) {
       for (const p of i.quote?.payments ?? []) {
-        byMode.set(p.payment_mode, (byMode.get(p.payment_mode) ?? 0) + p.amount);
+        byMode.set(p.payment_mode, (byMode.get(p.payment_mode) ?? 0) + toInr(i, p.amount));
       }
     }
     const followups = inquiries
@@ -673,6 +686,11 @@ export function B2BInquiryManager({
                             <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${quoteStatusClass(i.quote.status)}`}>{i.quote.status}</span>
                           </div>
                           <div className="text-xs text-slate-500">{fmtMoney(i.quote.total_amount, i.quote.currency)}</div>
+                          {i.quote.currency !== "INR" && (
+                            <div className="text-[11px] text-slate-400">
+                              ≈ ₹{(i.quote.total_amount * (i.quote.exchange_rate || 1)).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                            </div>
+                          )}
                         </>
                       ) : (
                         <span className="text-xs text-slate-400">—</span>
@@ -680,7 +698,7 @@ export function B2BInquiryManager({
                     </td>
                     <td className="px-4 py-3">
                       {paid > 0 ? (
-                        <span className="font-medium text-green-700">{fmtMoney(paid)}</span>
+                        <span className="font-medium text-green-700">{fmtMoney(paid, i.quote?.currency)}</span>
                       ) : i.quote ? (
                         <span className="text-xs text-red-500">due</span>
                       ) : (
@@ -1248,6 +1266,18 @@ function QuotePanel({
   // controlled state, so every live figure (subtotal preview, item rates'
   // context) re-renders the moment the select changes.
   const [currencySel, setCurrencySel] = useState("INR");
+  // 2026-11-17 — "EXPORT CURRENCY KA SAMJH NAHI AA RAHA": currency alone is
+  // not enough — every INR report multiplies by the FX snapshot, so the
+  // form asks for it explicitly, prefilled from exchange_rates.
+  const [fxRate, setFxRate] = useState("");
+
+  /** Currency change also refreshes the FX rate from the latest known rate. */
+  function pickCurrency(next: string) {
+    setCurrencySel(next);
+    const known = inquiry.fxRates?.[next];
+    setFxRate(next === "INR" ? "1" : known ? String(known) : "");
+  }
+  const displayRate = parseFloat(fxRate) || 1;
   // Draft lifecycle — a new quote is saved as Draft unless explicitly
   // "Save & Sent"; a Draft can be edited/deleted outright.
   const [saveStatus, setSaveStatus] = useState<"Draft" | "Sent">("Draft");
@@ -1282,6 +1312,7 @@ function QuotePanel({
       taxPercent: val("tax_percent"),
       shippingAmount: val("shipping_amount"),
       currency: currencySel,
+      exchangeRate: fxRate,
       terms: val("terms"),
       notes: val("notes"),
       status: saveStatus,
@@ -1364,6 +1395,7 @@ function QuotePanel({
       }))
     );
     setCurrencySel(q.currency);
+    setFxRate(String(q.exchange_rate ?? inquiry.fxRates?.[q.currency] ?? (q.currency === "INR" ? 1 : "")));
     setSaveStatus(q.status === "Sent" ? "Sent" : "Draft");
     // Split the stored address string back into the structured fields —
     // the same parser the order page uses handles collapsed one-liners too.
@@ -1381,7 +1413,9 @@ function QuotePanel({
 
   function openCreateForm() {
     setItems([emptyQuoteItem()]);
-    setCurrencySel("INR");
+    const buyerCur = inquiry.buyerCurrency || "INR";
+    setCurrencySel(buyerCur);
+    setFxRate(buyerCur === "INR" ? "1" : inquiry.fxRates?.[buyerCur] ? String(inquiry.fxRates[buyerCur]) : "");
     setSaveStatus("Draft");
     setAddr({ a1: "", a2: "", city: "", state: "", postal: "", country: inquiry.buyer_country ?? "" });
     setShowForm(true);
@@ -1538,6 +1572,12 @@ function QuotePanel({
                 <div className="text-xs text-slate-500">
                   {fmtDocMoney(q.subtotal, q.currency)} + {q.tax_percent}% tax + {fmtDocMoney(q.shipping_amount, q.currency)} ship
                 </div>
+                {q.currency !== "INR" && (
+                  <div className="text-xs text-slate-400">
+                    ≈ ₹{(q.total_amount * (q.exchange_rate || 1)).toLocaleString("en-IN", { maximumFractionDigits: 2 })} @ 1{" "}
+                    {q.currency} = {q.exchange_rate || 1} INR
+                  </div>
+                )}
               </div>
             </div>
             {/* 2026-10-13 — export-document quick summary: payment + shipping
@@ -1686,11 +1726,21 @@ function QuotePanel({
                 the shared QUOTE_CURRENCIES list; controlled, so the whole
                 form's live figures re-render the moment it changes. */}
             <Field label="Currency">
-              <select name="currency" value={currencySel} onChange={(e) => setCurrencySel(e.target.value)} className={inputClass}>
+              <select name="currency" value={currencySel} onChange={(e) => pickCurrency(e.target.value)} className={inputClass}>
                 {QUOTE_CURRENCIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
+            </Field>
+            {/* 2026-11-17 — the FX snapshot every INR report divides by. */}
+            <Field label={`FX rate — 1 ${currencySel} = ? INR`}>
+              <input
+                inputMode="decimal"
+                value={fxRate}
+                onChange={(e) => setFxRate(e.target.value)}
+                className={inputClass}
+                placeholder={currencySel === "INR" ? "1" : "e.g. 83.40"}
+              />
             </Field>
             {/* Status: born Draft; "Sent" only when explicitly chosen (sharing
                 a Draft later also flips it server-side). */}
@@ -1830,9 +1880,28 @@ function QuotePanel({
           <div>
             <div className="mb-1 flex items-center justify-between">
               <span className={labelClass}>Quotation Items * (HSN / qty / unit / rate)</span>
-              <button type="button" onClick={() => setItems((v) => [...v, emptyQuoteItem()])} className="text-xs font-medium text-amber-600 hover:underline">
-                + Add item
-              </button>
+              <div className="flex items-center gap-3">
+                {/* 2026-11-17 — "custom design ka charge kaise manage karein":
+                    it is a normal revenue line, so it is billed, taxed, printed
+                    on the PI and counted in the P&L like any other line. The
+                    button just pre-fills it correctly (unit "job", qty 1). */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setItems((v) => [
+                      ...v,
+                      { ...emptyQuoteItem(), description: "Design / Customisation charge", unit: "job", qty: "1" },
+                    ])
+                  }
+                  className="text-xs font-medium text-sky-600 hover:underline"
+                  title="Adds a billable design/customisation line — prints on the PI and counts in the quotation total"
+                >
+                  + Design / customisation charge
+                </button>
+                <button type="button" onClick={() => setItems((v) => [...v, emptyQuoteItem()])} className="text-xs font-medium text-amber-600 hover:underline">
+                  + Add item
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {items.map((it, idx) => (
@@ -1904,6 +1973,13 @@ function QuotePanel({
               </span>
               <span className="font-semibold text-slate-900">Subtotal ({currencySel}): {fmtDocMoney(liveSubtotal, currencySel)}</span>
             </div>
+            {currencySel !== "INR" && (
+              <p className="mt-1 text-right text-xs text-slate-500">
+                ≈ ₹{(liveSubtotal * displayRate).toLocaleString("en-IN", { maximumFractionDigits: 2 })} at 1 {currencySel} ={" "}
+                {displayRate} INR
+                {!parseFloat(fxRate) && <span className="font-medium text-red-600"> · FX rate missing, using 1:1</span>}
+              </p>
+            )}
           </div>
 
           <div className="flex justify-end gap-2">

@@ -37,7 +37,7 @@ export default async function B2BPage() {
   // companies columns (PI seller block) and the editable b2b_export_profiles
   // row (the 2026-10-13 PI export round). See the props below for how the
   // client falls back from one to the other.
-  const [inquiriesRes, quoteColsRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes, profileRes] = await Promise.all([
+  const [inquiriesRes, quoteColsRes, itemsRes, quotesRes, quoteItemsRes, paymentsRes, docsRes, companyRes, sellerProfileRes, profileRes, buyersRes, ratesRes] = await Promise.all([
     supabase
       .from("b2b_inquiries")
       .select("*")
@@ -148,7 +148,35 @@ export default async function B2BPage() {
         (r) => r,
         () => ({ data: null, error: null })
       ),
+    // 2026-11-17 — currency context for the quotation form: the buyer master
+    // carries the default currency, and exchange_rates carries the latest
+    // known INR rate so "USD" is not silently quoted at 1:1. Both degrade to
+    // empty (the form then keeps its INR default) if a table is missing.
+    supabase
+      .from("b2b_buyers")
+      .select("id, currency")
+      .eq("company_id", companyId)
+      .then(
+        (r) => r,
+        () => ({ data: [], error: null })
+      ),
+    supabase
+      .from("exchange_rates")
+      .select("currency_code, rate_to_inr, effective_from")
+      .order("effective_from", { ascending: false })
+      .limit(100)
+      .then(
+        (r) => r,
+        () => ({ data: [], error: null })
+      ),
   ]);
+
+  // Latest known rate per currency (rows arrive newest-first).
+  const fxRates: Record<string, number> = { INR: 1 };
+  for (const r of ratesRes.data ?? []) {
+    if (!(r.currency_code in fxRates)) fxRates[r.currency_code] = Number(r.rate_to_inr) || 1;
+  }
+  const buyerCurrency = new Map((buyersRes.data ?? []).map((b) => [b.id, b.currency as string | null]));
 
   // 2026-09-30b — "logout ho raha baar baar" root cause: a missing table
   // used to throw here and crash the whole page into the error boundary.
@@ -219,6 +247,8 @@ export default async function B2BPage() {
     ...i,
     items: itemsByInquiry.get(i.id) ?? [],
     quote: quoteByInquiry.get(i.id) ?? null,
+    buyerCurrency: i.buyer_id ? (buyerCurrency.get(i.buyer_id) ?? null) : null,
+    fxRates,
   }));
 
   return (

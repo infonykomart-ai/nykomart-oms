@@ -282,6 +282,8 @@ export default async function B2BControlCenterPage() {
             <h1 className="mt-1 text-2xl font-bold tracking-tight">Control Center</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-300">
               Live KPIs, automatic alerts and profitability — every number recomputed from the register on each load.
+              Foreign-currency orders are converted to INR at the FX rate booked on the order, so a rising rate changes
+              the ₹ figure without changing the buyer&apos;s price.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -305,7 +307,7 @@ export default async function B2BControlCenterPage() {
           row. Grouping by the question each number answers (am I selling /
           what is stuck / what is in the godown) keeps every row full and
           lets each card say what it means and link to its source page. */}
-      <KpiGroup title="Sales & profitability" hint={`INR · ${fyLabel} · from the order register`}>
+      <KpiGroup title="Sales & profitability" hint={`INR at booked FX · ${fyLabel} · from the order register`}>
         <Kpi label="Sales — this month" value={fmtMoney(salesMonth)} tone="amber" hint="Current month" href="/dashboard/b2b/orders" />
         <Kpi label="Sales — this quarter" value={fmtMoney(salesQuarter)} hint="Current FY quarter" href="/dashboard/b2b/orders" />
         <Kpi label="Sales — FY to date" value={fmtMoney(salesYear)} hint={fyLabel} href="/dashboard/b2b/reports" />
