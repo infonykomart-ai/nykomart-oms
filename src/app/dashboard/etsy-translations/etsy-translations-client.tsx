@@ -158,6 +158,7 @@ export function EtsyTranslationsClient({
   const [error, setError] = useState<string | null>(null);
   const [savingSource, setSavingSource] = useState(false);
   const [savingLang, setSavingLang] = useState<string | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
 
   const activeLanguage = languages.find((l) => l.code === active) ?? languages[0];
   const draft = drafts[active];
@@ -354,8 +355,60 @@ export function EtsyTranslationsClient({
     });
   }
 
+  // 2026-11-17 — "SAVE ALL LANGUAGES IS MISSING": saves every language that
+  // has valid content and differs from its saved snapshot, one language at a
+  // time (each is its own upsert, so one failure cannot block the rest). The
+  // per-language tab dots update as each one lands.
+  async function saveAllLanguages() {
+    if (!selected) {
+      setError("Save the English source first — translations are linked to a product SKU.");
+      return;
+    }
+    const targets = languages.filter((l) => {
+      const d = drafts[l.code];
+      if (!d) return false;
+      const valid = validateTitle(d.title).valid && validateTags(d.tags).pass && d.description.trim().length > 0;
+      const changed = d.title !== d.saved.title || d.description !== d.saved.description || d.tags !== d.saved.tags;
+      return valid && changed;
+    });
+    if (targets.length === 0) {
+      setError("Nothing to save — every valid language is already saved (or has no content yet).");
+      return;
+    }
+    setSavingAll(true);
+    setError(null);
+    setNotice(`Saving ${targets.length} language(s)…`);
+    let saved = 0;
+    const failures: string[] = [];
+    for (const l of targets) {
+      const d = drafts[l.code];
+      const res = await saveEtsyTranslation({
+        productId: selected.id,
+        languageCode: l.code,
+        title: d.title,
+        description: d.description,
+        tags: d.tags,
+        aiModel: d.aiModel ?? undefined,
+        editedManually: true,
+      });
+      if (res.ok) {
+        saved += 1;
+        patchDraft(l.code, {
+          saved: { title: d.title, description: d.description, tags: d.tags },
+          status: "saved",
+        });
+      } else {
+        failures.push(`${l.name}: ${res.error ?? "save failed"}`);
+      }
+    }
+    setSavingAll(false);
+    router.refresh();
+    setNotice(`${saved} language(s) saved${failures.length > 0 ? `, ${failures.length} failed` : ""}.`);
+    if (failures.length > 0) setError(failures.join(" · "));
+  }
+
   const savedCount = languages.filter((l) => drafts[l.code]?.saved.title).length;
-  const busy = generating.length > 0 || isPending;
+  const busy = generating.length > 0 || isPending || savingAll;
 
   return (
     <div className="space-y-5">
@@ -416,6 +469,15 @@ export function EtsyTranslationsClient({
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
           >
             {generating.length > 0 ? `Generating… ${generating.length} running` : "⚡ Generate All Languages"}
+          </button>
+          <button
+            type="button"
+            onClick={saveAllLanguages}
+            disabled={busy || !selected}
+            title="Save every language that has valid, unsaved content"
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+          >
+            {savingAll ? "Saving all…" : "💾 Save All Languages"}
           </button>
           <button
             type="button"

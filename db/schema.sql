@@ -5138,7 +5138,12 @@ CREATE INDEX idx_stock_out_order_links_order ON stock_out_order_links(order_id);
 -- (PER-COMPANY rows, round 9).
 -- ============================================================================
 
-CREATE OR REPLACE VIEW pl_dashboard_by_company_view AS
+-- 2026-11-17 — DROP before CREATE: an existing deployment's view can have the
+-- same columns in a different order, and CREATE OR REPLACE then fails with
+-- 42P16 ("cannot change name of view column …"). Dropping first makes a
+-- re-run deterministic; nothing else depends on this view.
+DROP VIEW IF EXISTS pl_dashboard_by_company_view CASCADE;
+CREATE VIEW pl_dashboard_by_company_view AS
 WITH order_refund_totals AS (
   SELECT order_id,
     SUM(refund_amount_inr) AS refund_total_inr,

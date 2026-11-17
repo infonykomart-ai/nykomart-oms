@@ -10,8 +10,11 @@
 -- Both views are recreated verbatim from db/schema.sql Section 17e with ONE
 -- added predicate on the internal-expense aggregate (and on the month spine,
 -- so a month that only holds capital work does not appear as an all-zero row).
--- Every other CTE, column, name and order is byte-identical, so
--- CREATE OR REPLACE VIEW is safe and nothing reading these views changes.
+-- Every other CTE, column, name and order is byte-identical. The views are
+-- DROPPED and recreated (not CREATE OR REPLACE): on a live database the
+-- existing view can hold the same columns in a different order, and REPLACE
+-- then fails with 42P16 "cannot change name of view column". Nothing depends
+-- on either view, so the drop is safe.
 --
 -- Idempotent; run after the existing P&L view migrations.
 -- =============================================================================
@@ -22,7 +25,8 @@ UPDATE internal_expenses
 SET category = 'Office Asset'
 WHERE category = 'Construction';
 
-CREATE OR REPLACE VIEW pl_dashboard_by_company_view AS
+DROP VIEW IF EXISTS pl_dashboard_by_company_view CASCADE;
+CREATE VIEW pl_dashboard_by_company_view AS
 WITH order_refund_totals AS (
   SELECT order_id,
     SUM(refund_amount_inr) AS refund_total_inr,
@@ -193,7 +197,8 @@ LEFT JOIN (
   GROUP BY company_id
 ) ie ON ie.company_id = combined.company_id;
 
-CREATE OR REPLACE VIEW pl_dashboard_by_month_view AS
+DROP VIEW IF EXISTS pl_dashboard_by_month_view CASCADE;
+CREATE VIEW pl_dashboard_by_month_view AS
 WITH months AS (
   SELECT company_id, date_trunc('month', order_date)::date AS month
   FROM orders WHERE status <> 'Cancelled'

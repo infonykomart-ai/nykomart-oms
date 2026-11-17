@@ -8,7 +8,8 @@ import {
   REQUIRED_TAG_COUNT,
   TAG_MAX_CHARS,
   TITLE_MAX_CHARS,
-  validateTranslation,
+  validateTags,
+  validateTitle,
 } from "@/lib/etsy/validation";
 
 // 2026-11-17 — AI generation for the Etsy multilingual module.
@@ -183,19 +184,28 @@ export async function POST(req: Request) {
 
       last = { title, description, tags: normalized.tags };
 
-      // Only validate the fields this request actually produced.
-      const check = validateTranslation({
-        title: field === "description" || field === "tags" ? source.title : title,
-        description: field === "title" || field === "tags" ? (source.description || "x".repeat(120)) : description,
-        tags: field === "title" || field === "description" ? Array.from({ length: REQUIRED_TAG_COUNT }, (_, i) => `tag ${i}`) : normalized.tags,
-      });
-      const relevant = check.issues.filter(
-        (issue) =>
-          (field === "all") ||
-          (field === "title" && issue.startsWith("Title")) ||
-          (field === "description" && issue.startsWith("Description")) ||
-          (field === "tags" && issue.startsWith("Tags"))
-      );
+      // 2026-11-17 — validate ONLY the fields this request actually produced.
+      // (An earlier version fed stand-in values — "x".repeat(120) and tag0…tag12
+      // — through the full-object validator and then filtered the messages by
+      // prefix, which could both miss a real problem and invent one. Each rule
+      // is now checked against the real output.)
+      const relevant: string[] = [];
+      if (field === "all" || field === "title") {
+        const titleCheck = validateTitle(title);
+        if (titleCheck.message) relevant.push(`Title: ${titleCheck.message}`);
+      }
+      if (field === "all" || field === "description") {
+        if (!description) relevant.push("Description: empty.");
+        else if (description.length < 120) relevant.push("Description: too short to be a complete listing.");
+      }
+      if (field === "all" || field === "tags") {
+        const tagCheck = validateTags(normalized.tags);
+        if (tagCheck.total !== REQUIRED_TAG_COUNT) {
+          relevant.push(`Tags: ${tagCheck.total}/${REQUIRED_TAG_COUNT} — exactly ${REQUIRED_TAG_COUNT} are required.`);
+        }
+        if (tagCheck.tooLong.length > 0) relevant.push(`Tags: ${tagCheck.tooLong.length} tag(s) exceed ${TAG_MAX_CHARS} characters.`);
+        if (tagCheck.duplicates.length > 0) relevant.push(`Tags: ${tagCheck.duplicates.length} duplicate tag(s).`);
+      }
       if (relevant.length === 0) {
         return NextResponse.json({
           ok: true,
