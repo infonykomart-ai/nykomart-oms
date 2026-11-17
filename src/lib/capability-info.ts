@@ -213,6 +213,13 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // SEO tags) generated with the same GEMINI_API_KEY the AI companion uses.
   { code: "etsy_translation", label: "Etsy Translations", icon: "🌐", href: "/dashboard/etsy-translations",
     description: "Turn one English Etsy listing into 10 localized, SEO-optimized listings — title, description and 13 tags per language, each saved and editable independently." },
+  // 2026-11-18 — Etsy International SEO Generator
+  // (db/2026-11-18-etsy-seo-generator.sql). Research → generate all ten
+  // languages → deterministic validation → export, with Gemini as the primary
+  // provider and an optional OpenRouter backup. Separate from the older
+  // SKU-only `etsy_translation` module, which stays untouched.
+  { code: "etsy_seo_generator", label: "Etsy SEO Generator", icon: "🌍", href: "/dashboard/etsy-seo",
+    description: "Full Etsy SEO studio — per-market keyword research, ten localized listings (title, 13 tags, description, image alt text), deterministic validation and score, competitor analysis, and Excel/CSV/JSON export with AI usage tracking." },
   { code: "b2b_inquiry", label: "B2B Inquiries", icon: "🤝", href: "/dashboard/b2b",
     description: "B2B export ERP end to end — inquiry register, buyer CRM, product master (auto-SKU + BOM), quotation costing engine, sales orders, production/QC, shipments, payments and the Control Center dashboard with automatic alerts." },
 ];
