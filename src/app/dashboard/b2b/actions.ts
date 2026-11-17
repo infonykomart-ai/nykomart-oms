@@ -448,6 +448,35 @@ function exportDocColumns(input: QuotationInput): Record<string, string | null> 
   };
 }
 
+// 2026-11-17 — the FX snapshot a quotation was priced at is also remembered
+// in exchange_rates, so the NEXT quotation in that currency prefills itself
+// without anyone typing the rate again ("conversion ke according auto update").
+// Best-effort and insert-only: exchange_rates is the customs/legal master, so
+// an official row already entered for today is never overwritten, and a
+// failure here can never fail the quotation save.
+async function rememberFxRate(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  currency: string,
+  rate: number,
+  employeeId: string
+): Promise<void> {
+  if (currency === "INR" || !(rate > 0)) return;
+  try {
+    await supabase.from("exchange_rates").upsert(
+      {
+        currency_code: currency,
+        effective_from: todayIST(),
+        rate_to_inr: rate,
+        remark: "Recorded from a B2B quotation FX snapshot",
+        entered_by: employeeId,
+      },
+      { onConflict: "currency_code,effective_from", ignoreDuplicates: true }
+    );
+  } catch {
+    // Rate master unavailable / currency not in the FK list — ignore.
+  }
+}
+
 export async function createQuotation(input: QuotationInput): Promise<SaveInquiryResult> {
   const me = await requireCapability("b2b_inquiry");
   const supabase = createServiceRoleClient();
@@ -548,6 +577,7 @@ export async function createQuotation(input: QuotationInput): Promise<SaveInquir
     .select("id, quote_no")
     .single();
   if (error || !created) return { ok: false, error: error?.message ?? "Insert failed." };
+  await rememberFxRate(supabase, currency, exchangeRate, me.id);
 
   const { error: itemError } = await supabase
     .from("b2b_quotation_items")
@@ -699,6 +729,7 @@ export async function updateQuotation(input: QuotationInput & { quotationId: str
     })
     .eq("id", input.quotationId);
   if (error) return { ok: false, error: error.message };
+  await rememberFxRate(supabase, (input.currency || "INR").trim().toUpperCase().slice(0, 3), exchangeRate, me.id);
 
   // Replace the item set wholesale (small row counts, delete+insert inside
   // one action call — simplest correct model for an editable item grid).
