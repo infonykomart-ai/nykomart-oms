@@ -1,6 +1,8 @@
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { B2BInquiryManager, type B2BInquiryView } from "./b2b-client";
+import { QUOTE_CURRENCIES } from "@/lib/b2b/erp";
+import { loadFxSnapshot } from "@/lib/fx/rates";
 import { B2BNav } from "./b2b-nav";
 
 // 2026-09-30 — B2B Inquiry Management ("B2B INQUIRY HANDLE / REPORT /
@@ -178,6 +180,17 @@ export default async function B2BPage() {
   }
   const buyerCurrency = new Map((buyersRes.data ?? []).map((b) => [b.id, b.currency as string | null]));
 
+  // 2026-11-17 — "HUMESHA AUTO GOOGLE SE UPDATE HO": the legal exchange_rates
+  // rows above are only a fallback now. loadFxSnapshot() keeps a 12-hour cache
+  // of live market rates (open.er-api.com) and refreshes it on read, so the
+  // quotation form prefills with today's rupee value; a failed fetch silently
+  // keeps the saved rates instead of breaking the register.
+  const liveFx = await loadFxSnapshot(supabase, [...QUOTE_CURRENCIES]);
+  for (const [code, rate] of Object.entries(liveFx.toInr)) {
+    if (rate > 0) fxRates[code] = Math.round(rate * 10000) / 10000;
+  }
+  const fxAsOf = liveFx.marketUpdatedAt ?? liveFx.fetchedAt;
+
   // 2026-09-30b — "logout ho raha baar baar" root cause: a missing table
   // used to throw here and crash the whole page into the error boundary.
   // Now the raw reason travels to the client as a setup notice.
@@ -249,6 +262,8 @@ export default async function B2BPage() {
     quote: quoteByInquiry.get(i.id) ?? null,
     buyerCurrency: i.buyer_id ? (buyerCurrency.get(i.buyer_id) ?? null) : null,
     fxRates,
+    fxAsOf,
+    fxLive: !liveFx.stale,
   }));
 
   return (

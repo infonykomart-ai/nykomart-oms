@@ -191,6 +191,10 @@ export type B2BInquiryView = B2BInquiryRow & {
    *  quote is never silently priced at 1:1. */
   buyerCurrency?: string | null;
   fxRates?: Record<string, number>;
+  /** Provider stamp of the live rates used to prefill (null = not fetched). */
+  fxAsOf?: string | null;
+  /** true when fxRates came from a successful live refresh. */
+  fxLive?: boolean;
 };
 
 /** The company row's SELLER / EXPORTER DETAILS columns (2026-10-13). */
@@ -1733,7 +1737,15 @@ function QuotePanel({
               </select>
             </Field>
             {/* 2026-11-17 — the FX snapshot every INR report divides by. */}
-            <Field label={`FX rate — 1 ${currencySel} = ? INR`}>
+            <Field
+              label={`FX rate — 1 ${currencySel} = ? INR${
+                currencySel !== "INR" && inquiry.fxRates?.[currencySel]
+                  ? inquiry.fxLive
+                    ? " (live)"
+                    : " (saved)"
+                  : ""
+              }`}
+            >
               <input
                 inputMode="decimal"
                 value={fxRate}
@@ -1741,6 +1753,13 @@ function QuotePanel({
                 className={inputClass}
                 placeholder={currencySel === "INR" ? "1" : "e.g. 83.40"}
               />
+              {currencySel !== "INR" && inquiry.fxAsOf && (
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  Auto-filled from live market rates as of{" "}
+                  {new Date(inquiry.fxAsOf).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} —
+                  edit if your bank rate differs.
+                </p>
+              )}
             </Field>
             {/* Status: born Draft; "Sent" only when explicitly chosen (sharing
                 a Draft later also flips it server-side). */}

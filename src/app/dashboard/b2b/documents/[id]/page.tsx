@@ -10,6 +10,7 @@ import { PrintArea, PrintButton } from "@/components/print-view";
 // sq ft / sq mtr / CBM figures.
 import { amountInWords, formatDocMoney } from "@/lib/b2b/money-format";
 import { computeItemDims, dimsFromSizeSpec, formatDims, lineArea, parseSizeSpec, SQFT_TO_SQM } from "@/lib/b2b/erp";
+import { loadFxSnapshot, FX_SOURCE_LABEL } from "@/lib/fx/rates";
 import { recordDocumentPrinted } from "../../actions";
 
 // 2026-09-30 — the printable A4 face of every issued B2B commercial
@@ -181,6 +182,17 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
   const taxAmount = Math.round(subtotal * quote.tax_percent) / 100;
   const total = Math.round((subtotal * (1 + quote.tax_percent / 100) + quote.shipping_amount) * 100) / 100;
   const totalQty = (items ?? []).reduce((s, it) => s + it.qty, 0);
+
+  // 2026-11-17 — "AGAR 1 USD KI VALUE 95 RUPESS HAI TO CALCULATION AAYE OR
+  // HUMESHA AUTO GOOGLE SE UPDATE HO": the document's own currency stays the
+  // contract, but every foreign-currency PI/CI now prints the rupee value at
+  // today's live market rate (12-hour cached, refreshed on read). The USD
+  // figure is never altered by a moving rate; the INR line says what it is
+  // worth right now and when that rate was last refreshed.
+  const fx = cur === "INR" ? null : await loadFxSnapshot(supabase, [cur]);
+  const inrRate = fx?.toInr[cur] ?? null;
+  const inrTotal = inrRate ? Math.round(total * inrRate * 100) / 100 : null;
+  const inrAsOf = fx?.marketUpdatedAt ?? fx?.fetchedAt ?? null;
   // 2026-10-17b — "confirm ho sake ki kitna sq ft maal hua": the document's
   // total area, from the SAME dims maths every other surface uses (sized
   // lines via size × qty; area-unit lines with no size count their qty).
@@ -426,7 +438,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
             {/* Totals — not on PL */}
             {!isPL && (
               <div className="mt-4 flex flex-col items-end gap-3">
-                <table className="w-72 text-sm">
+                <table className="w-64 text-[11px]">
                   <tbody>
                     <tr><td className="py-1 text-slate-500">Subtotal</td><td className="py-1 text-right">{money(subtotal, cur)}</td></tr>
                     <tr>
@@ -441,12 +453,32 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                       <td className="py-1">{isPI ? "TOTAL PROFORMA INVOICE VALUE" : "TOTAL"}</td>
                       <td className="py-1 text-right">{money(total, cur)}</td>
                     </tr>
+                    {inrRate !== null && inrTotal !== null && (
+                      <>
+                        <tr>
+                          <td className="py-1 text-slate-500">FX rate (1 {cur} = ? INR)</td>
+                          <td className="py-1 text-right">₹{inrRate.toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                          <td className="py-1 text-slate-500">Total in INR (indicative)</td>
+                          <td className="py-1 text-right font-semibold">
+                            ₹{inrTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </>
+                    )}
                   </tbody>
                 </table>
-                <div className="w-full text-[13px]">
+                <div className="w-full text-[11px]">
                   <span className="font-semibold">Amount in Words:</span>{" "}
                   <span className="italic">{amountInWords(total, cur)}</span>
                 </div>
+                {inrTotal !== null && (
+                  <div className="w-full text-[10px] leading-4 text-slate-600">
+                    INR equivalent in words: {amountInWords(inrTotal, "INR")}
+                    {inrAsOf ? ` (converted at ${FX_SOURCE_LABEL}, rate as of ${fmtDate(inrAsOf.slice(0, 10))})` : ""}
+                  </div>
+                )}
                 <div className="w-full space-y-1 text-[11px] leading-4 text-slate-600">
                   <p>
                     The above total is the product value only, before any additional shipping, insurance, or other
@@ -482,17 +514,17 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                   ))}
                 </div>
               )}
-              <p className="whitespace-pre-line text-[13px] text-slate-800">
+              <p className="whitespace-pre-line text-[11px] text-slate-800">
                 {paymentText || (paymentRows.length > 0 ? "" : `${TO_BE_CONFIRMED} by buyer and seller.`)}
               </p>
               {quote.payment_instructions && (
-                <p className="whitespace-pre-line text-[12px] text-slate-700">
+                <p className="whitespace-pre-line text-[10px] text-slate-700">
                   <span className="font-semibold">Payment Instructions: </span>
                   {quote.payment_instructions}
                 </p>
               )}
-              <div className="mt-2 flex gap-2 text-[13px] font-semibold">
-                <span className="w-52 shrink-0 text-slate-500">Total Payable as per this document</span>
+              <div className="mt-1 flex gap-2 text-[11px] font-semibold">
+                <span className="w-32 shrink-0 text-slate-500">Total Payable as per this document</span>
                 <span>{money(total, cur)}</span>
               </div>
               <p className="text-[11px] text-slate-500">
@@ -523,10 +555,10 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
           {/* 6. TERMS & CONDITIONS */}
           {!isPL && (quote.terms || quote.notes || isPI) && (
             <Section no={6} title="Terms & Conditions">
-              {quote.terms && <p className="whitespace-pre-line text-[13px] text-slate-800">{quote.terms}</p>}
-              {quote.notes && <p className="whitespace-pre-line text-[12px] text-slate-600">{quote.notes}</p>}
+              {quote.terms && <p className="whitespace-pre-line text-[11px] text-slate-800">{quote.terms}</p>}
+              {quote.notes && <p className="whitespace-pre-line text-[10px] text-slate-600">{quote.notes}</p>}
               {isPI && (
-                <ul className="list-disc space-y-1 pl-5 text-[13px] text-slate-800">
+                <ul className="list-disc space-y-0.5 pl-4 text-[10px] text-slate-800">
                   <li>
                     This Proforma Invoice is issued for order confirmation, advance payment arrangements, and
                     buyer-bank processing.
@@ -550,7 +582,7 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
           {/* 6b. PL: packing details text */}
           {isPL && quote.packing_details && (
             <Section no={6} title="Packing Details">
-              <p className="whitespace-pre-line text-[13px] text-slate-800">{quote.packing_details}</p>
+              <p className="whitespace-pre-line text-[11px] text-slate-800">{quote.packing_details}</p>
             </Section>
           )}
 
@@ -575,11 +607,11 @@ export default async function B2BDocumentPage({ params }: { params: Promise<{ id
                   return label ? (
                     <Row key={i} label={label} value={value} />
                   ) : (
-                    <p key={i} className="text-[13px] text-slate-800">{line}</p>
+                    <p key={i} className="text-[11px] text-slate-800">{line}</p>
                   );
                 })
               ) : (
-                <p className="text-[13px] text-slate-800">
+                <p className="text-[11px] text-slate-800">
                   {NOT_PROVIDED} here — beneficiary bank details will be shared separately by the seller and must be
                   verified with the bank before any remittance.
                 </p>
