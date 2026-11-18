@@ -207,7 +207,12 @@ function titleChecks(input: ListingForValidation): SeoCheck[] {
         ? { id: "title_length", category: "title", label: `Title within ${TITLE_MAX_CHARS} characters`, status: "pass", detail: `${length}/${TITLE_MAX_CHARS}` }
         : { id: "title_length", category: "title", label: `Title within ${TITLE_MAX_CHARS} characters`, status: "fail", mandatory: true, detail: `${length}/${TITLE_MAX_CHARS} — ${length - TITLE_MAX_CHARS} over.` }
     );
-    const capitalWords = title.split(/\s+/).filter((w) => w.length > 2 && w === w.toUpperCase() && /\p{L}/u.test(w));
+    // `w !== w.toLowerCase()` restricts this to scripts that actually have
+    // case: Japanese kana/kanji are unchanged by toUpperCase(), so comparing
+    // only against toUpperCase() flagged every Japanese title as ALL CAPS.
+    const capitalWords = title
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && /\p{L}/u.test(w) && w === w.toUpperCase() && w !== w.toLowerCase());
     checks.push(
       capitalWords.length >= Math.max(3, Math.ceil(words(title).length * 0.6))
         ? { id: "title_case", category: "title", label: "Not written in all capitals", status: "fail", mandatory: true, detail: "Etsy rejects titles written in all capitals." }
@@ -320,7 +325,9 @@ function keywordChecks(input: ListingForValidation): SeoCheck[] {
     );
   }
 
-  const primaryCore = primary.split(/\s+/).filter((w) => w.length > 3);
+  // Both sides lowercased: German nouns are always capitalised, so a
+  // case-sensitive match flagged every German primary keyword as missing.
+  const primaryCore = primary.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
   const covered = primaryCore.filter((w) => tagText.includes(w)).length;
   checks.push(
     primaryCore.length === 0

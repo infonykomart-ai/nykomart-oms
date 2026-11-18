@@ -165,3 +165,19 @@ test("untranslated English copy is a warning, never a silent pass into 'clean'",
   assert.ok(report.warnings.some((w) => /untranslated English/i.test(w)));
   assert.ok(report.checks.some((c) => c.id === "locale_english" && c.status === "warning"));
 });
+
+test("a capitalised single-word primary keyword is matched against the tags", () => {
+  // Regression: German nouns are capitalised, and the tag comparison used the
+  // keyword as typed against a lowercased tag string — so "Baumwollteppich"
+  // never matched the tag "baumwollteppich" and every German listing carried a
+  // false "primary keyword covered by tags" warning.
+  const report = validateListing(
+    base({
+      title: "Baumwollteppich handgemacht mit floralem Muster",
+      tags: ["baumwollteppich", ...TAGS.slice(0, 12)],
+      keywords: { primary: "Baumwollteppich", secondary: ["naturteppich", "wohnzimmer teppich"] },
+    })
+  );
+  const check = report.checks.find((c) => c.id === "kw_tags");
+  assert.equal(check?.status, "pass", check?.detail);
+});
