@@ -176,10 +176,13 @@ export async function fetchImageForVision(url: string): Promise<AiImage> {
   const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error(`Image could not be loaded (HTTP ${response.status}).`);
   const contentType = response.headers.get("content-type") ?? "image/jpeg";
-  if (!/^image\/(jpeg|png|webp|gif)$/i.test(contentType)) {
+  // Browsers and CDNs send "image/jpeg; charset=binary" — the parameter is not
+  // part of the media type, so compare without it.
+  const mimeType = contentType.split(";")[0].trim().toLowerCase();
+  if (!/^image\/(jpeg|png|webp|gif)$/.test(mimeType)) {
     throw new Error(`Unsupported image type "${contentType}" — use JPEG, PNG, WEBP or GIF.`);
   }
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength > 8 * 1024 * 1024) throw new Error("Image is larger than 8 MB after download.");
-  return { mimeType: contentType.split(";")[0], dataBase64: buffer.toString("base64") };
+  return { mimeType, dataBase64: buffer.toString("base64") };
 }

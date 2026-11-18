@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { ETSY_LANGUAGES, etsyLanguage } from "@/lib/etsy/languages";
-import { extractJsonObject } from "@/lib/etsy/ai/schemas";
+import { parseAltTextBundle, mergeAltTextEntry } from "@/lib/etsy/ai/alt-text";
 import { altTextSystemPrompt } from "@/lib/etsy/ai/prompts";
 import { fetchImageForVision } from "@/lib/etsy/ai/gemini.provider";
 import { ProviderError } from "@/lib/etsy/ai/types";
@@ -19,23 +19,6 @@ import { jsonError, rateLimit, rateLimited, readJsonBody, requireEtsySeoEmployee
 export const maxDuration = 60;
 
 type Body = { projectId?: string; imageIndex?: number };
-
-type AltBundle = { alt_texts?: Array<{ language_code?: string; code?: string; text?: string }> };
-
-function parseBundle(text: string, expected: string[]): { ok: true; data: Record<string, string> } | { ok: false; issues: string[] } {
-  const raw = extractJsonObject(text) as AltBundle | null;
-  const list = Array.isArray(raw?.alt_texts) ? raw!.alt_texts! : Array.isArray((raw as unknown as { altTexts?: unknown }).altTexts) ? ((raw as unknown as { altTexts: AltBundle["alt_texts"] }).altTexts ?? []) : [];
-  const out: Record<string, string> = {};
-  for (const entry of list) {
-    const code = (entry.language_code ?? entry.code ?? "").trim().toLowerCase();
-    const value = (entry.text ?? "").trim();
-    if (!code || !value || !expected.includes(code)) continue;
-    out[code] = value.slice(0, 250).replace(/\s+\S*$/, "").trim();
-  }
-  const missing = expected.filter((code) => !out[code]);
-  if (missing.length > 0) return { ok: false, issues: [`missing alt text for: ${missing.join(", ")}`] };
-  return { ok: true, data: out };
-}
 
 export async function POST(request: Request) {
   const auth = await requireEtsySeoEmployee();
@@ -86,7 +69,7 @@ export async function POST(request: Request) {
       images: [vision],
       temperature: 0.3,
       config: managerConfig(context.settings),
-      parse: (text) => parseBundle(text, expected),
+      parse: (text) => parseAltTextBundle(text, expected),
       onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id }, log),
     });
 
@@ -97,13 +80,10 @@ export async function POST(request: Request) {
     const skipped: string[] = [];
     for (const listing of listings ?? []) {
       const code = listing.language_code as string;
-      const text = result.data[code];
+      const text = result.data.altTexts[code];
       if (!text) continue;
       const check = validateAltText(text);
-      const existingAlt = (listing.alt_texts as Array<{ image: number; text: string }> | null) ?? [];
-      const altTexts = [...existingAlt.filter((a) => a.image !== index + 1), { image: index + 1, text: check.valid ? text : text.slice(0, 250) }].sort(
-        (a, b) => a.image - b.image
-      );
+      const altTexts = mergeAltTextEntry(listing.alt_texts as Array<{ image: number; text: string }> | null, index + 1, check.valid ? text : text.slice(0, 250));
       const language = etsyLanguage(code);
       const report = language
         ? validateListing({
@@ -137,7 +117,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       image: index + 1,
-      altTexts: result.data,
+      altTexts: result.data.altTexts,
+      truncated: result.data.truncated,
       provider: result.provider,
       model: result.model,
       backupUsed: result.backupUsed,
