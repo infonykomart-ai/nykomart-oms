@@ -226,8 +226,29 @@ set (missing/duplicate/unsupported/wrong locale), provider matrix (Gemini succes
 retry, rate limit → OpenRouter, alternate Gemini model, invalid JSON repair, auth error,
 backup disabled, all providers failing), CSV/JSON export with Japanese and Russian text.
 
-**Not covered by automated tests** (needs live credentials): a real Gemini/OpenRouter call,
-vision alt text, and the visual UI. Those must be checked manually with a key.
+The alt-text vision path has its own suite (`src/lib/etsy/ai/alt-text-vision.test.ts`):
+the photo really being inlined into the Gemini request, all ten languages in one reply,
+unknown-language entries dropped, over-250-character text cut at a word boundary, a reply
+missing a language getting exactly one repair pass (and failing loudly if the repair also
+misses one), plus `fetchImageForVision` rejecting non-images, 404s and photos over 8 MB.
+
+### Live smoke test (real API)
+
+```bash
+GEMINI_API_KEY=… npm run smoke:etsy-seo                    # German listing + export
+ETSY_SMOKE_LANGUAGE=ja GEMINI_API_KEY=… npm run smoke:etsy-seo
+```
+
+Runs one real generation through the same prompt → manager → parser → validator pipeline
+the route uses, then writes the JSON, CSV (UTF-8 BOM) and XLSX exports to
+`artifacts/etsy-seo-smoke/` (git-ignored) and prints provider, model, tokens, latency and
+estimated cost. Set `OPENROUTER_API_KEY` + `OPENROUTER_MODEL_ID` to exercise the real
+backup. It refuses to run without a key (exit 2) and fails if the API key appears in any
+exported file or if the listing fails validation. It spends credits — one call, plus a
+repair attempt or the fallback when needed.
+
+**Still needs a live check**: the visual UI. Model quality can only be judged from the
+smoke-test output.
 
 ## 10. Known limitations
 

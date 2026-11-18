@@ -19,6 +19,8 @@
 
 # local patch/scratch artifacts
 *.patch
+# output of scripts/etsy-seo-smoke.ts (real API spend, not source)
+/artifacts/
 
 # single package manager: npm / package-lock.json (see README)
 bun.lock
