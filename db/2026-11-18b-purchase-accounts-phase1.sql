@@ -588,6 +588,8 @@ DECLARE
   v         expense_vouchers%ROWTYPE;
   v_entry   fin_journal_entries%ROWTYPE;
   v_count   integer := 0;
+  v_fy      uuid;
+  v_fy_locked boolean;
 BEGIN
   SELECT * INTO v FROM expense_vouchers WHERE id = p_voucher_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -603,12 +605,25 @@ BEGIN
     RAISE EXCEPTION 'A reversal reason is required.';
   END IF;
 
+  -- A reversal is a NEW entry dated today, so it belongs to the financial year
+  -- that contains TODAY — never the original voucher's year. Copying the old
+  -- year would file a live correction under a closed (locked) year and break
+  -- every per-FY report. Refuse only if TODAY's year is itself locked.
+  SELECT fy.id, fy.is_locked INTO v_fy, v_fy_locked
+    FROM fin_financial_years fy
+   WHERE fy.company_id = v.company_id
+     AND CURRENT_DATE BETWEEN fy.start_date AND fy.end_date
+   ORDER BY fy.start_date DESC LIMIT 1;
+  IF v_fy_locked THEN
+    RAISE EXCEPTION 'The financial year containing today is locked; reopen it before reversing.';
+  END IF;
+
   FOR v_entry IN SELECT * FROM fin_journal_entries WHERE voucher_id = p_voucher_id LOOP
     INSERT INTO fin_journal_entries (
       company_id, financial_year_id, entry_date, source_type, source_id, voucher_id,
       account_id, debit, credit, narration, created_by_employee_id, reversal_of_entry_id
     ) VALUES (
-      v_entry.company_id, v_entry.financial_year_id, CURRENT_DATE, 'reversal', p_voucher_id, p_voucher_id,
+      v_entry.company_id, v_fy, CURRENT_DATE, 'reversal', p_voucher_id, p_voucher_id,
       v_entry.account_id, v_entry.credit, v_entry.debit,
       'Reversal: ' || COALESCE(p_reason, ''), p_employee_id, v_entry.id
     );
@@ -859,10 +874,19 @@ COMMENT ON COLUMN expense_vouchers.payment_account_id IS
 -- happen through the server action's service-role client, so public only
 -- affects rendering the receipt in the voucher preview.
 -- NOTE: this block is NOT folded into db/schema.sql because a fresh plain
--- Postgres (CI) has no `storage` schema.
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('expense-receipts', 'expense-receipts', true)
-ON CONFLICT (id) DO NOTHING;
+-- Postgres (CI) has no `storage` schema. It is guarded for the same reason: a
+-- plain-Postgres run (local type-gen / CI schema check) must not fail here,
+-- because the whole file is one transaction and an error at the end would
+-- silently roll back every table above it. On Supabase the bucket is created.
+DO $storage_bucket$
+BEGIN
+  IF to_regclass('storage.buckets') IS NOT NULL THEN
+    INSERT INTO storage.buckets (id, name, public)
+    VALUES ('expense-receipts', 'expense-receipts', true)
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END
+$storage_bucket$;
 
 -- ============================================================================
 -- 17. COMPANY ACCOUNTS SETTINGS (added with the app layer)
