@@ -48,27 +48,36 @@ import {
 // PURCHASE & ACCOUNTS — Phase 1 (office / cash expenses) plus the setup the
 // later phases need (financial years, cash/bank accounts, opening balances).
 //
-// ONE route with tabs, deliberately: the master prompt's 20 submenus are one
-// module, and this codebase's owner has asked for fewer tiles, not more. Each
-// tab is a link, so the whole module is server-rendered except the entry form.
+// ONE route with sections, deliberately: the master prompt's 20 submenus are
+// one module, and this codebase's owner has asked for fewer tiles, not more.
+// Each section is its own linkable screen (?tab=), and the dashboard tile for
+// Expense Vouchers / Expense Approvals opens its section directly instead of
+// dropping the user on the overview. The section bar is a tile grid (icon +
+// label + one-line hint) so this module navigates the way the rest of the OMS
+// launcher does, without adding more top-level tiles.
+//
+// Every section is server-rendered except the entry form.
+//
+// Read-only loads only; every write is a Server Action that re-checks
+// capabilities (see actions.ts).
 //
 // Read-only loads only; every write is a Server Action that re-checks
 // capabilities (see actions.ts).
 
 export const dynamic = "force-dynamic";
 
-const TABS = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "expenses", label: "Expense vouchers" },
-  { id: "approvals", label: "Approvals" },
-  { id: "petty-cash", label: "Petty cash" },
-  { id: "claims", label: "Reimbursements" },
-  { id: "categories", label: "Categories" },
-  { id: "reports", label: "Reports" },
-  { id: "setup", label: "Accounts setup" },
+const SECTIONS = [
+  { id: "dashboard", label: "Purchase & Accounts", icon: "🏦", hint: "Overview, KPIs and what still needs setting up" },
+  { id: "expenses", label: "Expense Vouchers", icon: "🧮", hint: "Office & cash expenses — enter a voucher, then track it" },
+  { id: "approvals", label: "Expense Approvals", icon: "✅", hint: "Review submitted vouchers and post them to the ledger" },
+  { id: "petty-cash", label: "Petty Cash", icon: "👛", hint: "Floats, spends, replenishments, physical count" },
+  { id: "claims", label: "Reimbursements", icon: "🧾", hint: "Employee expense claims and their payouts" },
+  { id: "categories", label: "Categories", icon: "🗂️", hint: "Expense heads, GST rate and their ledger account" },
+  { id: "reports", label: "Reports", icon: "📊", hint: "Trial balance, cash book, bank book and UPI" },
+  { id: "setup", label: "Accounts Setup", icon: "⚙️", hint: "FY, cash/bank accounts, opening balances" },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"];
+type TabId = (typeof SECTIONS)[number]["id"];
 
 type SearchParams = Promise<{ tab?: string; ok?: string; error?: string; from?: string; to?: string; fy?: string }>;
 
@@ -109,7 +118,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
     "accounts_setup"
   );
   const params = await searchParams;
-  const tab: TabId = (TABS.find((t) => t.id === params.tab)?.id ?? "dashboard") as TabId;
+  const tab: TabId = (SECTIONS.find((t) => t.id === params.tab)?.id ?? "dashboard") as TabId;
   const supabase = createServiceRoleClient();
   const today = todayIST();
 
@@ -117,6 +126,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
   const canApprove =
     employee.capabilities.includes("accounts_expense_approve") || employee.capabilities.includes("accounts_setup");
   const canSetup = employee.capabilities.includes("accounts_setup");
+  const visibleSections = SECTIONS.filter((section) =>
+    section.id === "approvals" ? canApprove : section.id === "setup" ? canSetup : true
+  );
 
   const schema = await accountsSchemaState(supabase);
   if (schema.state === "missing") {
@@ -245,7 +257,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">Purchase &amp; Accounts</p>
-          <h1 className="text-2xl font-semibold text-stone-900">Office &amp; cash expenses</h1>
+          <h1 className="text-2xl font-semibold text-stone-900">
+            {tab === "dashboard" ? "Office & cash expenses" : SECTIONS.find((s) => s.id === tab)?.label}
+          </h1>
           <p className="text-xs text-stone-500">
             {companyName} · every voucher is approved before it reaches the ledger · {today}
           </p>
@@ -270,16 +284,27 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
         <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{params.error}</p>
       ) : null}
 
-      <nav className="flex flex-wrap gap-1 border-b border-stone-200 pb-1">
-        {TABS.filter((t) => (t.id === "approvals" ? canApprove : t.id === "setup" ? canSetup : true)).map((item) => (
+      <nav className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {visibleSections.map((item) => (
           <Link
             key={item.id}
             href={`/dashboard/accounts?tab=${item.id}`}
-            className={`rounded-t-lg px-3 py-1.5 text-sm ${
-              tab === item.id ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
+            aria-current={tab === item.id ? "page" : undefined}
+            className={`flex items-start gap-2.5 rounded-xl border p-3 transition ${
+              tab === item.id
+                ? "border-amber-400 bg-amber-50 ring-1 ring-amber-300"
+                : "border-stone-200 bg-white hover:border-amber-300 hover:bg-amber-50/40"
             }`}
           >
-            {item.label}
+            <span className="text-lg leading-none" aria-hidden>
+              {item.icon}
+            </span>
+            <span className="min-w-0">
+              <span className={`block text-sm font-medium ${tab === item.id ? "text-amber-900" : "text-stone-800"}`}>
+                {item.label}
+              </span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-stone-500">{item.hint}</span>
+            </span>
           </Link>
         ))}
       </nav>

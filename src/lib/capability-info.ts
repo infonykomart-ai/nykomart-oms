@@ -49,16 +49,20 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // overhead feed, this one is the accounting ledger with approval + posting.
   // Entry and approval are their own capability because whoever raises a
   // voucher must not be the only person who can approve it.
+  // Each tile opens its OWN section (?tab=), not the module's default view —
+  // the owner's ask: "office expance vala section or purchase account expense
+  // voucher expense approval" should be separate, comfortable destinations
+  // instead of three tiles all landing on the same first tab.
   { code: "accounts_view", label: "Purchase & Accounts", icon: "🏦", href: "/dashboard/accounts",
     description: "Accounts dashboard, expense register, cash book, bank book, UPI report and trial balance — from posted double-entry records only." },
-  { code: "accounts_expense_entry", label: "Expense Vouchers", icon: "🧮", href: "/dashboard/accounts",
+  { code: "accounts_expense_entry", label: "Expense Vouchers", icon: "🧮", href: "/dashboard/accounts?tab=expenses",
     description: "Create and submit expense vouchers (cash / bank / UPI), petty cash movements and employee reimbursement claims." },
-  { code: "accounts_expense_approve", label: "Expense Approvals", icon: "✅", href: "/dashboard/accounts",
+  { code: "accounts_expense_approve", label: "Expense Approvals", icon: "✅", href: "/dashboard/accounts?tab=approvals",
     description: "Review submitted expense vouchers and reimbursement claims, then post approved vouchers to the ledger. Self-approval is blocked." },
   // The setup screens (financial years, cash/bank accounts, opening balances,
   // approval limits) are the same page's Setup tab — kept in the registry for
   // grants, but no separate tile: admins already reach it via accounts_view.
-  { code: "accounts_setup", label: "Accounts Setup", icon: "⚙️", href: "/dashboard/accounts", hidden: true,
+  { code: "accounts_setup", label: "Accounts Setup", icon: "⚙️", href: "/dashboard/accounts?tab=setup", hidden: true,
     description: "Financial years, cash/bank/UPI accounts, opening balances and approval limits." },
   { code: "freight_estimate", label: "Freight Cost Estimator", icon: "🧮", href: "/dashboard/freight-estimate",
     description: "Estimate/compare shipping cost by courier, zone and weight before booking or dispatch — from the manually-maintained Courier Rate Card." },
