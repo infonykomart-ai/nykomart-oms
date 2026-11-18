@@ -17,6 +17,7 @@ export type ProviderDiagnosticCode =
   | "invalid_api_key"
   | "model_not_found"
   | "quota_exceeded"
+  | "output_truncated"
   | "provider_unavailable"
   | "timeout"
   | "invalid_output"
@@ -67,6 +68,10 @@ const RULES: Rule[] = [
     test: /resource_exhausted|\b429\b|quota|rate.?limit|too many requests|insufficient credits|payment required|\b402\b/i,
   },
   {
+    code: "output_truncated",
+    test: /ran out of output tokens|truncated at the model's limit|output-token limit|finish.?reason[=_ ]?(length|max_tokens)|\bmax_tokens\b/i,
+  },
+  {
     code: "timeout",
     test: /timeout|timed out|aborted|abort|etimedout|econnreset|fetch failed|network error/i,
   },
@@ -86,6 +91,7 @@ const PRIORITY: ProviderDiagnosticCode[] = [
   "model_not_configured",
   "model_not_found",
   "quota_exceeded",
+  "output_truncated",
   "provider_unavailable",
   "timeout",
   "invalid_output",
@@ -232,6 +238,22 @@ export function explainProviderError(error: unknown, fallbackProvider?: AiProvid
         retryable: true,
         detail,
       };
+    case "output_truncated":
+      return {
+        code,
+        title: `${label} ran out of output tokens.`,
+        message: `${label} stopped at the model's output-token limit before the listing JSON was complete — nothing was saved.`,
+        fix: `Retry once: the app already retried with a compact description. If it repeats, the configured model's output limit is too small for a full listing — set ${modelVar(provider)} to a model with a larger output limit (${
+          provider === "openrouter"
+            ? "openrouter/free routes to a random free model per request and several of them cap output; pin a fixed slug such as google/gemini-2.5-flash"
+            : "or leave it blank to use the default"
+        }) and redeploy. ${REDEPLOY_NOTE}`,
+        envVars: [modelVar(provider)],
+        provider,
+        status: 502,
+        retryable: true,
+        detail,
+      };
     case "timeout":
       return {
         code,
@@ -249,7 +271,7 @@ export function explainProviderError(error: unknown, fallbackProvider?: AiProvid
         code,
         title: `${label} returned unusable content.`,
         message: `${label} answered, but the reply failed the JSON contract twice (first try + one repair pass).`,
-        fix: "Retry the generation. If it repeats for one market, set a stronger primary model in Settings → AI providers; the usage log keeps the raw reply per attempt.",
+        fix: "Retry the generation. If it repeats for one market, set a stronger primary model in Settings → AI providers (or check a backup model that actually supports JSON mode); the usage log keeps the raw reply per attempt.",
         envVars: [],
         provider,
         status: 502,

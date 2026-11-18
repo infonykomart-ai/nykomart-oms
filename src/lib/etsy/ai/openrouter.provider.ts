@@ -78,6 +78,12 @@ export class OpenRouterProvider implements AIProvider {
             { role: "user", content },
           ],
           response_format: { type: "json_object" },
+          // OpenRouter's free models frequently wrap JSON in markdown or leave a
+          // trailing comma. The healing plugin repairs syntax before we parse
+          // (it is free and non-streaming only — our requests are non-streaming).
+          // It cannot repair a truncation, which is why finish_reason=length is
+          // reported separately.
+          plugins: [{ id: "response-healing" }],
           temperature: request.temperature ?? 0.6,
           max_tokens: request.maxOutputTokens ?? 8192,
         }),
@@ -96,10 +102,21 @@ export class OpenRouterProvider implements AIProvider {
       }
 
       const payload = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{
+          /** `length` is how OpenRouter reports the output-token limit. */
+          finish_reason?: string | null;
+          message?: { content?: string | Array<{ type?: string; text?: string }> | null };
+        }>;
         usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
-      const text = (payload.choices?.[0]?.message?.content ?? "").trim();
+      const choice = payload.choices?.[0];
+      const replyContent = choice?.message?.content;
+      // Some models answer with content parts instead of one string, even when
+      // JSON mode is requested.
+      const text = (Array.isArray(replyContent)
+        ? replyContent.map((part) => (typeof part === "string" ? part : (part?.text ?? ""))).join("")
+        : (replyContent ?? "")
+      ).trim();
       if (!text) {
         throw new ProviderError("OpenRouter returned an empty response.", { provider: "openrouter", model, retryable: true, kind: "empty" });
       }
@@ -111,6 +128,7 @@ export class OpenRouterProvider implements AIProvider {
           ? { inputTokens: payload.usage.prompt_tokens ?? null, outputTokens: payload.usage.completion_tokens ?? null }
           : null,
         latencyMs: Date.now() - startedAt,
+        truncated: choice?.finish_reason === "length",
       };
     } catch (error) {
       if (error instanceof ProviderError) throw error;

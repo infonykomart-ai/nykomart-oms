@@ -39,6 +39,13 @@ export type ProviderResponse = {
   text: string;
   usage: AiUsage | null;
   latencyMs: number;
+  /**
+   * The vendor stopped because it reached the output-token limit
+   * (OpenRouter finish_reason=length / Gemini MAX_TOKENS). The text is almost
+   * always a half-written JSON object, so the caller must retry compactly
+   * instead of asking for a schema repair of a cut-off reply.
+   */
+  truncated?: boolean;
 };
 
 export type ProviderHealth = {
@@ -65,7 +72,7 @@ export type ProviderFailure = {
   model?: string;
   message: string;
   status?: number;
-  kind?: "timeout" | "rate_limit" | "unavailable" | "auth" | "http" | "network" | "empty";
+  kind?: "timeout" | "rate_limit" | "unavailable" | "auth" | "http" | "network" | "empty" | "truncated";
 };
 
 export class ProviderError extends Error {
@@ -77,7 +84,7 @@ export class ProviderError extends Error {
       /** 429 / 5xx / network / timeout are retryable; 4xx are not. */
       retryable: boolean;
       status?: number;
-      kind?: "timeout" | "rate_limit" | "unavailable" | "auth" | "http" | "network" | "empty";
+      kind?: "timeout" | "rate_limit" | "unavailable" | "auth" | "http" | "network" | "empty" | "truncated";
       /** Every failed attempt behind an aggregated error (manager only). */
       failures?: ProviderFailure[];
     }

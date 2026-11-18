@@ -162,6 +162,38 @@ test("a schema failure after the repair pass says retry / stronger model", () =>
   assert.match(diagnostic.fix, /Retry/i);
 });
 
+test("a reply cut off at the output-token limit is its own diagnosis", () => {
+  const diagnostic = explainProviderError(
+    new ProviderError("Every AI provider failed.", {
+      provider: "openrouter",
+      retryable: false,
+      failures: [
+        failure("gemini", "429 RESOURCE_EXHAUSTED: quota exceeded", 429),
+        failure("openrouter", "openrouter ran out of output tokens: the reply was truncated at the model's limit on both the first try and the compact repair pass"),
+      ],
+    })
+  );
+  // The exhausted quota is the more actionable cause and outranks truncation.
+  assert.equal(diagnostic.code, "quota_exceeded");
+
+  const onlyTruncated = explainProviderError(
+    new ProviderError("Every AI provider failed.", {
+      provider: "openrouter",
+      retryable: false,
+      failures: [
+        failure("openrouter", "openrouter ran out of output tokens: the reply was truncated at the model's limit on both the first try and the compact repair pass"),
+      ],
+    })
+  );
+  assert.equal(onlyTruncated.code, "output_truncated");
+  assert.equal(onlyTruncated.provider, "openrouter");
+  assert.equal(onlyTruncated.status, 502);
+  assert.equal(onlyTruncated.retryable, true);
+  assert.deepEqual(onlyTruncated.envVars, ["OPENROUTER_MODEL_ID"]);
+  assert.match(onlyTruncated.fix, /output limit/i);
+  assert.match(onlyTruncated.fix, /OPENROUTER_MODEL_ID/);
+});
+
 test("health-check strings (no ProviderError wrapper) still map", () => {
   assert.equal(explainProviderError("API key not valid. Please pass a valid API key.", "gemini").code, "invalid_api_key");
   assert.equal(explainProviderError("OPENROUTER_MODEL_ID is not set.", "openrouter").code, "model_not_configured");

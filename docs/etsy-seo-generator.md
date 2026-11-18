@@ -217,12 +217,23 @@ shows `error` plus `Fix: …`; no response ever contains a key.
 | Model id missing | `model_not_configured` | Set `OPENROUTER_MODEL_ID` — a key alone is not usable |
 | Model not found / retired | `model_not_found` | Correct `GEMINI_MODEL_ID` / `OPENROUTER_MODEL_ID` (exact slug) |
 | Quota or credits used up | `quota_exceeded` | Wait or raise quota; top up OpenRouter credits. 429, retryable |
+| Reply cut off at the output-token limit | `output_truncated` | Retried once with a compact description; if it repeats, set a model with a larger output limit |
 | Provider unavailable (5xx) | `provider_unavailable` | Retry; automatic backup covers it when configured |
 | Timed out | `timeout` | Retry; prefer a Flash/Lite model. 504, retryable |
-| Output failed the JSON contract twice | `invalid_output` | Retry; choose a stronger model if it repeats |
+| Output failed the JSON contract twice | `invalid_output` | Retry; choose a stronger model that supports JSON mode if it repeats |
 
 `Settings → Test Gemini / Test OpenRouter` returns the same mapping, so a failed health
 check names the broken setting instead of dumping the vendor body.
+
+The OpenRouter request also sends `plugins: [{ id: "response-healing" }]`, which repairs
+markdown-wrapped, trailing-comma and cut-off-bracket JSON before parsing. It cannot repair
+a reply that was truncated by the output-token limit — those are detected via
+`finish_reason: "length"` (OpenRouter) / `MAX_TOKENS` (Gemini), retried once with a compact
+description (`output_truncated`), and reported separately if they happen again.
+
+`openrouter/free` is a router that picks a random free model per request, so output size
+and JSON discipline vary between calls. Pin a fixed model slug (e.g. `google/gemini-2.5-flash`)
+for reproducible production output.
 
 **Rollback:** revert the deployment to the previous build. The module is additive — dropping
 it leaves every other OMS screen working. To remove its data:

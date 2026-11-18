@@ -108,7 +108,10 @@ export class GeminiProvider implements AIProvider {
             outputTokens: response.usageMetadata.candidatesTokenCount ?? null,
           }
         : null;
-      return { provider: "gemini", model, text, usage, latencyMs: Date.now() - startedAt };
+      // MAX_TOKENS means the listing JSON was cut off mid-object; the manager
+      // then retries with a compact request instead of a schema repair.
+      const finishReason = String(response.candidates?.[0]?.finishReason ?? "");
+      return { provider: "gemini", model, text, usage, latencyMs: Date.now() - startedAt, truncated: finishReason === "MAX_TOKENS" };
     } catch (error) {
       throw toProviderError(error, model);
     }

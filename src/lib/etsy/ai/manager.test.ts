@@ -162,6 +162,53 @@ test("invalid JSON triggers a repair prompt and then succeeds", async () => {
   assert.ok(gemini.calls[1].prompt.includes("failed validation"));
 });
 
+test("a truncated reply is retried with a compact request and the second pass is accepted", async () => {
+  let call = 0;
+  class Truncating extends FakeProvider {
+    async generateStructured(request: StructuredRequest) {
+      call += 1;
+      this.calls.push({ model: request.model ?? "m", prompt: request.prompt });
+      if (call === 1) {
+        return { provider: "gemini" as const, model: request.model ?? "m", text: '{"title":"Juteteppich","desc', usage: null, latencyMs: 1, truncated: true };
+      }
+      return super.generateStructured(request);
+    }
+  }
+  const gemini = new Truncating("gemini", { "gemini-1": "ok" });
+  const openrouter = new FakeProvider("openrouter", {}, false);
+  const manager = new AIProviderManager({ gemini, openrouter });
+
+  const result = await manager.generateStructured(options(gemini, openrouter));
+  assert.equal(result.provider, "gemini");
+  assert.equal(call, 2);
+  // The repair pass must ask for a compact reply, not just repeat the schema.
+  assert.match(gemini.calls[1].prompt, /COMPACT/);
+  assert.match(gemini.calls[1].prompt, /output-token limit/i);
+});
+
+test("truncated on both passes fails as a truncation, not as generic invalid JSON", async () => {
+  class AlwaysTruncating extends FakeProvider {
+    async generateStructured(request: StructuredRequest) {
+      this.calls.push({ model: request.model ?? "m", prompt: request.prompt });
+      return { provider: "gemini" as const, model: request.model ?? "m", text: '{"title":"Jut', usage: null, latencyMs: 1, truncated: true };
+    }
+  }
+  const gemini = new AlwaysTruncating("gemini", { "gemini-1": "ok" });
+  const openrouter = new FakeProvider("openrouter", { "backup-model": "timeout" });
+  const manager = new AIProviderManager({ gemini, openrouter });
+
+  await assert.rejects(
+    () => manager.generateStructured(options(gemini, openrouter)),
+    (error: unknown) => {
+      if (!(error instanceof ProviderError)) return false;
+      assert.match(error.message, /truncated/i);
+      const failure = error.options.failures?.find((f) => f.provider === "gemini");
+      assert.equal(failure?.kind, "truncated");
+      return true;
+    }
+  );
+});
+
 test("provider failure on both providers throws — never a fake success", async () => {
   const gemini = new FakeProvider("gemini", { "gemini-1": "timeout", "gemini-2": "timeout" });
   const openrouter = new FakeProvider("openrouter", { "backup-model": "timeout" });

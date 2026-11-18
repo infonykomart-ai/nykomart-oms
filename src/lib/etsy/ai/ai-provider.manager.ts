@@ -108,8 +108,12 @@ function failureFrom(provider: AiProviderName, model: string | undefined, error:
   };
 }
 
-const REPAIR_SUFFIX = (issues: string[]) =>
-  `\n\nYour previous reply failed validation:\n- ${issues.join("\n- ")}\nReturn ONLY corrected JSON that satisfies every rule above.`;
+const REPAIR_SUFFIX = (issues: string[], compact: boolean) =>
+  `\n\nYour previous reply failed validation:\n- ${issues.join("\n- ")}\nReturn ONLY corrected JSON that satisfies every rule above.${
+    compact
+      ? "\nThe reply was cut off by the output-token limit, so return a COMPACT version: keep the title, all 13 tags and every required key, but keep the description at most 1200 characters and do not repeat the prompt."
+      : ""
+  }`;
 
 /**
  * Ask one provider (one model) for JSON. Two passes: the first is the normal
@@ -125,9 +129,11 @@ async function requestJson<T>(
 ): Promise<{ data: T; response: ProviderResponse }> {
   let issues: string[] = [];
   let lastError: unknown = null;
+  let truncated = false;
 
   for (let pass = 0; pass < 2; pass++) {
-    const prompt = pass === 0 ? options.prompt : options.prompt + REPAIR_SUFFIX(issues);
+    const compact = pass > 0 && truncated;
+    const prompt = pass === 0 ? options.prompt : options.prompt + REPAIR_SUFFIX(issues, compact);
     const startedAt = Date.now();
     try {
       const response = await provider.generateStructured({
@@ -135,7 +141,9 @@ async function requestJson<T>(
         system: options.system,
         prompt,
         images: options.images,
-        temperature: options.temperature,
+        // The repair pass is deterministic on purpose: a creative retry tends
+        // to hit the same failure again.
+        temperature: pass === 0 ? options.temperature : Math.min(options.temperature ?? 0.6, 0.2),
         maxOutputTokens: options.maxOutputTokens,
       });
       const parsed = options.parse(response.text);
@@ -152,7 +160,10 @@ async function requestJson<T>(
         });
         return { data: parsed.data, response };
       }
-      issues = parsed.issues;
+      truncated = response.truncated === true;
+      issues = truncated
+        ? ["The reply stopped at the model's output-token limit, so the JSON was cut off before it closed.", ...parsed.issues]
+        : parsed.issues;
       await onAttempt({
         provider: provider.name,
         model: response.model,
@@ -182,6 +193,12 @@ async function requestJson<T>(
   }
 
   if (lastError) throw lastError;
+  if (truncated) {
+    throw new ProviderError(
+      `${provider.name} ran out of output tokens: the reply was truncated at the model's limit on both the first try and the compact repair pass, so the JSON never completed.`,
+      { provider: provider.name, model, retryable: true, kind: "truncated" }
+    );
+  }
   throw new ProviderError(`The model's JSON did not pass validation: ${issues.join("; ")}`, {
     provider: provider.name,
     model,

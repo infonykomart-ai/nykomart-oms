@@ -104,6 +104,7 @@ test("OpenRouter sends the documented chat-completions request and parses usage"
   assert.equal(body.messages[1].content[1].type, "image_url");
   assert.equal(body.messages[1].content[1].image_url.url, "data:image/jpeg;base64,QUJD");
   assert.deepEqual(body.response_format, { type: "json_object" });
+  assert.deepEqual(body.plugins, [{ id: "response-healing" }]);
   assert.equal(body.temperature, 0.4);
   assert.equal(body.max_tokens, 300);
 
@@ -127,6 +128,36 @@ test("OpenRouter 429 becomes a retryable ProviderError, an empty reply becomes k
     () => empty.generateStructured({ system: "s", prompt: "p" }),
     (error: unknown) => error instanceof ProviderError && error.options.kind === "empty"
   );
+});
+
+test("OpenRouter finish_reason=length is reported as a truncated reply", async () => {
+  stubFetch(() =>
+    json({
+      choices: [{ message: { role: "assistant", content: '{"title":"Katoenen vloerkleed","description":"Ein halb' }, finish_reason: "length" }],
+      usage: { prompt_tokens: 400, completion_tokens: 8192 },
+    })
+  );
+  const provider = new OpenRouterProvider({ apiKey: "k", models: ["free/model"] });
+  const result = await provider.generateStructured({ system: "s", prompt: "p", maxOutputTokens: 8192 });
+  assert.equal(result.truncated, true);
+  assert.match(result.text, /"description"/);
+});
+
+test("OpenRouter content parts are joined into one text", async () => {
+  stubFetch(() =>
+    json({
+      choices: [
+        {
+          message: { role: "assistant", content: [{ type: "text", text: '{"title":"Teppich"}' }] },
+          finish_reason: "stop",
+        },
+      ],
+    })
+  );
+  const provider = new OpenRouterProvider({ apiKey: "k", models: ["m"] });
+  const result = await provider.generateStructured({ system: "s", prompt: "p" });
+  assert.equal(result.text, '{"title":"Teppich"}');
+  assert.equal(result.truncated, false);
 });
 
 test("a key without a model id is not configured (never a guessed model)", async () => {
@@ -184,6 +215,20 @@ test("Gemini SDK call carries the system instruction, JSON mode, model and inlin
   assert.equal(result.provider, "gemini");
   assert.equal(result.model, "gemini-flash-latest");
   assert.deepEqual(result.usage, { inputTokens: 321, outputTokens: 45 });
+});
+
+test("Gemini finishReason MAX_TOKENS is reported as a truncated reply", async () => {
+  stubFetch(() =>
+    json({
+      candidates: [
+        { content: { role: "model", parts: [{ text: '{"title":"Baumwollteppich","description":"Halb' }] }, finishReason: "MAX_TOKENS", index: 0 },
+      ],
+      usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 8192, totalTokenCount: 8492 },
+    })
+  );
+  const provider = new GeminiProvider({ apiKey: "k", models: ["gemini-flash-latest"] });
+  const result = await provider.generateStructured({ system: "s", prompt: "p", maxOutputTokens: 8192 });
+  assert.equal(result.truncated, true);
 });
 
 test("Gemini 401/403 is classified as an auth error the manager will not retry", async () => {
