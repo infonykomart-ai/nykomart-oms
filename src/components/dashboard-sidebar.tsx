@@ -26,7 +26,7 @@ export const SIDEBAR_OPEN_EVENT = "oms:sidebar-open";
 
 export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const pathname = usePathname();
-  const items = CAPABILITY_INFO.filter((c) => capabilities.includes(c.code));
+  const items = CAPABILITY_INFO.filter((c) => !c.hidden && capabilities.includes(c.code));
 
   const [hidden, setHidden] = useState(false);
   const [mounted, setMounted] = useState(false);

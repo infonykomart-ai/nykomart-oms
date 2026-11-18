@@ -10,6 +10,8 @@ export type CapabilityInfo = {
   icon: string;
   description: string;
   href: string;
+  /** Kept in the registry (labels, permissions) but never shown as a tile. */
+  hidden?: boolean;
 };
 
 export const CAPABILITY_INFO: CapabilityInfo[] = [
@@ -207,11 +209,15 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // (Cash / Bank Transfer / UPI / Cheque / Card / Advance). MD/Admin to
   // start — grant wider via the Roles & Permissions matrix, zero code
   // change (see db/2026-09-30-b2b-inquiries.sql).
-  // 2026-11-17 — Etsy Multilingual Translation & SEO module
+  // 2026-11-18 — Etsy Multilingual Translation & SEO module
   // (db/2026-11-17-etsy-translations.sql). One English source listing per SKU
   // and ten independent localized listings (title + description + exactly 13
   // SEO tags) generated with the same GEMINI_API_KEY the AI companion uses.
-  { code: "etsy_translation", label: "Etsy Translations", icon: "🌐", href: "/dashboard/etsy-translations",
+  // 2026-11-19 — hidden from the launcher: the SEO Generator supersedes it, so
+  // the OMS shows ONE Etsy section. The route still works for employees who
+  // only hold `etsy_translation` (and it redirects to the SEO Generator
+  // otherwise); the entry stays here so the permissions matrix keeps its label.
+  { code: "etsy_translation", label: "Etsy Translations", icon: "🌐", href: "/dashboard/etsy-translations", hidden: true,
     description: "Turn one English Etsy listing into 10 localized, SEO-optimized listings — title, description and 13 tags per language, each saved and editable independently." },
   // 2026-11-18 — Etsy International SEO Generator
   // (db/2026-11-18-etsy-seo-generator.sql). Research → generate all ten

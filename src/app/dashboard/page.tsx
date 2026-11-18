@@ -15,7 +15,7 @@ import { SchemaHealthCard } from "@/components/schema-health-card";
  */
 export default async function DashboardHome() {
   const employee = await getAuthedEmployee();
-  const tiles = CAPABILITY_INFO.filter((c) => employee.capabilities.includes(c.code));
+  const tiles = CAPABILITY_INFO.filter((c) => !c.hidden && employee.capabilities.includes(c.code));
 
   // 2026-10-21 — "admin ko dikhta nahi ki kaunsi migration abhi bhi pending
   // hai": a pending SQL file degrades features through tolerant column

@@ -90,17 +90,16 @@ type CompetitorRow = {
 
 type Draft = { title: string; description: string; tags: string; altTexts: Array<{ image: number; text: string }>; dirty: boolean };
 
-type Step = "product" | "images" | "keywords" | "generate" | "review" | "validate" | "export" | "settings";
+// Three steps + settings. Product facts, images, keyword research, validation
+// and export all still exist — they are grouped so the page reads as one short
+// flow instead of eight tabs, and the optional research sits in a collapsible.
+type Step = "product" | "generate" | "review" | "settings";
 
 const STEPS: Array<{ id: Step; label: string }> = [
-  { id: "product", label: "1 · Product" },
-  { id: "images", label: "2 · Images" },
-  { id: "keywords", label: "3 · Keyword research" },
-  { id: "generate", label: "4 · Generate 10 languages" },
-  { id: "review", label: "5 · Review & edit" },
-  { id: "validate", label: "6 · Validate" },
-  { id: "export", label: "7 · Export" },
-  { id: "settings", label: "AI usage & settings" },
+  { id: "product", label: "1 · Product & images" },
+  { id: "generate", label: "2 · Generate 10 languages" },
+  { id: "review", label: "3 · Review & export" },
+  { id: "settings", label: "Settings" },
 ];
 
 const inputClass =
@@ -735,12 +734,20 @@ export function EtsySeoClient({
               }
             }} />
             <span className="text-xs text-slate-500">Empty optional fields are fine — generation still works.</span>
+            <button
+              type="button"
+              onClick={() => setStep("generate")}
+              disabled={!form.id || busy !== null}
+              className="ml-auto rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              Next: generate →
+            </button>
           </div>
         </section>
       )}
 
-      {/* IMAGES */}
-      {step === "images" && (
+      {/* IMAGES — part of step 1 */}
+      {step === "product" && (
         <section className={`${cardClass} space-y-4`}>
           <h2 className="text-sm font-bold text-slate-900">Product images &amp; alt text</h2>
           <p className="text-xs text-slate-600">
@@ -784,9 +791,14 @@ export function EtsySeoClient({
         </section>
       )}
 
-      {/* KEYWORDS */}
-      {step === "keywords" && (
-        <section className="space-y-4">
+      {/* KEYWORDS — optional, collapsed inside step 2 */}
+      {step === "generate" && (
+        <details className={cardClass}>
+          <summary className="cursor-pointer text-sm font-bold text-slate-900">Optional: keyword research &amp; competitor analysis</summary>
+          <p className="mt-1 text-xs text-slate-600">
+            Skip this to generate straight from the product facts. Research only adds per-market native keywords — it never invents search volume.
+          </p>
+          <div className="mt-4 space-y-4">
           <div className={cardClass}>
             <h2 className="text-sm font-bold text-slate-900">Live keyword research</h2>
             <p className="mt-1 text-xs text-slate-600">
@@ -871,7 +883,8 @@ export function EtsySeoClient({
               ))}
             </div>
           </div>
-        </section>
+          </div>
+        </details>
       )}
 
       {/* GENERATE */}
@@ -936,6 +949,16 @@ export function EtsySeoClient({
               </tbody>
             </table>
           </div>
+          <div className="flex justify-end border-t border-slate-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setStep("review")}
+              disabled={projectListings.length === 0 || busy !== null}
+              className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              Next: review &amp; export →
+            </button>
+          </div>
         </section>
       )}
 
@@ -962,7 +985,7 @@ export function EtsySeoClient({
 
           {!activeListing || !activeDraft ? (
             <div className={`${cardClass} text-sm text-slate-600`}>
-              This language has not been generated yet. Go to step 4 and generate it.
+              This language has not been generated yet. Go to step 2 and generate it.
             </div>
           ) : (
             <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr]">
@@ -1094,8 +1117,8 @@ export function EtsySeoClient({
         </section>
       )}
 
-      {/* VALIDATE */}
-      {step === "validate" && (
+      {/* VALIDATE — part of step 3 */}
+      {step === "review" && (
         <section className={`${cardClass} space-y-3`}>
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-bold text-slate-900">Validation reports</h2>
@@ -1136,8 +1159,8 @@ export function EtsySeoClient({
         </section>
       )}
 
-      {/* EXPORT */}
-      {step === "export" && (
+      {/* EXPORT — part of step 3 */}
+      {step === "review" && (
         <section className={`${cardClass} space-y-3`}>
           <h2 className="text-sm font-bold text-slate-900">Export center</h2>
           {!selectedId ? (

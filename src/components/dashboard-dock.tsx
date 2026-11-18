@@ -58,7 +58,7 @@ import { useNavStyle } from "@/components/nav-style-context";
 export function DashboardDock({ capabilities }: { capabilities: string[] }) {
   const pathname = usePathname();
   const { navStyle, mounted, setNavStyle } = useNavStyle();
-  const items = CAPABILITY_INFO.filter((c) => capabilities.includes(c.code));
+  const items = CAPABILITY_INFO.filter((c) => !c.hidden && capabilities.includes(c.code));
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);

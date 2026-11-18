@@ -1,4 +1,5 @@
-import { requireCapability } from "@/lib/auth/require-capability";
+import { redirect } from "next/navigation";
+import { requireAnyCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { ETSY_LANGUAGES } from "@/lib/etsy/languages";
 import { EtsyTranslationsClient, type EtsyProductWithTranslations, type EtsyTranslationRecord } from "./etsy-translations-client";
@@ -9,7 +10,12 @@ import { EtsyTranslationsClient, type EtsyProductWithTranslations, type EtsyTran
 // Degrades to a setup card naming the SQL file instead of crashing when the
 // tables have not been created yet — same pattern as the B2B module.
 export default async function EtsyTranslationsPage() {
-  const me = await requireCapability("etsy_translation");
+  // 2026-11-19 — the OMS now shows ONE Etsy section. This older SKU module is
+  // hidden from the launcher, and anyone who also holds the SEO Generator
+  // capability is sent straight there; employees who only have
+  // `etsy_translation` still get this page (nothing they saved is lost).
+  const me = await requireAnyCapability("etsy_translation", "etsy_seo_generator");
+  if (me.capabilities.includes("etsy_seo_generator")) redirect("/dashboard/etsy-seo");
   // 2026-11-17 — etsy_* tables come from db/2026-11-17-etsy-translations.sql and
   // are not in the generated Database type yet (same reason the Inventory
   // module uses the unchecked client — see lib/supabase/server.ts).
