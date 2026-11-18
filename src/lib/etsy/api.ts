@@ -9,7 +9,19 @@
 import { NextResponse } from "next/server";
 import { ForbiddenError, UnauthorizedError, requireCapability, type AuthedEmployee } from "@/lib/auth/require-capability";
 
-export type ApiError = { error: string; code?: string; issues?: string[] };
+export type ApiError = {
+  error: string;
+  code?: string;
+  issues?: string[];
+  /** Short headline for provider failures (see lib/etsy/ai/diagnostics.ts). */
+  title?: string;
+  /** Actionable instruction naming the env var(s) to fix. */
+  fix?: string;
+  envVars?: string[];
+  provider?: string | null;
+  retryable?: boolean;
+  detail?: string | null;
+};
 
 export function jsonError(message: string, status: number, extra: Omit<ApiError, "error"> = {}) {
   return NextResponse.json({ error: message, ...extra }, { status });

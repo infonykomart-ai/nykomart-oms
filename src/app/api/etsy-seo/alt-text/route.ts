@@ -5,6 +5,7 @@ import { parseAltTextBundle, mergeAltTextEntry } from "@/lib/etsy/ai/alt-text";
 import { altTextSystemPrompt } from "@/lib/etsy/ai/prompts";
 import { fetchImageForVision } from "@/lib/etsy/ai/gemini.provider";
 import { ProviderError } from "@/lib/etsy/ai/types";
+import { diagnosticBody, explainProviderError } from "@/lib/etsy/ai/diagnostics";
 import { loadCompanyAiContext, managerConfig, recordUsage } from "@/lib/etsy/ai/company-ai";
 import { validateAltText } from "@/lib/etsy/validation";
 import { validateListing } from "@/lib/etsy/seo-validation";
@@ -52,7 +53,11 @@ export async function POST(request: Request) {
 
   const context = await loadCompanyAiContext(supabase, project.company_id);
   if (!context.credentials.geminiApiKey && !context.credentials.openRouterApiKey) {
-    return jsonError("No AI provider is configured.", 503, { code: "provider_not_configured" });
+    const diagnostic = explainProviderError(
+      new ProviderError("GEMINI_API_KEY is not configured.", { provider: "gemini", retryable: false, kind: "auth" }),
+      "gemini"
+    );
+    return jsonError(diagnostic.message, 503, diagnosticBody(diagnostic));
   }
 
   try {
@@ -127,7 +132,10 @@ export async function POST(request: Request) {
       note: skipped.length > 0 ? "Generate those languages first — alt text was not saved for listings that do not exist yet." : null,
     });
   } catch (error) {
-    if (error instanceof ProviderError) return jsonError(error.message, 502, { code: "provider_failed" });
+    if (error instanceof ProviderError) {
+      const diagnostic = explainProviderError(error);
+      return jsonError(diagnostic.message, diagnostic.status, diagnosticBody(diagnostic));
+    }
     console.error("etsy-seo alt-text error:", error);
     return jsonError(error instanceof Error ? error.message : "Alt text generation failed.", 500);
   }

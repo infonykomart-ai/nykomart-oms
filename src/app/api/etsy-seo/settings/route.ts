@@ -4,6 +4,7 @@ import { encryptSecret } from "@/lib/crypto/secret-box";
 import { loadCompanyAiContext, DEFAULT_SETTINGS } from "@/lib/etsy/ai/company-ai";
 import { GeminiProvider } from "@/lib/etsy/ai/gemini.provider";
 import { OpenRouterProvider } from "@/lib/etsy/ai/openrouter.provider";
+import { diagnosticBody, explainProviderError } from "@/lib/etsy/ai/diagnostics";
 import { RESEARCH_SOURCES } from "@/lib/etsy/research";
 import { jsonError, readJsonBody, requireEtsySeoEmployee, tooLarge } from "@/lib/etsy/api";
 
@@ -166,5 +167,15 @@ export async function POST(request: Request) {
     .eq("company_id", me.currentCompanyId)
     .eq("provider", provider);
 
-  return NextResponse.json({ ok: health.ok, provider, model: health.model, error: health.error ?? null });
+  // A failed health check is the most common place an operator sees a vendor
+  // error, so map it to the same actionable diagnosis the generate route uses.
+  const diagnostic = health.ok ? null : explainProviderError(health.error ?? `${provider} health check failed.`, provider);
+
+  return NextResponse.json({
+    ok: health.ok,
+    provider,
+    model: health.model,
+    error: diagnostic ? diagnostic.message : null,
+    ...(diagnostic ? diagnosticBody(diagnostic) : {}),
+  });
 }

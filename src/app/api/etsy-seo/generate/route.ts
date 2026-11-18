@@ -4,6 +4,7 @@ import { ETSY_LANGUAGES, etsyLanguage } from "@/lib/etsy/languages";
 import { parseListingOutput, type KeywordGroups, type ListingField } from "@/lib/etsy/ai/schemas";
 import { listingSystemPrompt, listingUserPrompt } from "@/lib/etsy/ai/prompts";
 import { ProviderError } from "@/lib/etsy/ai/types";
+import { diagnosticBody, explainProviderError } from "@/lib/etsy/ai/diagnostics";
 import { loadCompanyAiContext, managerConfig, monthlySpendUsd, recordUsage } from "@/lib/etsy/ai/company-ai";
 import { validateListing } from "@/lib/etsy/seo-validation";
 import { PRODUCT_FIELDS, type EtsyProductFacts } from "@/lib/etsy/product";
@@ -117,11 +118,11 @@ export async function POST(request: Request) {
     }
   }
   if (!context.credentials.geminiApiKey && !context.credentials.openRouterApiKey) {
-    return jsonError(
-      "No AI provider is configured. Add GEMINI_API_KEY (or an OpenRouter key) in Settings, or ask an Admin to set the server environment variable.",
-      503,
-      { code: "provider_not_configured" }
+    const diagnostic = explainProviderError(
+      new ProviderError("GEMINI_API_KEY is not configured.", { provider: "gemini", retryable: false, kind: "auth" }),
+      "gemini"
     );
+    return jsonError(diagnostic.message, 503, diagnosticBody(diagnostic));
   }
 
   const product = (project.product ?? {}) as EtsyProductFacts;
@@ -251,8 +252,10 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (error instanceof ProviderError) {
-      const status = error.options.kind === "rate_limit" ? 429 : error.options.kind === "auth" ? 503 : 502;
-      return jsonError(error.message, status, { code: "provider_failed" });
+      // One actionable diagnosis instead of the raw vendor string: the operator
+      // needs to know which env var to fix on Vercel, not the HTTP trace.
+      const diagnostic = explainProviderError(error);
+      return jsonError(diagnostic.message, diagnostic.status, diagnosticBody(diagnostic));
     }
     console.error("etsy-seo generate error:", error);
     return jsonError("Generation failed — no output was saved. Try again.", 500);

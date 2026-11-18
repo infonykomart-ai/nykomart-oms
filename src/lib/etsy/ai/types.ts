@@ -59,6 +59,15 @@ export interface AIProvider {
   checkHealth(): Promise<ProviderHealth>;
 }
 
+/** One provider attempt that failed, kept structured for diagnosis. */
+export type ProviderFailure = {
+  provider: AiProviderName;
+  model?: string;
+  message: string;
+  status?: number;
+  kind?: "timeout" | "rate_limit" | "unavailable" | "auth" | "http" | "network" | "empty";
+};
+
 export class ProviderError extends Error {
   constructor(
     message: string,
@@ -69,6 +78,8 @@ export class ProviderError extends Error {
       retryable: boolean;
       status?: number;
       kind?: "timeout" | "rate_limit" | "unavailable" | "auth" | "http" | "network" | "empty";
+      /** Every failed attempt behind an aggregated error (manager only). */
+      failures?: ProviderFailure[];
     }
   ) {
     super(message);

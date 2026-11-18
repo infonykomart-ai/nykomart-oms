@@ -24,6 +24,7 @@ import {
   AiProviderName,
   AiUsage,
   ProviderError,
+  ProviderFailure,
   ProviderHealth,
   ProviderResponse,
 } from "./types";
@@ -93,6 +94,18 @@ export function createProviders(credentials: ProviderCredentials): { gemini: AIP
 
 export async function checkProviderHealth(gemini: AIProvider, openrouter: AIProvider): Promise<ProviderHealth[]> {
   return Promise.all([gemini.checkHealth(), openrouter.checkHealth()]);
+}
+
+/** Keep the structured shape of a failed attempt so routes can diagnose it. */
+function failureFrom(provider: AiProviderName, model: string | undefined, error: unknown): ProviderFailure {
+  const options = error instanceof ProviderError ? error.options : null;
+  return {
+    provider,
+    model: options?.model ?? model,
+    message: error instanceof Error ? error.message : String(error),
+    status: options?.status,
+    kind: options?.kind,
+  };
 }
 
 const REPAIR_SUFFIX = (issues: string[]) =>
@@ -189,11 +202,13 @@ export class AIProviderManager {
     const onAttempt = options.onAttempt ?? (() => {});
     const attemptsPerModel = options.attemptsPerModel ?? 2;
     const failures: string[] = [];
+    const failureDetails: ProviderFailure[] = [];
     const startedAt = Date.now();
 
     // ---- 1. Primary: Gemini ------------------------------------------------
     if (!gemini.isConfigured()) {
       failures.push("Gemini is not configured (no API key).");
+      failureDetails.push({ provider: "gemini", message: "GEMINI_API_KEY is not configured." });
     } else {
       const configured = gemini.models();
       const preferred = options.config.primaryModel?.trim();
@@ -213,6 +228,7 @@ export class AIProviderManager {
           return { data, provider: "gemini", model: response.model, backupUsed: false, latencyMs: Date.now() - startedAt, usage: response.usage };
         } catch (error) {
           failures.push(error instanceof Error ? error.message : String(error));
+          failureDetails.push(failureFrom("gemini", model, error));
           const nonRetryableAuth = error instanceof ProviderError && error.options.kind === "auth";
           if (nonRetryableAuth) break; // a bad key will fail on every model
         }
@@ -224,6 +240,12 @@ export class AIProviderManager {
       failures.push("Automatic backup is disabled in Settings.");
     } else if (!openrouter.isConfigured()) {
       failures.push("Backup provider is not configured (set OPENROUTER_API_KEY and OPENROUTER_MODEL_ID).");
+      failureDetails.push({
+        provider: "openrouter",
+        message: process.env.OPENROUTER_API_KEY?.trim()
+          ? "OPENROUTER_MODEL_ID is not configured."
+          : "OPENROUTER_API_KEY is not configured.",
+      });
     } else {
       const models = options.config.backupModel?.trim()
         ? [options.config.backupModel.trim(), ...openrouter.models().filter((m) => m !== options.config.backupModel?.trim())]
@@ -237,6 +259,7 @@ export class AIProviderManager {
           return { data, provider: "openrouter", model: response.model, backupUsed: true, latencyMs: Date.now() - startedAt, usage: response.usage };
         } catch (error) {
           failures.push(error instanceof Error ? error.message : String(error));
+          failureDetails.push(failureFrom("openrouter", model, error));
         }
       }
     }
@@ -245,6 +268,7 @@ export class AIProviderManager {
       provider: openrouter.isConfigured() ? "openrouter" : "gemini",
       retryable: false,
       kind: "unavailable",
+      failures: failureDetails,
     });
   }
 }

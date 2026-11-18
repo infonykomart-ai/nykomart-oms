@@ -135,10 +135,16 @@ function statusBadge(status: string) {
   return `inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${map[status] ?? map.pending}`;
 }
 
+/** Provider failures arrive with a server-written fix; show it under the error. */
+function errorText(data: { error?: string; fix?: string }, fallback: string): string {
+  if (!data.error) return fallback;
+  return data.fix ? `${data.error}\nFix: ${data.fix}` : data.error;
+}
+
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const data = (await response.json().catch(() => ({}))) as T & { error?: string; issues?: string[] };
-  if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status}).`);
+  const data = (await response.json().catch(() => ({}))) as T & { error?: string; fix?: string; issues?: string[] };
+  if (!response.ok) throw new Error(errorText(data, `Request failed (${response.status}).`));
   return data;
 }
 
@@ -513,8 +519,8 @@ export function EtsySeoClient({
           openRouterApiKey: settingsForm.openRouterApiKey || undefined,
         }),
       }).then(async (response) => {
-        const data = (await response.json()) as { error?: string };
-        if (!response.ok) throw new Error(data.error ?? "Settings save failed.");
+        const data = (await response.json()) as { error?: string; fix?: string };
+        if (!response.ok) throw new Error(errorText(data, "Settings save failed."));
       });
       setSettingsForm((prev) => ({ ...prev, geminiApiKey: "", openRouterApiKey: "" }));
       setNotice("Settings saved.");
@@ -530,8 +536,12 @@ export function EtsySeoClient({
     setBusy(`test-${provider}`);
     setError(null);
     try {
-      const result = await postJson<{ ok: boolean; model: string | null; error: string | null }>("/api/etsy-seo/settings", { test: provider });
-      setNotice(result.ok ? `${provider} works (${result.model}).` : `${provider} failed: ${result.error ?? "unknown error"}`);
+      const result = await postJson<{ ok: boolean; model: string | null; error: string | null; fix?: string }>("/api/etsy-seo/settings", { test: provider });
+      setNotice(
+        result.ok
+          ? `${provider} works (${result.model}).`
+          : `${provider} failed: ${result.error ?? "unknown error"}${result.fix ? `\nFix: ${result.fix}` : ""}`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -586,8 +596,12 @@ export function EtsySeoClient({
 
       {(error || notice || progress) && (
         <div className="space-y-2">
-          {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</div>}
-          {notice && <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">{notice}</div>}
+          {error && (
+            <div className="whitespace-pre-line rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</div>
+          )}
+          {notice && (
+            <div className="whitespace-pre-line rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">{notice}</div>
+          )}
           {progress && <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{progress}</div>}
         </div>
       )}

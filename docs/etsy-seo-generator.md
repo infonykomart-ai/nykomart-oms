@@ -202,6 +202,28 @@ HTTP 503 with a setup message instead of fake content.
    configured, **Test OpenRouter**.
 4. Generate one language end-to-end and export the workbook before announcing the module.
 
+### When generation fails: what the UI tells you
+
+`lib/etsy/ai/diagnostics.ts` maps every provider failure to one diagnosis — a headline,
+the env var to fix and whether a retry can help. API responses carry the same fields
+(`error`, `code`, `title`, `fix`, `envVars`, `provider`, `retryable`, `detail`), and the UI
+shows `error` plus `Fix: …`; no response ever contains a key.
+
+| Diagnosis | `code` | What to fix |
+|---|---|---|
+| Gemini rejected the API key | `invalid_api_key` | Replace `GEMINI_API_KEY` (401/403), then redeploy |
+| OpenRouter rejected the API key | `invalid_api_key` | Replace `OPENROUTER_API_KEY`; a company key in Settings overrides env |
+| API key missing | `provider_not_configured` | Add `GEMINI_API_KEY` (or `OPENROUTER_API_KEY`) and redeploy |
+| Model id missing | `model_not_configured` | Set `OPENROUTER_MODEL_ID` — a key alone is not usable |
+| Model not found / retired | `model_not_found` | Correct `GEMINI_MODEL_ID` / `OPENROUTER_MODEL_ID` (exact slug) |
+| Quota or credits used up | `quota_exceeded` | Wait or raise quota; top up OpenRouter credits. 429, retryable |
+| Provider unavailable (5xx) | `provider_unavailable` | Retry; automatic backup covers it when configured |
+| Timed out | `timeout` | Retry; prefer a Flash/Lite model. 504, retryable |
+| Output failed the JSON contract twice | `invalid_output` | Retry; choose a stronger model if it repeats |
+
+`Settings → Test Gemini / Test OpenRouter` returns the same mapping, so a failed health
+check names the broken setting instead of dumping the vendor body.
+
 **Rollback:** revert the deployment to the previous build. The module is additive — dropping
 it leaves every other OMS screen working. To remove its data:
 `DROP TABLE etsy_seo_usage_logs, etsy_seo_jobs, etsy_seo_competitors, etsy_seo_keywords,
