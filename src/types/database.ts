@@ -10,6 +10,266 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
+// 2026-11-18b — PURCHASE & ACCOUNTS (db/2026-11-18b-purchase-accounts-phase1.sql).
+//
+// Hand-annotated because this sandbox has no Postgres to run
+// scripts/gen-types.mjs against. Row is explicit and complete; Insert/Update
+// are Partial<Row> for these tables on purpose — every write is built in full
+// by a Server Action after src/lib/accounts/validation.ts has run, so the type
+// does not need to duplicate every column default.
+// scripts/check-types-in-sync.mjs compares tables + Row columns, which match.
+export type FinFinancialYearRow = {
+  id: string;
+  company_id: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
+  is_locked: boolean;
+  notes: string | null;
+  created_at: string;
+};
+
+export type FinAccountRow = {
+  id: string;
+  company_id: string;
+  code: string;
+  name: string;
+  account_type: "asset" | "liability" | "equity" | "income" | "expense";
+  account_group: string | null;
+  is_cash: boolean;
+  is_bank: boolean;
+  is_petty_cash: boolean;
+  is_credit_card: boolean;
+  bank_recon_account_id: string | null;
+  upi_handle: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type FinOpeningBalanceRow = {
+  id: string;
+  company_id: string;
+  financial_year_id: string;
+  account_id: string;
+  debit: number;
+  credit: number;
+  narration: string | null;
+  created_by_employee_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type ExpenseCategoryRow = {
+  id: string;
+  company_id: string | null;
+  name: string;
+  group_name: string;
+  parent_id: string | null;
+  ledger_account_id: string | null;
+  default_gst_rate: number;
+  gst_applicable: boolean;
+  itc_eligible: boolean;
+  sort_order: number;
+  active: boolean;
+  created_at: string;
+};
+
+export type ExpenseVoucherRow = {
+  id: string;
+  company_id: string;
+  voucher_no: string | null;
+  voucher_date: string;
+  expense_type: string;
+  financial_year_id: string | null;
+  department_id: string | null;
+  branch: string | null;
+  cost_centre: string | null;
+  paid_to: string | null;
+  party_id: string | null;
+  employee_id: string | null;
+  invoice_no: string | null;
+  invoice_date: string | null;
+  gstin: string | null;
+  vendor_state: string | null;
+  place_of_supply: string | null;
+  is_interstate: boolean;
+  description: string | null;
+  remarks: string | null;
+  payment_mode: string;
+  payment_account_id: string | null;
+  payment_reference: string | null;
+  upi_reference: string | null;
+  payment_status: "unpaid" | "pending" | "paid";
+  attachment_url: string | null;
+  gross_total: number;
+  discount_total: number;
+  taxable_total: number;
+  cgst_total: number;
+  sgst_total: number;
+  igst_total: number;
+  cess_total: number;
+  charges_total: number;
+  non_gst_total: number;
+  itc_total: number;
+  round_off: number;
+  grand_total: number;
+  status: "draft" | "submitted" | "approved" | "rejected" | "posted" | "paid" | "cancelled";
+  submitted_at: string | null;
+  submitted_by_employee_id: string | null;
+  approved_at: string | null;
+  approved_by_employee_id: string | null;
+  rejection_reason: string | null;
+  posted_at: string | null;
+  posted_by_employee_id: string | null;
+  paid_at: string | null;
+  reversal_of: string | null;
+  created_by_employee_id: string;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type ExpenseVoucherItemRow = {
+  id: string;
+  voucher_id: string;
+  company_id: string;
+  line_no: number;
+  description: string;
+  category_id: string | null;
+  qty: number | null;
+  unit: string | null;
+  rate: number | null;
+  gross_amount: number;
+  discount: number;
+  taxable_value: number;
+  gst_rate: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  cess: number;
+  gst_inclusive: boolean;
+  is_gst_applicable: boolean;
+  non_gst_amount: number;
+  total_amount: number;
+  ledger_account_id: string | null;
+  itc_eligible: boolean;
+  cost_centre: string | null;
+  remarks: string | null;
+  created_at: string;
+};
+
+export type ExpenseVoucherChargeRow = {
+  id: string;
+  voucher_id: string;
+  company_id: string;
+  charge_name: string;
+  amount: number;
+  gst_rate: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  is_taxable: boolean;
+  itc_eligible: boolean;
+  ledger_account_id: string | null;
+  allocation_method: string;
+  total_amount: number;
+  created_at: string;
+};
+
+export type FinJournalEntryRow = {
+  id: string;
+  company_id: string;
+  financial_year_id: string | null;
+  entry_date: string;
+  source_type: string;
+  source_id: string | null;
+  voucher_id: string | null;
+  account_id: string;
+  debit: number;
+  credit: number;
+  narration: string | null;
+  posted_at: string;
+  created_by_employee_id: string | null;
+  reversal_of_entry_id: string | null;
+};
+
+export type PettyCashAccountRow = {
+  id: string;
+  company_id: string;
+  name: string;
+  custodian_employee_id: string | null;
+  ledger_account_id: string;
+  opening_balance: number;
+  float_limit: number | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type PettyCashTransactionRow = {
+  id: string;
+  company_id: string;
+  petty_cash_account_id: string;
+  txn_date: string;
+  txn_type: string;
+  amount: number;
+  voucher_id: string | null;
+  narration: string | null;
+  created_by_employee_id: string | null;
+  created_at: string;
+};
+
+export type EmployeeExpenseClaimRow = {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  claim_date: string;
+  category_id: string | null;
+  description: string;
+  amount: number;
+  receipt_url: string | null;
+  status: string;
+  reviewer_employee_id: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+  approved_amount: number | null;
+  voucher_id: string | null;
+  claim_fingerprint: string | null;
+  created_at: string;
+};
+
+export type FinApprovalLimitRow = {
+  id: string;
+  company_id: string;
+  role_id: string;
+  max_amount: number;
+  can_self_approve: boolean;
+  created_at: string;
+};
+
+export type ExpenseVoucherEventRow = {
+  id: string;
+  voucher_id: string;
+  company_id: string;
+  action: string;
+  from_status: string | null;
+  to_status: string | null;
+  actor_employee_id: string | null;
+  actor_name: string | null;
+  reason: string | null;
+  changes: Json | null;
+  created_at: string;
+};
+
+export type FinSettingsRow = {
+  company_id: string;
+  legal_name: string | null;
+  gstin: string | null;
+  home_state: string | null;
+  round_to_rupee: boolean;
+  updated_at: string | null;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -11103,6 +11363,90 @@ export type Database = {
           },
         ];
       };
+      fin_financial_years: {
+        Row: FinFinancialYearRow;
+        Insert: Partial<FinFinancialYearRow>;
+        Update: Partial<FinFinancialYearRow>;
+        Relationships: [];
+      };
+      fin_accounts: {
+        Row: FinAccountRow;
+        Insert: Partial<FinAccountRow>;
+        Update: Partial<FinAccountRow>;
+        Relationships: [];
+      };
+      fin_opening_balances: {
+        Row: FinOpeningBalanceRow;
+        Insert: Partial<FinOpeningBalanceRow>;
+        Update: Partial<FinOpeningBalanceRow>;
+        Relationships: [];
+      };
+      expense_categories: {
+        Row: ExpenseCategoryRow;
+        Insert: Partial<ExpenseCategoryRow>;
+        Update: Partial<ExpenseCategoryRow>;
+        Relationships: [];
+      };
+      expense_vouchers: {
+        Row: ExpenseVoucherRow;
+        Insert: Partial<ExpenseVoucherRow>;
+        Update: Partial<ExpenseVoucherRow>;
+        Relationships: [];
+      };
+      expense_voucher_items: {
+        Row: ExpenseVoucherItemRow;
+        Insert: Partial<ExpenseVoucherItemRow>;
+        Update: Partial<ExpenseVoucherItemRow>;
+        Relationships: [];
+      };
+      expense_voucher_charges: {
+        Row: ExpenseVoucherChargeRow;
+        Insert: Partial<ExpenseVoucherChargeRow>;
+        Update: Partial<ExpenseVoucherChargeRow>;
+        Relationships: [];
+      };
+      fin_journal_entries: {
+        Row: FinJournalEntryRow;
+        Insert: Partial<FinJournalEntryRow>;
+        Update: Partial<FinJournalEntryRow>;
+        Relationships: [];
+      };
+      petty_cash_accounts: {
+        Row: PettyCashAccountRow;
+        Insert: Partial<PettyCashAccountRow>;
+        Update: Partial<PettyCashAccountRow>;
+        Relationships: [];
+      };
+      petty_cash_transactions: {
+        Row: PettyCashTransactionRow;
+        Insert: Partial<PettyCashTransactionRow>;
+        Update: Partial<PettyCashTransactionRow>;
+        Relationships: [];
+      };
+      employee_expense_claims: {
+        Row: EmployeeExpenseClaimRow;
+        Insert: Partial<EmployeeExpenseClaimRow>;
+        Update: Partial<EmployeeExpenseClaimRow>;
+        Relationships: [];
+      };
+      fin_approval_limits: {
+        Row: FinApprovalLimitRow;
+        Insert: Partial<FinApprovalLimitRow>;
+        Update: Partial<FinApprovalLimitRow>;
+        Relationships: [];
+      };
+      expense_voucher_events: {
+        Row: ExpenseVoucherEventRow;
+        Insert: Partial<ExpenseVoucherEventRow>;
+        Update: Partial<ExpenseVoucherEventRow>;
+        Relationships: [];
+      };
+      fin_settings: {
+        Row: FinSettingsRow;
+        Insert: Partial<FinSettingsRow>;
+        Update: Partial<FinSettingsRow>;
+        Relationships: [];
+      };
     };
     Views: {
       courier_cn_audit_view: {
@@ -11403,6 +11747,23 @@ export type Database = {
       };
     };
     Functions: {
+      // 2026-11-18b — Purchase & Accounts posting (atomic, balanced, once).
+      fin_post_expense_voucher: {
+        Args: { p_voucher_id: string; p_employee_id: string; p_lines: Json };
+        Returns: Json;
+      };
+      fin_reverse_expense_voucher: {
+        Args: { p_voucher_id: string; p_employee_id: string; p_reason: string };
+        Returns: Json;
+      };
+      fin_post_opening_balances: {
+        Args: { p_company_id: string; p_financial_year_id: string; p_employee_id: string };
+        Returns: Json;
+      };
+      fin_seed_default_accounts: {
+        Args: { p_company_id: string };
+        Returns: number;
+      };
       // 2026-11-05 — atomic refund mutations
       // (db/2026-11-05-refund-edit-delete-and-measurement.sql).
       apply_order_refund_delete: {

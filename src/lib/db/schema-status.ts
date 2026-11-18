@@ -42,6 +42,20 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-18b — Purchase & Accounts Phase 1. Without it the module's page
+    // shows a "run this SQL" card (it detects the missing table), so this is
+    // an explicit, high-value pending item.
+    file: "2026-11-18b-purchase-accounts-phase1.sql",
+    title: "Purchase & Accounts — expense vouchers, double-entry ledger, petty cash, opening balances",
+    probe: { table: "expense_vouchers", column: "status" },
+    features: [
+      "Purchase & Accounts page cannot load (expense vouchers, approvals, petty cash, claims, reports all unavailable)",
+      "Double-entry posting and the trial balance have no tables to write to",
+      "Phase 2 setup (financial years, cash/bank accounts, opening balances) cannot be configured",
+      "Receipt attachments have no 'expense-receipts' storage bucket",
+    ],
+  },
+  {
     // 2026-11-14 — the customs rate register. Without it the module's API,
     // dashboard and calculator have nothing to read (and the old per-currency
     // snapshot is renamed in the same patch, so this is the one to run first).

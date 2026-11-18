@@ -43,6 +43,23 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Bill-payment approval workflow." },
   { code: "internal_expense_entry", label: "Office Expenses", icon: "🧾", href: "/dashboard/expenses",
     description: "Log rent, electricity, fuel and other costs not tied to a purchase order or AWB — feeds the P&L Dashboard as a separate overhead line." },
+  // 2026-11-18b — PURCHASE & ACCOUNTS (Phase 1: office/cash expenses, petty
+  // cash, reimbursements, double-entry ledger, accounts setup). Deliberately
+  // separate from internal_expense_entry above: that module is the P&L
+  // overhead feed, this one is the accounting ledger with approval + posting.
+  // Entry and approval are their own capability because whoever raises a
+  // voucher must not be the only person who can approve it.
+  { code: "accounts_view", label: "Purchase & Accounts", icon: "🏦", href: "/dashboard/accounts",
+    description: "Accounts dashboard, expense register, cash book, bank book, UPI report and trial balance — from posted double-entry records only." },
+  { code: "accounts_expense_entry", label: "Expense Vouchers", icon: "🧮", href: "/dashboard/accounts",
+    description: "Create and submit expense vouchers (cash / bank / UPI), petty cash movements and employee reimbursement claims." },
+  { code: "accounts_expense_approve", label: "Expense Approvals", icon: "✅", href: "/dashboard/accounts",
+    description: "Review submitted expense vouchers and reimbursement claims, then post approved vouchers to the ledger. Self-approval is blocked." },
+  // The setup screens (financial years, cash/bank accounts, opening balances,
+  // approval limits) are the same page's Setup tab — kept in the registry for
+  // grants, but no separate tile: admins already reach it via accounts_view.
+  { code: "accounts_setup", label: "Accounts Setup", icon: "⚙️", href: "/dashboard/accounts", hidden: true,
+    description: "Financial years, cash/bank/UPI accounts, opening balances and approval limits." },
   { code: "freight_estimate", label: "Freight Cost Estimator", icon: "🧮", href: "/dashboard/freight-estimate",
     description: "Estimate/compare shipping cost by courier, zone and weight before booking or dispatch — from the manually-maintained Courier Rate Card." },
   { code: "freight_rate_admin", label: "Courier Rate Card", icon: "📊", href: "/dashboard/courier-rates",

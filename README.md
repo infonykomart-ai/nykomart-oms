@@ -362,6 +362,38 @@ Both are now integrated instead of one winning:
   in `db/schema.sql` / `src/types/database.ts` is deduped by hand (types
   can't be regenerated here without DB access).
 
+**Purchase & Accounts — Phase 1 (2026-11-18b)** — a real accounting module at
+`/dashboard/accounts` (tabbed: Dashboard · Expense vouchers · Approvals ·
+Petty cash · Reimbursements · Categories · Reports · Accounts setup), separate
+from the P&L overhead feed on `/dashboard/expenses` (which is unchanged):
+
+- **Expense vouchers** with dynamic lines and additional charges, GST
+  inclusive/exclusive, discounts, CGST/SGST vs IGST by place of supply, ITC
+  eligibility, receipt upload, and a live total computed by the same pure
+  engine the server uses (`src/lib/accounts/expense-calc.ts`).
+- **Money is integer paise** end to end (`src/lib/accounts/money.ts`) — no
+  floating-point financial arithmetic.
+- **UPI is a payment mode, never an account**: a UPI/NEFT/RTGS/IMPS/cheque
+  voucher must name a bank account and its UTR, so it reduces that bank
+  balance once and never appears in the Cash Book.
+- **Approval → posting**: Draft → Submitted → Admin approved/rejected → Posted
+  → Paid. Self-approval and per-role limits are enforced (`fin_approval_limits`);
+  `fin_post_expense_voucher()` writes the double entry and flips the status in
+  ONE transaction, refusing unless debit = credit and the voucher is approved.
+- **Posted vouchers are immutable** — corrections use
+  `fin_reverse_expense_voucher()` (opposite entries), never an in-place edit.
+- **Petty cash** (custodian, allocation/replenishment/expense/return/
+  verification, negative balance refused) and **employee reimbursement claims**
+  (duplicate guard; approval creates and posts the employee payable).
+- **Reports from real journal rows**: trial balance (debit = credit shown),
+  cash book, bank book, UPI payment report.
+- **Phase 2 prerequisites**: financial years, cash/bank/UPI/card accounts
+  (linkable to `bank_recon_accounts`), and opening balances that must balance
+  and can be posted to the ledger exactly once.
+- Migration: `db/2026-11-18b-purchase-accounts-phase1.sql` (idempotent; also
+  creates the public `expense-receipts` storage bucket). Full audit, rules and
+  what is still gated: [docs/purchase-accounts.md](docs/purchase-accounts.md).
+
 ## Database & schema workflow (important)
 
 - `db/schema.sql` is the **only** thing needed to stand up a fresh database — every dated
