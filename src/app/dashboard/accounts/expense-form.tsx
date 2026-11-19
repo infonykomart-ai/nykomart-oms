@@ -12,8 +12,18 @@ import Link from "next/link";
 import { saveExpenseAction } from "./actions";
 import { emptyExpenseFormState } from "@/lib/accounts/form-state";
 import { calculateVoucher, type ExpenseChargeInput, type ExpenseItemInput } from "@/lib/accounts/expense-calc";
+import {
+  expenseQtyLabel,
+  expenseRateLabel,
+  expenseUnitGroups,
+  expenseUnitLabel,
+  normalizeExpenseUnit,
+  resolveExpenseLineUnits,
+  type ResolvedExpenseLineUnits,
+} from "@/lib/accounts/line-units";
 import { formatPaise } from "@/lib/accounts/money";
 import { EXPENSE_TYPES, GST_RATES, INDIAN_STATES, PAYMENT_MODES } from "@/lib/accounts/validation";
+import { LENGTH_UNITS, LENGTH_UNIT_LABEL } from "@/lib/measurement";
 
 const input =
   "w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-stone-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -40,6 +50,16 @@ export type CategoryOption = {
 
 type Option = { id: string; name: string };
 
+/**
+ * What the company enabled in OMS Settings → Measurement. Optional: without it
+ * every engine unit is offered, exactly like Office Expenses before settings
+ * existed.
+ */
+export type ExpenseUnitSettings = {
+  enabledUnits?: string[];
+  defaultQuantityUnit?: string;
+};
+
 type DraftLine = {
   key: string;
   description: string;
@@ -52,6 +72,13 @@ type DraftLine = {
   gstRate: string;
   gstInclusive: boolean;
   itcEligible: boolean;
+  /** Size of ONE piece — only used when `unit` is an AREA unit (SQ FT…). */
+  length: string;
+  width: string;
+  lengthUnit: string;
+  widthUnit: string;
+  /** Piece count the size applies to; blank = use `qty` as the count. */
+  pieces: string;
 };
 
 type DraftCharge = {
@@ -69,20 +96,46 @@ const nextKey = () => {
   return `k${seq}`;
 };
 
-function newLine(): DraftLine {
+function newLine(defaultUnit: string): DraftLine {
   return {
     key: nextKey(),
     description: "",
     categoryId: "",
     qty: "1",
-    unit: "",
+    unit: defaultUnit,
     rate: "",
     amount: "",
     discount: "",
     gstRate: "0",
     gstInclusive: false,
     itcEligible: true,
+    length: "",
+    width: "",
+    lengthUnit: "FT",
+    widthUnit: "FT",
+    pieces: "",
   };
+}
+
+/**
+ * The line's own maths, spelled out: "10 MTR = 32.808 FT", or for an area line
+ * with a size "12 × 4 FT × 6 FT = 288 SQ FT". A unit nobody can verify is a
+ * unit that will be billed wrong.
+ */
+function unitHint(line: DraftLine, resolved: ResolvedExpenseLineUnits): string | null {
+  if (!resolved.unit || !resolved.qty) return null;
+  const base =
+    resolved.baseQty != null && resolved.baseUnit && resolved.baseUnit !== resolved.unit
+      ? ` = ${resolved.baseQty} ${expenseUnitLabel(resolved.baseUnit)}`
+      : "";
+  const unitLabel = expenseUnitLabel(resolved.unit);
+  if (!resolved.derivedFromSize) return `${resolved.qty} ${unitLabel}${base}`;
+  const lengthUnit = normalizeExpenseUnit(line.lengthUnit) ?? "FT";
+  const widthUnit = normalizeExpenseUnit(line.widthUnit) ?? lengthUnit;
+  const pieces = line.pieces || line.qty;
+  return `${pieces} × ${line.length} ${expenseUnitLabel(lengthUnit)} × ${line.width} ${expenseUnitLabel(
+    widthUnit
+  )} = ${resolved.qty} ${unitLabel}${base}`;
 }
 
 export function ExpenseEntryForm({
@@ -95,6 +148,7 @@ export function ExpenseEntryForm({
   homeState,
   today,
   roundToRupee,
+  unitSettings,
 }: {
   companies: Option[];
   defaultCompanyId: string;
@@ -105,6 +159,7 @@ export function ExpenseEntryForm({
   homeState: string | null;
   today: string;
   roundToRupee: boolean;
+  unitSettings: ExpenseUnitSettings;
 }) {
   const [state, formAction, pending] = useActionState(saveExpenseAction, emptyExpenseFormState);
 
@@ -130,7 +185,11 @@ export function ExpenseEntryForm({
   const [paymentReference, setPaymentReference] = useState("");
   const [upiReference, setUpiReference] = useState("");
 
-  const [lines, setLines] = useState<DraftLine[]>([newLine()]);
+  // The company's measurement settings decide which units the dropdown
+  // offers; the default count unit seeds every new line.
+  const unitGroups = expenseUnitGroups(unitSettings.enabledUnits);
+  const defaultUnit = normalizeExpenseUnit(unitSettings.defaultQuantityUnit) ?? "PCS";
+  const [lines, setLines] = useState<DraftLine[]>(() => [newLine(defaultUnit)]);
   const [charges, setCharges] = useState<DraftCharge[]>([]);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -148,6 +207,11 @@ export function ExpenseEntryForm({
       qty: line.qty,
       unit: line.unit || null,
       rate: line.rate,
+      length: line.length,
+      width: line.width,
+      lengthUnit: line.lengthUnit,
+      widthUnit: line.widthUnit,
+      pieces: line.pieces,
       amount: line.amount,
       discount: line.discount,
       gstRate: line.gstRate,
@@ -364,7 +428,7 @@ export function ExpenseEntryForm({
           <h3 className="text-sm font-semibold text-stone-800">2 · Expense lines</h3>
           <button
             type="button"
-            onClick={() => setLines((current) => [...current, newLine()])}
+            onClick={() => setLines((current) => [...current, newLine(defaultUnit)])}
             className="rounded-lg border border-stone-300 px-2.5 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100"
           >
             + Add line
@@ -374,10 +438,14 @@ export function ExpenseEntryForm({
         <div className="space-y-3">
           {lines.map((line, index) => {
             const category = categories.find((c) => c.id === line.categoryId);
+            // Same pure resolution the server will run on save.
+            const resolved = resolveExpenseLineUnits(line);
+            const isArea = resolved.family === "AREA";
+            const hint = unitHint(line, resolved);
             return (
               <div key={line.key} className="rounded-lg border border-stone-200 p-3">
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-12">
-                  <div className="lg:col-span-3">
+                  <div className="lg:col-span-2">
                     <label className={label}>Description</label>
                     <input
                       value={line.description}
@@ -386,7 +454,7 @@ export function ExpenseEntryForm({
                       placeholder={`Line ${index + 1}`}
                     />
                   </div>
-                  <div className="lg:col-span-3">
+                  <div className="lg:col-span-2">
                     <label className={label}>Category</label>
                     <select
                       value={line.categoryId}
@@ -409,25 +477,38 @@ export function ExpenseEntryForm({
                     </select>
                   </div>
                   <div className="lg:col-span-1">
-                    <label className={label}>Qty</label>
+                    <label className={label}>{expenseQtyLabel(line.unit)}</label>
                     <input
-                      value={line.qty}
+                      value={resolved.derivedFromSize ? String(resolved.qty ?? "") : line.qty}
                       onChange={(e) => updateLine(line.key, { qty: e.target.value })}
-                      className={input}
+                      className={`${input} ${resolved.derivedFromSize ? "bg-stone-100 text-stone-600" : ""}`}
                       inputMode="decimal"
+                      readOnly={resolved.derivedFromSize}
+                      title={resolved.derivedFromSize ? "From the size below — Length × Width × pieces" : undefined}
                     />
                   </div>
-                  <div className="lg:col-span-1">
+                  <div className="lg:col-span-2">
                     <label className={label}>Unit</label>
-                    <input
+                    <select
                       value={line.unit}
                       onChange={(e) => updateLine(line.key, { unit: e.target.value })}
                       className={input}
-                      placeholder="PCS"
-                    />
+                      title="How the vendor bills this line — the rate is per this unit"
+                    >
+                      <option value="">— no unit —</option>
+                      {unitGroups.map((group) => (
+                        <optgroup key={group.family} label={group.label}>
+                          {group.units.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {expenseUnitLabel(unit)}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
                   </div>
                   <div className="lg:col-span-1">
-                    <label className={label}>Rate</label>
+                    <label className={label}>{expenseRateLabel(line.unit)}</label>
                     <input
                       value={line.rate}
                       onChange={(e) => updateLine(line.key, { rate: e.target.value })}
@@ -488,11 +569,86 @@ export function ExpenseEntryForm({
                     </div>
                   </div>
                 </div>
-                <div className="mt-2 flex items-center justify-between text-[11px] text-stone-500">
-                  <span>
-                    {category ? `${category.groupName} · ${category.name}` : "No category — posts to the default expense account"}
-                    {" · "}
-                    tick = GST inclusive / ITC eligible
+                {isArea ? (
+                  <div className="mt-2 grid gap-2 rounded-lg bg-amber-50/70 p-2 sm:grid-cols-2 lg:grid-cols-12">
+                    <div className="lg:col-span-2">
+                      <label className={label}>Length (1 piece)</label>
+                      <input
+                        value={line.length}
+                        onChange={(e) => updateLine(line.key, { length: e.target.value })}
+                        className={input}
+                        inputMode="decimal"
+                        placeholder="e.g. 4"
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className={label}>Length unit</label>
+                      <select
+                        value={line.lengthUnit}
+                        onChange={(e) => updateLine(line.key, { lengthUnit: e.target.value })}
+                        className={input}
+                      >
+                        {LENGTH_UNITS.map((unit) => (
+                          <option key={unit} value={unit}>
+                            {LENGTH_UNIT_LABEL[unit]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className={label}>Width (1 piece)</label>
+                      <input
+                        value={line.width}
+                        onChange={(e) => updateLine(line.key, { width: e.target.value })}
+                        className={input}
+                        inputMode="decimal"
+                        placeholder="e.g. 6"
+                      />
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className={label}>Width unit</label>
+                      <select
+                        value={line.widthUnit}
+                        onChange={(e) => updateLine(line.key, { widthUnit: e.target.value })}
+                        className={input}
+                      >
+                        {LENGTH_UNITS.map((unit) => (
+                          <option key={unit} value={unit}>
+                            {LENGTH_UNIT_LABEL[unit]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="lg:col-span-2">
+                      <label className={label}>Pieces</label>
+                      <input
+                        value={line.pieces}
+                        onChange={(e) => updateLine(line.key, { pieces: e.target.value })}
+                        className={input}
+                        inputMode="decimal"
+                        placeholder="= qty"
+                        title="How many pieces the size applies to — blank means the Qty"
+                      />
+                    </div>
+                    <div className="flex items-end lg:col-span-2">
+                      <p className="text-[10px] leading-tight text-stone-600">
+                        {resolved.derivedFromSize
+                          ? "Area is calculated from the size — the qty box above is the result."
+                          : "Leave the size blank when the bill already states the total area."}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-stone-500">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span>
+                      {category ? `${category.groupName} · ${category.name}` : "No category — posts to the default expense account"}
+                      {" · "}
+                      tick = GST inclusive / ITC eligible
+                    </span>
+                    {hint ? (
+                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-800">{hint}</span>
+                    ) : null}
                   </span>
                   <button
                     type="button"

@@ -14,6 +14,7 @@ import type {
 } from "@/types/database";
 import { buildExpenseJournalLines, toPostingPayload, type JournalAccounts } from "./journal";
 import type { CalculatedCharge, CalculatedLine, VoucherCalculation } from "./expense-calc";
+import { expenseBaseUnit, expenseUnitFamily, normalizeExpenseUnit, toBaseExpenseQuantity } from "./line-units";
 
 type Client = SupabaseClient<Database>;
 
@@ -99,6 +100,18 @@ export function storedVoucherToCalculation(
       ledgerAccountId: item.ledger_account_id,
       qty: item.qty,
       unit: item.unit,
+      // Rebuilt from the STORED row only — the size fields are not needed here,
+      // the saved quantity already IS the billed area/length/weight.
+      unitFamily: expenseUnitFamily(item.unit),
+      baseQty:
+        item.base_qty != null
+          ? Number(item.base_qty)
+          : item.qty != null && normalizeExpenseUnit(item.unit)
+            ? toBaseExpenseQuantity(Number(item.qty), normalizeExpenseUnit(item.unit)!)
+            : null,
+      baseUnit: item.base_unit ?? expenseBaseUnit(expenseUnitFamily(item.unit)),
+      derivedFromSize: false,
+      pieceArea: null,
       rate: item.rate,
       gstRate: Number(item.gst_rate ?? 0),
       gstInclusive: item.gst_inclusive,

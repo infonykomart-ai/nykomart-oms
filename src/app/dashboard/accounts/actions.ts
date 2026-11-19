@@ -72,6 +72,12 @@ type RawItem = {
   qty?: string | number | null;
   unit?: string | null;
   rate?: string | number | null;
+  /** Size of ONE piece — the area coming with an SQ FT / SQ MTR unit. */
+  length?: string | number | null;
+  width?: string | number | null;
+  lengthUnit?: string | null;
+  widthUnit?: string | null;
+  pieces?: string | number | null;
   amount?: string | number | null;
   discount?: string | number | null;
   gstRate?: string | number | null;
@@ -183,6 +189,11 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
       qty: item.qty ?? null,
       unit: item.unit ?? null,
       rate: item.rate ?? null,
+      length: item.length ?? null,
+      width: item.width ?? null,
+      lengthUnit: item.lengthUnit ?? null,
+      widthUnit: item.widthUnit ?? null,
+      pieces: item.pieces ?? null,
       amount: item.amount ?? null,
       discount: item.discount ?? null,
       gstRate: item.gstRate ?? category?.default_gst_rate ?? 0,
@@ -308,7 +319,7 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
     };
   }
 
-  const itemRows = calculation.lines.map((line) => ({
+  const itemRowFor = (line: (typeof calculation.lines)[number], withBase: boolean) => ({
     voucher_id: voucher.id,
     company_id: companyId,
     line_no: line.lineNo,
@@ -316,6 +327,7 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
     category_id: line.categoryId,
     qty: line.qty,
     unit: line.unit,
+    ...(withBase ? { base_qty: line.baseQty, base_unit: line.baseUnit } : {}),
     rate: line.rate,
     gross_amount: fromPaise(line.grossPaise),
     discount: fromPaise(line.discountPaise),
@@ -333,9 +345,19 @@ export async function saveExpenseAction(_prev: ExpenseFormState, formData: FormD
     itc_eligible: line.itcEligible,
     cost_centre: line.costCentre,
     remarks: line.remarks,
-  }));
+  });
 
-  const { error: itemsError } = await supabase.from("expense_voucher_items").insert(itemRows);
+  let { error: itemsError } = await supabase
+    .from("expense_voucher_items")
+    .insert(calculation.lines.map((line) => itemRowFor(line, true)));
+  // Migration tolerance: on a database where db/2026-11-18d has not been run
+  // yet, the base quantity columns do not exist — save the voucher without
+  // them instead of losing the entry (posting derives the base qty itself).
+  if (itemsError && /base_qty|base_unit/i.test(itemsError.message)) {
+    ({ error: itemsError } = await supabase
+      .from("expense_voucher_items")
+      .insert(calculation.lines.map((line) => itemRowFor(line, false))));
+  }
   if (itemsError) {
     await supabase.from("expense_vouchers").delete().eq("id", voucher.id);
     return { ...emptyExpenseFormState, error: `Could not save the expense lines: ${itemsError.message}` };
@@ -1255,6 +1277,11 @@ export async function previewExpensePostingAction(formData: FormData): Promise<{
       qty: item.qty ?? null,
       unit: item.unit ?? null,
       rate: item.rate ?? null,
+      length: item.length ?? null,
+      width: item.width ?? null,
+      lengthUnit: item.lengthUnit ?? null,
+      widthUnit: item.widthUnit ?? null,
+      pieces: item.pieces ?? null,
       amount: item.amount ?? null,
       discount: item.discount ?? null,
       gstRate: item.gstRate ?? category?.default_gst_rate ?? 0,

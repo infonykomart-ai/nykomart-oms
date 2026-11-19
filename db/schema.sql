@@ -9641,6 +9641,11 @@ CREATE TABLE IF NOT EXISTS expense_voucher_items (
   category_id        uuid REFERENCES expense_categories(id) ON DELETE SET NULL,
   qty                numeric(14,3),
   unit               text,
+  -- 2026-11-18d — the same quantity in its family's base unit (KG for weight,
+  -- FT for length, SQ FT for area, PCS for count), so 10 MTR and 32.808 FT are
+  -- comparable. `unit`/`rate` stay exactly as the vendor billed.
+  base_qty           numeric(18,3),
+  base_unit          text,
   rate               numeric(14,4),
   gross_amount       numeric(14,2) NOT NULL DEFAULT 0,
   discount           numeric(14,2) NOT NULL DEFAULT 0,

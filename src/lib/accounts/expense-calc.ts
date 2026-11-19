@@ -24,6 +24,7 @@ import {
   toPaise,
   type Paise,
 } from "./money";
+import { resolveExpenseLineUnits, type ExpenseUnitFamily } from "./line-units";
 
 export type ExpenseItemInput = {
   description?: string | null;
@@ -31,6 +32,12 @@ export type ExpenseItemInput = {
   qty?: number | string | null;
   unit?: string | null;
   rate?: number | string | null;
+  /** Size of ONE piece — only used by an area unit (SQ FT / SQ MTR …). */
+  length?: number | string | null;
+  width?: number | string | null;
+  lengthUnit?: string | null;
+  widthUnit?: string | null;
+  pieces?: number | string | null;
   /** Direct amount, used when qty/rate are not both present. */
   amount?: number | string | null;
   discount?: number | string | null;
@@ -64,7 +71,14 @@ export type CalculatedLine = {
   ledgerAccountId: string | null;
   qty: number | null;
   unit: string | null;
+  unitFamily: ExpenseUnitFamily | null;
   rate: number | null;
+  /** `qty` expressed in the family's base unit (KG / FT / SQ FT / PCS). */
+  baseQty: number | null;
+  baseUnit: string | null;
+  /** True when `qty` was computed from Length × Width × pieces. */
+  derivedFromSize: boolean;
+  pieceArea: number | null;
   gstRate: number;
   gstInclusive: boolean;
   gstApplicable: boolean;
@@ -146,12 +160,6 @@ function isSupportedGstRate(rate: number): boolean {
   return ALLOWED_GST_RATES.some((allowed) => Math.abs(allowed - rate) < 1e-9);
 }
 
-function optionalNumber(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const num = typeof value === "number" ? value : Number(String(value).replace(/[,\s]/g, ""));
-  return Number.isFinite(num) ? num : null;
-}
-
 /**
  * Calculates ONE line. `qty × rate` wins when both are present (the master
  * prompt's Gross = Quantity × Rate); otherwise the typed amount is used
@@ -169,8 +177,12 @@ export function calculateLine(
   const gstApplicable = input.gstApplicable !== false && gstRate > 0;
   const itcEligible = input.itcEligible !== false;
 
-  const qty = optionalNumber(input.qty);
-  const rate = optionalNumber(input.rate);
+  // One resolution for the unit, the quantity and the rate (see line-units.ts):
+  // an area line's quantity comes from its size, everything else is qty × rate.
+  const resolved = resolveExpenseLineUnits(input);
+  if (resolved.error) errors.push(`Line ${lineNo}: ${resolved.error}`);
+  const qty = resolved.qty;
+  const rate = resolved.rate;
   const typedAmount = toPaise(input.amount ?? null);
   const discountPaise = Math.max(0, toPaise(input.discount ?? 0) || 0);
 
@@ -233,8 +245,13 @@ export function calculateLine(
       categoryId: input.categoryId ?? null,
       ledgerAccountId: input.ledgerAccountId ?? null,
       qty: qty !== null && qty > 0 ? qty : null,
-      unit: input.unit ? String(input.unit).slice(0, 12) : null,
+      unit: resolved.unit,
+      unitFamily: resolved.family,
       rate: rate !== null && rate >= 0 ? rate : null,
+      baseQty: resolved.baseQty,
+      baseUnit: resolved.baseUnit,
+      derivedFromSize: resolved.derivedFromSize,
+      pieceArea: resolved.pieceArea,
       gstRate,
       gstInclusive: Boolean(input.gstInclusive),
       gstApplicable,

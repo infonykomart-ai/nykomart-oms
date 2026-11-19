@@ -147,13 +147,37 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
     );
   }
 
-  const [companiesResult, settings, years, accounts, categories] = await Promise.all([
+  const [companiesResult, settings, years, accounts, categories, measurementSettings] = await Promise.all([
     supabase.from("companies").select("id, name, short_code").in("id", employee.companyIds),
     loadSettings(supabase, employee.currentCompanyId),
     loadFinancialYears(supabase, employee.currentCompanyId),
     loadAccounts(supabase, employee.currentCompanyId),
     loadCategories(supabase, employee.currentCompanyId),
+    // 2026-11-19 — the expense line's unit dropdown follows OMS Settings →
+    // Measurement, exactly like Office Expenses does. Missing row/columns =
+    // every unit (the pre-settings list).
+    supabase
+      .from("company_measurement_settings")
+      .select(
+        "enabled_length_units, enabled_area_units, enabled_weight_units, enabled_quantity_units, default_quantity_unit, module_defaults"
+      )
+      .eq("company_id", employee.currentCompanyId)
+      .maybeSingle(),
   ]);
+  const unitSettings = {
+    enabledUnits: measurementSettings.data
+      ? [
+          ...(measurementSettings.data.enabled_length_units ?? []),
+          ...(measurementSettings.data.enabled_area_units ?? []),
+          ...(measurementSettings.data.enabled_weight_units ?? []),
+          ...(measurementSettings.data.enabled_quantity_units ?? []),
+        ]
+      : undefined,
+    defaultQuantityUnit:
+      (measurementSettings.data?.module_defaults as { expenseQtyUnit?: string } | null)?.expenseQtyUnit ??
+      measurementSettings.data?.default_quantity_unit ??
+      "PCS",
+  };
   const companies = (companiesResult.data ?? []).map((c) => ({ id: c.id, name: c.name }));
   const companyName = companies.find((c) => c.id === employee.currentCompanyId)?.name ?? "Current company";
 
@@ -425,6 +449,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
                 homeState={homeState}
                 today={today}
                 roundToRupee={settings?.round_to_rupee ?? false}
+                unitSettings={unitSettings}
               />
             </div>
           ) : null}

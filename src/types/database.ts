@@ -139,6 +139,8 @@ export type ExpenseVoucherItemRow = {
   category_id: string | null;
   qty: number | null;
   unit: string | null;
+  base_qty: number | null;
+  base_unit: string | null;
   rate: number | null;
   gross_amount: number;
   discount: number;

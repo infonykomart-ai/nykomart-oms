@@ -42,6 +42,21 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-18d — expense voucher lines store a real unit plus its base
+    // quantity. Without the columns a voucher still saves (the insert omits
+    // them), but no line is comparable across units — 10 MTR can never be
+    // added to 32.808 FT in a report and an SQ FT line loses the size that
+    // produced its area, quietly.
+    file: "2026-11-18d-expense-line-units.sql",
+    title: "Expense lines — unit-aware quantity (KG / MTR / SQ FT / INCH) + base quantity",
+    probe: { table: "expense_voucher_items", column: "base_qty" },
+    features: [
+      "Expense report totals cannot compare lines across units — 10 MTR and 32.808 FT stay two unrelated numbers",
+      "An area line (SQ FT / SQ MTR) does not record the size that produced its area",
+      "Quantity/rate columns still show the bill's own unit, but no canonical base quantity is stored per line",
+    ],
+  },
+  {
     // 2026-11-18b — Purchase & Accounts Phase 1. Without it the module's page
     // shows a "run this SQL" card (it detects the missing table), so this is
     // an explicit, high-value pending item.
