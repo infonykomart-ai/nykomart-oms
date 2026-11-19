@@ -41,8 +41,12 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Enter/edit courier API account credentials (FedEx, UPS, Aramex, Delhivery, Shiprocket, DHL) — Admin/MD only." },
   { code: "bill_payment", label: "Bill Payment", icon: "💳", href: "/dashboard/bill-payment",
     description: "Bill-payment approval workflow." },
-  { code: "internal_expense_entry", label: "Office Expenses", icon: "🧾", href: "/dashboard/expenses",
-    description: "Log rent, electricity, fuel and other costs not tied to a purchase order or AWB — feeds the P&L Dashboard as a separate overhead line." },
+  // 2026-11-19 — labelled "(P&L)" on purpose: this screen only feeds the P&L
+  // overhead line, while Purchase & Accounts posts real double-entry vouchers.
+  // Two tiles both reading "Office Expenses" made them look interchangeable,
+  // so the tile now says which one it is (the page itself carries the same note).
+  { code: "internal_expense_entry", label: "Office Expenses (P&L)", icon: "🧾", href: "/dashboard/expenses",
+    description: "Log rent, electricity, fuel and other costs not tied to a purchase order or AWB — feeds the P&L Dashboard as a separate overhead line. No ledger entry, no approval; use Expense Vouchers for an accounting voucher." },
   // 2026-11-18b — PURCHASE & ACCOUNTS (Phase 1: office/cash expenses, petty
   // cash, reimbursements, double-entry ledger, accounts setup). Deliberately
   // separate from internal_expense_entry above: that module is the P&L

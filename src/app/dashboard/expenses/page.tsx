@@ -237,6 +237,12 @@ export default async function ExpensesPage({
     }));
   }
 
+  // 2026-11-19 — two different "office expense" screens exist, so each one
+  // says which it is: this page only feeds the P&L overhead line (no ledger,
+  // no approval), Purchase & Accounts posts real double-entry vouchers.
+  const canUseAccounts =
+    employee.capabilities.includes("accounts_expense_entry") || employee.capabilities.includes("accounts_setup");
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -249,6 +255,27 @@ export default async function ExpensesPage({
         >
           ← Dashboard
         </Link>
+      </div>
+
+      <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+        <p className="text-sm font-medium text-amber-900">
+          This is the P&amp;L overhead log — it does not create an accounting voucher.
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-amber-800">
+          Rows logged here only appear as an overhead line on the P&amp;L dashboard: no ledger entry, no approval, no cash/bank
+          book.{" "}
+          {canUseAccounts ? (
+            <>
+              For a voucher that is approved by an admin, posted as double entry and shows in the Cash/Bank Book, use{" "}
+              <Link href="/dashboard/accounts?tab=expenses" className="font-semibold underline">
+                Purchase &amp; Accounts → Expense Vouchers
+              </Link>
+              .
+            </>
+          ) : (
+            "Purchase & Accounts (Finance) handles the ledger vouchers."
+          )}
+        </p>
       </div>
 
       <div className="mb-4 flex gap-2">

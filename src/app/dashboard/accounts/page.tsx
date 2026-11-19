@@ -258,7 +258,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">Purchase &amp; Accounts</p>
           <h1 className="text-2xl font-semibold text-stone-900">
-            {tab === "dashboard" ? "Office & cash expenses" : SECTIONS.find((s) => s.id === tab)?.label}
+            {tab === "dashboard" ? "Purchase & Accounts" : SECTIONS.find((s) => s.id === tab)?.label}
           </h1>
           <p className="text-xs text-stone-500">
             {companyName} · every voucher is approved before it reaches the ledger · {today}
@@ -402,6 +402,16 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
       {/* ================= EXPENSES ================= */}
       {tab === "expenses" ? (
         <div className="space-y-4">
+          {employee.capabilities.includes("internal_expense_entry") ? (
+            <p className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-600">
+              Everything here is a real double-entry voucher — admin approval, posting, Cash/Bank Book. A quick overhead entry that
+              only feeds the P&amp;L (no ledger, no approval) stays on the older{" "}
+              <Link href="/dashboard/expenses" className="font-medium underline">
+                Office Expenses (P&amp;L)
+              </Link>{" "}
+              screen.
+            </p>
+          ) : null}
           {canEntry ? (
             <div className={card}>
               <h2 className="mb-3 text-sm font-semibold text-stone-800">New expense voucher</h2>
