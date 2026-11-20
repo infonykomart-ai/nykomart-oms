@@ -197,10 +197,13 @@ New capabilities: `inventory_master_admin`, `inventory_photo_upload`,
 `inventory_review`, `inventory_stock_approve`, `inventory_central_allocate`,
 `inventory_return_settle`.
 
-Backfill: one master product per existing distinct `product_code`, one master
-variant per distinct size/colour, every existing variant linked, and store-SKU
-mappings created only where order history proves them. Ambiguous SKUs are left
-for the mapping screen — never guessed.
+Backfill: one master product per existing `inventory_products` row (NOT per
+`product_code` — the same code in two companies can be two different products),
+with `master_code` namespaced by the company short code so codes never collide.
+One master variant per distinct size/colour, every variant linked to its OWN
+product's master, and store-SKU mappings created only where order history proves
+them. Sharing one Master SKU across products is a deliberate, audited merge on
+the Master SKUs screen — never guessed by the backfill.
 
 **Return rule change:** refunds no longer auto-increase legacy `finished_stock`.
 Returned goods affect stock only after a `RETURN_RECEIVED_LOCALLY` settlement is

@@ -10356,7 +10356,9 @@ GRANT EXECUTE ON FUNCTION fin_seed_default_accounts(uuid) TO service_role;
 --   * No company_measurement_settings interaction of any kind.
 --
 -- BACKFILL (deterministic, re-runnable)
---   1. One inventory_master_products row per existing distinct product_code.
+--   1. One inventory_master_products row per existing inventory_products row.
+--      A shared product_code is NOT proof of the same physical product; sharing a
+--      Master SKU is a deliberate admin merge, never an automatic backfill guess.
 --   2. One inventory_master_variants row per distinct (master product, size,
 --      colour); every existing variant is linked to it.
 --   3. Store SKU mappings are created only where history proves the mapping:
@@ -10802,78 +10804,91 @@ COMMENT ON FUNCTION inventory_master_availability(uuid) IS
 -- ---------------------------------------------------------------------------
 -- 11. BACKFILL — existing products/variants become master rows
 -- ---------------------------------------------------------------------------
--- 11a. Master product per existing distinct product_code. Same code in three
--- companies = ONE physical design. Blank codes are skipped (there is nothing
--- safe to key them on); an admin can create those masters manually.
-INSERT INTO inventory_master_products (master_code, name, item_category_id)
-SELECT DISTINCT ON (lower(btrim(p.product_code)))
-       lower(btrim(p.product_code)),
-       p.name,
-       p.item_category_id
-FROM inventory_products p
-WHERE btrim(p.product_code) <> ''
-ORDER BY lower(btrim(p.product_code)), p.created_at, p.id
-ON CONFLICT (master_code) DO NOTHING;
-
--- 11b. Master variant per distinct (master product, size, colour). The loop is
--- deliberate: the Master SKU sequence is generated per master product, so it
--- stays deterministic and collision-free on repeated runs.
+-- 11a. ONE master product per existing inventory_products row — never one per
+-- product_code. product_code is only unique inside a company; the same code in
+-- another company can be a completely different product (different name,
+-- category, material). Sharing a Master SKU is a deliberate, audited admin
+-- merge (2026-11-20c), never an automatic backfill guess.
+--
+-- master_code is namespaced with the company short_code, which is unique, so
+-- codes can never collide and no product's variants can attach to another
+-- product's master. Blank codes are skipped (nothing safe to key them on); an
+-- admin can create those masters manually.
+--
+-- 11a–11c are one loop so linking always uses that product's OWN master.
 DO $$
 DECLARE
-  mp      RECORD;
-  grp     RECORD;
-  v_base  text;
-  v_seq   integer;
-  v_id    uuid;
-  v_sku   text;
+  p          RECORD;
+  grp        RECORD;
+  v_code     text;
+  v_suffix   text;
+  v_sku_base text;
+  v_seq      integer;
+  v_mp_id    uuid;
+  v_mv_id    uuid;
+  v_sku      text;
 BEGIN
-  FOR mp IN SELECT id, master_code FROM inventory_master_products ORDER BY master_code LOOP
-    v_base := upper(regexp_replace(mp.master_code::text, '[^a-zA-Z0-9]+', '-', 'g'));
-    v_base := btrim(v_base, '-');
-    IF v_base = '' THEN v_base := 'MASTER'; END IF;
+  FOR p IN
+    SELECT ip.id, ip.company_id, ip.item_category_id, ip.name, ip.product_code,
+           ip.active, c.short_code
+    FROM inventory_products ip
+    JOIN companies c ON c.id = ip.company_id
+    WHERE btrim(ip.product_code) <> ''
+    ORDER BY ip.created_at, ip.id
+  LOOP
+    v_suffix := lower(regexp_replace(coalesce(p.short_code, ''), '[^a-zA-Z0-9]+', '-', 'g'));
+    v_suffix := btrim(v_suffix, '-');
+    IF v_suffix = '' THEN v_suffix := left(p.company_id::text, 8); END IF;
+    v_code := lower(btrim(p.product_code)) || '-' || v_suffix;
+
+    SELECT id INTO v_mp_id FROM inventory_master_products WHERE master_code = v_code;
+    IF v_mp_id IS NULL THEN
+      INSERT INTO inventory_master_products (master_code, name, item_category_id, active)
+      VALUES (v_code, p.name, p.item_category_id, p.active)
+      RETURNING id INTO v_mp_id;
+    END IF;
+
+    v_sku_base := upper(regexp_replace(v_code, '[^a-zA-Z0-9]+', '-', 'g'));
+    v_sku_base := btrim(v_sku_base, '-');
+    IF v_sku_base = '' THEN v_sku_base := 'MASTER'; END IF;
 
     FOR grp IN
-      SELECT DISTINCT v.size_label, v.colour
-      FROM inventory_product_variants v
-      JOIN inventory_products p ON p.id = v.product_id
-      WHERE lower(btrim(p.product_code)) = mp.master_code::text
-        AND v.master_variant_id IS NULL
-      ORDER BY v.size_label, v.colour
+      SELECT DISTINCT size_label, colour
+      FROM inventory_product_variants
+      WHERE product_id = p.id
+      ORDER BY size_label, colour
     LOOP
-      SELECT id INTO v_id
+      SELECT id INTO v_mv_id
       FROM inventory_master_variants
-      WHERE master_product_id = mp.id
+      WHERE master_product_id = v_mp_id
         AND size_label = grp.size_label
         AND colour = grp.colour
       LIMIT 1;
 
-      IF v_id IS NULL THEN
-        SELECT count(*) + 1 INTO v_seq
-        FROM inventory_master_variants
-        WHERE master_product_id = mp.id;
-
-        v_sku := v_base || '-' || lpad(v_seq::text, GREATEST(4, length(v_seq::text)), '0');
+      IF v_mv_id IS NULL THEN
+        v_seq := (SELECT count(*) FROM inventory_master_variants WHERE master_product_id = v_mp_id) + 1;
+        LOOP
+          v_sku := v_sku_base || '-' || lpad(v_seq::text, GREATEST(4, length(v_seq::text)), '0');
+          EXIT WHEN NOT EXISTS (SELECT 1 FROM inventory_master_variants WHERE master_sku = v_sku);
+          v_seq := v_seq + 1;
+        END LOOP;
 
         INSERT INTO inventory_master_variants
           (master_product_id, master_sku, size_label, colour)
-        VALUES (mp.id, v_sku, grp.size_label, grp.colour)
-        RETURNING id INTO v_id;
+        VALUES (v_mp_id, v_sku, grp.size_label, grp.colour)
+        RETURNING id INTO v_mv_id;
       END IF;
+
+      -- Exact strings only: no trimming or unit conversion of stored sizes.
+      UPDATE inventory_product_variants
+      SET master_variant_id = v_mv_id
+      WHERE product_id = p.id
+        AND size_label = grp.size_label
+        AND colour = grp.colour
+        AND master_variant_id IS NULL;
     END LOOP;
   END LOOP;
 END $$;
-
--- 11c. Link every existing variant. Exact string match only — no trimming or
--- unit conversion of stored size values.
-UPDATE inventory_product_variants v
-SET master_variant_id = mv.id
-FROM inventory_products p, inventory_master_products mp, inventory_master_variants mv
-WHERE v.product_id = p.id
-  AND mp.master_code::text = lower(btrim(p.product_code))
-  AND mv.master_product_id = mp.id
-  AND mv.size_label = v.size_label
-  AND mv.colour = v.colour
-  AND v.master_variant_id IS NULL;
 
 -- 11d. Store SKU mappings only where order history proves them. Distinct on
 -- (store, sku) keeps exactly one master per marketplace SKU; ambiguity is left
@@ -10953,6 +10968,15 @@ END $$;
 --    SELECT ref_no, size_label FROM orders ORDER BY entry_timestamp DESC LIMIT 10;
 -- 6) Return settlement safety constraint:
 --    SELECT count(*) FROM return_settlements WHERE physical_stock_added AND settlement_type <> 'RETURN_RECEIVED_LOCALLY';
+-- 7) No master product covers differently-named product rows (would mean the
+--    code-keyed backfill merged different products):
+
+--    SELECT mp.master_code, count(DISTINCT lower(btrim(p.name))) AS names
+--      FROM inventory_master_products mp
+--      JOIN inventory_master_variants mv ON mv.master_product_id = mp.id
+--      JOIN inventory_product_variants v ON v.master_variant_id = mv.id
+--      JOIN inventory_products p ON p.id = v.product_id
+--     GROUP BY mp.master_code HAVING count(DISTINCT lower(btrim(p.name))) > 1;
 -- =============================================================================
 
 -- =============================================================================
