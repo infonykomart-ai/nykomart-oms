@@ -42,6 +42,19 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-20c — Master SKU merge. Without it duplicates can be created but
+    // not merged, and the merge log/history is missing; the mapping screen and
+    // the rest of the inventory engine keep working.
+    file: "2026-11-20c-inventory-master-merge.sql",
+    title: "Inventory centralization — Master SKU merge + audit log",
+    probe: { table: "inventory_master_variants", column: "merged_into_id" },
+    features: [
+      "Duplicate Master SKUs cannot be merged into one surviving SKU",
+      "No merge audit log (who merged what, and how many mappings/variants moved)",
+      "The Master SKU screen still lists and edits SKUs, but the merge form refuses to run",
+    ],
+  },
+  {
     // 2026-11-20b — Inventory centralization foundation (Master SKU, store SKU
     // mappings, physical stock entries with photos, reviews, return
     // settlements). Without it the new master/mapping/photo/settlement screens

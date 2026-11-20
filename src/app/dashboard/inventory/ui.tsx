@@ -16,6 +16,9 @@ const TABS = [
   { href: "/dashboard/inventory/challans", label: "Challan & Dispatch" },
   { href: "/dashboard/inventory/ledger", label: "Stock Ledger" },
   { href: "/dashboard/inventory/reports", label: "Reports" },
+  // 2026-11-20 — central Master SKU layer, added above the untouched engine.
+  { href: "/dashboard/inventory/masters", label: "Master SKUs" },
+  { href: "/dashboard/inventory/mappings", label: "Store SKU Map" },
   { href: "/dashboard/inventory/settings", label: "Settings" },
 ];
 

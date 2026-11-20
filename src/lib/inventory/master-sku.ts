@@ -102,3 +102,55 @@ export function storeSkuKey(companyId: string, storeId: string, storeSku: string
     .map((value) => normalizeIdentityValue(value))
     .join("\u0001");
 }
+
+/**
+ * Next free Master SKU for a base, given the SKUs already used by that master
+ * product. Never reuses a number (including merged/inactive SKUs).
+ */
+export function nextMasterSku(base: string, existingSkus: readonly (string | null | undefined)[]): string {
+  let highest = 0;
+  for (const sku of existingSkus) {
+    const match = /-(\d+)\s*$/.exec((sku ?? "").trim());
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > highest) highest = value;
+  }
+  return formatMasterSku(base, highest + 1);
+}
+
+export type MergeCandidate = PhysicalVariantAttributes & {
+  id: string;
+  masterSku: string;
+  active?: boolean;
+  mergedIntoId?: string | null;
+};
+
+/**
+ * UI-side pre-check for a merge. The database function re-checks everything
+ * atomically; this exists to show a clear message before submitting.
+ */
+export function canMergeMasterVariants(
+  source: MergeCandidate,
+  target: MergeCandidate
+): { ok: true } | { ok: false; reason: string } {
+  if (source.id === target.id) return { ok: false, reason: "Source and target Master SKU must be different." };
+  if (source.mergedIntoId) return { ok: false, reason: `${source.masterSku} is already merged.` };
+  if (target.mergedIntoId) return { ok: false, reason: `${target.masterSku} is itself merged.` };
+  if (source.active === false || target.active === false) {
+    return { ok: false, reason: "Both Master SKUs must be active to merge." };
+  }
+  if (
+    normalizeIdentityValue(source.sizeLabel) !== normalizeIdentityValue(target.sizeLabel) ||
+    normalizeIdentityValue(source.sizeUnit ?? "") !== normalizeIdentityValue(target.sizeUnit ?? "") ||
+    normalizeIdentityValue(source.colour ?? "") !== normalizeIdentityValue(target.colour ?? "")
+  ) {
+    return { ok: false, reason: "These Master SKUs differ in size or colour." };
+  }
+  if (
+    normalizeIdentityValue(source.material ?? "") !== normalizeIdentityValue(target.material ?? "") ||
+    normalizeIdentityValue(source.construction ?? "") !== normalizeIdentityValue(target.construction ?? "")
+  ) {
+    return { ok: false, reason: "The master products differ in material or construction." };
+  }
+  return { ok: true };
+}

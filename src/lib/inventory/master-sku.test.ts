@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  canMergeMasterVariants,
   formatMasterSku,
+  nextMasterSku,
   isMasterSku,
   isSamePhysicalVariant,
   masterSkuBase,
@@ -104,4 +106,57 @@ test("store SKU keys are scoped by company and store", () => {
 test("normalisation only folds case and whitespace", () => {
   assert.equal(normalizeIdentityValue("  Natural   Jute "), "natural jute");
   assert.equal(normalizeIdentityValue(null), "");
+});
+
+// 2026-11-20c — merge safety. These mirror the SQL guards; a wrong pass here
+// would let the UI submit a merge of two different physical products.
+
+test("next Master SKU continues after the highest used number", () => {
+  assert.equal(nextMasterSku("JUTE-001", []), "JUTE-001-0001");
+  assert.equal(
+    nextMasterSku("JUTE-001", ["JUTE-001-0001", "JUTE-001-0007", "JUTE-001-0003"]),
+    "JUTE-001-0008"
+  );
+  // Merged/inactive SKUs are still in the list, so numbers are never reused.
+  assert.equal(nextMasterSku("JUTE-001", ["JUTE-001-0002", null, "legacy"]), "JUTE-001-0003");
+});
+
+test("merge refuses different physical variants", () => {
+  const base = {
+    id: "a",
+    masterSku: "JUTE-001-0001",
+    sizeLabel: "4x6 FT",
+    sizeUnit: "FT",
+    colour: "Natural",
+    material: "Jute",
+    construction: "Hand Braided",
+    active: true,
+    mergedIntoId: null,
+  };
+  const target = { ...base, id: "b", masterSku: "JUTE-001-0002" };
+
+  assert.equal(canMergeMasterVariants(base, target).ok, true);
+  assert.equal(canMergeMasterVariants(base, { ...target, sizeLabel: "5x8 FT" }).ok, false);
+  assert.equal(canMergeMasterVariants(base, { ...target, sizeUnit: "CM" }).ok, false);
+  assert.equal(canMergeMasterVariants(base, { ...target, colour: "Black" }).ok, false);
+  assert.equal(canMergeMasterVariants(base, { ...target, material: "Cotton" }).ok, false);
+  assert.equal(canMergeMasterVariants(base, { ...target, construction: "Powerloom" }).ok, false);
+});
+
+test("merge refuses same, already-merged and inactive Master SKUs", () => {
+  const base = {
+    id: "a",
+    masterSku: "JUTE-001-0001",
+    sizeLabel: "4x6 FT",
+    colour: "Natural",
+    active: true,
+    mergedIntoId: null,
+  };
+  const other = { ...base, id: "b", masterSku: "JUTE-001-0002" };
+
+  assert.equal(canMergeMasterVariants(base, base).ok, false);
+  assert.equal(canMergeMasterVariants({ ...base, mergedIntoId: "b" }, other).ok, false);
+  assert.equal(canMergeMasterVariants(base, { ...other, mergedIntoId: "a" }).ok, false);
+  assert.equal(canMergeMasterVariants({ ...base, active: false }, other).ok, false);
+  assert.equal(canMergeMasterVariants(base, { ...other, active: false }).ok, false);
 });

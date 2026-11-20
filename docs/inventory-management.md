@@ -206,8 +206,31 @@ for the mapping screen — never guessed.
 Returned goods affect stock only after a `RETURN_RECEIVED_LOCALLY` settlement is
 approved with photo evidence.
 
-Next phases: mapping/master UI, stock entry + photo UI, order matching/review,
-return settlement screens, dashboard/permissions.
+## Phase B — Master SKU + store mapping UI (2026-11-20c)
+
+Screens: `/dashboard/inventory/masters` and `/dashboard/inventory/mappings`, both
+added to the inventory tab bar. Writes require `inventory_master_admin`; reading
+only needs `inventory_view`.
+
+- **Master products** hold the design identity (code, name, material,
+  construction). **Master SKUs** are their size/colour variants and are
+  permanent: an auto-allocated `BASE-NNNN` SKU is never reused, including after a
+  merge.
+- **Store SKU mapping** is scoped by company + store. `UNIQUE (store_id,
+  store_sku)` prevents the same store SKU mapping twice; re-pointing updates the
+  row and writes `inventory_store_sku_map_history` (`CREATED` / `REPOINTED` /
+  `DEACTIVATED` / `MERGED`), so the old mapping is never silently lost.
+- **Merge** (`inventory_merge_master_variants`, migration `2026-11-20c`) is one
+  transaction: store mappings (with per-row history), variant links and
+  reservations move to the surviving Master SKU, the source becomes inactive with
+  `merged_into_id`, and `inventory_master_merge_log` records who/why/counts. It
+  refuses size/colour/material/construction mismatches and already-merged SKUs.
+  Nothing is deleted.
+- Size text is compared **exactly** (case/whitespace-normalised only). The merge
+  never consults measurement settings and never converts order sizes.
+
+Next phases: stock entry + photo UI, order matching/review, return settlement
+screens, dashboard/permissions.
 
 ## Known gaps / next steps
 

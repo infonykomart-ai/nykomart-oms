@@ -180,6 +180,21 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Create, issue and cancel customer challans — issuing is what deducts READY stock." },
   { code: "inventory_settings", label: "Inventory Settings", icon: "⚙️", href: "/dashboard/inventory/settings",
     description: "Products, variant SKUs with size/colour and SQ FT per piece, warehouses, and each category's workflow." },
+  // 2026-11-20 — central inventory layer. Master SKUs are shared physical
+  // identity, so changing/merging them is its own admin capability rather
+  // than part of day-to-day stock operations.
+  { code: "inventory_master_admin", label: "Master SKU Admin", icon: "🧬", href: "/dashboard/inventory/masters",
+    description: "Create and merge Master SKUs, fix their size/colour/material identity, and map each store SKU — every change is audited." },
+  { code: "inventory_photo_upload", label: "Physical Stock Photos", icon: "📷", href: "/dashboard/inventory/stock",
+    description: "Attach the mandatory actual photo(s) when recording a physical stock entry or a correction." },
+  { code: "inventory_review", label: "Order–Stock Photo Review", icon: "🔍", href: "/dashboard/inventory",
+    description: "Compare an order's reference photos with the actual stock photos side by side and approve or reject allocation." },
+  { code: "inventory_stock_approve", label: "Stock Entry Approval", icon: "✅", href: "/dashboard/inventory/stock",
+    description: "Approve or reject physical stock entries and audited corrections; unapproved entries never become available stock." },
+  { code: "inventory_central_allocate", label: "Central Allocation", icon: "🏭", href: "/dashboard/inventory/reservations",
+    description: "Allocate one Master SKU's physical stock across companies/stores when a matching stock entry is approved." },
+  { code: "inventory_return_settle", label: "Return Settlement", icon: "↩️", href: "/dashboard/orders",
+    description: "Record a return's physical settlement — only an approved locally-received return with photos may add stock back." },
   // 2026-08-14: Help Center itself (the 🤖 chat bubble) and Messages (the
   // header 💬 icon) are open to EVERY signed-in employee and are NOT
   // capability-gated tiles — they don't appear here, same reasoning as My
