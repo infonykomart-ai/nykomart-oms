@@ -42,6 +42,20 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-20 — WhatsApp "REF PHOTO <order no>" automation. Without the
+    // table the automatic/manual reference-photo send refuses to run (so it
+    // can never bypass its duplicate guard); the rest of the order page is
+    // unaffected and keeps working.
+    file: "2026-11-20-whatsapp-reference-photos.sql",
+    title: "WhatsApp reference-photo automation (delivery log + duplicate guard)",
+    probe: { table: "order_whatsapp_messages", column: "delivery_status" },
+    features: [
+      "Updating an order no longer sends its Close-Up photos on WhatsApp automatically",
+      "Order page: the WhatsApp reference-photo card shows no status/timestamp and cannot send or retry",
+      "No duplicate guard exists, so the automation deliberately stays off until this SQL is run",
+    ],
+  },
+  {
     // 2026-11-18d — expense voucher lines store a real unit plus its base
     // quantity. Without the columns a voucher still saves (the insert omits
     // them), but no line is comparable across units — 10 MTR can never be

@@ -9,6 +9,8 @@ import { FlagErrorButton } from "./flag-error-button";
 import { ShippingDetailsForm } from "./shipping-details-form";
 import { OrderHoldCancelActions } from "../order-hold-cancel-actions";
 import { TrackingRefreshButton } from "./tracking-refresh-button";
+import { ReferencePhotoWhatsApp, type ReferencePhotoLogView } from "./reference-photo-whatsapp";
+import { extractCloseUpPhotoUrls } from "@/lib/whatsapp/reference-photos";
 import {
   formatAreaNumber,
   isStairRugCategory,
@@ -514,6 +516,7 @@ export function OrderView({
   canManageOrders = false,
   refunds = [],
   currencies = [],
+  referencePhotoLog = null,
   embedded = false,
 }: {
   order: Order;
@@ -560,6 +563,8 @@ export function OrderView({
   /** "order_entry" capability — gates the Hold/Cancel/Return/Refund actions
    * (the same gate the Orders hub itself has). */
   canManageOrders?: boolean;
+  /** 2026-11-20 — newest WhatsApp reference-photo delivery attempt. */
+  referencePhotoLog?: ReferencePhotoLogView | null;
   /** Already-recorded refunds for this order, newest first. */
   refunds?: OrderRefund[];
   currencies?: { code: string; name: string }[];
@@ -669,6 +674,20 @@ export function OrderView({
           shipment={dispatchSummary}
         />
       </PrintArea>
+
+      {/* 2026-11-20 — "REF PHOTO <order no>" automation: close-up count, last
+          delivery status/timestamp, manual send and retry. Screen-only (the
+          formal print sheet above is unchanged) and it uses the same
+          selection + dedupe + send path as the automatic hook on order
+          update. */}
+      <div className="mt-4">
+        <ReferencePhotoWhatsApp
+          orderId={order.id}
+          closeUpPhotoCount={extractCloseUpPhotoUrls(order).length}
+          latest={referencePhotoLog ?? null}
+          canManage={canManageOrders}
+        />
+      </div>
 
       {invoice && (
         <div className="mt-4 print:hidden">

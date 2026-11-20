@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { listVendorAssignments } from "../vendor-assignment-actions";
 import { isMissingSchemaPiece } from "@/lib/db/missing-column";
+import { extractCloseUpPhotoUrls } from "@/lib/whatsapp/reference-photos";
 
 export async function loadOrderDetail(id: string) {
   const employee = await getAuthedEmployee();
@@ -164,6 +165,21 @@ export async function loadOrderDetail(id: string) {
 
   const statusSummary = statusByOrder[order.id];
 
+  // 2026-11-20 — newest WhatsApp reference-photo attempt for this order.
+  // Read tolerantly: on a database where db/2026-11-20-whatsapp-reference-
+  // photos.sql has not been run yet the table is missing, and that must only
+  // hide this card — never blank the order detail page.
+  const { data: referencePhotoLog, error: referencePhotoLogError } = await supabase
+    .from("order_whatsapp_messages")
+    .select(
+      "id, event_id, delivery_status, error_message, sent_at, created_at, retry_count, attachment_photo_ids, whatsapp_message_ids"
+    )
+    .eq("order_id", id)
+    .eq("message_type", "reference_photo")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return {
     order,
     companyName: company?.name ?? "",
@@ -240,6 +256,10 @@ export async function loadOrderDetail(id: string) {
       lastUpdateDate: dispatchSummary?.last_update_date ?? null,
     },
     canManageOrders: employee.capabilities.includes("order_entry"),
+    // 2026-11-20 — Close-Up / Reference photos live in orders.photo_urls
+    // after the main photo (see src/lib/whatsapp/reference-photos.ts).
+    closeUpPhotoCount: extractCloseUpPhotoUrls(order).length,
+    referencePhotoLog: referencePhotoLogError || !referencePhotoLog ? null : referencePhotoLog,
     refunds: (refunds ?? []).map((r) => ({ ...r, refund_amount: Number(r.refund_amount) })),
     currencies: currencies ?? [],
   };

@@ -14,7 +14,9 @@ import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
 import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { randomUUID } from "node:crypto";
+import { sendOrderReferencePhotos } from "@/lib/whatsapp/reference-photos-send";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -89,9 +91,12 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   const orderId = str(formData, "order_id");
   if (!orderId) return { error: "Order missing.", success: false };
 
+  // "*" (not a named list): the reference-photo hook below needs the photo
+  // columns, and a named list would reject the whole row on a database where
+  // a newer photo/size patch has not been applied yet.
   const { data: existing } = await supabase
     .from("orders")
-    .select("id, company_id, order_date, status, ref_no, sku_label, size_label, qty, item_category_id")
+    .select("*")
     .eq("id", orderId)
     .single();
   if (!existing || !employee.companyIds.includes(existing.company_id)) {
@@ -216,6 +221,57 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
 
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/orders/new");
+  revalidatePath(`/dashboard/orders/${orderId}`);
+
+  // 2026-11-20 — "REF PHOTO <order no>" automation.
+  //
+  // Runs AFTER the response (next/server's after), so saving an order never
+  // waits on WhatsApp and a provider outage can never fail the edit. The
+  // send itself is idempotent per order state: eventId is a hash of exactly
+  // what changed, so a duplicated save/request cannot send the same photos
+  // twice, while a real edit is a new event. With no close-up photos the
+  // helper returns immediately and the existing order-update workflow is
+  // untouched. This never reads or converts size units.
+  const savedPhotoUrl = strOrNull(formData, "photo_url");
+  const savedPhotoUrls = Array.from(
+    new Set([
+      ...(savedPhotoUrl ? [savedPhotoUrl] : []),
+      ...((existing.photo_urls ?? []).filter((u): u is string => !!u)),
+    ])
+  );
+  const savedSizeLabel = strOrNull(formData, "size_label") ?? "";
+  after(async () => {
+    const token = process.env.WHAPI_TOKEN;
+    if (!token) return;
+    try {
+      await sendOrderReferencePhotos({
+        supabase,
+        token,
+        actorEmployeeId: employee.id,
+        order: {
+          id: orderId,
+          ref_no: existing.ref_no,
+          company_id: existing.company_id,
+          photo_url: savedPhotoUrl,
+          photo_urls: savedPhotoUrls,
+          status: nextStatus || existing.status,
+          qty,
+          size_label: savedSizeLabel,
+          dispatch_date: strOrNull(formData, "dispatch_date"),
+          estimated_dispatch_date: strOrNull(formData, "estimated_dispatch_date"),
+          remark: strOrNull(formData, "remark"),
+          colour: strOrNull(formData, "colour"),
+          sku_label: strOrNull(formData, "sku_label"),
+          photo_type: strOrNull(formData, "photo_type"),
+        },
+      });
+    } catch {
+      // Best effort — the order edit is already saved, and a WhatsApp
+      // failure must never surface as a failed edit. The log row (when the
+      // migration is applied) is where a failure is visible and retryable.
+    }
+  });
+
   return { error: null, success: true };
 }
 

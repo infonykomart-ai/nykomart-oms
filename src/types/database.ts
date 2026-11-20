@@ -8704,6 +8704,82 @@ export type Database = {
           },
         ];
       };
+      order_whatsapp_messages: {
+        Row: {
+          id: string;
+          company_id: string | null;
+          order_id: string;
+          order_reference: string;
+          message_type: "reference_photo" | "order_update";
+          event_id: string;
+          message_text: string | null;
+          attachment_photo_ids: string[];
+          whatsapp_message_ids: string[];
+          delivery_status: "pending" | "sent" | "partial" | "failed" | "skipped";
+          error_message: string | null;
+          retry_count: number;
+          created_by_employee_id: string | null;
+          created_at: string;
+          sent_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          company_id?: string | null;
+          order_id: string;
+          order_reference: string;
+          message_type?: "reference_photo" | "order_update";
+          event_id: string;
+          message_text?: string | null;
+          attachment_photo_ids?: string[];
+          whatsapp_message_ids?: string[];
+          delivery_status?: "pending" | "sent" | "partial" | "failed" | "skipped";
+          error_message?: string | null;
+          retry_count?: number;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          sent_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          company_id?: string | null;
+          order_id?: string;
+          order_reference?: string;
+          message_type?: "reference_photo" | "order_update";
+          event_id?: string;
+          message_text?: string | null;
+          attachment_photo_ids?: string[];
+          whatsapp_message_ids?: string[];
+          delivery_status?: "pending" | "sent" | "partial" | "failed" | "skipped";
+          error_message?: string | null;
+          retry_count?: number;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          sent_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "order_whatsapp_messages_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_whatsapp_messages_order_id_fkey";
+            columns: ["order_id"];
+            isOneToOne: false;
+            referencedRelation: "orders";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "order_whatsapp_messages_created_by_employee_id_fkey";
+            columns: ["created_by_employee_id"];
+            isOneToOne: false;
+            referencedRelation: "employees";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       order_shipments: {
         Row: {
           id: string;

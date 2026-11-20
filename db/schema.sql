@@ -1939,6 +1939,47 @@ CREATE TRIGGER credit_notes_before_insert BEFORE INSERT ON credit_notes
 -- stays the single authoritative total (auto-filled from the breakdown,
 -- but always manually editable — "case-by-case decide karna padta hai"
 -- remains the rule, this is a convenience calculator, not a rigid formula).
+-- 2026-11-20 — WhatsApp "REF PHOTO <order no>" automation log. The photos
+-- themselves live in the existing orders.photo_url / orders.photo_urls —
+-- photo #1 is the main photo and every later entry is a Close-Up / Reference
+-- photo, so nothing about order data or its saved size units changes.
+-- event_id is a hash of the order state and is UNIQUE per (order, type), so a
+-- repeated webhook/click cannot send the same photos twice; a retry updates
+-- this row instead of inserting another. sent_at stays NULL unless at least
+-- one image genuinely left the OMS. See
+-- db/2026-11-20-whatsapp-reference-photos.sql for the full rationale.
+CREATE TABLE order_whatsapp_messages (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id              uuid REFERENCES companies(id) ON DELETE SET NULL,
+  order_id                uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  order_reference         text NOT NULL,
+  message_type            text NOT NULL DEFAULT 'reference_photo'
+                            CHECK (message_type IN ('reference_photo', 'order_update')),
+  event_id                text NOT NULL,
+  message_text            text,
+  attachment_photo_ids    text[] NOT NULL DEFAULT '{}',
+  whatsapp_message_ids    text[] NOT NULL DEFAULT '{}',
+  delivery_status         text NOT NULL DEFAULT 'pending'
+                            CHECK (delivery_status IN ('pending', 'sent', 'partial', 'failed', 'skipped')),
+  error_message           text,
+  retry_count             integer NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+  created_by_employee_id  uuid REFERENCES employees(id) ON DELETE SET NULL,
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  sent_at                 timestamptz,
+  UNIQUE (order_id, message_type, event_id)
+);
+CREATE INDEX idx_order_whatsapp_messages_order_created
+  ON order_whatsapp_messages (order_id, created_at DESC);
+CREATE INDEX idx_order_whatsapp_messages_status
+  ON order_whatsapp_messages (delivery_status, created_at DESC)
+  WHERE delivery_status IN ('failed', 'partial', 'pending');
+
+ALTER TABLE order_whatsapp_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_whatsapp_messages FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_authenticated_all ON order_whatsapp_messages;
+CREATE POLICY allow_authenticated_all ON order_whatsapp_messages
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
 CREATE TABLE order_refunds (
   id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id                  uuid NOT NULL REFERENCES orders(id),
