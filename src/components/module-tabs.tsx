@@ -63,8 +63,12 @@ function moduleForPath(pathname: string): ModuleTab {
     if (matches(t.href) && (!best || t.href.length >= best.href.length)) best = t;
   }
   if (best) return best;
+  // Hidden entries are permission labels / second destinations, not modules of
+  // their own (e.g. the inventory sub-capabilities). Skipping them keeps every
+  // /dashboard/inventory/* page on the ONE "Inventory Management" tab instead
+  // of opening a separate window per sub-capability.
   for (const c of CAPABILITY_INFO) {
-    if (matches(c.href) && (!best || c.href.length > best.href.length)) {
+    if (!c.hidden && matches(c.href) && (!best || c.href.length > best.href.length)) {
       best = { href: c.href, label: c.label, icon: c.icon };
     }
   }

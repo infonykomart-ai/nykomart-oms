@@ -50,10 +50,20 @@ export type MasterMergeRow = {
   created_at: string;
 };
 
+export type MasterPhotoRow = {
+  id: string;
+  master_variant_id: string;
+  image_type: string;
+  file_name: string | null;
+  is_active: boolean;
+  uploaded_at: string;
+};
+
 export type MasterCatalog = {
   products: MasterProductRow[];
   variants: MasterVariantRow[];
   merges: MasterMergeRow[];
+  photos: MasterPhotoRow[];
   mappingCounts: Map<string, number>;
   missingMigration: boolean;
   error: string | null;
@@ -63,6 +73,7 @@ const EMPTY_CATALOG: MasterCatalog = {
   products: [],
   variants: [],
   merges: [],
+  photos: [],
   mappingCounts: new Map(),
   missingMigration: false,
   error: null,
@@ -95,13 +106,20 @@ export async function loadMasterCatalog(db: Db): Promise<MasterCatalog> {
     };
   }
 
-  const [mapsRes, mergesRes] = await Promise.all([
+  const [mapsRes, mergesRes, photosRes] = await Promise.all([
     db.from("inventory_store_sku_map").select("master_variant_id"),
     db
       .from("inventory_master_merge_log")
       .select("id, source_master_sku, target_master_sku, mappings_moved, variants_moved, reservations_moved, reason, created_at")
       .order("created_at", { ascending: false })
       .limit(50),
+    // 2026-11-20d — Master SKU photo album. Its migration is separate, so a
+    // missing table must never blank the catalogue: just no thumbnails.
+    db
+      .from("inventory_master_variant_photos")
+      .select("id, master_variant_id, image_type, file_name, is_active, uploaded_at")
+      .order("uploaded_at", { ascending: false })
+      .limit(2000),
   ]);
 
   const mappingCounts = new Map<string, number>();
@@ -114,6 +132,7 @@ export async function loadMasterCatalog(db: Db): Promise<MasterCatalog> {
     variants: (variantsRes.data ?? []) as MasterVariantRow[],
     // The merge log only exists after 2026-11-20c; absence must not blank the page.
     merges: mergesRes.error ? [] : ((mergesRes.data ?? []) as MasterMergeRow[]),
+    photos: photosRes.error ? [] : ((photosRes.data ?? []) as MasterPhotoRow[]),
     mappingCounts,
     missingMigration: false,
     error: null,

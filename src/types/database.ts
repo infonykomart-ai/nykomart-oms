@@ -7938,6 +7938,54 @@ export type Database = {
         };
         Relationships: [];
       };
+      // 2026-11-20d — the Master SKU's own photo album. Typed here only so the
+      // Schema / Migration Status probe can ask for it; the inventory module
+      // itself reads through the unchecked service-role client.
+      inventory_master_variant_photos: {
+        Row: {
+          id: string;
+          master_variant_id: string;
+          image_path: string;
+          image_type: string;
+          file_name: string | null;
+          mime_type: string | null;
+          size_bytes: number | null;
+          is_active: boolean;
+          replaced_photo_id: string | null;
+          update_reason: string | null;
+          uploaded_by_employee_id: string | null;
+          uploaded_at: string;
+        };
+        Insert: {
+          id?: string;
+          master_variant_id: string;
+          image_path: string;
+          image_type?: string;
+          file_name?: string | null;
+          mime_type?: string | null;
+          size_bytes?: number | null;
+          is_active?: boolean;
+          replaced_photo_id?: string | null;
+          update_reason?: string | null;
+          uploaded_by_employee_id?: string | null;
+          uploaded_at?: string;
+        };
+        Update: {
+          id?: string;
+          master_variant_id?: string;
+          image_path?: string;
+          image_type?: string;
+          file_name?: string | null;
+          mime_type?: string | null;
+          size_bytes?: number | null;
+          is_active?: boolean;
+          replaced_photo_id?: string | null;
+          update_reason?: string | null;
+          uploaded_by_employee_id?: string | null;
+          uploaded_at?: string;
+        };
+        Relationships: [];
+      };
       item_categories: {
         Row: {
           id: string;

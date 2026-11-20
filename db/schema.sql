@@ -11140,3 +11140,40 @@ COMMENT ON FUNCTION inventory_merge_master_variants(uuid, uuid, uuid, text) IS
   'Moves store mappings (with history), variant links and reservations, marks the '
   'source inactive with merged_into_id, and writes inventory_master_merge_log. '
   'Refuses size/colour/material/construction mismatches.';
+
+-- =============================================================================
+-- SECTION 36 — MASTER SKU PHOTOS (2026-11-20d)
+-- =============================================================================
+-- Folded from db/2026-11-20d-inventory-master-photos.sql. The Master SKU's own
+-- photo album — reference photos of the physical variant, independent of any
+-- stock entry. Files live in the private `inventory-photos` bucket and are only
+-- served through the app's authenticated proxy; old photos are never
+-- overwritten (a replacement deactivates the old row via replaced_photo_id).
+
+CREATE TABLE IF NOT EXISTS inventory_master_variant_photos (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  master_variant_id       uuid NOT NULL REFERENCES inventory_master_variants(id) ON DELETE CASCADE,
+  image_path              text NOT NULL,
+  image_type              text NOT NULL DEFAULT 'PRODUCT_MAIN'
+                            CHECK (image_type IN (
+                              'PRODUCT_MAIN', 'DESIGN_DETAIL', 'COLOUR_REFERENCE',
+                              'SIZE_MEASUREMENT', 'QUALITY_CHECK', 'PACKAGING')),
+  file_name               text,
+  mime_type               text CHECK (mime_type IS NULL OR mime_type IN ('image/jpeg', 'image/jpg', 'image/png', 'image/webp')),
+  size_bytes              bigint CHECK (size_bytes IS NULL OR size_bytes >= 0),
+  is_active               boolean NOT NULL DEFAULT true,
+  replaced_photo_id       uuid REFERENCES inventory_master_variant_photos(id) ON DELETE SET NULL,
+  update_reason           text,
+  uploaded_by_employee_id uuid REFERENCES employees(id),
+  uploaded_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_master_variant_photos_variant
+  ON inventory_master_variant_photos(master_variant_id, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inventory_master_variant_photos_active
+  ON inventory_master_variant_photos(master_variant_id, is_active);
+
+ALTER TABLE inventory_master_variant_photos ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS inventory_read ON inventory_master_variant_photos;
+CREATE POLICY inventory_read ON inventory_master_variant_photos
+  FOR SELECT TO authenticated USING (true);

@@ -232,8 +232,33 @@ only needs `inventory_view`.
 - Size text is compared **exactly** (case/whitespace-normalised only). The merge
   never consults measurement settings and never converts order sizes.
 
-Next phases: stock entry + photo UI, order matching/review, return settlement
-screens, dashboard/permissions.
+## Phase B2 — Master SKU photos + one inventory section (2026-11-20d)
+
+- **Master SKU photo album** (`inventory_master_variant_photos`, migration
+  `2026-11-20d`): the Master SKUs screen has a **Master SKU photo** card — pick the
+  SKU, pick a photo type (product main / design detail / colour reference / size
+  measurement / quality check / packaging) and upload. The catalogue shows the
+  newest photo as a thumbnail and flags SKUs with no photo. Files live in the
+  private `inventory-photos` bucket under `masters/<variant_id>/` and are served
+  only through the authenticated `/api/inventory/master-photo/[id]` proxy; no
+  public URL is stored. An upload never overwrites an older photo — every one is
+  kept, and the newest active row is the SKU's current photo.
+- This is separate from `inventory_entry_photos`, which stays evidence attached
+  to a physical stock receipt and still requires an entry.
+- **One inventory section:** the inventory sub-capabilities
+  (`inventory_manage`, `inventory_dispatch`, `inventory_settings`,
+  `inventory_master_admin`, `inventory_photo_upload`, `inventory_review`,
+  `inventory_stock_approve`, `inventory_central_allocate`,
+  `inventory_return_settle`, and the legacy `finished_stock_view`) are now
+  `hidden` in `capability-info.ts`, so the launcher/sidebar shows a single
+  **Inventory Management** tile and every screen is reached from its tabs. They
+  stay in the registry, so the Roles & Permissions matrix and all capability
+  checks are unchanged (`inventory_view` is granted to every role, so nobody
+  loses access). Hidden entries are also skipped by the module tab strip, so
+  every `/dashboard/inventory/*` page stays on that one tab.
+
+Next phases: stock entry + entry-photo UI, order matching/review, return
+settlement screens, dashboard/permissions.
 
 ## Known gaps / next steps
 

@@ -13,6 +13,7 @@ import {
   mergeMasterVariants,
   saveMasterProduct,
   saveMasterVariant,
+  saveMasterVariantPhoto,
   saveStoreSkuMapping,
 } from "@/lib/inventory/master-service";
 
@@ -36,11 +37,17 @@ function safeTarget(formData: FormData, fallback: string): string {
   const target = str(formData, "return_to");
   return target.startsWith(BASE) ? target : fallback;
 }
+// The Master SKU photo form returns to ?edit_variant=<id> so the gallery stays
+// on screen, so appending a result must respect an existing query string.
+function withParam(target: string, key: "ok" | "error", message: string): never {
+  const joiner = target.includes("?") ? "&" : "?";
+  redirect(`${target}${joiner}${new URLSearchParams({ [key]: message }).toString()}`);
+}
 function done(target: string, message: string): never {
-  redirect(`${target}?${new URLSearchParams({ ok: message }).toString()}`);
+  withParam(target, "ok", message);
 }
 function failed(target: string, message: string): never {
-  redirect(`${target}?${new URLSearchParams({ error: message }).toString()}`);
+  withParam(target, "error", message);
 }
 
 export async function masterProductAction(formData: FormData): Promise<void> {
@@ -81,6 +88,27 @@ export async function masterVariantAction(formData: FormData): Promise<void> {
     lengthValue: numOrNull(formData, "length_value"),
     widthValue: numOrNull(formData, "width_value"),
     active: checked(formData, "active"),
+    actorId: employee.id,
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function masterVariantPhotoAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_master_admin");
+  const target = safeTarget(formData, MASTERS);
+  const db = createServiceRoleClientUnchecked();
+
+  const file = formData.get("file");
+  const result = await saveMasterVariantPhoto(db, {
+    variantId: str(formData, "variant_id"),
+    // An absent file input still needs a File for the type check in the service.
+    file: file instanceof File ? file : new File([], ""),
+    imageType: str(formData, "image_type") || null,
+    reason: str(formData, "reason") || null,
+    replacePhotoId: str(formData, "replace_photo_id") || null,
     actorId: employee.id,
   });
 

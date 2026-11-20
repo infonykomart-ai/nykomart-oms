@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { loadMasterCatalog } from "@/lib/inventory/master-queries";
-import { masterProductAction, masterVariantAction, mergeMasterVariantsAction } from "../master-actions";
+import { masterProductAction, masterVariantAction, masterVariantPhotoAction, mergeMasterVariantsAction } from "../master-actions";
 import { EmptyRow, InventoryTabs, MessageBanner, PageHeading, Stat, cardClass, inputClass, labelClass, td, th } from "../ui";
 
 const PATH = "/dashboard/inventory/masters";
@@ -30,6 +30,15 @@ export default async function MasterSkuPage({
 
   const productById = new Map(catalog.products.map((p) => [p.id, p]));
   const activeVariants = catalog.variants.filter((v) => v.active && !v.merged_into_id);
+  // 2026-11-20d — each Master SKU's photo album, newest first.
+  const activePhotosByVariant = new Map<string, typeof catalog.photos>();
+  for (const photo of catalog.photos) {
+    if (!photo.is_active) continue;
+    const list = activePhotosByVariant.get(photo.master_variant_id) ?? [];
+    list.push(photo);
+    activePhotosByVariant.set(photo.master_variant_id, list);
+  }
+  const withPhoto = activeVariants.filter((v) => (activePhotosByVariant.get(v.id)?.length ?? 0) > 0).length;
   const mappedVariantIds = new Set(
     catalog.variants.filter((v) => (catalog.mappingCounts.get(v.id) ?? 0) > 0).map((v) => v.id)
   );
@@ -64,6 +73,7 @@ export default async function MasterSkuPage({
         <Stat label="Master products" value={catalog.products.length} />
         <Stat label="Active Master SKUs" value={activeVariants.length} tone="teal" />
         <Stat label="Store SKU mappings" value={totalMappings} tone="indigo" />
+        <Stat label="Master SKUs with photo" value={`${withPhoto}/${activeVariants.length}`} tone={withPhoto < activeVariants.length ? "amber" : "teal"} />
         <Stat label="Unmapped Master SKUs" value={unmapped.length} tone={unmapped.length ? "amber" : "slate"} />
       </div>
 
@@ -172,6 +182,56 @@ export default async function MasterSkuPage({
         </div>
       </div>
 
+      <div className={`${cardClass} mb-4 p-4`} id="master-photos">
+        <h2 className="text-sm font-semibold text-slate-700">Master SKU photo</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          The Master SKU banne ke baad uski photo yahan add hoti hai — photo SKU ke saath rehti hai, kisi stock entry ka intezaar nahi.
+          Uploaded photos are never overwritten: every upload is kept and the newest one is the SKU&apos;s current photo. Files stay private and open only inside the app.
+        </p>
+        {canEdit ? (
+          <form action={masterVariantPhotoAction} className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <input type="hidden" name="return_to" value={PATH} />
+            <div className="lg:col-span-2">
+              <label className={labelClass} htmlFor="photo_variant">Master SKU</label>
+              <select id="photo_variant" name="variant_id" required className={inputClass}>
+                <option value="">Select Master SKU</option>
+                {activeVariants.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.master_sku} · {productById.get(v.master_product_id)?.name ?? ""}{v.size_label ? ` · ${v.size_label}` : ""}{v.colour ? ` · ${v.colour}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="photo_type">Photo type</label>
+              <select id="photo_type" name="image_type" className={inputClass} defaultValue="PRODUCT_MAIN">
+                <option value="PRODUCT_MAIN">Product main</option>
+                <option value="DESIGN_DETAIL">Design detail</option>
+                <option value="COLOUR_REFERENCE">Colour reference</option>
+                <option value="SIZE_MEASUREMENT">Size measurement</option>
+                <option value="QUALITY_CHECK">Quality check</option>
+                <option value="PACKAGING">Packaging</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="photo_file">Photo (JPEG / PNG / WebP, max 10MB)</label>
+              <input id="photo_file" name="file" type="file" accept="image/jpeg,image/png,image/webp" required className={inputClass} />
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="w-full rounded-lg bg-slate-800 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">
+                Upload photo
+              </button>
+            </div>
+            <div className="sm:col-span-2 lg:col-span-5">
+              <label className={labelClass} htmlFor="photo_reason">Note (optional)</label>
+              <input id="photo_reason" name="reason" className={inputClass} placeholder="e.g. New colour lot, actual shade reference" />
+            </div>
+          </form>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">You can see the photos but not upload them. Ask an administrator for the Inventory Master Admin capability.</p>
+        )}
+      </div>
+
       <div className={`${cardClass} mb-4 overflow-x-auto`}>
         <div className="border-b border-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">Master catalogue</h2>
@@ -179,6 +239,7 @@ export default async function MasterSkuPage({
         <table className="min-w-full text-xs">
           <thead className="bg-slate-50">
             <tr>
+              <th className={th()}>Photo</th>
               <th className={th()}>Master SKU</th>
               <th className={th()}>Product</th>
               <th className={th()}>Size</th>
@@ -192,8 +253,18 @@ export default async function MasterSkuPage({
             {catalog.variants.map((variant) => {
               const product = productById.get(variant.master_product_id);
               const maps = catalog.mappingCounts.get(variant.id) ?? 0;
+              const photos = activePhotosByVariant.get(variant.id) ?? [];
               return (
                 <tr key={variant.id}>
+                  <td className={td()}>
+                    {photos.length === 0 ? (
+                      <span className="text-[11px] text-amber-600">No photo</span>
+                    ) : (
+                      <a href={`/api/inventory/master-photo/${photos[0].id}`} target="_blank" rel="noreferrer" title={`${photos[0].image_type} · ${photos.length} active photo(s)`}>
+                        <img src={`/api/inventory/master-photo/${photos[0].id}`} alt={`${variant.master_sku} photo`} className="h-10 w-10 rounded-md border border-slate-200 object-cover" />
+                      </a>
+                    )}
+                  </td>
                   <td className={td("font-mono text-[11px] font-semibold")}>{variant.master_sku}</td>
                   <td className={td()}>
                     <div>{product?.name ?? "—"}</div>
@@ -221,7 +292,7 @@ export default async function MasterSkuPage({
                 </tr>
               );
             })}
-            {catalog.variants.length === 0 && <EmptyRow colSpan={7} message="No Master SKU yet — create a master product, then its first size/colour." />}
+            {catalog.variants.length === 0 && <EmptyRow colSpan={8} message="No Master SKU yet — create a master product, then its first size/colour, then add its photo." />}
           </tbody>
         </table>
       </div>

@@ -4,6 +4,7 @@
 // has passed in the server action. The database remains the final authority:
 // unique keys stop duplicate mappings and the merge RPC re-checks physical
 // identity atomically.
+import { randomUUID } from "node:crypto";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { isMissingSchemaPiece } from "@/lib/db/missing-column";
 import {
@@ -154,6 +155,113 @@ export async function saveMasterVariant(
   });
   if (error) return { error: explain(error, "Could not create the Master SKU."), message: null };
   return { error: null, message: `Master SKU ${masterSku} created. Map the store SKUs to it next.` };
+}
+
+// ---------------------------------------------------------------------------
+// Master SKU photos — the SKU's own album (2026-11-20d)
+// ---------------------------------------------------------------------------
+// A Master SKU is the physical identity, so its photo belongs to the SKU, not
+// to a stock receipt. Files go to the SAME private `inventory-photos` bucket as
+// stock-entry photos (never a public URL) and are served only through
+// /api/inventory/master-photo/[id]. A replacement deactivates the old row and
+// links it through replaced_photo_id — photos are never overwritten.
+const PHOTO_BUCKET = "inventory-photos";
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB, same cap as other uploads
+const PHOTO_TYPES = [
+  "PRODUCT_MAIN",
+  "DESIGN_DETAIL",
+  "COLOUR_REFERENCE",
+  "SIZE_MEASUREMENT",
+  "QUALITY_CHECK",
+  "PACKAGING",
+];
+const EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+const PHOTOS_FILE = "db/2026-11-20d-inventory-master-photos.sql";
+
+export async function saveMasterVariantPhoto(
+  db: Db,
+  input: {
+    variantId: string;
+    file: File;
+    imageType?: string | null;
+    reason?: string | null;
+    replacePhotoId?: string | null;
+    actorId: string;
+  }
+): Promise<MasterResult> {
+  if (!input.variantId) return { error: "Choose the Master SKU this photo belongs to.", message: null };
+
+  const file = input.file;
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: "Choose a photo file to upload.", message: null };
+  }
+  if (file.size > MAX_PHOTO_BYTES) return { error: "Photo is too large — max 10MB.", message: null };
+  const mime = (file.type || "").toLowerCase();
+  const ext = EXT_BY_MIME[mime];
+  if (!ext) return { error: "Photos must be JPEG, PNG or WebP.", message: null };
+
+  const imageType = (input.imageType ?? "").trim().toUpperCase() || "PRODUCT_MAIN";
+  if (!PHOTO_TYPES.includes(imageType)) return { error: "Choose a valid photo type.", message: null };
+
+  const { data: variant, error: variantError } = await db
+    .from("inventory_master_variants")
+    .select("id, master_sku")
+    .eq("id", input.variantId)
+    .maybeSingle();
+  if (variantError) return { error: explain(variantError, "Could not load the Master SKU."), message: null };
+  if (!variant) return { error: "That Master SKU no longer exists.", message: null };
+
+  const path = `masters/${input.variantId}/${Date.now()}-${randomUUID()}.${ext}`;
+  const { error: uploadError } = await db.storage
+    .from(PHOTO_BUCKET)
+    .upload(path, Buffer.from(await file.arrayBuffer()), { contentType: file.type, upsert: false });
+  if (uploadError) return { error: `Upload failed: ${uploadError.message}`, message: null };
+
+  const { error: insertError } = await db.from("inventory_master_variant_photos").insert({
+    master_variant_id: input.variantId,
+    image_path: path,
+    image_type: imageType,
+    file_name: file.name.replace(/[^\w.\- ]/g, "_").slice(0, 150),
+    mime_type: mime,
+    size_bytes: file.size,
+    is_active: true,
+    replaced_photo_id: input.replacePhotoId || null,
+    update_reason: input.reason?.trim() || null,
+    uploaded_by_employee_id: input.actorId,
+  });
+  if (insertError) {
+    // Keep storage and the table consistent — no orphan file on failure.
+    await db.storage.from(PHOTO_BUCKET).remove([path]);
+    if (isMissingSchemaPiece(insertError)) {
+      return { error: `Master SKU photos need ${PHOTOS_FILE} to be run in Supabase first.`, message: null };
+    }
+    return { error: explain(insertError, "Photo uploaded but could not be saved."), message: null };
+  }
+
+  if (input.replacePhotoId) {
+    const { error: replaceError } = await db
+      .from("inventory_master_variant_photos")
+      .update({ is_active: false })
+      .eq("id", input.replacePhotoId)
+      .eq("master_variant_id", input.variantId);
+    if (replaceError) {
+      return {
+        error: explain(replaceError, "New photo saved, but the old photo could not be marked replaced."),
+        message: null,
+      };
+    }
+  }
+
+  return {
+    error: null,
+    message: `Photo added to ${variant.master_sku}. Earlier photos stay in history — nothing was overwritten.`,
+  };
 }
 
 // ---------------------------------------------------------------------------

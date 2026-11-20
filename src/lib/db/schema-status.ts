@@ -42,6 +42,19 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-20d — Master SKU photo album. Without it a Master SKU can be
+    // created and mapped but carries no reference photo of its own; stock-entry
+    // photos (which need a physical receipt first) are unaffected.
+    file: "2026-11-20d-inventory-master-photos.sql",
+    title: "Master SKU photos — reference photo album per Master SKU",
+    probe: { table: "inventory_master_variant_photos", column: "image_path" },
+    features: [
+      "Master SKU screen has no photo upload/gallery — a SKU can only be described in text",
+      "Stock entry photos still work, but there is no photo of the variant before stock arrives",
+      "Order-vs-stock photo review has no Master SKU reference photo to compare against",
+    ],
+  },
+  {
     // 2026-11-20c — Master SKU merge. Without it duplicates can be created but
     // not merged, and the merge log/history is missing; the mapping screen and
     // the rest of the inventory engine keep working.
