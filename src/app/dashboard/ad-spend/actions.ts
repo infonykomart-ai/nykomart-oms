@@ -51,6 +51,16 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
   const spendUsd = numOrZero(formData, "spend_usd");
   if (budgetUsd < 0 || spendUsd < 0) return fail("Budget/Spend cannot be negative.");
 
+  // 2026-11-20 — optional ad-platform attributed orders (see
+  // db/2026-11-20e-store-ad-spend-attributed-orders.sql). Blank means "not
+  // recorded" (NULL), which is what lets the report hide the ad/organic
+  // split instead of pretending the day had zero ad orders.
+  const adOrdersRaw = str(formData, "ad_orders");
+  const adOrders = adOrdersRaw === "" ? null : Number(adOrdersRaw);
+  if (adOrders !== null && (!Number.isFinite(adOrders) || !Number.isInteger(adOrders) || adOrders < 0)) {
+    return fail("Ad orders must be a whole number (0 or more), or left blank.");
+  }
+
   // Confirm this store belongs to one of the employee's accessible
   // companies before writing — same defense-in-depth check used across
   // every other module (e.g. lookupOrderForEntry's employee.companyIds
@@ -79,22 +89,34 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
     return fail("You do not have access to this store.");
   }
 
+  const base = {
+    store_id: storeId,
+    spend_date: spendDate,
+    country_code: countryCode,
+    budget_usd: budgetUsd,
+    spend_usd: spendUsd,
+    entry_by_employee_id: employee.id,
+    updated_at: new Date().toISOString(),
+  };
+
   const { error } = await supabase
     .from("store_ad_spend")
-    .upsert(
-      {
-        store_id: storeId,
-        spend_date: spendDate,
-        country_code: countryCode,
-        budget_usd: budgetUsd,
-        spend_usd: spendUsd,
-        entry_by_employee_id: employee.id,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "store_id,spend_date,country_code" }
-    );
+    .upsert({ ...base, ad_orders: adOrders }, { onConflict: "store_id,spend_date,country_code" });
 
-  if (error) return fail(`Failed to save: ${error.message}`);
+  if (error) {
+    // The optional ad-orders column ships as its own migration; until it is
+    // run, Budget/Spend must still save exactly as before rather than failing
+    // the whole entry.
+    if (adOrders !== null && /ad_orders/i.test(error.message)) {
+      const retry = await supabase
+        .from("store_ad_spend")
+        .upsert(base, { onConflict: "store_id,spend_date,country_code" });
+      if (retry.error) return fail(`Failed to save: ${retry.error.message}`);
+      revalidatePath("/dashboard/ad-spend");
+      return ok;
+    }
+    return fail(`Failed to save: ${error.message}`);
+  }
   revalidatePath("/dashboard/ad-spend");
   return ok;
 }

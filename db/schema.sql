@@ -930,11 +930,18 @@ CREATE TABLE store_ad_spend (
   country_code          text NOT NULL DEFAULT '',
   budget_usd            numeric(12,2) NOT NULL DEFAULT 0,
   spend_usd             numeric(12,2) NOT NULL DEFAULT 0,
+  -- 2026-11-20 — orders the AD PLATFORM attributed to this spend, so the
+  -- report can split ad orders from organic ones. NULL = not recorded (the
+  -- report hides the split instead of assuming 0). See
+  -- db/2026-11-20e-store-ad-spend-attributed-orders.sql.
+  ad_orders             integer,
   entry_by_employee_id  uuid NOT NULL REFERENCES employees(id),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT store_ad_spend_store_date_country_key UNIQUE (store_id, spend_date, country_code),
   CONSTRAINT store_ad_spend_country_code_check
-    CHECK (country_code IN ('', 'US', 'CA', 'MX', 'AU', 'GB', 'DE', 'IT', 'JP', 'FR', 'ES', 'IN', 'AE'))
+    CHECK (country_code IN ('', 'US', 'CA', 'MX', 'AU', 'GB', 'DE', 'IT', 'JP', 'FR', 'ES', 'IN', 'AE')),
+  CONSTRAINT store_ad_spend_ad_orders_check
+    CHECK (ad_orders IS NULL OR ad_orders >= 0)
 );
 CREATE INDEX idx_store_ad_spend_date  ON store_ad_spend(spend_date);
 CREATE INDEX idx_store_ad_spend_store ON store_ad_spend(store_id);

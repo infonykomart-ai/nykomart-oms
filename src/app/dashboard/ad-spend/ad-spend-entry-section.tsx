@@ -21,6 +21,8 @@ type RecentEntry = {
   countryCode: string;
   budget: number;
   spend: number;
+  /** Ad-platform attributed orders for that day, null when not recorded. */
+  adOrders: number | null;
   /** When these numbers were last saved (store_ad_spend.updated_at). */
   enteredAt: string;
 };
@@ -165,6 +167,24 @@ export function AdSpendEntrySection({
               <label className={labelClass} htmlFor="as_spend">Spend (USD)</label>
               <input id="as_spend" name="spend_usd" type="number" step="0.01" min="0" defaultValue="0" className={inputClass} />
             </div>
+            {/* 2026-11-20 — optional: the ad platform's own attributed-order
+                count, which is the only honest source for the report's
+                ad-vs-organic split (the orders table has no ad flag). */}
+            <div className="col-span-2">
+              <label className={labelClass} htmlFor="as_ad_orders">Ad orders — from the ad platform (optional)</label>
+              <input
+                id="as_ad_orders"
+                name="ad_orders"
+                type="number"
+                step="1"
+                min="0"
+                placeholder="e.g. 12 — leave blank if not recorded"
+                className={inputClass}
+              />
+              <p className="mt-1 text-[10px] text-slate-400">
+                Blank = not recorded. Enter 0 when the spend ran but no order was attributed to it. The Report tab uses this to separate ad orders from organic ones.
+              </p>
+            </div>
           </div>
           <button
             type="submit"
@@ -233,6 +253,7 @@ function RecentEntries({
                 <div className="text-right">
                   <div className="text-slate-700">Budget ${e.budget.toFixed(2)}</div>
                   <div className="text-slate-700">Spend ${e.spend.toFixed(2)}</div>
+                  {e.adOrders !== null && <div className="text-slate-500">{e.adOrders} ad order(s)</div>}
                 </div>
               </div>
               <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5">

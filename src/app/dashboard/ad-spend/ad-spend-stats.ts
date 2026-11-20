@@ -51,6 +51,9 @@ export type AdSpendSpendRow = {
   country_code: string | null;
   budget_usd: number | null;
   spend_usd: number | null;
+  /** 2026-11-20 — ad-platform attributed orders; null/absent = not recorded
+   *  (see db/2026-11-20e-store-ad-spend-attributed-orders.sql). */
+  ad_orders?: number | null;
 };
 
 export type AdSpendStoreRef = { id: string; name: string; company_id: string };
@@ -98,11 +101,25 @@ type Cell = {
   usd: number;
   budget: number;
   spend: number;
+  /** Sum of the ad-platform attributed orders of the row's spend entries. */
+  adOrders: number;
+  /** How many spend entries actually reported ad orders — 0 means the split
+   *  is unknown for this cell (older entries / migration not run). */
+  adOrderRows: number;
   label: string;
   orders: string[];
 };
 
-const emptyCell = (label: string): Cell => ({ qty: 0, usd: 0, budget: 0, spend: 0, label, orders: [] });
+const emptyCell = (label: string): Cell => ({
+  qty: 0,
+  usd: 0,
+  budget: 0,
+  spend: 0,
+  adOrders: 0,
+  adOrderRows: 0,
+  label,
+  orders: [],
+});
 
 export type AdSpendReport = {
   dailyRows: AdSpendDailyRow[];
@@ -112,6 +129,9 @@ export type AdSpendReport = {
   /** true when at least one Amazon store is in scope, so the section (and
    *  its explanatory note) can be shown even before any country entry. */
   hasAmazonStore: boolean;
+  /** true when at least one spend entry carries ad-platform attributed
+   *  orders, i.e. when an ad-vs-organic split can honestly be shown. */
+  hasAdOrderData: boolean;
   /** Month-scoped order ids per store — feeds the per-store statement link. */
   verifyByKey: Record<string, AdSpendStatementVerify>;
 };
@@ -148,9 +168,17 @@ export function buildAdSpendReport({
     cur.usd += delta.usd ?? 0;
     cur.budget += delta.budget ?? 0;
     cur.spend += delta.spend ?? 0;
+    cur.adOrders += delta.adOrders ?? 0;
+    cur.adOrderRows += delta.adOrderRows ?? 0;
     if (orderId) cur.orders.push(orderId);
     if (!cur.label && label) cur.label = label;
     map.set(key, cur);
+  }
+
+  // NULL stays NULL: a day with no recorded ad orders must not be reported as
+  // "0 ad orders", which would silently turn every order organic.
+  function adOrdersOf(cell: Cell): number | null {
+    return cell.adOrderRows > 0 ? cell.adOrders : null;
   }
 
   for (const o of orders ?? []) {
@@ -173,7 +201,17 @@ export function buildAdSpendReport({
     const code = isAmazon(s.store_id) ? (s.country_code ?? "") : "";
     const label = amazonCountryLabel(code) || (code ? code : "");
     const key = adSpendKey(s.store_id, code);
-    const delta = { budget: Number(s.budget_usd ?? 0), spend: Number(s.spend_usd ?? 0) };
+    const rawAdOrders = s.ad_orders;
+    const adOrders =
+      rawAdOrders === null || rawAdOrders === undefined || !Number.isFinite(Number(rawAdOrders))
+        ? null
+        : Number(rawAdOrders);
+    const delta = {
+      budget: Number(s.budget_usd ?? 0),
+      spend: Number(s.spend_usd ?? 0),
+      adOrders: adOrders ?? 0,
+      adOrderRows: adOrders === null ? 0 : 1,
+    };
     bump(daily, key + KEY_SEP + s.spend_date, label, delta);
     bump(monthly, key, label, delta);
   }
@@ -203,6 +241,7 @@ export function buildAdSpendReport({
         countryCode: code,
         countryLabel: amazonCountryLabel(code) || cell.label || "Other",
         qty: cell.qty,
+        adOrders: adOrdersOf(cell),
         usd: cell.usd,
         avg: cell.qty > 0 ? cell.usd / cell.qty : 0,
         budget: cell.budget,
@@ -238,6 +277,7 @@ export function buildAdSpendReport({
         countryLabel: amazonCountryLabel(code) || cell.label,
         date: date ?? "",
         qty: cell.qty,
+        adOrders: adOrdersOf(cell),
         usd: cell.usd,
         budget: cell.budget,
         spend: cell.spend,
@@ -257,6 +297,7 @@ export function buildAdSpendReport({
         countryCode: code,
         countryLabel: amazonCountryLabel(code) || cell.label,
         qty: cell.qty,
+        adOrders: adOrdersOf(cell),
         usd: cell.usd,
         avg: cell.qty > 0 ? cell.usd / cell.qty : 0,
         budget: cell.budget,
@@ -270,11 +311,14 @@ export function buildAdSpendReport({
   const verifyByKey: Record<string, AdSpendStatementVerify> = {};
   for (const [key, v] of verified) verifyByKey[key] = v;
 
+  const hasAdOrderData = [...monthly.values()].some((cell) => cell.adOrderRows > 0);
+
   return {
     dailyRows,
     monthlyRows,
     amazonCountryRows,
     hasAmazonStore: stores.some((s) => isAmazonStore(s.name)),
+    hasAdOrderData,
     verifyByKey,
   };
 }

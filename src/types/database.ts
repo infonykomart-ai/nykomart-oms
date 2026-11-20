@@ -11158,6 +11158,8 @@ export type Database = {
           country_code: string;
           budget_usd: number;
           spend_usd: number;
+          // 2026-11-20 — ad-platform attributed orders; NULL = not recorded.
+          ad_orders: number | null;
           entry_by_employee_id: string;
           updated_at: string;
         };
@@ -11168,6 +11170,7 @@ export type Database = {
           country_code?: string;
           budget_usd?: number;
           spend_usd?: number;
+          ad_orders?: number | null;
           entry_by_employee_id: string;
           updated_at?: string;
         };
@@ -11177,6 +11180,7 @@ export type Database = {
           spend_date?: string;
           budget_usd?: number;
           spend_usd?: number;
+          ad_orders?: number | null;
           entry_by_employee_id?: string;
           updated_at?: string;
         };

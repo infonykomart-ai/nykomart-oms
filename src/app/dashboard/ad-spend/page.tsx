@@ -6,7 +6,7 @@ import { AdSpendReportTable } from "./ad-spend-report-table";
 // 2026-10-15 — the Report tab's math (Amazon country split + statement
 // verification) lives in its own module, same as the Daily Order Sheet's
 // daily-sheet-stats.ts: page.tsx fetches/scopes, the module decides numbers.
-import { buildAdSpendReport, type AdSpendReport } from "./ad-spend-stats";
+import { buildAdSpendReport, type AdSpendReport, type AdSpendSpendRow } from "./ad-spend-stats";
 // 2026-10-15b — live FX snapshot for the Amazon country-wise totals
 // ("ACTUAL CONVERSION KE HISAB SE JO DAILY BASIS PAR UPDATE HO AUTOMATICLLY").
 import { loadFxSnapshot } from "@/lib/fx/rates";
@@ -22,6 +22,19 @@ import { DailyOrderSheet, type DailyOrderSheetData } from "./daily-order-sheet";
 // so the math can be stub-tested; this page only fetches and scopes.
 import { buildDailySheet } from "./daily-sheet-stats";
 import { todayIST } from "@/lib/attendance/ist-date";
+
+/** The columns the Recent Entries list reads; ad_orders is optional because
+ *  it ships in its own migration (db/2026-11-20e-…). */
+type AdSpendListRow = {
+  id: string;
+  store_id: string;
+  spend_date: string;
+  country_code: string;
+  budget_usd: number;
+  spend_usd: number;
+  updated_at: string;
+  ad_orders?: number | null;
+};
 
 // Store-level Daily Spend tracking (pending item 3, 2026-08-08 —
 // "STORE KI REPORT NIKALENGE TO EASY WAY MIL JAYEGI SABHI CHIJE EK DUSRE SE
@@ -106,24 +119,33 @@ export default async function AdSpendPage({
     countryCode: string;
     budget: number;
     spend: number;
+    adOrders: number | null;
     enteredAt: string;
   }[] = [];
   if (tab === "entry") {
     const allStoreIds = (stores ?? []).map((s) => s.id);
-    const { data: recent } = allStoreIds.length
-      ? await supabase
-          .from("store_ad_spend")
-          // 2026-10-15 — country_code rides along so an Amazon day's rows
-          // are told apart in this list (see the entry form).
-          // 2026-10-19 — "koi bhi entry ho ... uska time and date aani
-          // chahiye": updated_at is when these numbers were last entered/
-          // re-saved (the row is an upsert, see saveAdSpendAction), so the
-          // list can show the entry timestamp next to the spend date.
-          .select("id, store_id, spend_date, country_code, budget_usd, spend_usd, updated_at")
-          .in("store_id", allStoreIds)
-          .order("spend_date", { ascending: false })
-          .limit(30)
-      : { data: [] };
+    // 2026-10-15 — country_code rides along so an Amazon day's rows
+    // are told apart in this list (see the entry form).
+    // 2026-10-19 — "koi bhi entry ho ... uska time and date aani
+    // chahiye": updated_at is when these numbers were last entered/
+    // re-saved (the row is an upsert, see saveAdSpendAction), so the
+    // list can show the entry timestamp next to the spend date.
+    // 2026-11-20 — ad_orders is optional and ships in its own migration, so
+    // the read falls back to the old column list instead of breaking this
+    // list before that migration is run.
+    const recentQuery = async (withAdOrders: boolean) => {
+      const res = withAdOrders
+        ? await supabase.from("store_ad_spend").select("*").in("store_id", allStoreIds).order("spend_date", { ascending: false }).limit(30)
+        : await supabase
+            .from("store_ad_spend")
+            .select("id, store_id, spend_date, country_code, budget_usd, spend_usd, updated_at")
+            .in("store_id", allStoreIds)
+            .order("spend_date", { ascending: false })
+            .limit(30);
+      return { data: (res.data ?? []) as unknown as AdSpendListRow[], error: res.error };
+    };
+    const recentRes = allStoreIds.length ? await recentQuery(true) : { data: [] as AdSpendListRow[], error: null };
+    const recent = recentRes.error && allStoreIds.length ? (await recentQuery(false)).data : recentRes.data;
     recentEntries = (recent ?? []).map((r) => ({
       id: r.id,
       storeId: r.store_id,
@@ -133,6 +155,7 @@ export default async function AdSpendPage({
       countryCode: r.country_code ?? "",
       budget: Number(r.budget_usd ?? 0),
       spend: Number(r.spend_usd ?? 0),
+      adOrders: typeof r.ad_orders === "number" ? r.ad_orders : null,
       enteredAt: r.updated_at,
     }));
   }
@@ -142,7 +165,27 @@ export default async function AdSpendPage({
     const [y, m] = month.split("-").map(Number);
     const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of month
 
-    const [{ data: orders }, { data: spend }] = await Promise.all([
+    // 2026-11-20 — ad_orders (ad-platform attributed orders) is read alongside
+    // Budget/Spend when its migration has been run; until then the older
+    // column list is used and the report simply hides the ad/organic split.
+    const spendQuery = async (withAdOrders: boolean) => {
+      const res = withAdOrders
+        ? await supabase
+            .from("store_ad_spend")
+            .select("*")
+            .in("store_id", relevantStoreIds)
+            .gte("spend_date", monthStart)
+            .lte("spend_date", monthEnd)
+        : await supabase
+            .from("store_ad_spend")
+            .select("id, store_id, spend_date, country_code, budget_usd, spend_usd")
+            .in("store_id", relevantStoreIds)
+            .gte("spend_date", monthStart)
+            .lte("spend_date", monthEnd);
+      return { data: (res.data ?? []) as unknown as AdSpendSpendRow[], error: res.error };
+    };
+
+    const [{ data: orders }, spendRes] = await Promise.all([
       // 2026-10-13 — "order date ki bajaye po date se clear ho": an order
       // belongs to the month its PO DATE falls in (blank PO date falls
       // back to the entry/order date — the effective date below). The
@@ -161,13 +204,9 @@ export default async function AdSpendPage({
         .or(
           `and(po_date.gte.${monthStart},po_date.lte.${monthEnd}),and(order_date.gte.${monthStart},order_date.lte.${monthEnd})`
         ),
-      supabase
-        .from("store_ad_spend")
-        .select("id, store_id, spend_date, country_code, budget_usd, spend_usd")
-        .in("store_id", relevantStoreIds)
-        .gte("spend_date", monthStart)
-        .lte("spend_date", monthEnd),
+      spendQuery(true),
     ]);
+    const spend = (spendRes.error ? (await spendQuery(false)).data : spendRes.data) ?? [];
 
     const monthOrders = orders ?? [];
     // 2026-10-15 — "STORE KI MONTHLY STATEMENT SE BHI VERFY... OR LINK HO
@@ -190,10 +229,12 @@ export default async function AdSpendPage({
       matches,
     });
 
-    // 2026-10-15b — only an Amazon store needs a currency conversion, so the
-    // rates are loaded only then (and the loader keeps them fresh on its own:
-    // it re-pulls from the provider once the cached snapshot is 12h old).
-    if (report.hasAmazonStore) fx = await loadFxSnapshot(supabase, AMAZON_CURRENCIES);
+    // 2026-10-15b — the loader keeps the rates fresh on its own: it re-pulls
+    // from the provider once the cached snapshot is 12h old. 2026-11-20 — the
+    // Report tab always shows the ₹ companion for total sales and spend, not
+    // just the Amazon country section, so the snapshot is loaded for every
+    // report (it still degrades to the cached rates, never breaks the page).
+    fx = await loadFxSnapshot(supabase, AMAZON_CURRENCIES);
   }
 
   // 2026-10-13 — "DAILY ORDER SHEET ... AAJ SABHI STORE PAR KITNE ORDER
@@ -265,6 +306,7 @@ export default async function AdSpendPage({
           monthlyRows={report?.monthlyRows ?? []}
           amazonCountryRows={report?.amazonCountryRows ?? []}
           hasAmazonStore={report?.hasAmazonStore ?? false}
+          hasAdOrderData={report?.hasAdOrderData ?? false}
           fx={fx}
         />
       )}
