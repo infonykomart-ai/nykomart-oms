@@ -100,25 +100,59 @@ async function post(token: string, path: string, body: Record<string, unknown>):
   return { ok: false, error: lastError, retryable };
 }
 
-export type WhapiMediaResult = { ok: true; mediaId: string } | { ok: false; error: string };
+/** Any scalar (string OR number) rendered as a non-empty id string. */
+function scalarId(input: unknown): string | null {
+  if (typeof input === "string" && input.trim()) return input.trim();
+  if (typeof input === "number" && Number.isFinite(input)) return String(input);
+  return null;
+}
 
 /**
- * Uploads image bytes and returns the provider's media id. `dataUri` must be a
- * real `data:image/...;base64,...` string; bytes are sent unchanged (no
- * re-encode), so the original image quality is preserved.
+ * 2026-11-20 — real-world fix: Whapi's documented /media response is `{ id }`,
+ * but the live endpoint can answer with a wrapped or URL-shaped body. Never
+ * throw a successful upload away over a field name: find an id anywhere sane,
+ * and fall back to an uploaded media URL when that is what came back.
+ */
+export function extractWhapiMediaReference(json: unknown): { id: string | null; url: string | null } {
+  const url =
+    stringValue(json, "url") ||
+    stringValue(json, "media_url") ||
+    stringValue(objectValue(json, "media"), "url") ||
+    stringValue(objectValue(json, "data"), "url") ||
+    stringValue(objectValue(json, "file"), "url");
+
+  const id =
+    scalarId(objectValue(json, "id")) ||
+    scalarId(objectValue(json, "media_id")) ||
+    scalarId(objectValue(json, "mediaId")) ||
+    scalarId(objectValue(objectValue(json, "media"), "id")) ||
+    scalarId(objectValue(objectValue(json, "data"), "id")) ||
+    scalarId(objectValue(objectValue(json, "result"), "id")) ||
+    scalarId(objectValue(objectValue(json, "file"), "id")) ||
+    scalarId(objectValue(objectValue(objectValue(json, "files"), "0"), "id"));
+
+  return { id, url };
+}
+
+export type WhapiMediaResult =
+  | { ok: true; mediaId: string | null; mediaUrl: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Uploads image bytes and returns whatever reference the provider gave back
+ * (media id and/or hosted URL). `dataUri` must be a real
+ * `data:image/...;base64,...` string; bytes are sent unchanged (no re-encode).
+ *
+ * A successful HTTP upload with an unexpected body is NOT an error: the caller
+ * can send the data URI directly to /messages/image (Whapi accepts a media id,
+ * an uploaded URL, or base64/data URI), so the photos still go out.
  */
 export async function uploadWhapiMedia(token: string, dataUri: string): Promise<WhapiMediaResult> {
   const result = await post(token, "/media", { media: dataUri });
   if (!result.ok) return { ok: false, error: result.error };
 
-  // Whapi's documented shape is { id }. Accept the common aliases too rather
-  // than failing a successful upload over a field name.
-  const mediaId =
-    stringValue(result.json, "id") ||
-    stringValue(result.json, "media_id") ||
-    stringValue(objectValue(result.json, "media"), "id");
-  if (!mediaId) return { ok: false, error: "WhatsApp uploaded the photo but did not return a media id." };
-  return { ok: true, mediaId };
+  const reference = extractWhapiMediaReference(result.json);
+  return { ok: true, mediaId: reference.id, mediaUrl: reference.url };
 }
 
 export type WhapiSendResult = { ok: true; messageId: string } | { ok: false; error: string };

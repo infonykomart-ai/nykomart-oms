@@ -296,20 +296,22 @@ export async function sendOrderReferencePhotos(params: {
     const mimeType = (mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
     const dataUri = `data:${mimeType};base64,${buffer.toString("base64")}`;
 
+    // Upload first (the requirement's media-id path). Whapi also accepts a
+    // data URI / hosted URL directly in /messages/image, so a provider upload
+    // response we cannot read (or even a failed upload call) must not drop the
+    // photo: fall back to the data URI itself and let the SEND result decide.
     const upload = await uploadWhapiMedia(token, dataUri);
-    if (!upload.ok) {
-      errors.push(`${label}: WhatsApp media upload failed — ${upload.error}`);
-      continue;
-    }
+    const mediaReference = upload.ok ? (upload.mediaId ?? upload.mediaUrl ?? dataUri) : dataUri;
 
     const send = await sendWhapiImage(
       token,
       groupId,
-      upload.mediaId,
+      mediaReference,
       referencePhotoCaptionFor(order.ref_no, i, photos.length)
     );
     if (!send.ok) {
-      errors.push(`${label}: WhatsApp rejected the image — ${send.error}`);
+      const uploadNote = !upload.ok ? ` (media upload: ${upload.error})` : "";
+      errors.push(`${label}: WhatsApp rejected the image — ${send.error}${uploadNote}`);
       continue;
     }
 
