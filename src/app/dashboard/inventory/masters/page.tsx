@@ -1,8 +1,18 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
-import { loadMasterCatalog } from "@/lib/inventory/master-queries";
-import { masterProductAction, masterVariantAction, masterVariantPhotoAction, mergeMasterVariantsAction } from "../master-actions";
+import { loadMasterCatalog, loadMappingData } from "@/lib/inventory/master-queries";
+import {
+  deactivateMappingAction,
+  masterPhotoRemoveAction,
+  masterProductAction,
+  masterProductDeleteAction,
+  masterVariantAction,
+  masterVariantDeleteAction,
+  masterVariantPhotoAction,
+  mergeMasterVariantsAction,
+  storeSkuMappingAction,
+} from "../master-actions";
 import { EmptyRow, InventoryTabs, MessageBanner, PageHeading, Stat, cardClass, inputClass, labelClass, td, th } from "../ui";
 
 const PATH = "/dashboard/inventory/masters";
@@ -17,9 +27,10 @@ export default async function MasterSkuPage({
   const canEdit = employee.capabilities.includes("inventory_master_admin");
   const db = createServiceRoleClientUnchecked();
 
-  const [catalog, categoriesRes] = await Promise.all([
+  const [catalog, categoriesRes, mappingData] = await Promise.all([
     loadMasterCatalog(db),
     db.from("item_categories").select("id, name").order("name"),
+    loadMappingData(db, employee.companyIds),
   ]);
   const categories = (categoriesRes.data ?? []) as { id: string; name: string }[];
 
@@ -44,6 +55,11 @@ export default async function MasterSkuPage({
   );
   const unmapped = activeVariants.filter((v) => !mappedVariantIds.has(v.id));
   const totalMappings = Array.from(catalog.mappingCounts.values()).reduce((sum, n) => sum + n, 0);
+  // 2026-11-20e — each store's own SKU/listing is updated from this same screen.
+  const mappingCompanyById = new Map(mappingData.companies.map((c) => [c.id, c.name]));
+  const storeOptions = mappingData.stores.filter((s) => s.active);
+  const activePhotoRows = catalog.photos.filter((p) => p.is_active);
+  const masterSkuById = new Map(catalog.variants.map((v) => [v.id, v.master_sku]));
 
   if (catalog.missingMigration) {
     return (
@@ -232,6 +248,156 @@ export default async function MasterSkuPage({
         )}
       </div>
 
+      <div className={`${cardClass} mb-4 overflow-x-auto`} id="master-photo-album">
+        <div className="border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-700">Master SKU photo album</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Har Master SKU ki current photo yahan dikhti hai. Remove sirf photo ko album se hataata hai (file private storage me aur history me rehti hai) — purani photo kabhi overwrite nahi hoti.
+          </p>
+        </div>
+        <table className="min-w-full text-xs">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className={th()}>Photo</th>
+              <th className={th()}>Master SKU</th>
+              <th className={th()}>Type</th>
+              <th className={th()}>Uploaded</th>
+              <th className={th()}></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {activePhotoRows.map((photo) => (
+              <tr key={photo.id}>
+                <td className={td()}>
+                  <a href={`/api/inventory/master-photo/${photo.id}`} target="_blank" rel="noreferrer">
+                    <img src={`/api/inventory/master-photo/${photo.id}`} alt={photo.file_name ?? "Master SKU photo"} className="h-12 w-12 rounded-md border border-slate-200 object-cover" />
+                  </a>
+                </td>
+                <td className={td("font-mono text-[11px]")}>{masterSkuById.get(photo.master_variant_id) ?? "—"}</td>
+                <td className={td()}>{photo.image_type}</td>
+                <td className={td("text-slate-500")}>{new Date(photo.uploaded_at).toLocaleString("en-IN")}</td>
+                <td className={td("text-right whitespace-nowrap")}>
+                  {canEdit && (
+                    <form action={masterPhotoRemoveAction}>
+                      <input type="hidden" name="return_to" value={PATH} />
+                      <input type="hidden" name="photo_id" value={photo.id} />
+                      <input type="hidden" name="variant_id" value={photo.master_variant_id} />
+                      <button type="submit" className="text-xs font-medium text-rose-600 underline">Remove</button>
+                    </form>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {activePhotoRows.length === 0 && <EmptyRow colSpan={5} message="No Master SKU photo yet — upload one in the card above." />}
+          </tbody>
+        </table>
+      </div>
+
+      <div className={`${cardClass} mb-4 p-4`} id="store-updates">
+        <h2 className="text-sm font-semibold text-slate-700">Store update — alag alag store ka SKU</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Same Master SKU, different store SKU/listing? Update it yahin se: store + store SKU choose karein, naya Master SKU ya listing ID save karein.
+          Re-pointing writes history and never deletes the old mapping.
+        </p>
+        {canEdit ? (
+          <form action={storeSkuMappingAction} className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <input type="hidden" name="return_to" value={PATH} />
+            <div>
+              <label className={labelClass} htmlFor="store_company">Company</label>
+              <select id="store_company" name="company_id" required defaultValue={employee.currentCompanyId} className={inputClass}>
+                {mappingData.companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="store_store">Store</label>
+              <select id="store_store" name="store_id" required className={inputClass}>
+                <option value="">Select store</option>
+                {storeOptions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name} — {mappingCompanyById.get(s.company_id) ?? ""}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="store_sku">Store SKU</label>
+              <input id="store_sku" name="store_sku" required className={inputClass} placeholder="e.g. JK-NAT-M" />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="store_master">Master SKU</label>
+              <select id="store_master" name="master_variant_id" required className={inputClass}>
+                <option value="">Select Master SKU</option>
+                {activeVariants.map((v) => <option key={v.id} value={v.id}>{v.master_sku} · {productById.get(v.master_product_id)?.name ?? ""}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="store_listing">Marketplace listing ID</label>
+              <div className="flex gap-2">
+                <input id="store_listing" name="marketplace_listing_id" className={inputClass} placeholder="Optional" />
+                <button type="submit" className="whitespace-nowrap rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-700">Save</button>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">You can see store mappings but not change them. Ask an administrator for the Inventory Master Admin capability.</p>
+        )}
+        <div className="mt-4 overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className={th()}>Company / store</th>
+                <th className={th()}>Store SKU</th>
+                <th className={th()}>Master SKU</th>
+                <th className={th()}>Listing</th>
+                <th className={th()}>Status</th>
+                <th className={th()}></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {mappingData.mappings.map((mapping) => (
+                <tr key={mapping.id}>
+                  <td className={td()}>{mapping.companyName} / {mapping.storeName}</td>
+                  <td className={td("font-mono text-[11px] font-semibold")}>{mapping.store_sku}</td>
+                  <td className={td()}>
+                    {canEdit && mapping.is_active ? (
+                      <form action={storeSkuMappingAction} className="flex items-center gap-2">
+                        <input type="hidden" name="return_to" value={PATH} />
+                        <input type="hidden" name="company_id" value={mapping.company_id} />
+                        <input type="hidden" name="store_id" value={mapping.store_id} />
+                        <input type="hidden" name="store_sku" value={mapping.store_sku} />
+                        <select name="master_variant_id" defaultValue={mapping.master_variant_id} className={inputClass}>
+                          {activeVariants.map((v) => <option key={v.id} value={v.id}>{v.master_sku}</option>)}
+                        </select>
+                        <input name="marketplace_listing_id" defaultValue={mapping.marketplace_listing_id ?? ""} placeholder="Listing" className={inputClass} />
+                        <button type="submit" className="whitespace-nowrap rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Update</button>
+                      </form>
+                    ) : (
+                      <span className="font-mono text-[11px]">{mapping.masterSku}</span>
+                    )}
+                  </td>
+                  <td className={td("text-slate-500")}>{mapping.marketplace_listing_id || "—"}</td>
+                  <td className={td()}>
+                    {mapping.is_active
+                      ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">Active</span>
+                      : <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Inactive — save again to reactivate</span>}
+                  </td>
+                  <td className={td("text-right whitespace-nowrap")}>
+                    {canEdit && mapping.is_active && (
+                      <form action={deactivateMappingAction}>
+                        <input type="hidden" name="return_to" value={PATH} />
+                        <input type="hidden" name="mapping_id" value={mapping.id} />
+                        <input type="hidden" name="company_id" value={mapping.company_id} />
+                        <input type="hidden" name="reason" value="Deactivated from the Master SKU screen" />
+                        <button type="submit" className="text-xs font-medium text-rose-600 underline">Deactivate</button>
+                      </form>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {mappingData.mappings.length === 0 && <EmptyRow colSpan={6} message="No store SKU mapped yet — map the first one above." />}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className={`${cardClass} mb-4 overflow-x-auto`}>
         <div className="border-b border-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">Master catalogue</h2>
@@ -284,9 +450,16 @@ export default async function MasterSkuPage({
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">Inactive</span>
                     )}
                   </td>
-                  <td className={td("text-right")}>
+                  <td className={td("text-right whitespace-nowrap")}>
                     {canEdit && (
-                      <Link href={`${PATH}?edit_variant=${variant.id}`} className="text-xs font-medium text-slate-600 underline">Edit</Link>
+                      <span className="flex items-center justify-end gap-3">
+                        <Link href={`${PATH}?edit_variant=${variant.id}`} className="text-xs font-medium text-slate-600 underline">Edit</Link>
+                        <form action={masterVariantDeleteAction}>
+                          <input type="hidden" name="return_to" value={PATH} />
+                          <input type="hidden" name="variant_id" value={variant.id} />
+                          <button type="submit" className="text-xs font-medium text-rose-600 underline">Delete</button>
+                        </form>
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -323,8 +496,17 @@ export default async function MasterSkuPage({
                     <td className={td("text-slate-500")}>{[product.material, product.construction].filter(Boolean).join(" · ") || "—"}</td>
                     <td className={td()}>{variants.length}</td>
                     <td className={td()}>{product.active ? <span className="text-emerald-700">Active</span> : <span className="text-slate-500">Inactive</span>}</td>
-                    <td className={td("text-right")}>
-                      {canEdit && <Link href={`${PATH}?edit_product=${product.id}`} className="text-xs font-medium text-slate-600 underline">Edit</Link>}
+                    <td className={td("text-right whitespace-nowrap")}>
+                      {canEdit && (
+                        <span className="flex items-center justify-end gap-3">
+                          <Link href={`${PATH}?edit_product=${product.id}`} className="text-xs font-medium text-slate-600 underline">Edit</Link>
+                          <form action={masterProductDeleteAction}>
+                            <input type="hidden" name="return_to" value={PATH} />
+                            <input type="hidden" name="product_id" value={product.id} />
+                            <button type="submit" className="text-xs font-medium text-rose-600 underline">Delete</button>
+                          </form>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

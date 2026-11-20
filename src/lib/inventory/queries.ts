@@ -31,7 +31,7 @@ export type VariantRow = {
   active: boolean;
 };
 
-export type WarehouseRow = { id: string; name: string; code: string; active: boolean };
+export type WarehouseRow = { id: string; name: string; code: string; address: string | null; active: boolean };
 export type BalanceRow = {
   id: string;
   variant_id: string;
@@ -68,7 +68,11 @@ export async function getLookups(db: InventoryDb, companyId: string): Promise<In
         )
         .eq("company_id", companyId)
         .order("name"),
-      db.from("inventory_warehouses").select("id, name, code, active").eq("company_id", companyId).order("name"),
+      db
+        .from("inventory_warehouses")
+        .select("id, name, code, address, active")
+        .eq("company_id", companyId)
+        .order("name"),
       db.from("item_categories").select("id, name").order("name"),
       db.from("parties").select("id, name").order("name"),
       db

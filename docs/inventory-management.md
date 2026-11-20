@@ -257,6 +257,39 @@ only needs `inventory_view`.
   loses access). Hidden entries are also skipped by the module tab strip, so
   every `/dashboard/inventory/*` page stays on that one tab.
 
+### Master data edit / delete (in place, no extra screens)
+
+Everything a stock item is built from is now editable and removable from the
+same Inventory Management section:
+
+- **Product** (`/dashboard/inventory/settings`): Edit prefills the form
+  (`?edit_product=`), Active checkbox controls visibility. Delete removes the
+  product and its unused variants; if any variant already has stock, ledger,
+  reservation, challan, job or requirement history, the product and those
+  variants are deactivated instead — nothing that already happened is erased.
+- **Variant (size / colour)**: Edit prefills size, colour, length/width, product
+  and Active; Delete hard-deletes only a variant nothing references, otherwise
+  deactivates it.
+- **Warehouse**: Edit (name, code, address, Active) and Delete; a warehouse with
+  stock or movement history is deactivated rather than removed.
+- **Category workflow**: Edit prefills the flags for the chosen category; Delete
+  removes only the workflow configuration row — the item category and its
+  products are untouched.
+- **Master product / Master SKU** (`/dashboard/inventory/masters`): each row has
+  Edit and Delete. A used Master SKU (store mappings, linked store variants,
+  reservations, stock entries) is deactivated and keeps its merge/history row;
+  an unused one is deleted with its photo rows. Photos can be removed from the
+  album (the row is deactivated, the private file and history stay).
+- **Different stores**: the Masters screen now has a **Store update** card and a
+  per-row mapping table — pick store + store SKU, choose the Master SKU and
+  listing ID, and update. Re-pointing writes `inventory_store_sku_map_history`;
+  Deactivate keeps the old mapping as history. Saving an inactive mapping again
+  reactivates it.
+
+No schema change: these use the existing `active` / `is_active` columns and the
+same capability gates (`inventory_settings` for master data,
+`inventory_master_admin` for the master layer).
+
 Next phases: stock entry + entry-photo UI, order matching/review, return
 settlement screens, dashboard/permissions.
 

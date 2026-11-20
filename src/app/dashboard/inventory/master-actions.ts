@@ -9,7 +9,10 @@ import { revalidatePath } from "next/cache";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import {
+  deactivateMasterVariantPhoto,
   deactivateStoreSkuMapping,
+  deleteMasterProduct,
+  deleteMasterVariant,
   mergeMasterVariants,
   saveMasterProduct,
   saveMasterVariant,
@@ -109,6 +112,53 @@ export async function masterVariantPhotoAction(formData: FormData): Promise<void
     imageType: str(formData, "image_type") || null,
     reason: str(formData, "reason") || null,
     replacePhotoId: str(formData, "replace_photo_id") || null,
+    actorId: employee.id,
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function masterVariantDeleteAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_master_admin");
+  const target = safeTarget(formData, MASTERS);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deleteMasterVariant(db, {
+    id: str(formData, "variant_id"),
+    actorId: employee.id,
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function masterProductDeleteAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_master_admin");
+  const target = safeTarget(formData, MASTERS);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deleteMasterProduct(db, {
+    id: str(formData, "product_id"),
+    actorId: employee.id,
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function masterPhotoRemoveAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_master_admin");
+  const target = safeTarget(formData, MASTERS);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deactivateMasterVariantPhoto(db, {
+    photoId: str(formData, "photo_id"),
+    variantId: str(formData, "variant_id"),
+    reason: str(formData, "reason") || null,
     actorId: employee.id,
   });
 

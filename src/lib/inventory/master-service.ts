@@ -498,3 +498,154 @@ export async function deactivateStoreSkuMapping(
 
   return { error: null, message: `Store SKU ${mapping.store_sku} is now inactive (history kept).` };
 }
+
+// ---------------------------------------------------------------------------
+// Master SKU / master product removal + photo removal
+// ---------------------------------------------------------------------------
+// Master identity is permanent and shared across stores, so a used Master SKU
+// is deactivated (reversible, still visible in history) instead of deleted.
+// Only a Master SKU with no store mapping, no linked store variant, no stock
+// entry and no reservation is physically removed.
+
+async function masterReferenceCount(db: Db, table: string, id: string): Promise<number> {
+  const { count, error } = await db
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq("master_variant_id", id);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+const MASTER_VARIANT_REFERENCE_TABLES = [
+  "inventory_store_sku_map",
+  "inventory_product_variants",
+  "inventory_reservations",
+  "inventory_stock_entries",
+  "inventory_entry_photos",
+];
+
+async function masterVariantIsReferenced(db: Db, variantId: string): Promise<boolean> {
+  for (const table of MASTER_VARIANT_REFERENCE_TABLES) {
+    if ((await masterReferenceCount(db, table, variantId)) > 0) return true;
+  }
+  return false;
+}
+
+export async function deleteMasterVariant(
+  db: Db,
+  input: { id: string; actorId: string }
+): Promise<MasterResult> {
+  const { data: variant, error } = await db
+    .from("inventory_master_variants")
+    .select("id, master_sku, active, merged_into_id")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (error) return { error: explain(error, "Could not load the Master SKU."), message: null };
+  if (!variant) return { error: "That Master SKU no longer exists.", message: null };
+
+  if (variant.merged_into_id) {
+    const { error: deactivateError } = await db
+      .from("inventory_master_variants")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", input.id);
+    if (deactivateError) return { error: explain(deactivateError, "Could not deactivate the Master SKU."), message: null };
+    return { error: null, message: `${variant.master_sku} is already merged and inactive — kept as merge history.` };
+  }
+
+  if (await masterVariantIsReferenced(db, input.id)) {
+    const { error: deactivateError } = await db
+      .from("inventory_master_variants")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", input.id);
+    if (deactivateError) return { error: explain(deactivateError, "Could not deactivate the Master SKU."), message: null };
+    return {
+      error: null,
+      message: `${variant.master_sku} deactivated: stores or stock entries still point at it, so it is kept (not deleted). Reactivate it from Edit.`,
+    };
+  }
+
+  const { error: deleteError } = await db.from("inventory_master_variants").delete().eq("id", input.id);
+  if (deleteError) return { error: explain(deleteError, "Could not delete the Master SKU."), message: null };
+  return { error: null, message: `${variant.master_sku} and its photos were deleted — it had no store mapping or stock history.` };
+}
+
+export async function deleteMasterProduct(
+  db: Db,
+  input: { id: string; actorId: string }
+): Promise<MasterResult> {
+  const { data: product, error } = await db
+    .from("inventory_master_products")
+    .select("id, master_code, name")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (error) return { error: explain(error, "Could not load the master product."), message: null };
+  if (!product) return { error: "That master product no longer exists.", message: null };
+
+  const { data: variants } = await db
+    .from("inventory_master_variants")
+    .select("id, master_sku")
+    .eq("master_product_id", input.id);
+
+  let kept = 0;
+  for (const variant of (variants ?? []) as { id: string; master_sku: string }[]) {
+    if (variant.master_sku && (await masterVariantIsReferenced(db, variant.id))) {
+      const { error: deactivateError } = await db
+        .from("inventory_master_variants")
+        .update({ active: false, updated_at: new Date().toISOString() })
+        .eq("id", variant.id);
+      if (deactivateError) return { error: explain(deactivateError, "Could not deactivate a Master SKU."), message: null };
+      kept += 1;
+      continue;
+    }
+    const { error: deleteError } = await db.from("inventory_master_variants").delete().eq("id", variant.id);
+    if (deleteError) {
+      await db.from("inventory_master_variants").update({ active: false }).eq("id", variant.id);
+      kept += 1;
+    }
+  }
+
+  if (kept > 0) {
+    const { error: deactivateError } = await db
+      .from("inventory_master_products")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", input.id);
+    if (deactivateError) return { error: explain(deactivateError, "Could not deactivate the master product."), message: null };
+    return {
+      error: null,
+      message: `${product.master_code} deactivated: ${kept} Master SKU(s) still have store stock or mappings and were kept (deactivated).`,
+    };
+  }
+
+  const { error: deleteError } = await db.from("inventory_master_products").delete().eq("id", input.id);
+  if (deleteError) return { error: explain(deleteError, "Could not delete the master product."), message: null };
+  return { error: null, message: `${product.master_code} and its unused Master SKUs were deleted.` };
+}
+
+export async function deactivateMasterVariantPhoto(
+  db: Db,
+  input: { photoId: string; variantId: string; actorId: string; reason?: string | null }
+): Promise<MasterResult> {
+  if (!input.photoId) return { error: "Choose the photo to remove.", message: null };
+  const { data: photo, error } = await db
+    .from("inventory_master_variant_photos")
+    .select("id, master_variant_id, is_active, image_type")
+    .eq("id", input.photoId)
+    .maybeSingle();
+  if (error) return { error: explain(error, "Could not load the photo."), message: null };
+  if (!photo) return { error: "That photo no longer exists.", message: null };
+  if (input.variantId && photo.master_variant_id !== input.variantId) {
+    return { error: "That photo belongs to another Master SKU.", message: null };
+  }
+  if (!photo.is_active) return { error: null, message: "That photo is already removed." };
+
+  const { error: updateError } = await db
+    .from("inventory_master_variant_photos")
+    .update({
+      is_active: false,
+      update_reason: input.reason?.trim() || "Removed from the Master SKU screen",
+    })
+    .eq("id", input.photoId);
+  if (updateError) return { error: explain(updateError, "Could not remove the photo."), message: null };
+
+  return { error: null, message: `${photo.image_type} photo removed from the SKU album (file kept in private storage, history intact).` };
+}

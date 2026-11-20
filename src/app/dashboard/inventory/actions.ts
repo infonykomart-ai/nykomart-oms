@@ -16,6 +16,10 @@ import {
   completeManufacturing,
   completeProcessing,
   createChallan,
+  deleteCategorySettings,
+  deleteProduct,
+  deleteVariant,
+  deleteWarehouse,
   issueChallan,
   markChallanDispatched,
   moveQcStock,
@@ -426,6 +430,7 @@ export async function productAction(formData: FormData): Promise<void> {
     manufacturingEnabled: checked(formData, "manufacturing_enabled"),
     processingRequired: checked(formData, "processing_required"),
     minStockPcs: num(formData, "min_stock_pcs"),
+    active: checked(formData, "active"),
   });
 
   if (result.error) failed(target, result.error);
@@ -447,6 +452,7 @@ export async function variantAction(formData: FormData): Promise<void> {
     colour: str(formData, "colour"),
     lengthFt: numOrNull(formData, "length_ft"),
     widthFt: numOrNull(formData, "width_ft"),
+    active: checked(formData, "active"),
   });
 
   if (result.error) failed(target, result.error);
@@ -465,6 +471,7 @@ export async function warehouseAction(formData: FormData): Promise<void> {
     name: str(formData, "name"),
     code: str(formData, "code"),
     address: str(formData, "address") || null,
+    active: checked(formData, "active"),
   });
 
   if (result.error) failed(target, result.error);
@@ -490,4 +497,64 @@ export async function categorySettingsAction(formData: FormData): Promise<void> 
   if (result.error) failed(target, result.error);
   revalidatePath(BASE, "layout");
   done(target, "Category workflow saved.");
+}
+
+export async function productDeleteAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_settings");
+  const target = safeTarget(formData, `${BASE}/settings`);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deleteProduct(db, {
+    companyId: employee.currentCompanyId,
+    productId: str(formData, "product_id"),
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function variantDeleteAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_settings");
+  const target = safeTarget(formData, `${BASE}/settings`);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deleteVariant(db, {
+    companyId: employee.currentCompanyId,
+    variantId: str(formData, "variant_id"),
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function warehouseDeleteAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_settings");
+  const target = safeTarget(formData, `${BASE}/settings`);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deleteWarehouse(db, {
+    companyId: employee.currentCompanyId,
+    warehouseId: str(formData, "warehouse_id"),
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
+}
+
+export async function categoryWorkflowDeleteAction(formData: FormData): Promise<void> {
+  const employee = await requireCapability("inventory_settings");
+  const target = safeTarget(formData, `${BASE}/settings`);
+  const db = createServiceRoleClientUnchecked();
+
+  const result = await deleteCategorySettings(db, {
+    companyId: employee.currentCompanyId,
+    itemCategoryId: str(formData, "item_category_id"),
+  });
+
+  if (result.error) failed(target, result.error);
+  revalidatePath(BASE, "layout");
+  done(target, result.message!);
 }

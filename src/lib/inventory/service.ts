@@ -652,6 +652,7 @@ export async function saveProduct(
     manufacturingEnabled: boolean;
     processingRequired: boolean;
     minStockPcs: number;
+    active?: boolean;
   }
 ): Promise<InventoryResult<null>> {
   if (!input.name.trim() || !input.productCode.trim()) return { error: "Product name and code are required.", data: null };
@@ -665,6 +666,7 @@ export async function saveProduct(
     manufacturing_enabled: input.manufacturingEnabled,
     processing_required: input.processingRequired,
     min_stock_pcs: input.minStockPcs,
+    active: input.active ?? true,
     updated_at: new Date().toISOString(),
   };
   const query = input.productId
@@ -686,6 +688,7 @@ export async function saveVariant(
     colour: string;
     lengthFt: number | null;
     widthFt: number | null;
+    active?: boolean;
   }
 ): Promise<InventoryResult<null>> {
   if (!input.sku.trim()) return { error: "A variant SKU is required.", data: null };
@@ -706,6 +709,7 @@ export async function saveVariant(
     colour: input.colour.trim(),
     length_ft: input.lengthFt,
     width_ft: input.widthFt,
+    active: input.active ?? true,
   };
   const query = input.variantId
     ? db.from("inventory_product_variants").update(payload).eq("id", input.variantId)
@@ -717,7 +721,14 @@ export async function saveVariant(
 
 export async function saveWarehouse(
   db: InventoryDb,
-  input: { companyId: string; warehouseId?: string | null; name: string; code: string; address?: string | null }
+  input: {
+    companyId: string;
+    warehouseId?: string | null;
+    name: string;
+    code: string;
+    address?: string | null;
+    active?: boolean;
+  }
 ): Promise<InventoryResult<null>> {
   if (!input.name.trim() || !input.code.trim()) return { error: "Warehouse name and code are required.", data: null };
   const payload = {
@@ -725,6 +736,7 @@ export async function saveWarehouse(
     name: input.name.trim(),
     code: input.code.trim().toUpperCase(),
     address: input.address?.trim() || null,
+    active: input.active ?? true,
   };
   const query = input.warehouseId
     ? db.from("inventory_warehouses").update(payload).eq("id", input.warehouseId)
@@ -762,4 +774,193 @@ export async function saveCategorySettings(
   );
   if (error) return { error: friendlyDbError(error.message), data: null };
   return { error: null, data: null };
+}
+
+// ---------------------------------------------------------------------------
+// Settings: edit / remove
+// ---------------------------------------------------------------------------
+// A master data row that stock, ledger or order history already points at is
+// never hard-deleted: it is deactivated (reversible) and the screen is told
+// why. Only a row nothing references is physically removed.
+
+export type RemovalResult = { error: string | null; message: string | null; deleted: boolean };
+
+async function referenceCount(db: InventoryDb, table: string, column: string, id: string): Promise<number> {
+  const { count, error } = await db.from(table).select("id", { count: "exact", head: true }).eq(column, id);
+  // A table from a newer migration may not exist yet — that is zero references.
+  if (error) return 0;
+  return count ?? 0;
+}
+
+const VARIANT_REFERENCE_TABLES = [
+  "inventory_balances",
+  "inventory_ledger",
+  "inventory_reservations",
+  "inventory_adjustments",
+  "inventory_challan_lines",
+  "inventory_processing_jobs",
+  "inventory_manufacturing_jobs",
+  "inventory_purchase_requirements",
+  "inventory_stock_entries",
+];
+
+const WAREHOUSE_REFERENCE_TABLES = [
+  "inventory_balances",
+  "inventory_ledger",
+  "inventory_adjustments",
+  "inventory_challan_lines",
+  "inventory_processing_jobs",
+  "inventory_manufacturing_jobs",
+  "inventory_stock_entries",
+];
+
+async function variantIsReferenced(db: InventoryDb, variantId: string): Promise<boolean> {
+  for (const table of VARIANT_REFERENCE_TABLES) {
+    if ((await referenceCount(db, table, "variant_id", variantId)) > 0) return true;
+  }
+  return false;
+}
+
+async function warehouseIsReferenced(db: InventoryDb, warehouseId: string): Promise<boolean> {
+  for (const table of WAREHOUSE_REFERENCE_TABLES) {
+    if ((await referenceCount(db, table, "warehouse_id", warehouseId)) > 0) return true;
+  }
+  return false;
+}
+
+export async function deleteProduct(
+  db: InventoryDb,
+  input: { companyId: string; productId: string }
+): Promise<RemovalResult> {
+  const { data: product } = await db
+    .from("inventory_products")
+    .select("id, company_id, name, product_code")
+    .eq("id", input.productId)
+    .maybeSingle();
+  if (!product || product.company_id !== input.companyId) {
+    return { error: "Product not found for this company.", message: null, deleted: false };
+  }
+
+  const { data: variants } = await db
+    .from("inventory_product_variants")
+    .select("id, sku")
+    .eq("product_id", input.productId);
+
+  let kept = 0;
+  for (const variant of (variants ?? []) as { id: string; sku: string }[]) {
+    if (await variantIsReferenced(db, variant.id)) {
+      const { error } = await db
+        .from("inventory_product_variants")
+        .update({ active: false })
+        .eq("id", variant.id);
+      if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+      kept += 1;
+      continue;
+    }
+    const { error } = await db.from("inventory_product_variants").delete().eq("id", variant.id);
+    if (error) {
+      await db.from("inventory_product_variants").update({ active: false }).eq("id", variant.id);
+      kept += 1;
+    }
+  }
+
+  if (kept > 0) {
+    const { error } = await db
+      .from("inventory_products")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", input.productId);
+    if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+    return {
+      error: null,
+      message: `${product.product_code} deactivated: ${kept} variant(s) have stock or history and were kept (deactivated), not deleted.`,
+      deleted: false,
+    };
+  }
+
+  const { error } = await db.from("inventory_products").delete().eq("id", input.productId);
+  if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+  return { error: null, message: `${product.product_code} and its unused variants were deleted.`, deleted: true };
+}
+
+export async function deleteVariant(
+  db: InventoryDb,
+  input: { companyId: string; variantId: string }
+): Promise<RemovalResult> {
+  const { data: variant } = await db
+    .from("inventory_product_variants")
+    .select("id, sku, product_id")
+    .eq("id", input.variantId)
+    .maybeSingle();
+  if (!variant) return { error: "Variant not found.", message: null, deleted: false };
+
+  const { data: product } = await db
+    .from("inventory_products")
+    .select("id, company_id")
+    .eq("id", variant.product_id)
+    .maybeSingle();
+  if (!product || product.company_id !== input.companyId) {
+    return { error: "Variant not found for this company.", message: null, deleted: false };
+  }
+
+  if (await variantIsReferenced(db, input.variantId)) {
+    const { error } = await db
+      .from("inventory_product_variants")
+      .update({ active: false })
+      .eq("id", input.variantId);
+    if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+    return {
+      error: null,
+      message: `${variant.sku} deactivated: it has stock or history, so it is kept for the ledger instead of deleted.`,
+      deleted: false,
+    };
+  }
+
+  const { error } = await db.from("inventory_product_variants").delete().eq("id", input.variantId);
+  if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+  return { error: null, message: `${variant.sku} deleted.`, deleted: true };
+}
+
+export async function deleteWarehouse(
+  db: InventoryDb,
+  input: { companyId: string; warehouseId: string }
+): Promise<RemovalResult> {
+  const { data: warehouse } = await db
+    .from("inventory_warehouses")
+    .select("id, company_id, code, name")
+    .eq("id", input.warehouseId)
+    .maybeSingle();
+  if (!warehouse || warehouse.company_id !== input.companyId) {
+    return { error: "Warehouse not found for this company.", message: null, deleted: false };
+  }
+
+  if (await warehouseIsReferenced(db, input.warehouseId)) {
+    const { error } = await db
+      .from("inventory_warehouses")
+      .update({ active: false })
+      .eq("id", input.warehouseId);
+    if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+    return {
+      error: null,
+      message: `${warehouse.code} deactivated: stock or history already points at it, so the row is kept.`,
+      deleted: false,
+    };
+  }
+
+  const { error } = await db.from("inventory_warehouses").delete().eq("id", input.warehouseId);
+  if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+  return { error: null, message: `Warehouse ${warehouse.code} deleted.`, deleted: true };
+}
+
+export async function deleteCategorySettings(
+  db: InventoryDb,
+  input: { companyId: string; itemCategoryId: string }
+): Promise<RemovalResult> {
+  if (!input.itemCategoryId) return { error: "Choose an item category.", message: null, deleted: false };
+  const { error } = await db
+    .from("inventory_category_settings")
+    .delete()
+    .eq("company_id", input.companyId)
+    .eq("item_category_id", input.itemCategoryId);
+  if (error) return { error: friendlyDbError(error.message), message: null, deleted: false };
+  return { error: null, message: "Category workflow removed — the category itself and its products are untouched.", deleted: true };
 }
