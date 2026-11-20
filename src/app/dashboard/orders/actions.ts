@@ -782,55 +782,20 @@ export async function saveOrderRefundCore(
   }
   if (error) return { error: `Failed to save refund: ${error.message}`, success: null };
 
-  // Inventory — every processed return/refund puts the item back into
-  // sellable stock. Originally this only fired for the "order placed ->
-  // cancelled -> refunded, but a Purchase entry was already made for it"
-  // orphaned-purchase case (Pending item 4), gated on a purchase_bills row
-  // existing for this order. Widened: restock now runs unconditionally on
-  // every refund. Qty restocked is still the purchased qty when a
-  // purchase_bills row exists (the amount actually paid for and sitting in
-  // hand, same as before); otherwise it falls back to the order's own qty
-  // (the amount actually returned). There's no "is this item still
-  // sellable" signal anywhere in the schema (no damaged/condition flag), so
-  // — per the decided scope — this restocks unconditionally rather than
-  // trying to infer sellability.
-  const { data: purchases } = await supabase.from("purchase_bills").select("qty").eq("order_id", order.id);
-  const purchasedQty = (purchases ?? []).reduce((sum, p) => sum + Number(p.qty || 0), 0);
-  const restockQty = purchasedQty > 0 ? purchasedQty : Number(order.qty || 0);
-  if (restockQty > 0) {
-    const skuLabel = order.sku_label ?? "";
-    const sizeLabel = order.size_label ?? "";
-    const { data: existingStock } = await supabase
-      .from("finished_stock")
-      .select("id, qty")
-      .eq("item_category_id", order.item_category_id)
-      .eq("sku_label", skuLabel)
-      .eq("size_label", sizeLabel)
-      .maybeSingle();
-
-    if (existingStock) {
-      await supabase
-        .from("finished_stock")
-        .update({ qty: existingStock.qty + restockQty, updated_at: new Date().toISOString() })
-        .eq("id", existingStock.id);
-    } else {
-      await supabase.from("finished_stock").insert({
-        item_category_id: order.item_category_id,
-        sku_label: skuLabel,
-        size_label: sizeLabel,
-        qty: restockQty,
-      });
-    }
-    await supabase.from("finished_stock_movements").insert({
-      item_category_id: order.item_category_id,
-      sku_label: skuLabel,
-      size_label: sizeLabel,
-      qty_change: restockQty,
-      reason: "auto_restock_return_refund",
-      order_id: order.id,
-      entry_by_employee_id: employee.id,
-    });
-  }
+  // 2026-11-20b — RETURN STOCK RULE (owner-confirmed): a marketplace return
+  // must NEVER automatically increase sellable/physical stock. NYKO MART does
+  // not generally ship USA returns back to India, so the old unconditional
+  // `finished_stock` restock here (purchased qty, else order qty) created
+  // phantom stock for goods that may never have come back.
+  //
+  // The restock is therefore REMOVED. A return now creates/updates a row in
+  // `return_settlements` (Inventory → Return Settlement). Only an approved
+  // "Return Received Locally" — with actual returned-product photos and a
+  // physical receipt confirmation — may add stock, through the new
+  // inventory_stock_entries approval path.
+  //
+  // `finished_stock` itself is untouched (read-only legacy view keeps working);
+  // this only stops writing to it from the refund path.
 
   // 2026-09-05 — AI Companion: return/refund is one of the "zyada events"
   // (returns, shipment, attendance, etc.) the user asked to wire in

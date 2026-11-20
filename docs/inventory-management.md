@@ -162,6 +162,53 @@ ledger entries. The dashboard surfaces the count as an alert.
 - Cancellation after dispatch is refused.
 - Both PCS and SQ FT are checked on every movement.
 
+## Phase A — Master SKU foundation (2026-11-20b)
+
+Run **`db/2026-11-20b-inventory-master-sku-foundation.sql`** once (also folded
+into `db/schema.sql` as Section 34). It is additive and re-runnable; the existing
+balances, ledger, reservations, challans and their functions are untouched.
+
+What it adds:
+
+- `inventory_master_products` — cross-company physical design identity.
+- `inventory_master_variants` — the permanent **Master SKU** per physical
+  variant (size + colour + material/construction through the master product).
+  Size labels/units are copied exactly; nothing is converted and measurement
+  settings are never consulted.
+- `inventory_store_sku_map` + `..._history` — many marketplace SKUs → one
+  master variant, with `UNIQUE (store_id, store_sku)` preventing conflicting
+  mappings and full history on re-point/merge.
+- `inventory_stock_entries`, `inventory_entry_photos`, `inventory_photo_audit` —
+  physical receipt batches with mandatory-photo support, photo categories and
+  replacement history (old photos are deactivated, never overwritten).
+- `inventory_stock_corrections` — previous/corrected quantity, difference,
+  reason and approval; a correction is never a silent overwrite.
+- `inventory_order_matches` + `inventory_reviews` — one live match per order row
+  and the eight review decisions.
+- `return_settlements` — one settlement per returned order. Seven of the eight
+  settlement types have zero stock impact; only an approved
+  `RETURN_RECEIVED_LOCALLY` may create a stock entry.
+- `inventory_master_availability(uuid)` — READY minus ACTIVE reservations
+  aggregated across every company/store variant of one master variant.
+- Private `inventory-photos` storage bucket (served through an authenticated
+  proxy, never a public URL).
+
+New capabilities: `inventory_master_admin`, `inventory_photo_upload`,
+`inventory_review`, `inventory_stock_approve`, `inventory_central_allocate`,
+`inventory_return_settle`.
+
+Backfill: one master product per existing distinct `product_code`, one master
+variant per distinct size/colour, every existing variant linked, and store-SKU
+mappings created only where order history proves them. Ambiguous SKUs are left
+for the mapping screen — never guessed.
+
+**Return rule change:** refunds no longer auto-increase legacy `finished_stock`.
+Returned goods affect stock only after a `RETURN_RECEIVED_LOCALLY` settlement is
+approved with photo evidence.
+
+Next phases: mapping/master UI, stock entry + photo UI, order matching/review,
+return settlement screens, dashboard/permissions.
+
 ## Known gaps / next steps
 
 - **Purchase orders are still not modelled.** Requirements (what to buy) are

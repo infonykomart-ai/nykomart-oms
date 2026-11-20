@@ -42,6 +42,21 @@ export type SchemaCheck = {
  */
 export const SCHEMA_CHECKS: SchemaCheck[] = [
   {
+    // 2026-11-20b — Inventory centralization foundation (Master SKU, store SKU
+    // mappings, physical stock entries with photos, reviews, return
+    // settlements). Without it the new master/mapping/photo/settlement screens
+    // have no tables; the existing inventory engine keeps working untouched.
+    file: "2026-11-20b-inventory-master-sku-foundation.sql",
+    title: "Inventory centralization — Master SKU, store SKU mapping, stock photos, reviews, return settlements",
+    probe: { table: "inventory_master_variants", column: "master_sku" },
+    features: [
+      "No Master SKU exists, so the same physical product cannot be linked across companies/stores",
+      "Store SKU mapping, mandatory stock photos, stock entries and photo history are unavailable",
+      "Order-vs-stock photo review has nowhere to record a decision",
+      "Return settlement has no table — returned orders simply cannot record what physically happened",
+    ],
+  },
+  {
     // 2026-11-20 — WhatsApp "REF PHOTO <order no>" automation. Without the
     // table the automatic/manual reference-photo send refuses to run (so it
     // can never bypass its duplicate guard); the rest of the order page is

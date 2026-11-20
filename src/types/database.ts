@@ -7886,6 +7886,58 @@ export type Database = {
           },
         ];
       };
+      // 2026-11-20b — inventory master layer (Phase A). Only the probe table is
+      // typed here because the inventory module reads through the unchecked
+      // service-role client; this entry exists so Schema/Migration Status can
+      // probe it without weakening the probe type.
+      inventory_master_variants: {
+        Row: {
+          id: string;
+          master_product_id: string;
+          master_sku: string;
+          size_label: string;
+          size_unit: string | null;
+          length_value: number | null;
+          width_value: number | null;
+          colour: string;
+          variant_attributes: Json;
+          active: boolean;
+          created_by_employee_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          master_product_id: string;
+          master_sku: string;
+          size_label?: string;
+          size_unit?: string | null;
+          length_value?: number | null;
+          width_value?: number | null;
+          colour?: string;
+          variant_attributes?: Json;
+          active?: boolean;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          master_product_id?: string;
+          master_sku?: string;
+          size_label?: string;
+          size_unit?: string | null;
+          length_value?: number | null;
+          width_value?: number | null;
+          colour?: string;
+          variant_attributes?: Json;
+          active?: boolean;
+          created_by_employee_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       item_categories: {
         Row: {
           id: string;
