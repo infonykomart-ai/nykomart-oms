@@ -360,6 +360,9 @@ export async function saveStoreSkuMapping(
     storeSku: string;
     masterVariantId: string;
     marketplaceListingId?: string | null;
+    // Set when the row's own "Update" form submitted, so the write targets the
+    // exact mapping the operator saw and not just a matching store + SKU.
+    mappingId?: string | null;
     actorId: string;
   }
 ): Promise<MasterResult> {
@@ -390,13 +393,39 @@ export async function saveStoreSkuMapping(
     return { error: "That Master SKU is inactive or merged — map to the surviving Master SKU.", message: null };
   }
 
-  const { data: existing, error: existingError } = await db
-    .from("inventory_store_sku_map")
-    .select("id, master_variant_id, is_active")
-    .eq("store_id", input.storeId)
-    .eq("store_sku", storeSku)
-    .maybeSingle();
-  if (existingError) return { error: explain(existingError, "Could not check the existing mapping."), message: null };
+  type ExistingMapping = { id: string; master_variant_id: string; is_active: boolean };
+  let existing: ExistingMapping | null = null;
+
+  if (input.mappingId) {
+    // Row edit: re-read the row this form came from. If it moved, was
+    // deactivated or now holds another store SKU, the operator must choose the
+    // Master SKU again instead of having the write land somewhere unexpected.
+    const { data: target, error: targetError } = await db
+      .from("inventory_store_sku_map")
+      .select("id, company_id, store_id, store_sku, master_variant_id, is_active")
+      .eq("id", input.mappingId)
+      .maybeSingle();
+    if (targetError) return { error: explain(targetError, "Could not load the store mapping."), message: null };
+    if (!target) {
+      return { error: "That store mapping no longer exists — reload the Master SKU screen and map it again.", message: null };
+    }
+    if (target.company_id !== input.companyId || target.store_id !== input.storeId || target.store_sku !== storeSku) {
+      return { error: "That store mapping changed while this page was open — reload and choose the Master SKU again.", message: null };
+    }
+    if (!target.is_active) {
+      return { error: `${storeSku} was deactivated while this page was open — map it again from the "Store update" form above.`, message: null };
+    }
+    existing = target as ExistingMapping;
+  } else {
+    const { data: found, error: existingError } = await db
+      .from("inventory_store_sku_map")
+      .select("id, master_variant_id, is_active")
+      .eq("store_id", input.storeId)
+      .eq("store_sku", storeSku)
+      .maybeSingle();
+    if (existingError) return { error: explain(existingError, "Could not check the existing mapping."), message: null };
+    existing = (found as ExistingMapping | null) ?? null;
+  }
 
   const listing = input.marketplaceListingId?.trim() || null;
 

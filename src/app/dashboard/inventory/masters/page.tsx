@@ -13,6 +13,7 @@ import {
   mergeMasterVariantsAction,
   storeSkuMappingAction,
 } from "../master-actions";
+import { ConfirmSubmitButton } from "../confirm-submit";
 import { EmptyRow, InventoryTabs, MessageBanner, PageHeading, Stat, cardClass, inputClass, labelClass, td, th } from "../ui";
 
 const PATH = "/dashboard/inventory/masters";
@@ -282,7 +283,12 @@ export default async function MasterSkuPage({
                       <input type="hidden" name="return_to" value={PATH} />
                       <input type="hidden" name="photo_id" value={photo.id} />
                       <input type="hidden" name="variant_id" value={photo.master_variant_id} />
-                      <button type="submit" className="text-xs font-medium text-rose-600 underline">Remove</button>
+                      <ConfirmSubmitButton
+                        message={`Remove this ${photo.image_type} photo from ${masterSkuById.get(photo.master_variant_id) ?? "the SKU"}? The file stays in private storage and in history.`}
+                        className="text-xs font-medium text-rose-600 underline"
+                      >
+                        Remove
+                      </ConfirmSubmitButton>
                     </form>
                   )}
                 </td>
@@ -298,6 +304,10 @@ export default async function MasterSkuPage({
         <p className="mt-1 text-xs text-slate-500">
           Same Master SKU, different store SKU/listing? Update it yahin se: store + store SKU choose karein, naya Master SKU ya listing ID save karein.
           Re-pointing writes history and never deletes the old mapping.
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          Row ka Update button dabane par Master SKU khud select nahi hota — aapko list me se explicitly choose karna padta hai, warna save hi nahi hoga.
+          Jis row ka current Master SKU inactive/merged hai wo row read-only hai (galat SKU par silent re-point na ho), use upar wale form se map karein.
         </p>
         {canEdit ? (
           <form action={storeSkuMappingAction} className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -352,25 +362,62 @@ export default async function MasterSkuPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {mappingData.mappings.map((mapping) => (
+              {mappingData.mappings.map((mapping) => {
+                // 2026-11-20e — the row's select must never pre-select a Master
+                // SKU it does not list. When the current one is inactive, merged
+                // or missing from the catalogue, the browser falls back to the
+                // first option and a save would silently re-point the mapping.
+                // Those rows are read-only and the fixed form above re-maps them.
+                const currentSelectable = activeVariants.some((v) => v.id === mapping.master_variant_id);
+                const rowEditable = canEdit && mapping.is_active && currentSelectable;
+                return (
                 <tr key={mapping.id}>
                   <td className={td()}>{mapping.companyName} / {mapping.storeName}</td>
                   <td className={td("font-mono text-[11px] font-semibold")}>{mapping.store_sku}</td>
-                  <td className={td()}>
-                    {canEdit && mapping.is_active ? (
-                      <form action={storeSkuMappingAction} className="flex items-center gap-2">
-                        <input type="hidden" name="return_to" value={PATH} />
-                        <input type="hidden" name="company_id" value={mapping.company_id} />
-                        <input type="hidden" name="store_id" value={mapping.store_id} />
-                        <input type="hidden" name="store_sku" value={mapping.store_sku} />
-                        <select name="master_variant_id" defaultValue={mapping.master_variant_id} className={inputClass}>
-                          {activeVariants.map((v) => <option key={v.id} value={v.id}>{v.master_sku}</option>)}
-                        </select>
-                        <input name="marketplace_listing_id" defaultValue={mapping.marketplace_listing_id ?? ""} placeholder="Listing" className={inputClass} />
-                        <button type="submit" className="whitespace-nowrap rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Update</button>
-                      </form>
+                  <td className={td("whitespace-normal")}>
+                    {rowEditable ? (
+                      <details className="min-w-[250px]">
+                        <summary className="cursor-pointer text-[11px] font-semibold text-slate-700 underline">
+                          Update — current {mapping.masterSku}
+                        </summary>
+                        <form action={storeSkuMappingAction} className="mt-2 grid gap-1.5">
+                          <input type="hidden" name="return_to" value={PATH} />
+                          <input type="hidden" name="mapping_id" value={mapping.id} />
+                          <input type="hidden" name="company_id" value={mapping.company_id} />
+                          <input type="hidden" name="store_id" value={mapping.store_id} />
+                          <input type="hidden" name="store_sku" value={mapping.store_sku} />
+                          <label className="text-[10px] font-medium text-slate-500" htmlFor={`map_master_${mapping.id}`}>
+                            Master SKU — choose explicitly
+                          </label>
+                          <select
+                            id={`map_master_${mapping.id}`}
+                            name="master_variant_id"
+                            required
+                            defaultValue=""
+                            className={inputClass}
+                          >
+                            <option value="" disabled>Choose Master SKU</option>
+                            {activeVariants.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.master_sku}{v.id === mapping.master_variant_id ? " (current)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <input name="marketplace_listing_id" defaultValue={mapping.marketplace_listing_id ?? ""} placeholder="Listing" className={inputClass} />
+                          <button type="submit" className="w-fit whitespace-nowrap rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                            Save mapping
+                          </button>
+                        </form>
+                      </details>
                     ) : (
-                      <span className="font-mono text-[11px]">{mapping.masterSku}</span>
+                      <div>
+                        <span className="font-mono text-[11px]">{mapping.masterSku}</span>
+                        {canEdit && mapping.is_active && (
+                          <div className="mt-1 max-w-[260px] whitespace-normal text-[10px] text-amber-600">
+                            Current Master SKU is inactive or merged — this row is read-only on purpose. Map the store SKU again from the form above.
+                          </div>
+                        )}
+                      </div>
                     )}
                   </td>
                   <td className={td("text-slate-500")}>{mapping.marketplace_listing_id || "—"}</td>
@@ -391,7 +438,8 @@ export default async function MasterSkuPage({
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {mappingData.mappings.length === 0 && <EmptyRow colSpan={6} message="No store SKU mapped yet — map the first one above." />}
             </tbody>
           </table>
@@ -457,7 +505,12 @@ export default async function MasterSkuPage({
                         <form action={masterVariantDeleteAction}>
                           <input type="hidden" name="return_to" value={PATH} />
                           <input type="hidden" name="variant_id" value={variant.id} />
-                          <button type="submit" className="text-xs font-medium text-rose-600 underline">Delete</button>
+                          <ConfirmSubmitButton
+                            message={`Delete Master SKU ${variant.master_sku}? If any store mapping or stock history points at it, it is only deactivated and stays in history.`}
+                            className="text-xs font-medium text-rose-600 underline"
+                          >
+                            Delete
+                          </ConfirmSubmitButton>
                         </form>
                       </span>
                     )}
@@ -503,7 +556,12 @@ export default async function MasterSkuPage({
                           <form action={masterProductDeleteAction}>
                             <input type="hidden" name="return_to" value={PATH} />
                             <input type="hidden" name="product_id" value={product.id} />
-                            <button type="submit" className="text-xs font-medium text-rose-600 underline">Delete</button>
+                            <ConfirmSubmitButton
+                              message={`Delete master product ${product.master_code}? Its unused Master SKUs are deleted too; any SKU that stores or stock point at is only deactivated.`}
+                              className="text-xs font-medium text-rose-600 underline"
+                            >
+                              Delete
+                            </ConfirmSubmitButton>
                           </form>
                         </span>
                       )}

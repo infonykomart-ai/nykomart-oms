@@ -12,6 +12,7 @@ import {
   warehouseAction,
   warehouseDeleteAction,
 } from "../actions";
+import { ConfirmSubmitButton } from "../confirm-submit";
 import { EmptyRow, InventoryTabs, MessageBanner, PageHeading, cardClass, inputClass, labelClass, td, th } from "../ui";
 
 const PATH = "/dashboard/inventory/settings";
@@ -121,7 +122,12 @@ export default async function InventorySettingsPage({
                             <form action={categoryWorkflowDeleteAction}>
                               <input type="hidden" name="return_to" value={PATH} />
                               <input type="hidden" name="item_category_id" value={c.id} />
-                              <button type="submit" className="font-medium text-rose-600 underline">Delete</button>
+                              <ConfirmSubmitButton
+                                message={`Delete the workflow settings for ${c.name}? Orders already using this category keep their data.`}
+                                className="font-medium text-rose-600 underline"
+                              >
+                                Delete
+                              </ConfirmSubmitButton>
                             </form>
                           </span>
                         )}
@@ -165,7 +171,12 @@ export default async function InventorySettingsPage({
                     <form action={warehouseDeleteAction}>
                       <input type="hidden" name="return_to" value={PATH} />
                       <input type="hidden" name="warehouse_id" value={w.id} />
-                      <button type="submit" className="font-medium text-rose-600 underline">Delete</button>
+                      <ConfirmSubmitButton
+                        message={`Delete warehouse ${w.code} — ${w.name}? If any stock or ledger entry uses it, it is only deactivated.`}
+                        className="font-medium text-rose-600 underline"
+                      >
+                        Delete
+                      </ConfirmSubmitButton>
                     </form>
                   </span>
                 )}
@@ -226,7 +237,12 @@ export default async function InventorySettingsPage({
                           <form action={productDeleteAction}>
                             <input type="hidden" name="return_to" value={PATH} />
                             <input type="hidden" name="product_id" value={p.id} />
-                            <button type="submit" className="font-medium text-rose-600 underline">Delete</button>
+                            <ConfirmSubmitButton
+                              message={`Delete product ${p.product_code} — ${p.name}? If orders, stock or challans point at it, it is only deactivated.`}
+                              className="font-medium text-rose-600 underline"
+                            >
+                              Delete
+                            </ConfirmSubmitButton>
                           </form>
                         </span>
                       )}
@@ -285,7 +301,12 @@ export default async function InventorySettingsPage({
                           <form action={variantDeleteAction}>
                             <input type="hidden" name="return_to" value={PATH} />
                             <input type="hidden" name="variant_id" value={v.id} />
-                            <button type="submit" className="font-medium text-rose-600 underline">Delete</button>
+                            <ConfirmSubmitButton
+                              message={`Delete variant ${v.sku}${v.size_label ? ` (${v.size_label}${v.colour ? ` / ${v.colour}` : ""})` : ""}? If stock or orders point at it, it is only deactivated.`}
+                              className="font-medium text-rose-600 underline"
+                            >
+                              Delete
+                            </ConfirmSubmitButton>
                           </form>
                         </span>
                       )}

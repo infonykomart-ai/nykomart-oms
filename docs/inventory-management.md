@@ -285,6 +285,20 @@ same Inventory Management section:
   listing ID, and update. Re-pointing writes `inventory_store_sku_map_history`;
   Deactivate keeps the old mapping as history. Saving an inactive mapping again
   reactivates it.
+- **Row update is explicit, never implicit.** The row's Update form opens with
+  the Master SKU select empty and `required`, so a save always carries a Master
+  SKU the operator chose on purpose. A row whose current Master SKU is inactive,
+  merged or missing from the catalogue is read-only (with a note) — it cannot be
+  saved from the row, because the select would otherwise fall back to its first
+  option and silently re-point the store SKU. Re-map such rows from the fixed
+  **Store update** form above. The row form also posts its `mapping_id`; if that
+  mapping was re-pointed, deactivated or deleted in another tab meanwhile, the
+  save is refused with a reload message instead of writing to a stale target.
+- **Delete asks first.** Every Delete (master product, Master SKU, product,
+  variant, warehouse, category workflow) and the photo Remove button shows a
+  confirmation naming the record before the server action runs. The action still
+  re-checks the capability and still deactivates instead of deleting when
+  anything references the row.
 
 No schema change: these use the existing `active` / `is_active` columns and the
 same capability gates (`inventory_settings` for master data,

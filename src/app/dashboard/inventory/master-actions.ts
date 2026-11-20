@@ -199,6 +199,7 @@ export async function storeSkuMappingAction(formData: FormData): Promise<void> {
     storeSku: str(formData, "store_sku"),
     masterVariantId: str(formData, "master_variant_id"),
     marketplaceListingId: str(formData, "marketplace_listing_id") || null,
+    mappingId: str(formData, "mapping_id") || null,
     actorId: employee.id,
   });
 
