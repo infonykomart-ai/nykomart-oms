@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDailyAdReport, isoDaysBack, type DailyAdOrderRow, type DailyAdSpendRow } from "./daily-ad-report";
+import {
+  buildDailyAdReport,
+  buildStoreTotals,
+  isoDaysBack,
+  type DailyAdOrderRow,
+  type DailyAdSpendRow,
+} from "./daily-ad-report";
 
 const today = "2026-11-21";
 
@@ -87,6 +93,33 @@ test("Amazon splits ad metrics and organic orders by marketplace country", () =>
   assert.equal(ca.totals.clicks, 0);
   assert.equal(ca.totals.orderAmountUsd, 20);
   assert.equal(ca.totals.visits, 0);
+});
+
+test("the all-stores total adds each store exactly once and re-derives CTR", () => {
+  const spend: DailyAdSpendRow[] = [
+    { store_id: "s1", spend_date: "2026-11-20", clicks: 5, impressions: 500, spend_usd: 10 },
+    { store_id: "s2", spend_date: "2026-11-20", clicks: 5, impressions: 500, spend_usd: 20 },
+  ];
+  const orders: DailyAdOrderRow[] = [
+    order({ id: "a", store_id: "s1", buyer_country: null }),
+    order({ id: "b", store_id: "s2", buyer_country: null }),
+  ];
+  const report = buildDailyAdReport({
+    stores: [
+      { id: "s1", name: "Amazon USA" },
+      { id: "s2", name: "eBay NYKO" },
+    ],
+    spendRows: spend,
+    orderRows: orders,
+    today,
+  });
+  const { perStore, grand } = buildStoreTotals(report);
+  assert.equal(perStore.length, 2);
+  assert.equal(grand.orders, 2);
+  assert.equal(grand.orderAmountUsd, 200);
+  assert.equal(grand.clicks, 10);
+  assert.equal(grand.spendUsd, 30);
+  assert.equal(grand.ctr, 1, "10 clicks / 1000 views");
 });
 
 test("Etsy monthly revenue is shown, never summed across daily entries", () => {

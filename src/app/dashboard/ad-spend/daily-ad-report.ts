@@ -166,7 +166,9 @@ function makeRow(date: string, spend: SpendAgg, order: OrderAgg, channel: StoreC
   };
 }
 
-function sumRows(rows: DailyAdReportRow[]): Omit<DailyAdReportRow, "date"> {
+export type DailyAdTotals = Omit<DailyAdReportRow, "date">;
+
+function sumRows(rows: DailyAdReportRow[]): DailyAdTotals {
   const totals = {
     totalOrders: 0,
     totalSpendUsd: 0,
@@ -199,6 +201,69 @@ function sumRows(rows: DailyAdReportRow[]): Omit<DailyAdReportRow, "date"> {
   }
   totals.ctr = ctrPct(totals.clicks, totals.views);
   return totals;
+}
+
+/** Add up several totals blocks (Amazon countries of one store, or many
+ *  stores) without ever summing a monthly figure twice: revenue is the last
+ *  recorded value, CTR is re-derived from the summed clicks/views. */
+export function combineTotals(list: DailyAdTotals[]): DailyAdTotals {
+  const out: DailyAdTotals = {
+    totalOrders: 0,
+    totalSpendUsd: 0,
+    visits: 0,
+    orders: 0,
+    orderAmountUsd: 0,
+    views: 0,
+    clicks: 0,
+    ctr: 0,
+    budgetUsd: 0,
+    spendUsd: 0,
+    revenueUsd: 0,
+    adOrders: 0,
+    hasData: list.some((t) => t.hasData),
+  };
+  for (const t of list) {
+    out.totalOrders += t.totalOrders;
+    out.totalSpendUsd += t.totalSpendUsd;
+    out.visits += t.visits;
+    out.orders += t.orders;
+    out.orderAmountUsd += t.orderAmountUsd;
+    out.views += t.views;
+    out.clicks += t.clicks;
+    out.budgetUsd += t.budgetUsd;
+    out.spendUsd += t.spendUsd;
+    out.adOrders += t.adOrders;
+    if (t.revenueUsd !== 0) out.revenueUsd = t.revenueUsd;
+  }
+  out.ctr = ctrPct(out.clicks, out.views);
+  return out;
+}
+
+/** One line per store for the "all stores + total" view (admin / MD). */
+export type DailyAdStoreTotal = {
+  storeId: string;
+  storeName: string;
+  channel: StoreChannel;
+  totals: DailyAdTotals;
+};
+
+/**
+ * The all-stores summary: each store's 30-day total plus the grand total.
+ * Stores with no data in the window are left out (they would only add zeros).
+ */
+export function buildStoreTotals(report: DailyAdReportStore[]): {
+  perStore: DailyAdStoreTotal[];
+  grand: DailyAdTotals;
+} {
+  const perStore = report
+    .filter((s) => s.groups.length > 0)
+    .map((s) => ({
+      storeId: s.storeId,
+      storeName: s.storeName,
+      channel: s.channel,
+      totals: combineTotals(s.groups.map((g) => g.totals)),
+    }));
+  return { perStore, grand: combineTotals(perStore.map((s) => s.totals)) };
 }
 
 /**

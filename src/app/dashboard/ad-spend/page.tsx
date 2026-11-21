@@ -3,6 +3,10 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { AdSpendEntrySection } from "./ad-spend-entry-section";
 import { AdSpendReportTable } from "./ad-spend-report-table";
+// 2026-11-21 (part 2) — "DAILY ENTRY VALE SECTION SE NIKAL KAR ALAG TAB
+// BANAO ... DAILY ORDER SHEET KE RIGHT ME": the daily advertisement sheet is
+// its own fourth tab now, scoped to the same Store Access as the other three.
+import { DailyAdReport } from "./daily-ad-report-table";
 // 2026-10-15 — the Report tab's math (Amazon country split + statement
 // verification) lives in its own module, same as the Daily Order Sheet's
 // daily-sheet-stats.ts: page.tsx fetches/scopes, the module decides numbers.
@@ -58,7 +62,7 @@ type AdSpendListRow = {
 // db/2026-08-08-store-ad-spend.sql). Three tabs: Entry (today's/any day's
 // Budget+Spend per store), Report (Daily master + Monthly roll-up, matching
 // the old system's SUMMERY2026.html / MONTHLY REPORT.html shapes) and the
-// Daily Order Sheet.
+// Daily Order Sheet, and (2026-11-21) the Daily Ad Report.
 //
 // 2026-10-15 — two user-requested additions, both scoped exactly as asked:
 //  (1) an AMAZON-only Country dimension — "AMAZON ME ALAG ALAG COUNTRY KE
@@ -80,7 +84,8 @@ export default async function AdSpendPage({
   const supabase = createServiceRoleClient();
   const sp = await searchParams;
 
-  const tab = sp.tab === "report" ? "report" : sp.tab === "sheet" ? "sheet" : "entry";
+  const tab =
+    sp.tab === "report" ? "report" : sp.tab === "sheet" ? "sheet" : sp.tab === "daily" ? "daily" : "entry";
   const companyFilter = typeof sp.company === "string" && sp.company ? sp.company : "";
   // 2026-11-21 — "store wise filter karne ka option nahi hai total filter ke
   // according update ho": an optional store filter. Applied HERE (server side)
@@ -168,10 +173,13 @@ export default async function AdSpendPage({
     enteredAt: string;
   }[] = [];
   // 2026-11-21 — the channel chart's history (last 14 days) and the Etsy
-  // monthly spend % (this month's summed spend) share this read. The daily
-  // advertisement report reads the same rows over 30 days.
+  // monthly spend % (this month's summed spend) share this read.
   let channelRows: DailyAdSpendRow[] = [];
-  let reportOrders: DailyAdOrderRow[] = [];
+  // The Daily Ad Report tab's own 30-day read (spend rows + our orders),
+  // scoped exactly like every other tab: the login's stores only, unless the
+  // login holds ad_spend_report_all (MD/Admin/Finance) and therefore sees all.
+  let dailySpendRows: DailyAdSpendRow[] = [];
+  let dailyOrderRows: DailyAdOrderRow[] = [];
   if (tab === "entry") {
     const allStoreIds = (stores ?? []).map((s) => s.id);
     if (allStoreIds.length > 0) {
@@ -185,19 +193,12 @@ export default async function AdSpendPage({
       const from = chartFrom < monthFrom ? chartFrom : monthFrom;
       // "*" so the optional metric columns simply come back when their
       // migration has been run, and are absent (→ null) before that.
-      const [{ data: historyData }, { data: reportOrderData }] = await Promise.all([
-        supabase.from("store_ad_spend").select("*").in("store_id", allStoreIds).gte("spend_date", from),
-        // Organic side of the daily advertisement report: same columns and
-        // same PO-date rule the Daily Order Sheet uses (the report module
-        // applies the rule). Only the login's own stores are ever read.
-        supabase
-          .from("orders")
-          .select("id, ref_no, store_id, order_date, po_date, order_value_usd, buyer_country, destination_country")
-          .in("store_id", allStoreIds)
-          .or(`po_date.gte.${from},order_date.gte.${from}`),
-      ]);
+      const { data: historyData } = await supabase
+        .from("store_ad_spend")
+        .select("*")
+        .in("store_id", allStoreIds)
+        .gte("spend_date", from);
       channelRows = (historyData ?? []) as unknown as DailyAdSpendRow[];
-      reportOrders = (reportOrderData ?? []) as unknown as DailyAdOrderRow[];
     }
     // 2026-10-15 — country_code rides along so an Amazon day's rows
     // are told apart in this list (see the entry form).
@@ -243,6 +244,28 @@ export default async function AdSpendPage({
       etsyAdClicks: typeof r.etsy_ad_clicks === "number" ? r.etsy_ad_clicks : null,
       enteredAt: r.updated_at,
     }));
+  }
+
+  if (tab === "daily") {
+    const allStoreIds = stores.map((s) => s.id);
+    if (allStoreIds.length > 0) {
+      const today = todayIST();
+      const fromDate = new Date(`${today}T00:00:00Z`);
+      fromDate.setUTCDate(fromDate.getUTCDate() - 29);
+      const from = fromDate.toISOString().slice(0, 10);
+      const [{ data: dailySpend }, { data: dailyOrders }] = await Promise.all([
+        supabase.from("store_ad_spend").select("*").in("store_id", allStoreIds).gte("spend_date", from),
+        // Organic side of the sheet: same columns and same PO-date rule the
+        // Daily Order Sheet uses (the report module applies the rule).
+        supabase
+          .from("orders")
+          .select("id, ref_no, store_id, order_date, po_date, order_value_usd, buyer_country, destination_country")
+          .in("store_id", allStoreIds)
+          .or(`po_date.gte.${from},order_date.gte.${from}`),
+      ]);
+      dailySpendRows = (dailySpend ?? []) as unknown as DailyAdSpendRow[];
+      dailyOrderRows = (dailyOrders ?? []) as unknown as DailyAdOrderRow[];
+    }
   }
 
   if (tab === "report" && relevantStoreIds.length > 0) {
@@ -400,18 +423,28 @@ export default async function AdSpendPage({
         <Link href="/dashboard/ad-spend?tab=entry" className={tabClass(tab === "entry")}>Daily Entry</Link>
         <Link href="/dashboard/ad-spend?tab=report" className={tabClass(tab === "report")}>Report</Link>
         <Link href="/dashboard/ad-spend?tab=sheet" className={tabClass(tab === "sheet")}>🧾 Daily Order Sheet</Link>
+        <Link href="/dashboard/ad-spend?tab=daily" className={tabClass(tab === "daily")}>
+          📋 Daily Ad Report
+        </Link>
       </div>
 
       {tab === "entry" ? (
         <AdSpendEntrySection
-        companies={visibleCompanies}
-        stores={stores ?? []}
-        recentEntries={recentEntries}
-        channelRows={channelRows}
-        orderRows={reportOrders}
-        today={todayIST()}
-        month={defaultMonth}
-      />
+          companies={visibleCompanies}
+          stores={stores ?? []}
+          recentEntries={recentEntries}
+          channelRows={channelRows}
+          month={defaultMonth}
+        />
+      ) : tab === "daily" ? (
+        <DailyAdReport
+          stores={stores ?? []}
+          spendRows={dailySpendRows}
+          orderRows={dailyOrderRows}
+          today={todayIST()}
+          canSeeAllStores={canSeeAllStores}
+          storeAccessHref={storeAccessHref}
+        />
       ) : tab === "sheet" ? (
         <DailyOrderSheet
           companies={visibleCompanies}
