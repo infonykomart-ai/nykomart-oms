@@ -276,8 +276,8 @@ function CornerTotal({ grand }: { grand: DailyAdTotals }) {
   return (
     <div className="rounded-xl border-2 border-slate-900 bg-slate-900 p-3 text-white print:border-slate-300 print:bg-white print:text-slate-900">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-bold uppercase tracking-wide">Total — sabhi stores</h3>
-        <span className="text-[10px] opacity-70 print:hidden">selected range ka total</span>
+        <h3 className="text-xs font-bold uppercase tracking-wide">Total — all stores</h3>
+        <span className="text-[10px] opacity-70 print:hidden">selected range</span>
       </div>
       <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 sm:grid-cols-4">
         {cells.map((c) => (
@@ -318,7 +318,7 @@ function PacingCard({ stores }: { stores: DailyAdReportStore[] }) {
         Budget <b>{money(budget)}</b> · spent <b>{money(spend)}</b> · expected by now <b>{money(expected)}</b> · month-end
         projection <b>{money(projected)}</b>
       </p>
-      {over && <p className="mt-1 font-semibold text-red-700">⚠ Is pace se month budget cross ho jayega.</p>}
+      {over && <p className="mt-1 font-semibold text-red-700">⚠ This pace will exceed the month budget.</p>}
     </div>
   );
 }
@@ -384,7 +384,7 @@ function TargetsPanel({
         >
           {pending ? "Saving…" : "Save targets"}
         </button>
-        <p className="text-[10px] text-slate-400">Blank dono = target hata diya jayega. Budget se pacing aur over-budget alert aata hai.</p>
+        <p className="text-[10px] text-slate-400">Blank clears the target.</p>
       </form>
     </details>
   );
@@ -598,12 +598,11 @@ export function DailyAdReport({
     <div className="space-y-3">
       <div className="rounded-xl border border-slate-200 bg-white p-4 print:border-0 print:p-0">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="flex flex-wrap items-baseline gap-2">
             <h2 className="text-sm font-semibold text-slate-700">📋 Daily advertisement report</h2>
-            <p className="text-[11px] text-slate-400">
-              {periodLabel} · organic sales from our orders (base PO = one order, PO-date day) + the ad numbers saved in
-              Daily Entry. CTR / ROAS / ACoS are calculated, never typed.
-            </p>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+              {periodLabel}
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 print:hidden">
             <label className="text-[11px] font-medium text-slate-500" htmlFor="daily_month">
@@ -665,7 +664,7 @@ export function DailyAdReport({
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs">
               {missing.length > 0 && (
                 <p className="font-semibold text-amber-800">
-                  ⚠ {missingDays} din ki ad entry missing — order hai par spend entry nahi (
+                  ⚠ {missingDays} day(s) missing an ad entry — orders exist but no spend was entered (
                   {missing.map((s) => s.storeName).join(", ")}).
                 </p>
               )}
@@ -684,14 +683,13 @@ export function DailyAdReport({
 
         {withData.length === 0 ? (
           <p className="mt-3 rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">
-            {periodLabel} me aapke store(s) ki koi ad entry ya order nahi hai. Daily Entry me us din ka data save
-            karein (ya order enter karein) — yeh sheet khud ban jayegi.{" "}
+            No ad entry or order found for {periodLabel}.{" "}
             {storeAccessHref ? (
               <Link href={storeAccessHref} className="font-semibold text-amber-700 underline hover:text-amber-900">
-                Store access assign karein (Employees → Store Access)
+                Assign store access (Employees → Store Access)
               </Link>
             ) : (
-              "Agar aapke login par koi store nahi hai to Admin se Employees → Store Access me tick karwayein."
+              "Ask an Admin to tick your store under Employees → Store Access."
             )}
           </p>
         ) : (
@@ -747,11 +745,6 @@ export function DailyAdReport({
 
         {canEditTargets && <TargetsPanel stores={withData.map((s) => ({ id: s.storeId, name: s.storeName }))} targets={targets} />}
 
-        <p className="mt-2 text-[10px] text-slate-400">
-          <b>TOTAL ORD</b> = organic orders + ad-platform attributed orders. <b>TOTAL SPEND</b> = the day&apos;s ad spend.
-          <b> ROAS</b> = ad revenue ÷ ad spend, <b>ACoS</b> = ad spend ÷ ad revenue. Etsy revenue is the monthly figure
-          from the entry form (latest saved), so it is shown per store, never summed over days.
-        </p>
       </div>
     </div>
   );

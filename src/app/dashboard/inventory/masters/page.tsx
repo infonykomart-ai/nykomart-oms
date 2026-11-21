@@ -201,10 +201,6 @@ export default async function MasterSkuPage({
 
       <div className={`${cardClass} mb-4 p-4`} id="master-photos">
         <h2 className="text-sm font-semibold text-slate-700">Master SKU photo</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          The Master SKU banne ke baad uski photo yahan add hoti hai — photo SKU ke saath rehti hai, kisi stock entry ka intezaar nahi.
-          Uploaded photos are never overwritten: every upload is kept and the newest one is the SKU&apos;s current photo. Files stay private and open only inside the app.
-        </p>
         {canEdit ? (
           <form action={masterVariantPhotoAction} className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <input type="hidden" name="return_to" value={PATH} />
@@ -252,9 +248,6 @@ export default async function MasterSkuPage({
       <div className={`${cardClass} mb-4 overflow-x-auto`} id="master-photo-album">
         <div className="border-b border-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">Master SKU photo album</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Har Master SKU ki current photo yahan dikhti hai. Remove sirf photo ko album se hataata hai (file private storage me aur history me rehti hai) — purani photo kabhi overwrite nahi hoti.
-          </p>
         </div>
         <table className="min-w-full text-xs">
           <thead className="bg-slate-50">
@@ -300,15 +293,7 @@ export default async function MasterSkuPage({
       </div>
 
       <div className={`${cardClass} mb-4 p-4`} id="store-updates">
-        <h2 className="text-sm font-semibold text-slate-700">Store update — alag alag store ka SKU</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Same Master SKU, different store SKU/listing? Update it yahin se: store + store SKU choose karein, naya Master SKU ya listing ID save karein.
-          Re-pointing writes history and never deletes the old mapping.
-        </p>
-        <p className="mt-1 text-xs text-slate-500">
-          Row ka Update button dabane par Master SKU khud select nahi hota — aapko list me se explicitly choose karna padta hai, warna save hi nahi hoga.
-          Jis row ka current Master SKU inactive/merged hai wo row read-only hai (galat SKU par silent re-point na ho), use upar wale form se map karein.
-        </p>
+        <h2 className="text-sm font-semibold text-slate-700">Store update — store-specific SKU</h2>
         {canEdit ? (
           <form action={storeSkuMappingAction} className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             <input type="hidden" name="return_to" value={PATH} />

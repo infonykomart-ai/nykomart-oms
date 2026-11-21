@@ -278,9 +278,6 @@ export function AdSpendEntrySection({
                   placeholder="e.g. 12 — leave blank if not recorded"
                   className={inputClass}
                 />
-                <p className="mt-1 text-[10px] text-slate-400">
-                  Blank = not recorded. Enter 0 when the spend ran but no order was attributed to it. The Report tab uses this to separate ad orders from organic ones.
-                </p>
               </div>
             </div>
 
@@ -292,7 +289,7 @@ export function AdSpendEntrySection({
                   {metricField("clicks", "Clicks")}
                   {metricField("impressions", "Impressions / Views")}
                   {metricField("visits", "Visiting")}
-                  {metricField("ad_revenue_usd", "Ad revenue (USD)", "0.01", "Amazon Ads report ka REVENUE — ROAS / ACoS isi se banta hai.")}
+                  {metricField("ad_revenue_usd", "Ad revenue (USD)", "0.01", "ROAS / ACoS is calculated from this.")}
                   <div className="rounded-lg border border-amber-200 bg-white px-3 py-1.5">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">CTR %</div>
                     <div className="text-sm font-bold text-slate-900">{ctr.toFixed(2)}%</div>
@@ -309,7 +306,7 @@ export function AdSpendEntrySection({
                   {metricField("visits", "Visits")}
                   {metricField("impressions", "Impressions")}
                   {metricField("clicks", "Clicks")}
-                  {metricField("ad_revenue_usd", "Ad revenue (USD)", "0.01", "eBay ad report ka revenue — ROAS / ACoS isi se banta hai.")}
+                  {metricField("ad_revenue_usd", "Ad revenue (USD)", "0.01", "ROAS / ACoS is calculated from this.")}
                   <div className="rounded-lg border border-amber-200 bg-white px-3 py-1.5">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">CTR %</div>
                     <div className="text-sm font-bold text-slate-900">{ctr.toFixed(2)}%</div>
@@ -336,9 +333,6 @@ export function AdSpendEntrySection({
                     <div className="text-sm font-bold text-slate-900">
                       {etsySpendPct === null ? "— (enter monthly revenue)" : `${etsySpendPct.toFixed(1)}%`}
                     </div>
-                    <p className="text-[10px] text-slate-400">
-                      This month&apos;s spend ÷ revenue × 100 — calculated automatically, never typed.
-                    </p>
                   </div>
                 </div>
               </fieldset>
@@ -352,17 +346,6 @@ export function AdSpendEntrySection({
               {pending ? "Saving..." : "Save"}
             </button>
           </form>
-          <p className="mt-3 text-xs text-slate-400">
-            {isAmazon
-              ? "Amazon store — enter one row per marketplace country (US, UK, Germany …). The store and country stay selected after Save so you can go country by country; re-saving the same store + date + country overwrites that day's numbers."
-              : channel === "etsy"
-                ? "Etsy store — visits, conversion rate, revenue, orders and ads clicks are the Etsy Stats figures; leave a box blank when it was not recorded."
-                : channel === "ebay"
-                  ? "eBay store — visits, impressions and clicks for the day; leave a box blank when it was not recorded."
-                  : "Pick an Amazon, Etsy or eBay store to get its channel metrics block — other stores keep just Budget/Spend."}
-            {" "}QTY ORD / USD are not entered here — see the <strong>Report</strong> tab for the combined view against live
-            Order Entry data.
-          </p>
         </div>
 
         <RecentEntries entries={recentEntries} storeIsAmazon={storeIsAmazon} />

@@ -237,7 +237,6 @@ export default async function AttendanceOverviewPage({
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50">
           <header className="border-b border-slate-100 bg-slate-50/60 px-5 py-3.5">
             <h2 className="text-sm font-semibold tracking-tight text-slate-900">Employees Daily Status (In Percentage)</h2>
-            <p className="mt-0.5 text-xs text-slate-500">Aaj {today} ki team distribution</p>
           </header>
           <div className="p-5">
             {donutData.length === 0 ? (

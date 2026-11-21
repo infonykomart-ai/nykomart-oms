@@ -32,11 +32,6 @@ export default async function AmazonBulkUploadPage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">📦 Amazon Bulk Order Entry</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Amazon ka order Excel/CSV jaisa hai waisa hi bhejo — Amazon report ke columns (amazon-order-id, buyer-name,
-            purchase-date, item-price, quantity-purchased, currency) ya Order No wali book sheet. Pehle preview dikhega,
-            phir hi orders create honge.
-          </p>
         </div>
         <Link
           href="/dashboard/orders/bulk-upload"
@@ -48,8 +43,7 @@ export default async function AmazonBulkUploadPage() {
 
       {amazonStores.length === 0 && (
         <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Koi Amazon store nahi mila — Settings me store ka naam Amazon ke saath ho (jaise &quot;Amazon Rugara&quot;) to hi
-          yahan select kar payenge.
+          No Amazon store found — a store name must contain &quot;Amazon&quot; (for example &quot;Amazon Rugara&quot;).
         </p>
       )}
 

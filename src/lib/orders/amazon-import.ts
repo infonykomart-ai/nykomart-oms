@@ -392,7 +392,7 @@ export function parseAmazonOrders(aoa: unknown[][]): AmazonParseResult {
   };
   const rows: AmazonOrderRow[] = [];
   const sheet = (aoa ?? []).filter((r) => !isBlankRow(r));
-  if (!sheet.length) return { rows, issues: ["File me koi row nahi mili."], shape: "none" };
+  if (!sheet.length) return { rows, issues: ["No rows found in the file."], shape: "none" };
 
   // 1. Standard Amazon report / any flat sheet with a recognizable header.
   let headerRow = -1;
@@ -421,7 +421,7 @@ export function parseAmazonOrders(aoa: unknown[][]): AmazonParseResult {
     const c = current;
     current = null;
     if (!c.orderNo) {
-      pushIssue(`Line ${c.line}: order block me Order No nahi mila — skip kiya.`);
+      pushIssue(`Line ${c.line}: no Order No in the order block — skipped.`);
       return;
     }
     const row: AmazonOrderRow = {
@@ -517,7 +517,7 @@ export function parseAmazonOrders(aoa: unknown[][]): AmazonParseResult {
     return {
       rows,
       issues: [
-        "Sheet ka format pehchana nahi gaya. Amazon All Orders report (headers: amazon-order-id, buyer-name, purchase-date, item-price, quantity-purchased, currency) ya Order No wale book format me bhejo.",
+        "Could not recognise the sheet format. Send an Amazon All Orders report (headers: amazon-order-id, buyer-name, purchase-date, item-price, quantity-purchased, currency) or the Order No book format.",
       ],
       shape: "none",
     };

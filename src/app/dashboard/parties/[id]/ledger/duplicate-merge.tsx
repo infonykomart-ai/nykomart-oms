@@ -73,7 +73,7 @@ function MergeAllBar({ groups }: { groups: LedgerDuplicateGroup[] }) {
     return (
       <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs font-medium text-teal-800">
         ✓ {eligible.length} duplicate invoice{eligible.length === 1 ? "" : "s"} merged into one entry each — refresh to see the single lines.
-        {skipped > 0 && ` ${skipped} skipped because their invoice values differ (aage alag se dekh lo).`}
+        {skipped > 0 && ` ${skipped} skipped because their invoice values differ.`}
       </p>
     );
   }
@@ -114,19 +114,16 @@ function MergeAllBar({ groups }: { groups: LedgerDuplicateGroup[] }) {
           type="button"
           onClick={mergeAll}
           disabled={pending || eligible.length === 0}
-          title={eligible.length === 0 ? "Har group me invoice value alag hai — duplicate nahi." : undefined}
+          title={eligible.length === 0 ? "Invoice values differ in every group — not duplicates." : undefined}
           className="rounded-lg bg-teal-700 px-3 py-1 text-xs font-semibold text-white hover:bg-teal-800 disabled:opacity-40"
         >
           {pending ? progress ?? "Merging…" : `🔗 Merge all ${eligible.length} into one entry each`}
         </button>
         {skipped > 0 && (
           <span className="text-[10px] font-medium text-amber-700">
-            {skipped} group{skipped === 1 ? "" : "s"} skipped — invoice value alag hai
+            {skipped} group{skipped === 1 ? "" : "s"} skipped — invoice value differs
           </span>
         )}
-        <span className="text-[10px] text-teal-700">
-          Keeps the entry that carries the document/AWBs and folds the other into it — payments, credit/debit notes and adjustments move across, duplicate amounts are dropped.
-        </span>
       </div>
       {failure && <p className="mt-1 font-medium text-red-600">{failure}</p>}
     </div>
@@ -187,7 +184,7 @@ function DuplicateGroupRow({ group }: { group: LedgerDuplicateGroup }) {
         })}
         {valueMismatch && (
           <p className="mt-0.5 font-semibold text-red-600">
-            Value alag hai — ye duplicate nahi, merge server par reject hoga.
+            Value differs — not a duplicate; the server will reject the merge.
           </p>
         )}
       </div>

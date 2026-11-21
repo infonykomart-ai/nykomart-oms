@@ -67,7 +67,7 @@ export function AmazonUploadForm({
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="fallback_currency">
-              Currency (jab sheet me na ho)
+              Currency (when the sheet has none)
             </label>
             <select id="fallback_currency" name="fallback_currency" className={inputClass} defaultValue="USD">
               {currencies.length > 0

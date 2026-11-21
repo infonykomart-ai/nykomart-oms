@@ -89,7 +89,7 @@ export function RecurringDebitsSection({
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-lg">🔁</span>
         <h2 className="text-sm font-bold text-slate-700">Card Auto-Debits (recurring)</h2>
-        <span className="text-[11px] text-slate-400">eRank · Etsy bill · eBay &amp; other — credit card se har mahine automatic</span>
+        <span className="text-[11px] text-slate-400">eRank · Etsy bill · eBay &amp; other — charged automatically to the card every month</span>
         <div className="ml-auto flex items-center gap-1.5">
           <select value={logCompanyId} onChange={(e) => setLogCompanyId(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs">
             {companies.map((c) => (

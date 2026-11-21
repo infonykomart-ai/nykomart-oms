@@ -840,7 +840,7 @@ function MergeBar({
             </ul>
             {valueMismatch && (
               <p className="mt-1 font-semibold text-red-600">
-                Ye entries duplicate nahi lag rahi (invoice value ya date alag hai) — merge nahi hoga.
+                These entries do not look like duplicates (invoice value or date differs) — they will not be merged.
               </p>
             )}
           </div>

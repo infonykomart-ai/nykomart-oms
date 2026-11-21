@@ -258,11 +258,11 @@ export async function importPunchReport(_prev: ImportState, formData: FormData):
         })
         .slice(0, 3)
         .map((e) => `"${e.employee_code ?? "—"} ${e.name}"`);
-      return near.length ? ` Closest in roster: ${near.join(", ")}.` : ` Roster me ${employees.length} employee hain — code/naam milta nahi.`;
+      return near.length ? ` Closest in roster: ${near.join(", ")}.` : ` ${employees.length} employees in the roster — no code/name match.`;
     };
     for (const u of unmatched.values()) {
       pushIssue(
-        `Row ${u.line}: employee code "${u.code || "(blank)"}"${u.name ? ` / name "${u.name}"` : ""} roster me nahi mila` +
+        `Row ${u.line}: employee code "${u.code || "(blank)"}"${u.name ? ` / name "${u.name}"` : ""} not found in the roster` +
           `${u.count > 1 ? ` (${u.count} punch rows)` : ""}.${rosterHint(u.code, u.name)}`
       );
     }

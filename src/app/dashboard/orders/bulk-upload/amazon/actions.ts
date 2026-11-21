@@ -52,8 +52,8 @@ const MAX_FILE_BYTES = 900_000;
 const MAX_ROWS = 200;
 
 async function readSheet(file: FormDataEntryValue | null): Promise<{ aoa: unknown[][] } | { error: string }> {
-  if (!(file instanceof File) || file.size === 0) return { error: "Pehle Amazon ka Excel/CSV file choose karo." };
-  if (file.size > MAX_FILE_BYTES) return { error: "File ~1MB se bada hai — thodi chhoti file/batch me bhejo." };
+  if (!(file instanceof File) || file.size === 0) return { error: "Choose the Amazon Excel/CSV file first." };
+  if (file.size > MAX_FILE_BYTES) return { error: "File is over ~1MB — send a smaller file or split it into batches." };
   const buf = await file.arrayBuffer();
   const name = file.name.toLowerCase();
   if (name.endsWith(".csv") || name.endsWith(".txt") || name.endsWith(".tsv")) {
@@ -67,10 +67,10 @@ async function readSheet(file: FormDataEntryValue | null): Promise<{ aoa: unknow
     const XLSX = await import("xlsx");
     const wb = XLSX.read(buf, { type: "array", raw: false });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    if (!sheet) return { error: "Workbook me koi readable sheet nahi mili." };
+    if (!sheet) return { error: "No readable sheet found in the workbook." };
     return { aoa: XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) as unknown[][] };
   } catch {
-    return { error: "Excel file read nahi hui — .xlsx ya .csv me save karke dobara bhejo." };
+    return { error: "Could not read the Excel file — save it as .xlsx or .csv and try again." };
   }
 }
 
@@ -83,25 +83,25 @@ export async function importAmazonOrders(_prev: AmazonImportState, formData: For
   const itemCategoryId = String(formData.get("item_category_id") ?? "").trim();
   const fallbackCurrency = String(formData.get("fallback_currency") ?? "USD").trim().toUpperCase() || "USD";
 
-  if (!storeId) return { ...EMPTY, error: "Amazon store select karo." };
-  if (!itemCategoryId) return { ...EMPTY, error: "Item Category select karo (sheet me category nahi hoti)." };
+  if (!storeId) return { ...EMPTY, error: "Select an Amazon store." };
+  if (!itemCategoryId) return { ...EMPTY, error: "Select an Item Category (the sheet has no category column)." };
 
   const { data: store } = await supabase.from("stores").select("id, name, company_id").eq("id", storeId).maybeSingle();
   if (!store || !employee.companyIds.includes(store.company_id)) {
-    return { ...EMPTY, error: "Selected store is company ke liye available nahi hai." };
+    return { ...EMPTY, error: "The selected store is not available for this company." };
   }
   const { data: category } = await supabase.from("item_categories").select("id").eq("id", itemCategoryId).maybeSingle();
-  if (!category) return { ...EMPTY, error: "Item Category nahi mili — page refresh karke dobara try karo." };
+  if (!category) return { ...EMPTY, error: "Item Category not found — refresh the page and try again." };
 
   const sheet = await readSheet(formData.get("file"));
   if ("error" in sheet) return { ...EMPTY, error: sheet.error };
 
   const parsed = parseAmazonOrders(sheet.aoa);
-  if (!parsed.rows.length) return { ...EMPTY, error: "Is file me koi order row nahi mili.", issues: parsed.issues, shape: parsed.shape };
+  if (!parsed.rows.length) return { ...EMPTY, error: "No order rows found in this file.", issues: parsed.issues, shape: parsed.shape };
   if (parsed.rows.length > MAX_ROWS) {
     return {
       ...EMPTY,
-      error: `${parsed.rows.length} orders mile — ek baar me ${MAX_ROWS} tak. File ko do hisson me bhejo.`,
+      error: `${parsed.rows.length} orders found — up to ${MAX_ROWS} per upload. Split the file into two parts.`,
       issues: parsed.issues,
       shape: parsed.shape,
     };

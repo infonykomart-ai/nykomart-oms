@@ -432,18 +432,18 @@ export function findAnomalies(rows: DailyAdReportRow[], max = 5): DailyAdAnomaly
     // The checks are independent: a day can be both overspent with no order
     // and have a broken CTR, and hiding one behind the other would lose it.
     if (r.clicks > r.views && r.clicks > 0) {
-      out.push({ date: r.date, kind: "clicks-over-views", message: "Clicks are more than views — entry check karein." });
+      out.push({ date: r.date, kind: "clicks-over-views", message: "Clicks are more than views — check the entry." });
     }
     if (out.length >= max) break;
     if (r.spendUsd > 0 && r.totalOrders === 0) {
-      out.push({ date: r.date, kind: "spend-no-orders", message: "Spend hua par koi order nahi." });
+      out.push({ date: r.date, kind: "spend-no-orders", message: "Spend recorded with no order." });
     }
     if (out.length >= max) break;
     if (r.views >= 100 && avgCtr > 0 && r.ctr < avgCtr / 2) {
       out.push({
         date: r.date,
         kind: "ctr-drop",
-        message: `CTR ${r.ctr.toFixed(2)}% — average ${avgCtr.toFixed(2)}% se aadha se bhi kam.`,
+        message: `CTR ${r.ctr.toFixed(2)}% — less than half the average ${avgCtr.toFixed(2)}%.`,
       });
     }
   }

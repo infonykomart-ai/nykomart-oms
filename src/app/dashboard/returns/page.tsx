@@ -765,10 +765,6 @@ export default async function ReturnsPage({
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-teal-900">🆕 New refund / return</h2>
-            <p className="text-xs text-teal-700">
-              PO / RF / RG no, marketplace order no ya buyer ka naam daalo — order select karo, uski poori detail wali A4
-              refund sheet khul jayegi (read only), phir reason aur amount bhar ke save karo.
-            </p>
           </div>
           <form method="get" className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="from" value={fromDate} />

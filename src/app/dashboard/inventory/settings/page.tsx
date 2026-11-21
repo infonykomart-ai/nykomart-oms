@@ -51,7 +51,6 @@ export default async function InventorySettingsPage({
     <div>
       <PageHeading
         title="Inventory Settings"
-        subtitle="Products, categories, warehouses and variants — sab yahin se edit, deactivate ya delete hote hain. Used rows are deactivated instead of deleted so stock history stays intact."
       />
       <MessageBanner ok={typeof sp.ok === "string" ? sp.ok : undefined} error={typeof sp.error === "string" ? sp.error : undefined} />
       <InventoryTabs active={PATH} />

@@ -177,9 +177,6 @@ export default async function MonthSummaryPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-slate-900">📒 Month Summary (Calendar Sheet)</h1>
-          <p className="text-sm text-slate-500">
-            Ek employee ka poora mahina calendar grid me — status badge + IN/OUT per day, totals strip, Print/PDF aur export ke saath.
-          </p>
         </div>
         <Link
           href="/dashboard/attendance/admin"

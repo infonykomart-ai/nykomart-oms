@@ -35,8 +35,8 @@ export function RefundOrderPicker({
   if (orders.length === 0) {
     return (
       <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-        &quot;{search}&quot; se koi order match nahi hua (ya us company/date range me nahi hai). PO no ya marketplace order
-        no poora likh ke try karo.
+        No order matched &quot;{search}&quot; (or it is outside this company/date range). Try the full PO number or marketplace
+        order number.
       </p>
     );
   }
@@ -44,8 +44,8 @@ export function RefundOrderPicker({
   return (
     <div className="mt-3 space-y-2">
       <p className="text-xs text-teal-700">
-        {orders.length} order{orders.length === 1 ? "" : "s"} mile — jis order ka refund karna hai us par{" "}
-        <b>Open refund sheet</b> dabao.
+        {orders.length} order{orders.length === 1 ? "" : "s"} found — press <b>Open refund sheet</b> on the order you want
+        to refund.
       </p>
       <div className="overflow-x-auto rounded-lg border border-teal-200 bg-white">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
