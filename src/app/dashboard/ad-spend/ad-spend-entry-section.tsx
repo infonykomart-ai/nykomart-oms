@@ -5,13 +5,9 @@ import { saveAdSpendAction, deleteAdSpendAction, type AdSpendFormState } from ".
 import { AMAZON_COUNTRIES, amazonCountryLabel, isAmazonStore } from "./amazon-countries";
 import { formatIST } from "@/lib/format-ist";
 import { ChannelChart } from "./ad-spend-chart";
-import {
-  ctrPct,
-  monthSpendFor,
-  monthlySpendPct,
-  storeChannel,
-  type ChannelMetricRow,
-} from "./channel-metrics";
+import { DailyAdReport } from "./daily-ad-report-table";
+import type { DailyAdOrderRow, DailyAdSpendRow } from "./daily-ad-report";
+import { ctrPct, monthSpendFor, monthlySpendPct, storeChannel } from "./channel-metrics";
 
 const initialState: AdSpendFormState = { error: null, success: false };
 const inputClass =
@@ -97,13 +93,20 @@ export function AdSpendEntrySection({
   stores,
   recentEntries,
   channelRows,
+  orderRows,
+  today,
   month,
 }: {
   companies: Company[];
   stores: Store[];
   recentEntries: RecentEntry[];
-  /** Last 14 days across the login's stores — feeds the channel chart. */
-  channelRows: ChannelMetricRow[];
+  /** Last 30 days across the login's stores — feeds the trend chart (it
+   *  slices its own 14) and the daily advertisement report. */
+  channelRows: DailyAdSpendRow[];
+  /** The organic side of the daily advertisement report (same stores). */
+  orderRows: DailyAdOrderRow[];
+  /** Today in IST — the report's 30-day window ends here. */
+  today: string;
   /** YYYY-MM used by the Etsy monthly spend % tile. */
   month: string;
 }) {
@@ -374,6 +377,11 @@ export function AdSpendEntrySection({
           rows={channelRows}
         />
       )}
+
+      {/* 2026-11-21 — the per-store (and per Amazon country) daily
+          advertisement sheet, built from our own orders + the saved ad
+          numbers; every store this login can see is selectable there. */}
+      <DailyAdReport stores={stores} spendRows={channelRows} orderRows={orderRows} today={today} />
     </div>
   );
 }

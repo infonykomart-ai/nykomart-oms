@@ -25,7 +25,7 @@ import { todayIST } from "@/lib/attendance/ist-date";
 import { storesForAdSpend } from "./store-scope";
 // 2026-11-21 — the Daily Entry's channel metrics (Amazon / eBay / Etsy) and
 // their 14-day chart read the same stored columns the save action writes.
-import type { ChannelMetricRow } from "./channel-metrics";
+import type { DailyAdOrderRow, DailyAdSpendRow } from "./daily-ad-report";
 
 /** The columns the Recent Entries list reads; ad_orders is optional because
  *  it ships in its own migration (db/2026-11-20e-…). */
@@ -104,6 +104,11 @@ export default async function AdSpendPage({
   // of every store of the company. The whole rule lives in store-scope.ts so
   // the three tabs and the save/delete actions can never disagree.
   const canSeeAllStores = employee.capabilities.includes("ad_spend_report_all");
+  // 2026-11-21 — the empty-module messages point straight at the Employees
+  // page's Store Access banner (only admins can open that page).
+  const storeAccessHref = employee.capabilities.includes("employee_admin")
+    ? "/dashboard/admin/employees#store-access"
+    : null;
   const storeScope = {
     companyIds: employee.companyIds,
     assignedStoreIds: employee.storeIds,
@@ -163,25 +168,36 @@ export default async function AdSpendPage({
     enteredAt: string;
   }[] = [];
   // 2026-11-21 — the channel chart's history (last 14 days) and the Etsy
-  // monthly spend % (this month's summed spend) share this read.
-  let channelRows: ChannelMetricRow[] = [];
+  // monthly spend % (this month's summed spend) share this read. The daily
+  // advertisement report reads the same rows over 30 days.
+  let channelRows: DailyAdSpendRow[] = [];
+  let reportOrders: DailyAdOrderRow[] = [];
   if (tab === "entry") {
     const allStoreIds = (stores ?? []).map((s) => s.id);
     if (allStoreIds.length > 0) {
       const today = todayIST();
       const chartFromDate = new Date(`${today}T00:00:00Z`);
-      chartFromDate.setUTCDate(chartFromDate.getUTCDate() - 13);
+      // 30 days feeds the daily advertisement report; the trend chart slices
+      // its own last 14 out of the same rows.
+      chartFromDate.setUTCDate(chartFromDate.getUTCDate() - 29);
       const chartFrom = chartFromDate.toISOString().slice(0, 10);
       const monthFrom = `${defaultMonth}-01`;
       const from = chartFrom < monthFrom ? chartFrom : monthFrom;
       // "*" so the optional metric columns simply come back when their
       // migration has been run, and are absent (→ null) before that.
-      const { data: historyData } = await supabase
-        .from("store_ad_spend")
-        .select("*")
-        .in("store_id", allStoreIds)
-        .gte("spend_date", from);
-      channelRows = (historyData ?? []) as unknown as ChannelMetricRow[];
+      const [{ data: historyData }, { data: reportOrderData }] = await Promise.all([
+        supabase.from("store_ad_spend").select("*").in("store_id", allStoreIds).gte("spend_date", from),
+        // Organic side of the daily advertisement report: same columns and
+        // same PO-date rule the Daily Order Sheet uses (the report module
+        // applies the rule). Only the login's own stores are ever read.
+        supabase
+          .from("orders")
+          .select("id, ref_no, store_id, order_date, po_date, order_value_usd, buyer_country, destination_country")
+          .in("store_id", allStoreIds)
+          .or(`po_date.gte.${from},order_date.gte.${from}`),
+      ]);
+      channelRows = (historyData ?? []) as unknown as DailyAdSpendRow[];
+      reportOrders = (reportOrderData ?? []) as unknown as DailyAdOrderRow[];
     }
     // 2026-10-15 — country_code rides along so an Amazon day's rows
     // are told apart in this list (see the entry form).
@@ -343,9 +359,32 @@ export default async function AdSpendPage({
           <h1 className="text-2xl font-semibold text-slate-900">📈 Store Ad Spend</h1>
           {!canSeeAllStores && (
             <p className="mt-1 text-xs text-amber-700">
-              {stores.length > 0
-                ? "All three tabs show only the store(s) assigned to you under Employees → Store Access (never every store of a company). The complete report is shown to logins approved for it (ad_spend_report_all — MD/Admin/Finance by default)."
-                : "No store is assigned to your login yet. Ask an Admin to tick your store(s) under Employees → Store Access — only the stores given to you are shown here."}
+              {stores.length > 0 ? (
+                <>
+                  All three tabs show only the store(s) assigned to you under{" "}
+                  {storeAccessHref ? (
+                    <Link href={storeAccessHref} className="font-semibold underline hover:text-amber-900">
+                      Employees → Store Access
+                    </Link>
+                  ) : (
+                    <b>Employees → Store Access</b>
+                  )}{" "}
+                  (never every store of a company). The complete report is shown to logins approved for it
+                  (ad_spend_report_all — MD/Admin/Finance by default).
+                </>
+              ) : (
+                <>
+                  No store is assigned to your login yet. Ask an Admin to tick your store(s) under{" "}
+                  {storeAccessHref ? (
+                    <Link href={storeAccessHref} className="font-semibold underline hover:text-amber-900">
+                      Employees → Store Access
+                    </Link>
+                  ) : (
+                    <b>Employees → Store Access</b>
+                  )}{" "}
+                  — only the stores given to you are shown here.
+                </>
+              )}
             </p>
           )}
         </div>
@@ -369,10 +408,17 @@ export default async function AdSpendPage({
         stores={stores ?? []}
         recentEntries={recentEntries}
         channelRows={channelRows}
+        orderRows={reportOrders}
+        today={todayIST()}
         month={defaultMonth}
       />
       ) : tab === "sheet" ? (
-        <DailyOrderSheet companies={visibleCompanies} filters={{ date: sheetDate, companyId: companyFilter }} data={sheet} />
+        <DailyOrderSheet
+          companies={visibleCompanies}
+          filters={{ date: sheetDate, companyId: companyFilter }}
+          data={sheet}
+          storeAccessHref={storeAccessHref}
+        />
       ) : (
         <AdSpendReportTable
           companies={visibleCompanies}

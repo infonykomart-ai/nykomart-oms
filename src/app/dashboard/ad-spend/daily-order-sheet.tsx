@@ -21,6 +21,7 @@
 // and exports can never disagree.
 
 import { useState } from "react";
+import Link from "next/link";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
@@ -115,10 +116,13 @@ export function DailyOrderSheet({
   companies,
   filters,
   data,
+  storeAccessHref,
 }: {
   companies: { id: string; name: string }[];
   filters: { date: string; companyId: string };
   data: DailyOrderSheetData | null;
+  /** Employees page's Store Access banner, when this login can open it. */
+  storeAccessHref?: string | null;
 }) {
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
@@ -162,8 +166,15 @@ export function DailyOrderSheet({
 
       {!data ? (
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">
-          No store is assigned to your login — pick another company, or ask an Admin to tick your store(s) under
-          Employees → Store Access.
+          No store is assigned to your login — pick another company, or ask an Admin to tick your store(s) under{" "}
+          {storeAccessHref ? (
+            <Link href={storeAccessHref} className="font-semibold text-amber-700 underline hover:text-amber-900">
+              Employees → Store Access
+            </Link>
+          ) : (
+            <>Employees → Store Access</>
+          )}
+          .
         </div>
       ) : (
         <>

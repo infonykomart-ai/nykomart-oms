@@ -167,8 +167,11 @@ export default async function EmployeesAdminPage() {
       />
 
       {/* 2026-11-21 — strict store access warning, visible before the table
-          and fixable from the banner itself (assign stores inline). */}
-      <LockoutWarning employees={lockedOutProps} stores={stores ?? []} />
+          and fixable from the banner itself (assign stores inline). The id is
+          the anchor the Ad Spend empty-module messages link to. */}
+      <div id="store-access" className="scroll-mt-24">
+        <LockoutWarning employees={lockedOutProps} stores={stores ?? []} />
+      </div>
 
       {/* 2026-09-15 — "screen auto adjust hojaye": @lg: variants respond to
           THIS page's own width (DashboardMain is a CSS container), not the
