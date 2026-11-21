@@ -33,7 +33,7 @@ export default async function EmployeesAdminPage() {
   // salary page), so read it via the service-role client.
   const finSupabase = createServiceRoleClient();
 
-  const [{ data: employees }, { data: roles }, { data: companies }, { data: companyAccess }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }] =
+  const [{ data: employees }, { data: roles }, { data: roleCaps }, { data: companies }, { data: companyAccess }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }] =
     await Promise.all([
       supabase
         .from("employees")
@@ -44,6 +44,10 @@ export default async function EmployeesAdminPage() {
         )
         .order("created_at", { ascending: false }),
       supabase.from("roles").select("id, name").order("name"),
+      // 2026-11-21 — role capabilities, so this page can warn about logins
+      // that the strict Ad Spend store rule would lock out (ad_spend_entry
+      // but no ad_spend_report_all and no store ticked).
+      supabase.from("role_capabilities").select("role_id, capability_code"),
       // 2026-10-13 — ALL companies now (active filter moved to the create
       // form's own list below): the Edit Details home-company select must
       // be able to render an inactive company this employee already sits
@@ -97,6 +101,36 @@ export default async function EmployeesAdminPage() {
     storeIdsByEmployee.set(row.employee_id, list);
   }
 
+  // 2026-11-21 — "STRICT RULE SE KOI LOCK OUT NA HO": Store Ad Spend now
+  // shows a login ONLY the stores ticked for it (store-scope.ts). A login
+  // whose role can use Ad Spend (ad_spend_entry) but that has neither the
+  // complete-report capability (ad_spend_report_all) nor a single store tick
+  // would see an empty module, so those employees are called out here before
+  // anyone discovers it from an empty screen. Inactive logins are skipped:
+  // they cannot sign in, and are flagged the moment they are reactivated.
+  const capsByRole = new Map<string, Set<string>>();
+  for (const row of roleCaps ?? []) {
+    const set = capsByRole.get(row.role_id) ?? new Set<string>();
+    set.add(row.capability_code);
+    capsByRole.set(row.role_id, set);
+  }
+  const storeCompanyId = new Map((stores ?? []).map((s) => [s.id, s.company_id]));
+  const storeAccessWarning = (employee: { id: string; role_id: string; active: boolean; company_id: string }) => {
+    const caps = capsByRole.get(employee.role_id) ?? new Set<string>();
+    if (!employee.active) return false;
+    if (!caps.has("ad_spend_entry")) return false;
+    if (caps.has("ad_spend_report_all")) return false;
+    // A tick only helps when the store belongs to a company this employee can
+    // reach — the strict rule intersects the two, so a tick from another
+    // company would still leave the module empty and must not hide the warning.
+    const companies = new Set([employee.company_id, ...(companyAccessByEmployee.get(employee.id) ?? [])]);
+    return !(storeIdsByEmployee.get(employee.id) ?? []).some((storeId) =>
+      companies.has(storeCompanyId.get(storeId) ?? "")
+    );
+  };
+  const lockedOutEmployees = (employees ?? []).filter(storeAccessWarning);
+  const lockedOutIds = new Set(lockedOutEmployees.map((e) => e.id));
+
   // 2026-09-11 (Payroll Phase 3) — "Reports To" options stay scoped to
   // the SAME company as the employee (an org chart spanning companies
   // isn't meaningful here), excluding the employee themselves. Since
@@ -122,6 +156,41 @@ export default async function EmployeesAdminPage() {
         inactiveCount={list.length - activeCount}
         photoUrls={list.map((e) => e.photo_url)}
       />
+
+      {/* 2026-11-21 — strict store access warning, visible before the table
+          so nobody has to open an employee to discover it. */}
+      {lockedOutEmployees.length > 0 && (
+        <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <div className="flex items-start gap-3">
+            <span className="text-lg leading-none" aria-hidden>
+              ⚠️
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-amber-900">
+                {lockedOutEmployees.length} login{lockedOutEmployees.length === 1 ? "" : "s"} have Ad Spend access but no store ticked
+              </h2>
+              <p className="mt-1 text-xs text-amber-800">
+                Store Ad Spend now shows each login ONLY the stores ticked for it under <b>Store Access</b> — never every
+                store of the company. These people would see an empty Ad Spend module until a store is ticked:
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {lockedOutEmployees.map((e) => (
+                  <span
+                    key={e.id}
+                    className="rounded-full border border-amber-300 bg-white px-2.5 py-0.5 text-xs font-medium text-amber-900"
+                  >
+                    {e.name}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-amber-700">
+                Fix: use <b>Store Access</b> in that employee&apos;s Actions column and tick their store(s). Roles with the
+                complete-report capability (MD/Admin/Finance/Higher Authority) are not affected — they already see every store.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2026-09-15 — "screen auto adjust hojaye": @lg: variants respond to
           THIS page's own width (DashboardMain is a CSS container), not the
@@ -190,6 +259,18 @@ export default async function EmployeesAdminPage() {
                         <div className="mt-1">
                           <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
                             Advance Due: ₹{outstandingAdvanceByEmployee.get(e.id)!.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                      {/* 2026-11-21 — same strict-store warning, on the row it
+                          applies to. */}
+                      {lockedOutIds.has(e.id) && (
+                        <div className="mt-1">
+                          <span
+                            className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                            title="Ad Spend access but no store ticked — this login would see an empty Ad Spend module"
+                          >
+                            ⚠️ No store access
                           </span>
                         </div>
                       )}
