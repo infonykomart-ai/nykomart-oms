@@ -6,11 +6,10 @@ import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
 import { verifyStatus, verifyText } from "./ad-spend-stats";
-// 2026-11-20 — every money column stays in USD; the ₹ column/total next to it
-// is a live-rate companion from the Exchange Rates module
-// (src/lib/fx/rates.ts keeps the cached snapshot at most 12 hours old by
-// itself; the button below is the manual refresh). The ₹ figure is display
-// only — it never rewrites a stored USD amount.
+// 2026-11-21 — the report's money columns and totals are USD only ("Data in
+// USD only (No INR Conversion)"); the earlier ₹ companion columns were the
+// opposite of that ask and are gone. The only rate left is the Amazon
+// country section's own conversion strip (pre-existing, src/lib/fx/rates.ts).
 import { formatUsdToInr, type FxSnapshot } from "@/lib/fx/rates";
 import { refreshFxRatesAction } from "./actions";
 
@@ -174,11 +173,13 @@ function StatementCell({
 // section below the two tables shows one row per Amazon store × country
 // including the 12 marketplace countries that have no activity yet.
 // 2026-11-20 — added on top, all display-side: ROAS + Budget Used %, the
-// ad-vs-organic order split (from store_ad_spend.ad_orders), ₹ companions for
-// total spend/sales at the live rate, and click-to-sort headers plus a search
-// box on every table. Nothing here writes a number.
+// ad-vs-organic order split (from store_ad_spend.ad_orders), and click-to-sort
+// headers plus a search box on every table. 2026-11-21 — a store filter now
+// scopes the whole tab (rows AND totals), and all ₹ companions were removed
+// so money stays USD only. Nothing here writes a number.
 export function AdSpendReportTable({
   companies,
+  stores,
   filters,
   dailyRows,
   monthlyRows,
@@ -188,7 +189,9 @@ export function AdSpendReportTable({
   fx,
 }: {
   companies: { id: string; name: string }[];
-  filters: { month: string; companyId: string };
+  /** Stores this login may see (same scoping as the server filters). */
+  stores: { id: string; name: string; company_id: string }[];
+  filters: { month: string; companyId: string; storeId: string };
   dailyRows: AdSpendDailyRow[];
   monthlyRows: AdSpendMonthlyRow[];
   amazonCountryRows: AdSpendAmazonCountryRow[];
@@ -199,7 +202,6 @@ export function AdSpendReportTable({
   /** Live rate snapshot (null before the first successful fetch). */
   fx?: FxSnapshot | null;
 }) {
-  const usdToInr = fx?.usdToInr ?? null;
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 
@@ -211,8 +213,6 @@ export function AdSpendReportTable({
   // re-orders the Daily master.
   const [sortBy, setSortBy] = useState<Record<string, { key: string; dir: "asc" | "desc" }>>({});
   const [searchBy, setSearchBy] = useState<Record<string, string>>({});
-
-  const inrToText = (usd: number) => (usdToInr ? `₹${(usd * usdToInr).toFixed(2)}` : "—");
 
   const monthlyTotals = monthlyRows.reduce(
     (acc, r) => ({
@@ -248,12 +248,10 @@ export function AdSpendReportTable({
     { key: "qty", label: "QTY ORD", value: (r) => r.qty },
     ...(hasAdOrderData ? AD_ORDER_COLUMNS<AdSpendMonthlyRow>() : []),
     { key: "usd", label: "SALES (USD)", value: (r) => r.usd.toFixed(2) },
-    { key: "usdInr", label: "SALES (₹ @ live rate)", value: (r) => inrToText(r.usd) },
     { key: "avg", label: "AVG Order (USD)", value: (r) => r.avg.toFixed(2) },
     { key: "budget", label: "Budget (USD)", value: (r) => r.budget.toFixed(2) },
     { key: "budgetUsed", label: "Budget Used %", value: (r) => budgetUsedText(r.spend, r.budget) },
     { key: "spend", label: "Spend (USD)", value: (r) => r.spend.toFixed(2) },
-    { key: "spendInr", label: "Spend (₹ @ live rate)", value: (r) => inrToText(r.spend) },
     { key: "roas", label: "ROAS", value: (r) => roasText(r.usd, r.spend) },
     { key: "spendPct", label: "Spend % of Sales", value: (r) => spendPctText(r.spend, r.usd) },
     { key: "verify", label: "Statement", value: (r) => verifyText(r.verify) },
@@ -280,12 +278,10 @@ export function AdSpendReportTable({
     { key: "qty", label: "QTY ORD", value: (r) => r.qty },
     ...(hasAdOrderData ? AD_ORDER_COLUMNS<AdSpendAmazonCountryRow>() : []),
     { key: "usd", label: "SALES (USD)", value: (r) => r.usd.toFixed(2) },
-    { key: "usdInr", label: "SALES (₹ @ live rate)", value: (r) => inrToText(r.usd) },
     { key: "avg", label: "AVG Order (USD)", value: (r) => r.avg.toFixed(2) },
     { key: "budget", label: "Budget (USD)", value: (r) => r.budget.toFixed(2) },
     { key: "budgetUsed", label: "Budget Used %", value: (r) => budgetUsedText(r.spend, r.budget) },
     { key: "spend", label: "Spend (USD)", value: (r) => r.spend.toFixed(2) },
-    { key: "spendInr", label: "Spend (₹ @ live rate)", value: (r) => inrToText(r.spend) },
     { key: "roas", label: "ROAS", value: (r) => roasText(r.usd, r.spend) },
     { key: "spendPct", label: "Spend % of Sales", value: (r) => spendPctText(r.spend, r.usd) },
     { key: "verify", label: "Statement", value: (r) => verifyText(r.verify) },
@@ -344,12 +340,10 @@ export function AdSpendReportTable({
       if (key === "adOrders") return organicOrdersKnown ? String(totals.adOrders) : "—";
       if (key === "organicOrders") return organicOrdersKnown ? String(Math.max(0, totals.qty - totals.adOrders)) : "—";
       if (key === "usd") return totals.usd.toFixed(2);
-      if (key === "usdInr") return inrToText(totals.usd);
       if (key === "avg") return totals.qty > 0 ? (totals.usd / totals.qty).toFixed(2) : "—";
       if (key === "budget") return totals.budget.toFixed(2);
       if (key === "budgetUsed") return budgetUsedText(totals.spend, totals.budget);
       if (key === "spend") return totals.spend.toFixed(2);
-      if (key === "spendInr") return totals.spend > 0 ? inrToText(totals.spend) : "";
       if (key === "roas") return roasText(totals.usd, totals.spend);
       if (key === "spendPct") return spendPctText(totals.spend, totals.usd);
       return "";
@@ -359,12 +353,10 @@ export function AdSpendReportTable({
       "adOrders",
       "organicOrders",
       "usd",
-      "usdInr",
       "avg",
       "budget",
       "budgetUsed",
       "spend",
-      "spendInr",
       "roas",
       "spendPct",
     ]);
@@ -488,6 +480,21 @@ export function AdSpendReportTable({
             ))}
           </select>
         </div>
+        {/* 2026-11-21 — "store wise filter karne ka option nahi hai total
+            filter ke according update ho": the store filter is applied on the
+            server, so every table, footer total and summary tile below is
+            built from only the selected store's rows. */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-500" htmlFor="store">Store</label>
+          <select id="store" name="store" defaultValue={filters.storeId} className={inputClass}>
+            <option value="">All</option>
+            {stores
+              .filter((s) => !filters.companyId || s.company_id === filters.companyId)
+              .map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+          </select>
+        </div>
         <button type="submit" className="rounded-lg bg-amber-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-amber-600">
           Filter
         </button>
@@ -504,11 +511,15 @@ export function AdSpendReportTable({
           ad/organic source are stated once here too. */}
       <div className="-mt-3 space-y-1 text-[11px] text-slate-400">
         <p>
+          The <b>store filter</b> scopes the whole tab: both tables, the Amazon country section, every footer total and every summary
+          tile are recalculated from the filtered rows only.
+        </p>
+        <p>
           Orders are counted in the month their <b>PO date</b> falls in — orders without a PO date fall back to their order (entry) date.
         </p>
         <p>
-          <b>All money is USD.</b> The <b>₹</b> columns and the ₹ totals are a live-rate companion (@ 1 USD = {formatUsdToInr(fx)}) so the
-          Indian books can be read next to the marketplace numbers — they are display only and never change a stored amount.
+          <b>All money is USD</b> — no INR conversion in these tables or totals. The only rate shown is the Amazon section&apos;s
+          own conversion strip below.
         </p>
         <p>
           <b>ROAS</b> = SALES ÷ Spend (a dash when nothing was spent). <b>Budget Used %</b> = Spend ÷ Budget. <b>Spend % of Sales</b> is the
@@ -549,8 +560,8 @@ export function AdSpendReportTable({
               companion underneath, plus the two metrics that were missing:
               ROAS and Budget Utilisation. */}
           <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            <StatTile label="Total Sales (USD)" value={monthlyTotals.usd.toFixed(2)} sub={inrToText(monthlyTotals.usd)} />
-            <StatTile label="Total Spend (USD)" value={monthlyTotals.spend.toFixed(2)} sub={inrToText(monthlyTotals.spend)} />
+            <StatTile label="Total Sales (USD)" value={monthlyTotals.usd.toFixed(2)} />
+            <StatTile label="Total Spend (USD)" value={monthlyTotals.spend.toFixed(2)} />
             <StatTile label="Total Budget (USD)" value={monthlyTotals.budget.toFixed(2)} />
             <StatTile label="Budget Used" value={monthlyBudgetUsed} />
             <StatTile label="ROAS" value={monthlyRoas} sub="Sales ÷ Spend" />
@@ -611,7 +622,7 @@ export function AdSpendReportTable({
                 copy now covers SALES as well as Spend. */}
             <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 print:hidden">
               <StatTile label="Total Budget (USD)" value={amazonTotals.budget.toFixed(2)} />
-              <StatTile label="Total Spend (USD)" value={amazonTotals.spend.toFixed(2)} sub={inrToText(amazonTotals.spend)} />
+              <StatTile label="Total Spend (USD)" value={amazonTotals.spend.toFixed(2)} />
               <StatTile label="Total Sales (USD)" value={amazonTotals.usd.toFixed(2)} sub={`${amazonTotals.qty} order(s)`} />
               <StatTile label="Budget Used" value={budgetUsedText(amazonTotals.spend, amazonTotals.budget)} />
               <StatTile label="ROAS" value={roasText(amazonTotals.usd, amazonTotals.spend)} sub="Sales ÷ Spend" />

@@ -69,6 +69,11 @@ export default async function AdSpendPage({
 
   const tab = sp.tab === "report" ? "report" : sp.tab === "sheet" ? "sheet" : "entry";
   const companyFilter = typeof sp.company === "string" && sp.company ? sp.company : "";
+  // 2026-11-21 — "store wise filter karne ka option nahi hai total filter ke
+  // according update ho": an optional store filter. Applied HERE (server side)
+  // so the report module never sees another store's rows — the tables, footer
+  // totals and summary tiles all follow the filter by construction.
+  const storeParam = typeof sp.store === "string" ? sp.store : "";
   // Daily Order Sheet's date: ?date=YYYY-MM-DD, defaulting to today (IST).
   const dateParam = typeof sp.date === "string" ? sp.date : "";
   const sheetDate = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayIST();
@@ -100,7 +105,11 @@ export default async function AdSpendPage({
   // The company filter narrows both the store list AND the report rows —
   // kept as the store rows themselves (not just their ids) so the report
   // module can tell an Amazon store from an Etsy/eBay/Website one.
-  const scopedStores = stores.filter((s) => !companyFilter || s.company_id === companyFilter);
+  // An unknown/foreign store id is ignored (never widens the scope).
+  const storeFilter = stores.some((s) => s.id === storeParam) ? storeParam : "";
+  const scopedStores = stores.filter(
+    (s) => (!companyFilter || s.company_id === companyFilter) && (!storeFilter || s.id === storeFilter)
+  );
   const relevantStoreIds = scopedStores.map((s) => s.id);
 
   let report: AdSpendReport | null = null;
@@ -230,11 +239,11 @@ export default async function AdSpendPage({
     });
 
     // 2026-10-15b — the loader keeps the rates fresh on its own: it re-pulls
-    // from the provider once the cached snapshot is 12h old. 2026-11-20 — the
-    // Report tab always shows the ₹ companion for total sales and spend, not
-    // just the Amazon country section, so the snapshot is loaded for every
-    // report (it still degrades to the cached rates, never breaks the page).
-    fx = await loadFxSnapshot(supabase, AMAZON_CURRENCIES);
+    // from the provider once the cached snapshot is 12h old. 2026-11-21 — the
+    // report's money columns are USD only again, so the snapshot is loaded
+    // only when the Amazon country section (its pre-existing conversion
+    // strip) is actually rendered. It never breaks the page either way.
+    if (report.hasAmazonStore) fx = await loadFxSnapshot(supabase, AMAZON_CURRENCIES);
   }
 
   // 2026-10-13 — "DAILY ORDER SHEET ... AAJ SABHI STORE PAR KITNE ORDER
@@ -301,7 +310,8 @@ export default async function AdSpendPage({
       ) : (
         <AdSpendReportTable
           companies={companies ?? []}
-          filters={{ month, companyId: companyFilter }}
+          stores={stores ?? []}
+          filters={{ month, companyId: companyFilter, storeId: storeFilter }}
           dailyRows={report?.dailyRows ?? []}
           monthlyRows={report?.monthlyRows ?? []}
           amazonCountryRows={report?.amazonCountryRows ?? []}

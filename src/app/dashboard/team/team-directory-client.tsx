@@ -22,6 +22,9 @@ export type DirectoryPerson = {
   email: string | null;
   whatsapp: string | null;
   joined: string | null;
+  /** 2026-11-21 — date of birth, shown on the card ("team directory me DOB
+   *  show nahi hoti"). Null renders as an em dash, same as joining date. */
+  dob: string | null;
   role: string;
   company: string;
 };
@@ -176,6 +179,11 @@ export function TeamDirectoryClient({ people }: { people: DirectoryPerson[] }) {
                     <dt className="sr-only">Company</dt>
                     <span aria-hidden>🏢</span>
                     <dd className="truncate text-[var(--oms-text-muted)]">{p.company}</dd>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <dt className="sr-only">Date of birth</dt>
+                    <span aria-hidden>🎂</span>
+                    <dd className="text-[var(--oms-text-muted)]">DOB {fmtDate(p.dob)}</dd>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <dt className="sr-only">Date of joining</dt>

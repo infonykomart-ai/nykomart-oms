@@ -13,7 +13,11 @@ import { TeamDirectoryClient } from "./team-directory-client";
 // staff, so the select below must never grow bank/statutory/salary
 // columns (that data stays behind the Employees admin page):
 //   name, photo, designation, employee_code, role, company, email,
-//   WhatsApp, date_of_joining. Nothing else.
+//   WhatsApp, date_of_joining, dob. Nothing else.
+//
+// 2026-11-21 — "team directory me DOB show nahi hoti": date of birth is shown
+// on each card now (so birthdays are findable), still deliberately no bank /
+// statutory / salary columns.
 export default async function TeamDirectoryPage() {
   await requireAnyCapability("team_directory", "employee_admin");
   const supabase = await createClient();
@@ -21,7 +25,7 @@ export default async function TeamDirectoryPage() {
   const [employeesRaw, roles, companies] = await Promise.all([
     supabase
       .from("employees")
-      .select("id, name, photo_url, designation, employee_code, email, whatsapp_no, date_of_joining, role_id, company_id")
+      .select("id, name, photo_url, designation, employee_code, email, whatsapp_no, date_of_joining, dob, role_id, company_id")
       .eq("active", true)
       .order("name"),
     supabase.from("roles").select("id, name"),
@@ -40,6 +44,7 @@ export default async function TeamDirectoryPage() {
     email: e.email,
     whatsapp: e.whatsapp_no,
     joined: e.date_of_joining,
+    dob: e.dob,
     role: roleName.get(e.role_id) ?? "—",
     company: companyName.get(e.company_id) ?? "—",
   }));
