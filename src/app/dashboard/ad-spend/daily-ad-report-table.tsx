@@ -277,7 +277,7 @@ function CornerTotal({ grand }: { grand: DailyAdTotals }) {
     <div className="rounded-xl border-2 border-slate-900 bg-slate-900 p-3 text-white print:border-slate-300 print:bg-white print:text-slate-900">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <h3 className="text-xs font-bold uppercase tracking-wide">Total — sabhi stores</h3>
-        <span className="text-[10px] opacity-70 print:hidden">month ke selected range ka</span>
+        <span className="text-[10px] opacity-70 print:hidden">selected range ka total</span>
       </div>
       <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 sm:grid-cols-4">
         {cells.map((c) => (
@@ -403,6 +403,7 @@ export function DailyAdReport({
   orderRows,
   dates,
   month,
+  range = null,
   monthOptions,
   targets = {},
   initialStore = "",
@@ -414,10 +415,12 @@ export function DailyAdReport({
   stores: { id: string; name: string; company_id?: string; companyName?: string }[];
   spendRows: DailyAdSpendRow[];
   orderRows: DailyAdOrderRow[];
-  /** The selected month's dates (current month stops at today). */
+  /** The selected range's dates (current month stops at today). */
   dates: string[];
-  /** YYYY-MM. */
+  /** YYYY-MM — the month view's month (also the fallback when a range is on). */
   month: string;
+  /** 7 / 30 / 90 rolling days; null = calendar month. */
+  range?: number | null;
   /** The last 12 months, oldest first. */
   monthOptions: string[];
   /** store_ad_targets, per store. */
@@ -448,14 +451,21 @@ export function DailyAdReport({
   const active = withData.find((s) => s.storeId === selected) ?? null;
   const showTotal = totalView && (selected === TOTAL || !active);
 
-  function navigate(nextMonth: string, nextStore: string) {
+  function navigate(nextMonth: string, nextStore: string, nextRange: number | null = range) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", "daily");
     params.set("month", nextMonth);
+    // A range and a month are exclusive: picking a month clears the range.
+    if (nextRange) params.set("range", String(nextRange));
+    else params.delete("range");
     if (nextStore && nextStore !== TOTAL) params.set("store", nextStore);
     else params.delete("store");
     startNav(() => router.replace(`${pathname}?${params.toString()}`, { scroll: false }));
   }
+
+  const periodLabel = range
+    ? `Last ${range} days · ${dates.length > 0 ? `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}` : "—"}`
+    : monthLabel(month);
 
   const anomalies = (showTotal ? report : active ? [active] : []).flatMap((s) =>
     s.anomalies.map((a) => ({ ...a, storeName: s.storeName }))
@@ -577,7 +587,9 @@ export function DailyAdReport({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ad-report-${month}${showTotal || !active ? "-all" : `-${active.storeName.replace(/[^a-z0-9]+/gi, "-")}`}.csv`;
+    a.download = `ad-report-${range ? `last-${range}d` : month}${
+      showTotal || !active ? "-all" : `-${active.storeName.replace(/[^a-z0-9]+/gi, "-")}`
+    }.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -589,8 +601,8 @@ export function DailyAdReport({
           <div>
             <h2 className="text-sm font-semibold text-slate-700">📋 Daily advertisement report</h2>
             <p className="text-[11px] text-slate-400">
-              {monthLabel(month)} · organic sales from our orders (base PO = one order, PO-date day) + the ad numbers
-              saved in Daily Entry. CTR / ROAS / ACoS are calculated, never typed.
+              {periodLabel} · organic sales from our orders (base PO = one order, PO-date day) + the ad numbers saved in
+              Daily Entry. CTR / ROAS / ACoS are calculated, never typed.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 print:hidden">
@@ -599,16 +611,34 @@ export function DailyAdReport({
             </label>
             <select
               id="daily_month"
-              value={month}
-              onChange={(e) => navigate(e.target.value, selected)}
+              value={range ? "" : month}
+              onChange={(e) => navigate(e.target.value, selected, null)}
               className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
             >
+              {range && <option value="" disabled>Last {range} days</option>}
               {monthOptions.map((m) => (
                 <option key={m} value={m}>
                   {monthLabel(m)}
                 </option>
               ))}
             </select>
+            {/* 2026-11-21 (round 3) — rolling windows share the same sheet; the
+                month dropdown switches back to a calendar month. */}
+            <div className="flex overflow-hidden rounded-lg border border-slate-300 bg-white">
+              {[7, 30, 90].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => navigate(month, selected, r)}
+                  className={`px-2 py-1 text-xs transition ${
+                    range === r ? "bg-amber-500 font-semibold text-white" : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                  title={`Last ${r} days`}
+                >
+                  {r}d
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={downloadCsv}
@@ -629,7 +659,8 @@ export function DailyAdReport({
         <CornerTotal grand={totals.grand} />
 
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <PacingCard stores={showTotal ? withData : active ? [active] : []} />
+          {/* Pacing is month-budget based, so a rolling window never shows it. */}
+          {!range && <PacingCard stores={showTotal ? withData : active ? [active] : []} />}
           {(missing.length > 0 || anomalies.length > 0) && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs">
               {missing.length > 0 && (
@@ -653,7 +684,7 @@ export function DailyAdReport({
 
         {withData.length === 0 ? (
           <p className="mt-3 rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">
-            {monthLabel(month)} me aapke store(s) ki koi ad entry ya order nahi hai. Daily Entry me us din ka data save
+            {periodLabel} me aapke store(s) ki koi ad entry ya order nahi hai. Daily Entry me us din ka data save
             karein (ya order enter karein) — yeh sheet khud ban jayegi.{" "}
             {storeAccessHref ? (
               <Link href={storeAccessHref} className="font-semibold text-amber-700 underline hover:text-amber-900">
@@ -671,7 +702,7 @@ export function DailyAdReport({
                   type="button"
                   onClick={() => {
                     setSelected(TOTAL);
-                    navigate(month, TOTAL);
+                    navigate(month, TOTAL, range);
                   }}
                   className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold transition ${
                     showTotal
@@ -690,7 +721,7 @@ export function DailyAdReport({
                     type="button"
                     onClick={() => {
                       setSelected(s.storeId);
-                      navigate(month, s.storeId);
+                      navigate(month, s.storeId, range);
                     }}
                     className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition ${
                       on

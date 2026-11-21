@@ -133,6 +133,21 @@ test("a month select uses the whole past month but stops the current month at to
   assert.deepEqual(monthOptions("2026-11", 3), ["2026-09", "2026-10", "2026-11"]);
 });
 
+test("a 7-day rolling window only counts the days inside it", () => {
+  const report = buildDailyAdReport({
+    stores: [{ id: "s1", name: "Etsy NYKO" }],
+    spendRows: [{ store_id: "s1", spend_date: "2026-11-21", spend_usd: 5 }],
+    orderRows: [
+      order({ id: "old", ref_no: "PO-OLD", po_date: "2026-11-10" }),
+      order({ id: "new", ref_no: "PO-NEW", po_date: "2026-11-20" }),
+    ],
+    dates: isoDaysBack(today, 7),
+  })[0];
+  assert.equal(report.totals.orders, 1, "the 10-Nov order is outside 7 days");
+  assert.equal(report.totals.spendUsd, 5);
+  assert.deepEqual(report.missingEntryDates, ["2026-11-20"]);
+});
+
 test("Amazon daily ad revenue feeds ROAS and ACoS instead of staying 0", () => {
   const spend: DailyAdSpendRow[] = [
     { store_id: "s1", spend_date: "2026-11-20", spend_usd: 40, ad_revenue_usd: 200, clicks: 10, impressions: 1000 },

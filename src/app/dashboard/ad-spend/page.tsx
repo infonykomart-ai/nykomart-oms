@@ -10,7 +10,7 @@ import { DailyAdReport } from "./daily-ad-report-table";
 // 2026-11-21 (round 2) — "MONTH SELECT KARNE KA ... TOTAL BHI AAJAYE": the
 // daily tab is month-based now (the current month stops at today), and its
 // per-store targets live in store_ad_targets.
-import { isoMonthDates, monthOptions, type DailyAdTarget } from "./daily-ad-report";
+import { isoDaysBack, isoMonthDates, monthOptions, type DailyAdTarget } from "./daily-ad-report";
 // 2026-10-15 — the Report tab's math (Amazon country split + statement
 // verification) lives in its own module, same as the Daily Order Sheet's
 // daily-sheet-stats.ts: page.tsx fetches/scopes, the module decides numbers.
@@ -190,7 +190,13 @@ export default async function AdSpendPage({
   // here; a past month is whole, the current month stops at today.
   const dailyMonth =
     typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : defaultMonth;
-  const dailyDates = isoMonthDates(dailyMonth, todayIST());
+  // 2026-11-21 (round 3) — quick rolling windows next to the month select:
+  // ?range=7 / 30 / 90. A range and a month are mutually exclusive; a range
+  // wins because it is the more specific choice in the URL. Pacing is only
+  // shown for a calendar month (a rolling window has no "month budget").
+  const dailyRange =
+    sp.range === "7" ? 7 : sp.range === "30" ? 30 : sp.range === "90" ? 90 : null;
+  const dailyDates = dailyRange ? isoDaysBack(todayIST(), dailyRange) : isoMonthDates(dailyMonth, todayIST());
   const dailyMonthOptions = monthOptions(todayIST(), 12);
   const dailyTargets: Record<string, DailyAdTarget> = {};
   if (tab === "entry") {
@@ -477,6 +483,7 @@ export default async function AdSpendPage({
           orderRows={dailyOrderRows}
           dates={dailyDates}
           month={dailyMonth}
+          range={dailyRange}
           monthOptions={dailyMonthOptions}
           targets={dailyTargets}
           initialStore={storeFilter}
