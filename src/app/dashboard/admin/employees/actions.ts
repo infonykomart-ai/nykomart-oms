@@ -743,21 +743,51 @@ export async function updateEmployeeDetails(_prev: EmployeeDetailsFormState, for
  * same pattern as every other capability/permissions grid in this app.
  */
 export async function updateEmployeeStoreAccess(_prev: SimpleActionState, formData: FormData): Promise<SimpleActionState> {
-  await requireCapability("employee_admin");
+  const actor = await requireCapability("employee_admin");
   const supabase = createServiceRoleClient();
 
   const employeeId = str(formData, "employee_id");
   if (!employeeId) return { error: "Employee missing.", success: false };
   const storeIds = Array.from(new Set(formData.getAll("store_access").map(String).filter(Boolean)));
+  // 2026-11-21 (round 2) — optional temporary grant. Blank = permanent.
+  const validUntilRaw = str(formData, "valid_until");
+  if (validUntilRaw && !/^\d{4}-\d{2}-\d{2}$/.test(validUntilRaw)) {
+    return { error: "Access expiry must be a valid date (YYYY-MM-DD) or blank.", success: false };
+  }
+  const validUntil = validUntilRaw || null;
+
+  // Snapshot the current grant so the audit log can show exactly what changed.
+  const { data: before } = await supabase.from("employee_store_access").select("store_id").eq("employee_id", employeeId);
+  const beforeIds = new Set((before ?? []).map((r) => r.store_id));
 
   const { error: delError } = await supabase.from("employee_store_access").delete().eq("employee_id", employeeId);
   if (delError) return { error: delError.message, success: false };
 
   if (storeIds.length > 0) {
-    const { error: insError } = await supabase
-      .from("employee_store_access")
-      .insert(storeIds.map((store_id) => ({ employee_id: employeeId, store_id })));
+    const rows = storeIds.map((store_id) => ({ employee_id: employeeId, store_id, valid_until: validUntil }));
+    let { error: insError } = await supabase.from("employee_store_access").insert(rows);
+    if (insError) {
+      // Before the round-2 migration the column does not exist yet; the
+      // grant itself must still save.
+      ({ error: insError } = await supabase
+        .from("employee_store_access")
+        .insert(storeIds.map((store_id) => ({ employee_id: employeeId, store_id }))));
+    }
     if (insError) return { error: insError.message, success: false };
+  }
+
+  // Audit trail — best-effort: the assignment above already succeeded, so a
+  // missing log table (pre-migration) must not turn this into an error.
+  const afterIds = new Set(storeIds);
+  const logRows: { employee_id: string; store_id: string; actor_employee_id: string; action: string }[] = [];
+  for (const store_id of afterIds) if (!beforeIds.has(store_id)) logRows.push({ employee_id: employeeId, store_id, actor_employee_id: actor.id, action: "granted" });
+  for (const store_id of beforeIds) if (!afterIds.has(store_id)) logRows.push({ employee_id: employeeId, store_id, actor_employee_id: actor.id, action: "revoked" });
+  if (logRows.length > 0) {
+    try {
+      await supabase.from("employee_store_access_log").insert(logRows);
+    } catch {
+      // log is optional
+    }
   }
 
   revalidatePath("/dashboard/admin/employees");

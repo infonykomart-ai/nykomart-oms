@@ -36,6 +36,8 @@ type RecentEntry = {
   etsyRevenueUsd: number | null;
   etsyOrders: number | null;
   etsyAdClicks: number | null;
+  /** Ad platform's own daily revenue (Amazon / eBay), null = not recorded. */
+  adRevenueUsd: number | null;
   /** When these numbers were last saved (store_ad_spend.updated_at). */
   enteredAt: string;
 };
@@ -46,6 +48,7 @@ type MetricForm = {
   clicks: string;
   impressions: string;
   visits: string;
+  ad_revenue_usd: string;
   etsy_visits_daily: string;
   etsy_visits_monthly: string;
   etsy_conversion_rate_monthly: string;
@@ -58,6 +61,7 @@ const EMPTY_METRIC_FORM: MetricForm = {
   clicks: "",
   impressions: "",
   visits: "",
+  ad_revenue_usd: "",
   etsy_visits_daily: "",
   etsy_visits_monthly: "",
   etsy_conversion_rate_monthly: "",
@@ -288,6 +292,7 @@ export function AdSpendEntrySection({
                   {metricField("clicks", "Clicks")}
                   {metricField("impressions", "Impressions / Views")}
                   {metricField("visits", "Visiting")}
+                  {metricField("ad_revenue_usd", "Ad revenue (USD)", "0.01", "Amazon Ads report ka REVENUE — ROAS / ACoS isi se banta hai.")}
                   <div className="rounded-lg border border-amber-200 bg-white px-3 py-1.5">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">CTR %</div>
                     <div className="text-sm font-bold text-slate-900">{ctr.toFixed(2)}%</div>
@@ -304,6 +309,7 @@ export function AdSpendEntrySection({
                   {metricField("visits", "Visits")}
                   {metricField("impressions", "Impressions")}
                   {metricField("clicks", "Clicks")}
+                  {metricField("ad_revenue_usd", "Ad revenue (USD)", "0.01", "eBay ad report ka revenue — ROAS / ACoS isi se banta hai.")}
                   <div className="rounded-lg border border-amber-200 bg-white px-3 py-1.5">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">CTR %</div>
                     <div className="text-sm font-bold text-slate-900">{ctr.toFixed(2)}%</div>
@@ -382,6 +388,7 @@ function metricSummary(e: RecentEntry): string[] {
   if (e.clicks !== null) parts.push(`${e.clicks} clicks`);
   if (e.impressions !== null) parts.push(`${e.impressions} views`);
   if (e.visits !== null) parts.push(`${e.visits} visits`);
+  if (e.adRevenueUsd !== null) parts.push(`$${e.adRevenueUsd.toFixed(2)} ad revenue`);
   if (e.clicks !== null && e.impressions !== null) parts.push(`CTR ${ctrPct(e.clicks, e.impressions).toFixed(2)}%`);
   if (e.etsyVisitsDaily !== null) parts.push(`${e.etsyVisitsDaily} visits/day`);
   if (e.etsyVisitsMonthly !== null) parts.push(`${e.etsyVisitsMonthly} visits/mo`);

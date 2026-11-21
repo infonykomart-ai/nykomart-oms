@@ -44,8 +44,8 @@ test("Etsy monthly spend % is spend ÷ revenue and null without revenue", () => 
 });
 
 test("each channel only owns its own metric columns", () => {
-  assert.deepEqual(CHANNEL_METRIC_KEYS.amazon, ["clicks", "impressions", "visits"]);
-  assert.deepEqual(CHANNEL_METRIC_KEYS.ebay, ["visits", "impressions", "clicks"]);
+  assert.deepEqual(CHANNEL_METRIC_KEYS.amazon, ["clicks", "impressions", "visits", "ad_revenue_usd"]);
+  assert.deepEqual(CHANNEL_METRIC_KEYS.ebay, ["visits", "impressions", "clicks", "ad_revenue_usd"]);
   assert.ok(CHANNEL_METRIC_KEYS.etsy.includes("etsy_revenue_usd"));
   assert.ok(!CHANNEL_METRIC_KEYS.amazon.includes("etsy_revenue_usd"));
   assert.deepEqual(CHANNEL_METRIC_KEYS.other, []);

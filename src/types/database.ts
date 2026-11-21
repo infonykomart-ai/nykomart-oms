@@ -6475,14 +6475,19 @@ export type Database = {
         Row: {
           employee_id: string;
           store_id: string;
+          // 2026-11-21 (round 2) — NULL = permanent; a date = temporary grant
+          // (see require-capability.ts and the Store Access form).
+          valid_until: string | null;
         };
         Insert: {
           employee_id: string;
           store_id: string;
+          valid_until?: string | null;
         };
         Update: {
           employee_id?: string;
           store_id?: string;
+          valid_until?: string | null;
         };
         Relationships: [
           {
@@ -6500,6 +6505,33 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      employee_store_access_log: {
+        Row: {
+          id: number;
+          employee_id: string | null;
+          store_id: string | null;
+          actor_employee_id: string | null;
+          action: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          employee_id?: string | null;
+          store_id?: string | null;
+          actor_employee_id?: string | null;
+          action: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          employee_id?: string | null;
+          store_id?: string | null;
+          actor_employee_id?: string | null;
+          action?: string;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       employees: {
         Row: {
@@ -11173,6 +11205,8 @@ export type Database = {
           etsy_revenue_usd: number | null;
           etsy_orders: number | null;
           etsy_ad_clicks: number | null;
+          // 2026-11-21 (round 2) — ad platform daily revenue (Amazon/eBay).
+          ad_revenue_usd: number | null;
           entry_by_employee_id: string;
           updated_at: string;
         };
@@ -11193,6 +11227,7 @@ export type Database = {
           etsy_revenue_usd?: number | null;
           etsy_orders?: number | null;
           etsy_ad_clicks?: number | null;
+          ad_revenue_usd?: number | null;
           entry_by_employee_id: string;
           updated_at?: string;
         };
@@ -11212,6 +11247,7 @@ export type Database = {
           etsy_revenue_usd?: number | null;
           etsy_orders?: number | null;
           etsy_ad_clicks?: number | null;
+          ad_revenue_usd?: number | null;
           entry_by_employee_id?: string;
           updated_at?: string;
         };
@@ -11227,6 +11263,35 @@ export type Database = {
             foreignKeyName: "store_ad_spend_store_id_fkey";
             columns: ["store_id"];
             isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      store_ad_targets: {
+        Row: {
+          store_id: string;
+          monthly_budget_usd: number | null;
+          roas_target: number | null;
+          updated_at: string;
+        };
+        Insert: {
+          store_id: string;
+          monthly_budget_usd?: number | null;
+          roas_target?: number | null;
+          updated_at?: string;
+        };
+        Update: {
+          store_id?: string;
+          monthly_budget_usd?: number | null;
+          roas_target?: number | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "store_ad_targets_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: true;
             referencedRelation: "stores";
             referencedColumns: ["id"];
           },

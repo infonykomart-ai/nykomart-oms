@@ -60,6 +60,24 @@ export function EmployeeStoreAccessForm({
         {stores.length === 0 && <p className="text-xs text-slate-400">No stores set up yet.</p>}
       </div>
 
+      {/* 2026-11-21 (round 2) — temporary access: a date here ends the grant
+          automatically after that day, so leave coverage no longer needs a
+          manual cleanup. Blank keeps it permanent. */}
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs font-medium text-slate-500">
+          Access expires on (optional)
+          <input
+            type="date"
+            name="valid_until"
+            className="mt-1 block rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-800"
+          />
+        </label>
+        <p className="max-w-sm text-[11px] text-slate-400">
+          Blank = permanent. Setting a date replaces any existing expiry for these stores; after that day the login stops
+          seeing them without any manual change.
+        </p>
+      </div>
+
       <div className="flex gap-2">
         <button
           type="submit"

@@ -154,7 +154,23 @@ export const getAuthedEmployee = cache(async (): Promise<AuthedEmployee> => {
   // missing RLS policy on a table that legitimately has rows).
   const finSupabase = createServiceRoleClient();
 
-  const [{ data: role }, { data: caps }, { data: access }, { data: storeAccess }, { data: coverage }] = await Promise.all([
+  // 2026-11-21 (round 2) — temporary Store Access: valid_until ships in
+  // db/2026-11-21b-ad-spend-report-upgrades.sql. Read it when the column
+  // exists and fall back to the old two-column read before that migration is
+  // run, so no page can break on it.
+  const storeAccessRows = await (async () => {
+    const res = await supabase
+      .from("employee_store_access")
+      .select("store_id, valid_until")
+      .eq("employee_id", employee.id);
+    if (!res.error) return res.data ?? [];
+    const fallback = await supabase.from("employee_store_access").select("store_id").eq("employee_id", employee.id);
+    return (fallback.data ?? []).map((r) => ({ ...r, valid_until: null as string | null }));
+  })();
+  // An expired grant stops granting access on its own — no cleanup job.
+  const activeStoreAccess = storeAccessRows.filter((r) => !r.valid_until || r.valid_until >= today);
+
+  const [{ data: role }, { data: caps }, { data: access }, { data: coverage }] = await Promise.all([
     supabase.from("roles").select("name").eq("id", employee.role_id).single(),
     supabase.from("role_capabilities").select("capability_code").eq("role_id", employee.role_id),
     supabase.from("employee_company_access").select("company_id").eq("employee_id", employee.id),
@@ -163,7 +179,6 @@ export const getAuthedEmployee = cache(async (): Promise<AuthedEmployee> => {
     // ad_spend_report_all capability. See employee_store_access in
     // db/schema.sql. Empty on purpose for most logins (Finance/MD/Admin/
     // Higher Authority bypass this via ad_spend_report_all instead).
-    supabase.from("employee_store_access").select("store_id").eq("employee_id", employee.id),
     finSupabase
       .from("leave_coverage_assignments")
       .select("store_id")
@@ -188,7 +203,7 @@ export const getAuthedEmployee = cache(async (): Promise<AuthedEmployee> => {
   const companyIds = Array.from(
     new Set([employee.company_id, ...(access ?? []).map((a) => a.company_id), ...coverageCompanyIds])
   );
-  const storeIds = Array.from(new Set([...(storeAccess ?? []).map((a) => a.store_id), ...coverageStoreIds]));
+  const storeIds = Array.from(new Set([...activeStoreAccess.map((a) => a.store_id), ...coverageStoreIds]));
 
   const cookieStore = await cookies();
   const requested = cookieStore.get(CURRENT_COMPANY_COOKIE)?.value;

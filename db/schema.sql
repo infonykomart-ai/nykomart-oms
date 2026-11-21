@@ -438,9 +438,24 @@ COMMENT ON TABLE employee_company_access IS
 CREATE TABLE employee_store_access (
   employee_id   uuid NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
   store_id      uuid NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  -- 2026-11-21 (round 2) — NULL = permanent grant; a date = temporary access
+  -- that stops on its own (require-capability.ts filters expired rows).
+  valid_until   date,
   PRIMARY KEY (employee_id, store_id)
 );
 CREATE INDEX idx_employee_store_access_store ON employee_store_access(store_id);
+
+-- 2026-11-21 (round 2) — who granted/revoked which Store Access, and when.
+CREATE TABLE employee_store_access_log (
+  id                  bigserial PRIMARY KEY,
+  employee_id         uuid REFERENCES employees(id) ON DELETE CASCADE,
+  store_id            uuid REFERENCES stores(id) ON DELETE CASCADE,
+  actor_employee_id   uuid REFERENCES employees(id) ON DELETE SET NULL,
+  action              text NOT NULL,
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_employee_store_access_log_employee
+  ON employee_store_access_log(employee_id, created_at DESC);
 
 
 -- =============================================================================
@@ -935,17 +950,56 @@ CREATE TABLE store_ad_spend (
   -- report hides the split instead of assuming 0). See
   -- db/2026-11-20e-store-ad-spend-attributed-orders.sql.
   ad_orders             integer,
+  -- 2026-11-21 — channel metrics for the Daily Entry; NULL = not recorded.
+  -- CTR and the Etsy monthly spend % are derived on read, never stored.
+  -- See db/2026-11-21-store-ad-spend-channel-metrics.sql.
+  clicks                integer,
+  impressions           integer,
+  visits                integer,
+  etsy_visits_daily     integer,
+  etsy_visits_monthly   integer,
+  etsy_conversion_rate_monthly numeric(7,2),
+  etsy_revenue_usd      numeric(14,2),
+  etsy_orders           integer,
+  etsy_ad_clicks        integer,
+  -- 2026-11-21 (round 2) — the ad platform's own daily revenue, so Amazon /
+  -- eBay ROAS and ACoS are real. See
+  -- db/2026-11-21b-ad-spend-report-upgrades.sql.
+  ad_revenue_usd        numeric(14,2),
   entry_by_employee_id  uuid NOT NULL REFERENCES employees(id),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT store_ad_spend_store_date_country_key UNIQUE (store_id, spend_date, country_code),
   CONSTRAINT store_ad_spend_country_code_check
     CHECK (country_code IN ('', 'US', 'CA', 'MX', 'AU', 'GB', 'DE', 'IT', 'JP', 'FR', 'ES', 'IN', 'AE')),
   CONSTRAINT store_ad_spend_ad_orders_check
-    CHECK (ad_orders IS NULL OR ad_orders >= 0)
+    CHECK (ad_orders IS NULL OR ad_orders >= 0),
+  CONSTRAINT store_ad_spend_channel_metrics_check
+    CHECK (
+      (clicks IS NULL OR clicks >= 0)
+      AND (impressions IS NULL OR impressions >= 0)
+      AND (visits IS NULL OR visits >= 0)
+      AND (etsy_visits_daily IS NULL OR etsy_visits_daily >= 0)
+      AND (etsy_visits_monthly IS NULL OR etsy_visits_monthly >= 0)
+      AND (etsy_conversion_rate_monthly IS NULL OR etsy_conversion_rate_monthly >= 0)
+      AND (etsy_revenue_usd IS NULL OR etsy_revenue_usd >= 0)
+      AND (etsy_orders IS NULL OR etsy_orders >= 0)
+      AND (etsy_ad_clicks IS NULL OR etsy_ad_clicks >= 0)
+      AND (ad_revenue_usd IS NULL OR ad_revenue_usd >= 0)
+    )
 );
 CREATE INDEX idx_store_ad_spend_date  ON store_ad_spend(spend_date);
 CREATE INDEX idx_store_ad_spend_store ON store_ad_spend(store_id);
 CREATE INDEX idx_store_ad_spend_store_country_date ON store_ad_spend(store_id, country_code, spend_date);
+CREATE INDEX idx_store_ad_spend_store_date ON store_ad_spend(store_id, spend_date);
+
+-- 2026-11-21 (round 2) — one monthly budget + ROAS target per store, used by
+-- the Daily Ad Report's pacing and over-budget alert.
+CREATE TABLE store_ad_targets (
+  store_id            uuid PRIMARY KEY REFERENCES stores(id) ON DELETE CASCADE,
+  monthly_budget_usd  numeric(14,2),
+  roas_target         numeric(8,2),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
 
 
 -- =============================================================================

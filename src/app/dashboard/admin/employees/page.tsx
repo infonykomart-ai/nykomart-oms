@@ -34,7 +34,7 @@ export default async function EmployeesAdminPage() {
   // salary page), so read it via the service-role client.
   const finSupabase = createServiceRoleClient();
 
-  const [{ data: employees }, { data: roles }, { data: roleCaps }, { data: companies }, { data: companyAccess }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }] =
+  const [{ data: employees }, { data: roles }, { data: roleCaps }, { data: companies }, { data: companyAccess }, { data: stores }, { data: storeAccess }, { data: advances }, { data: documentsRaw }, { data: departments }, { data: storeAccessLog }] =
     await Promise.all([
       supabase
         .from("employees")
@@ -69,6 +69,13 @@ export default async function EmployeesAdminPage() {
       // 2026-10-02b — structured department master (all companies this
       // admin can see; per-company filtering happens at each usage).
       supabase.from("departments").select("id, name, company_id, active").order("name"),
+      // 2026-11-21 (round 2) — Store Access audit trail (its own migration;
+      // a missing table just means no history to show yet).
+      supabase
+        .from("employee_store_access_log")
+        .select("id, employee_id, store_id, actor_employee_id, action, created_at")
+        .order("created_at", { ascending: false })
+        .limit(25),
     ]);
 
   // 2026-10-03 — resolved ONCE for the whole page (the row map is a sync
@@ -116,6 +123,8 @@ export default async function EmployeesAdminPage() {
     capsByRole.set(row.role_id, set);
   }
   const storeCompanyId = new Map((stores ?? []).map((s) => [s.id, s.company_id]));
+  const storeName = new Map((stores ?? []).map((s) => [s.id, s.name]));
+  const employeeName = new Map((employees ?? []).map((e) => [e.id, e.name]));
   const storeAccessWarning = (employee: { id: string; role_id: string; active: boolean; company_id: string }) => {
     const caps = capsByRole.get(employee.role_id) ?? new Set<string>();
     if (!employee.active) return false;
@@ -171,6 +180,30 @@ export default async function EmployeesAdminPage() {
           the anchor the Ad Spend empty-module messages link to. */}
       <div id="store-access" className="scroll-mt-24">
         <LockoutWarning employees={lockedOutProps} stores={stores ?? []} />
+        {(storeAccessLog ?? []).length > 0 && (
+          <details className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+              🧾 Store access change log (last 25)
+            </summary>
+            <ul className="mt-2 space-y-1 text-[11px] text-slate-600">
+              {(storeAccessLog ?? []).map((l) => (
+                <li key={l.id} className="flex flex-wrap items-baseline gap-1 border-b border-slate-100 pb-1 last:border-0">
+                  <span
+                    className={`rounded px-1.5 py-0.5 font-semibold ${
+                      l.action === "revoked" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
+                    }`}
+                  >
+                    {l.action}
+                  </span>
+                  <b>{l.store_id ? storeName.get(l.store_id) ?? "—" : "—"}</b>
+                  <span>→ {l.employee_id ? employeeName.get(l.employee_id) ?? "—" : "—"}</span>
+                  <span className="text-slate-400">by {l.actor_employee_id ? employeeName.get(l.actor_employee_id) ?? "—" : "—"}</span>
+                  <span className="ml-auto text-slate-400">{formatISTShort(l.created_at)}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
 
       {/* 2026-09-15 — "screen auto adjust hojaye": @lg: variants respond to

@@ -99,6 +99,7 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
     clicks: "Clicks",
     impressions: "Impressions / Views",
     visits: "Visits",
+    ad_revenue_usd: "Ad revenue (USD)",
     etsy_visits_daily: "Etsy visits (daily)",
     etsy_visits_monthly: "Etsy visits (monthly)",
     etsy_conversion_rate_monthly: "Etsy conversion rate (monthly)",
@@ -113,6 +114,18 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
       return fail(`${metricLabels[key]} must be zero or a positive number, or left blank.`);
     }
     metrics[key] = parsed;
+  }
+  // 2026-11-21 (round 2) — impossible figures are caught before they reach
+  // the report: more clicks than views can only be a mistyped entry.
+  if (
+    metrics.clicks !== null &&
+    metrics.clicks !== undefined &&
+    metrics.impressions !== null &&
+    metrics.impressions !== undefined &&
+    metrics.impressions > 0 &&
+    metrics.clicks > metrics.impressions
+  ) {
+    return fail("Clicks cannot be more than impressions / views for the same day.");
   }
 
   // 2026-10-15 — an Amazon store's numbers are per marketplace country, so
@@ -139,16 +152,77 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
   const upsert = (payload: Record<string, unknown>) =>
     supabase.from("store_ad_spend").upsert(payload as never, { onConflict: "store_id,spend_date,country_code" });
 
-  let { error } = await upsert({ ...base, ad_orders: adOrders, ...metrics });
+  // Optional columns each ship in their own migration. Until those are run,
+  // Budget/Spend must still save exactly as before: drop the newest column
+  // (ad_revenue_usd) first, then the rest of the channel metrics, then
+  // ad_orders, ending at the original two-number row.
+  const metricsWithoutRevenue = { ...metrics };
+  delete metricsWithoutRevenue.ad_revenue_usd;
+  const attempts: Record<string, unknown>[] = [
+    { ...base, ad_orders: adOrders, ...metrics },
+    { ...base, ad_orders: adOrders, ...metricsWithoutRevenue },
+    { ...base, ad_orders: adOrders },
+    base,
+  ];
+  let error: { message: string } | null = null;
+  for (const payload of attempts) {
+    const res = await upsert(payload);
+    error = res.error;
+    if (!error) break;
+  }
+  if (error) return fail(`Failed to save: ${error.message}`);
+  revalidatePath("/dashboard/ad-spend");
+  return ok;
+}
 
-  if (error) {
-    // The ad-orders and channel-metric columns each ship in their own
-    // migration. Until those are run, Budget/Spend must still save exactly
-    // as before rather than failing the whole entry: retry with the optional
-    // columns dropped, ending at the original two-number row.
-    ({ error } = await upsert({ ...base, ad_orders: adOrders }));
-    if (error) ({ error } = await upsert(base));
-    if (error) return fail(`Failed to save: ${error.message}`);
+/**
+ * 2026-11-21 (round 2) — monthly budget + ROAS target per store
+ * (store_ad_targets). Only logins approved for the complete report can set
+ * them. One form saves every store at once; a blank pair clears that store's
+ * target. Best-effort on the audit-free table: a missing migration means the
+ * page simply keeps showing "no target".
+ */
+export async function saveAdSpendTargetsAction(
+  _prev: AdSpendFormState,
+  formData: FormData
+): Promise<AdSpendFormState> {
+  const employee = await requireCapability("ad_spend_report_all");
+  const supabase = createServiceRoleClient();
+  const storeIds = Array.from(
+    new Set(
+      [...formData.keys()]
+        .filter((k) => k.startsWith("budget_") || k.startsWith("roas_"))
+        .map((k) => k.replace(/^(budget|roas)_/, ""))
+    )
+  );
+  if (storeIds.length === 0) return ok;
+
+  const { data: stores } = await supabase.from("stores").select("id, company_id").in("id", storeIds);
+  const allowed = new Set((stores ?? []).filter((s) => employee.companyIds.includes(s.company_id)).map((s) => s.id));
+
+  const rows: { store_id: string; monthly_budget_usd: number | null; roas_target: number | null; updated_at: string }[] = [];
+  const cleared: string[] = [];
+  for (const storeId of storeIds) {
+    if (!allowed.has(storeId)) continue;
+    const budgetRaw = String(formData.get(`budget_${storeId}`) ?? "").trim();
+    const roasRaw = String(formData.get(`roas_${storeId}`) ?? "").trim();
+    const budget = budgetRaw === "" ? null : Number(budgetRaw);
+    const roas = roasRaw === "" ? null : Number(roasRaw);
+    if (budget !== null && (!Number.isFinite(budget) || budget < 0)) return fail("Monthly budget must be 0 or more.");
+    if (roas !== null && (!Number.isFinite(roas) || roas < 0)) return fail("ROAS target must be 0 or more.");
+    if (budget === null && roas === null) cleared.push(storeId);
+    else rows.push({ store_id: storeId, monthly_budget_usd: budget, roas_target: roas, updated_at: new Date().toISOString() });
+  }
+
+  if (rows.length > 0) {
+    const { error } = await supabase
+      .from("store_ad_targets")
+      .upsert(rows as never, { onConflict: "store_id" });
+    if (error) return fail(`Could not save targets: ${error.message}`);
+  }
+  if (cleared.length > 0) {
+    const { error } = await supabase.from("store_ad_targets").delete().in("store_id", cleared);
+    if (error) return fail(`Could not clear targets: ${error.message}`);
   }
   revalidatePath("/dashboard/ad-spend");
   return ok;
@@ -178,9 +252,19 @@ export async function deleteAdSpendAction(id: string): Promise<SimpleResult> {
   const employee = await requireCapability("ad_spend_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: row } = await supabase.from("store_ad_spend").select("id, store_id").eq("id", id).maybeSingle();
+  const { data: row } = await supabase
+    .from("store_ad_spend")
+    .select("id, store_id, entry_by_employee_id")
+    .eq("id", id)
+    .maybeSingle();
   if (!row) return { error: "Entry not found." };
   const { data: store } = await supabase.from("stores").select("company_id").eq("id", row.store_id).maybeSingle();
+  // 2026-11-21 (round 2) — a login may not delete someone else's entry unless
+  // it holds the complete-report approval: the upsert key is fixed, so an
+  // unrestricted delete could quietly remove a store's only day of data.
+  if (!employee.capabilities.includes("ad_spend_report_all") && row.entry_by_employee_id !== employee.id) {
+    return { error: "Only the login that entered this row (or an admin) can delete it." };
+  }
   const storeScope: AdSpendStoreScope = {
     companyIds: employee.companyIds,
     assignedStoreIds: employee.storeIds,

@@ -35,6 +35,9 @@ export type ChannelMetrics = {
   clicks: number | null;
   impressions: number | null;
   visits: number | null;
+  /** 2026-11-21 (round 2) — the ad platform's own daily revenue, so the
+   *  report can show a real ROAS/ACoS for Amazon and eBay instead of 0. */
+  ad_revenue_usd: number | null;
   etsy_visits_daily: number | null;
   etsy_visits_monthly: number | null;
   etsy_conversion_rate_monthly: number | null;
@@ -47,6 +50,7 @@ export const EMPTY_CHANNEL_METRICS: ChannelMetrics = {
   clicks: null,
   impressions: null,
   visits: null,
+  ad_revenue_usd: null,
   etsy_visits_daily: null,
   etsy_visits_monthly: null,
   etsy_conversion_rate_monthly: null,
@@ -58,8 +62,8 @@ export const EMPTY_CHANNEL_METRICS: ChannelMetrics = {
 /** The columns each channel's entry block owns. A save only writes those, so
  *  an Amazon entry can never blank an Etsy store's numbers (and vice versa). */
 export const CHANNEL_METRIC_KEYS: Record<StoreChannel, (keyof ChannelMetrics)[]> = {
-  amazon: ["clicks", "impressions", "visits"],
-  ebay: ["visits", "impressions", "clicks"],
+  amazon: ["clicks", "impressions", "visits", "ad_revenue_usd"],
+  ebay: ["visits", "impressions", "clicks", "ad_revenue_usd"],
   etsy: [
     "etsy_visits_daily",
     "etsy_visits_monthly",
@@ -110,6 +114,7 @@ export type ChannelMetricRow = {
   clicks?: number | null;
   impressions?: number | null;
   visits?: number | null;
+  ad_revenue_usd?: number | null;
   etsy_visits_daily?: number | null;
   etsy_visits_monthly?: number | null;
   etsy_revenue_usd?: number | null;

@@ -7,6 +7,10 @@ import { AdSpendReportTable } from "./ad-spend-report-table";
 // BANAO ... DAILY ORDER SHEET KE RIGHT ME": the daily advertisement sheet is
 // its own fourth tab now, scoped to the same Store Access as the other three.
 import { DailyAdReport } from "./daily-ad-report-table";
+// 2026-11-21 (round 2) — "MONTH SELECT KARNE KA ... TOTAL BHI AAJAYE": the
+// daily tab is month-based now (the current month stops at today), and its
+// per-store targets live in store_ad_targets.
+import { isoMonthDates, monthOptions, type DailyAdTarget } from "./daily-ad-report";
 // 2026-10-15 — the Report tab's math (Amazon country split + statement
 // verification) lives in its own module, same as the Daily Order Sheet's
 // daily-sheet-stats.ts: page.tsx fetches/scopes, the module decides numbers.
@@ -51,6 +55,7 @@ type AdSpendListRow = {
   etsy_revenue_usd?: number | null;
   etsy_orders?: number | null;
   etsy_ad_clicks?: number | null;
+  ad_revenue_usd?: number | null;
 };
 
 // Store-level Daily Spend tracking (pending item 3, 2026-08-08 —
@@ -170,6 +175,7 @@ export default async function AdSpendPage({
     etsyRevenueUsd: number | null;
     etsyOrders: number | null;
     etsyAdClicks: number | null;
+    adRevenueUsd: number | null;
     enteredAt: string;
   }[] = [];
   // 2026-11-21 — the channel chart's history (last 14 days) and the Etsy
@@ -180,6 +186,13 @@ export default async function AdSpendPage({
   // login holds ad_spend_report_all (MD/Admin/Finance) and therefore sees all.
   let dailySpendRows: DailyAdSpendRow[] = [];
   let dailyOrderRows: DailyAdOrderRow[] = [];
+  // 2026-11-21 (round 2) — the month the daily tab is showing. Validated
+  // here; a past month is whole, the current month stops at today.
+  const dailyMonth =
+    typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : defaultMonth;
+  const dailyDates = isoMonthDates(dailyMonth, todayIST());
+  const dailyMonthOptions = monthOptions(todayIST(), 12);
+  const dailyTargets: Record<string, DailyAdTarget> = {};
   if (tab === "entry") {
     const allStoreIds = (stores ?? []).map((s) => s.id);
     if (allStoreIds.length > 0) {
@@ -242,29 +255,47 @@ export default async function AdSpendPage({
       etsyRevenueUsd: typeof r.etsy_revenue_usd === "number" ? r.etsy_revenue_usd : null,
       etsyOrders: typeof r.etsy_orders === "number" ? r.etsy_orders : null,
       etsyAdClicks: typeof r.etsy_ad_clicks === "number" ? r.etsy_ad_clicks : null,
+      adRevenueUsd: typeof r.ad_revenue_usd === "number" ? r.ad_revenue_usd : null,
       enteredAt: r.updated_at,
     }));
   }
 
   if (tab === "daily") {
     const allStoreIds = stores.map((s) => s.id);
-    if (allStoreIds.length > 0) {
-      const today = todayIST();
-      const fromDate = new Date(`${today}T00:00:00Z`);
-      fromDate.setUTCDate(fromDate.getUTCDate() - 29);
-      const from = fromDate.toISOString().slice(0, 10);
-      const [{ data: dailySpend }, { data: dailyOrders }] = await Promise.all([
-        supabase.from("store_ad_spend").select("*").in("store_id", allStoreIds).gte("spend_date", from),
+    if (allStoreIds.length > 0 && dailyDates.length > 0) {
+      const from = dailyDates[0];
+      const to = dailyDates[dailyDates.length - 1];
+      const [{ data: dailySpend }, { data: dailyOrders }, { data: targetRows }] = await Promise.all([
+        supabase
+          .from("store_ad_spend")
+          .select("*")
+          .in("store_id", allStoreIds)
+          .gte("spend_date", from)
+          .lte("spend_date", to),
         // Organic side of the sheet: same columns and same PO-date rule the
         // Daily Order Sheet uses (the report module applies the rule).
         supabase
           .from("orders")
           .select("id, ref_no, store_id, order_date, po_date, order_value_usd, buyer_country, destination_country")
           .in("store_id", allStoreIds)
-          .or(`po_date.gte.${from},order_date.gte.${from}`),
+          .or(
+            `and(po_date.gte.${from},po_date.lte.${to}),and(order_date.gte.${from},order_date.lte.${to})`
+          ),
+        // Monthly budget / ROAS target per store (its own migration).
+        supabase
+          .from("store_ad_targets")
+          .select("store_id, monthly_budget_usd, roas_target")
+          .in("store_id", allStoreIds),
       ]);
       dailySpendRows = (dailySpend ?? []) as unknown as DailyAdSpendRow[];
       dailyOrderRows = (dailyOrders ?? []) as unknown as DailyAdOrderRow[];
+      for (const t of targetRows ?? []) {
+        if (!allStoreIds.includes(t.store_id)) continue;
+        dailyTargets[t.store_id] = {
+          monthlyBudgetUsd: t.monthly_budget_usd === null ? null : Number(t.monthly_budget_usd),
+          roasTarget: t.roas_target === null ? null : Number(t.roas_target),
+        };
+      }
     }
   }
 
@@ -438,11 +469,19 @@ export default async function AdSpendPage({
         />
       ) : tab === "daily" ? (
         <DailyAdReport
-          stores={stores ?? []}
+          stores={(stores ?? []).map((s) => ({
+            ...s,
+            companyName: companyName.get(s.company_id) ?? "",
+          }))}
           spendRows={dailySpendRows}
           orderRows={dailyOrderRows}
-          today={todayIST()}
+          dates={dailyDates}
+          month={dailyMonth}
+          monthOptions={dailyMonthOptions}
+          targets={dailyTargets}
+          initialStore={storeFilter}
           canSeeAllStores={canSeeAllStores}
+          canEditTargets={canSeeAllStores}
           storeAccessHref={storeAccessHref}
         />
       ) : tab === "sheet" ? (
