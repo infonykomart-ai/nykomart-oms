@@ -213,7 +213,7 @@ export async function collectSnapshot(): Promise<SnapshotData> {
 const EXCEL_CELL_LIMIT = 32_000;
 const EXCEL_SHEET_NAME_LIMIT = 31;
 
-function cellValue(value: unknown): string | number | boolean {
+export function cellValue(value: unknown): string | number | boolean {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") {
     return value.length > EXCEL_CELL_LIMIT ? `${value.slice(0, EXCEL_CELL_LIMIT)}…` : value;

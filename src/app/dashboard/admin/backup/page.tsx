@@ -13,10 +13,15 @@ import { CloudBackupButton } from "./cloud-backup-panel";
 // rationale on why this is its own capability rather than reusing
 // "reports" or "invoicing".
 //
-// 2026-10-23 — Cloud Backup added above it: the weekly full snapshot stored
-// in Cloudflare R2 (every table as Excel + a readable PDF), plus the list of
-// stored runs to download. The Excel export below remains the quick,
-// on-demand "orders + invoices" workbook; it does not touch R2.
+// 2026-10-23 — Cloud Backup: the weekly full snapshot stored in Cloudflare
+// R2 (every table as Excel + a readable PDF), plus the list of stored runs.
+//
+// 2026-11-21 — "pure oms me jo data hai uska backup one click me download …
+// pura excel me zip file me chahiye": a direct, R2-free download of the SAME
+// full snapshot as a ZIP of Excel workbooks (Summary + one workbook per
+// domain + MANIFEST.json), plus the extra backup sections merged into one
+// card instead of three competing ones. The weekly R2 snapshot and the quick
+// orders-only workbook stay, as secondary actions inside that card.
 
 // The stored-run list is read from R2 on every visit (the list calls use
 // `cache: "no-store"`), so a just-finished backup shows up immediately — no
@@ -137,23 +142,54 @@ export default async function BackupExportPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">💾 Backup Export</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">💾 Backup</h1>
+        <p className="mt-1 text-xs text-slate-500">
+          The complete OMS data in one download, plus the scheduled cloud copy. Admin/MD only.
+        </p>
       </div>
 
       <div className="max-w-3xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-800">☁️ Cloud Backup — weekly full snapshot</h2>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">Every Sunday, 02:00 IST</span>
-        </div>
-        <CloudBackupButton disabled={!runs.configured} />
-        <div className="mt-4">
-          <StoredRuns state={runs} />
-        </div>
-      </div>
+        <h2 className="text-sm font-semibold text-slate-800">⬇️ Full OMS backup — one click</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Every table in the database, downloaded as one ZIP: a <b>00-Summary.xlsx</b> receipt (table, its workbook, row
+          count), one Excel workbook per area (Orders, Invoices, Inventory, People & Payroll, Parties & Accounts, Ads &
+          Marketplaces, Messages & CRM, System & Settings, and Other for anything newer), and a <b>MANIFEST.json</b>.
+          Nothing is written to the database, and no Cloudflare/R2 setup is needed for this download.
+        </p>
+        <a
+          href="/api/admin/backup/full"
+          className="mt-3 inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+        >
+          ⬇️ Download full backup (ZIP of Excel)
+        </a>
+        <p className="mt-2 text-[11px] text-slate-400">
+          A full history can take up to a minute to prepare before the download starts — keep this tab open until the ZIP
+          appears. Tables that could not be read are listed in the summary with the reason instead of being left out silently.
+        </p>
 
-      <div className="max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-slate-800">Export All Orders + Invoices</h2>
-        <BackupExportButton />
+        <div className="mt-6 border-t border-slate-100 pt-5">
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-800">☁️ Weekly cloud snapshot</h3>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">Every Sunday, 02:00 IST</span>
+          </div>
+          <p className="mb-2 text-xs text-slate-500">
+            The same snapshot stored in Cloudflare R2 (Excel + PDF) and kept between deploys. Needs the R2 keys below;
+            the one-click ZIP above does not.
+          </p>
+          <CloudBackupButton disabled={!runs.configured} />
+          <div className="mt-4">
+            <StoredRuns state={runs} />
+          </div>
+        </div>
+
+        <div className="mt-6 border-t border-slate-100 pt-5">
+          <h3 className="mb-1 text-sm font-semibold text-slate-800">Orders + Invoices — quick single-sheet export</h3>
+          <p className="mb-2 text-xs text-slate-500">
+            Only the joined order/invoice columns, in one small workbook, for day-to-day sharing. The full backup above is
+            the one to keep.
+          </p>
+          <BackupExportButton />
+        </div>
       </div>
 
       {/* 2026-08-22 — one-time (safely re-runnable) migration for the
@@ -161,9 +197,10 @@ export default async function BackupExportPage() {
           db/2026-08-22-orders-buyer-country.sql and actions.ts's
           backfillBuyerCountry() for the full rationale. New/edited
           orders get this automatically from now on; this button is only
-          for the pre-existing backlog. */}
+          for the pre-existing backlog. Not a backup action, so it stays out
+          of the merged backup card. */}
       <div className="max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-1 text-sm font-semibold text-slate-800">🌍 Backfill Buyer Country</h2>
+        <h2 className="mb-1 text-sm font-semibold text-slate-800">🌍 Backfill Buyer Country (maintenance)</h2>
         <BuyerCountryBackfillButton />
       </div>
     </div>
