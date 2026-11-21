@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { updateOrder, type OrderEditState } from "./actions";
 import { PhotoUrlField } from "./photo-url-field";
+import { MultiPhotoUrls } from "./multi-photo-urls";
 import { StairRugFields } from "./stair-rug-fields";
 import { isStairRugCategory } from "@/lib/orders/stair-rug";
 import { lookupPostalCode } from "@/lib/postal-lookup";
@@ -45,6 +46,10 @@ export type EditableOrder = {
   colour: string | null;
   photo_type: string | null;
   photo_url: string | null;
+  // 2026-11-21 — every saved photo, main first, close-ups after. The edit
+  // form's Close-Up slots read this and updateOrder writes it back, so
+  // adding/changing a close-up here actually saves (it used to be ignored).
+  photo_urls?: string[] | null;
   tassel_fringes: boolean | null;
   buyer_name_address: string | null;
   contact_no: string | null;
@@ -322,6 +327,25 @@ export function OrderEditForm({
             label="Main Photo (order photo)"
             labelClass={labelClass}
           />
+        </div>
+        {/* 2026-11-21 — "ORDER UPDATE ME CLOSUP PHOTO DALNE PAR BHI VO UPDATE
+            NAHI HO RAHI": the edit form had no Close-Up fields at all, so
+            there was nowhere to add one and updateOrder never wrote
+            photo_urls. The same MultiPhotoUrls group the New Order form uses
+            is rendered here with the order's saved close-ups, and
+            updateOrder now rebuilds photo_urls from these boxes (main photo
+            first). Clearing a box removes that close-up on save. */}
+        <div className="sm:col-span-4 rounded-lg border border-slate-200 bg-white p-3">
+          <span className={labelClass}>Closeup Photos (optional — extra links)</span>
+          <MultiPhotoUrls
+            namePrefix="photo_extra_urls"
+            inputClass={inputClass}
+            initialUrls={(order.photo_urls ?? []).filter((u) => !!u && u !== order.photo_url)}
+          />
+          <p className="mt-1 text-[11px] text-slate-400">
+            Saved close-ups appear above; clear a box to remove that photo when you save. These are the
+            photos the WhatsApp reference-photo automation attaches.
+          </p>
         </div>
         <div className="flex items-center gap-2 pt-5">
           <input id={`tassel_fringes-${order.id}`} name="tassel_fringes" type="checkbox" defaultChecked={!!order.tassel_fringes} className="h-4 w-4 rounded border-slate-300" />

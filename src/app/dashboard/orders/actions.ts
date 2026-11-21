@@ -137,6 +137,24 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
 
   const nextStatus = str(formData, "status");
 
+  // 2026-11-21 — "ORDER UPDATE ME CLOSUP PHOTO DALNE PAR BHI VO UPDATE NAHI HO
+  // RAHI": updateOrder only ever wrote the MAIN photo, so a close-up typed in
+  // the edit form was silently dropped (and the reference-photo automation
+  // never saw it). photo_urls is rebuilt here — main photo first, then the
+  // form's close-up slots, blank rows dropped and duplicates removed. When a
+  // caller does not submit the close-up fields at all, the saved photo list is
+  // kept as-is instead of being wiped.
+  const savedPhotoUrl = strOrNull(formData, "photo_url");
+  const closeUpFields = formData.getAll("photo_extra_urls");
+  const submittedCloseUps = closeUpFields.map((v) => String(v).trim()).filter(Boolean);
+  const savedPhotoUrls = Array.from(
+    new Set(
+      closeUpFields.length > 0
+        ? [...(savedPhotoUrl ? [savedPhotoUrl] : []), ...submittedCloseUps]
+        : [...(savedPhotoUrl ? [savedPhotoUrl] : []), ...((existing.photo_urls ?? []).filter((u): u is string => !!u))]
+    )
+  );
+
   const { error } = await supabase
     .from("orders")
     .update({
@@ -153,7 +171,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       qty,
       colour: strOrNull(formData, "colour"),
       photo_type: (strOrNull(formData, "photo_type") as "Dispatch" | "Website" | null) ?? null,
-      photo_url: strOrNull(formData, "photo_url"),
+      photo_url: savedPhotoUrl,
+      photo_urls: savedPhotoUrls,
       tassel_fringes: formData.get("tassel_fringes") === "on",
       buyer_name_address: buyerNameAddress,
       buyer_country: buyerCountry,
@@ -232,13 +251,6 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   // twice, while a real edit is a new event. With no close-up photos the
   // helper returns immediately and the existing order-update workflow is
   // untouched. This never reads or converts size units.
-  const savedPhotoUrl = strOrNull(formData, "photo_url");
-  const savedPhotoUrls = Array.from(
-    new Set([
-      ...(savedPhotoUrl ? [savedPhotoUrl] : []),
-      ...((existing.photo_urls ?? []).filter((u): u is string => !!u)),
-    ])
-  );
   const savedSizeLabel = strOrNull(formData, "size_label") ?? "";
   after(async () => {
     const token = process.env.WHAPI_TOKEN;
