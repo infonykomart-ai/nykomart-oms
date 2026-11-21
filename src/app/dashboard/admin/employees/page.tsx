@@ -3,6 +3,7 @@ import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { EmployeesHeader } from "./employees-header";
 import { EmployeeForm } from "./employee-form";
 import { EmployeeRowActions } from "./employee-row-actions";
+import { LockoutWarning } from "./lockout-warning";
 // 2026-09-30 — per-row Telegram connection status + one-click Test send,
 // see employee-telegram-cell.tsx (replaced the WhatsApp cell the same day
 // punch notifications switched to Telegram DMs).
@@ -130,6 +131,14 @@ export default async function EmployeesAdminPage() {
   };
   const lockedOutEmployees = (employees ?? []).filter(storeAccessWarning);
   const lockedOutIds = new Set(lockedOutEmployees.map((e) => e.id));
+  // 2026-11-21 — the banner fixes the assignment inline, so it needs each
+  // flagged login's current ticks + companies (see lockout-warning.tsx).
+  const lockedOutProps = lockedOutEmployees.map((e) => ({
+    id: e.id,
+    name: e.name,
+    storeIds: storeIdsByEmployee.get(e.id) ?? [],
+    companyIds: [e.company_id, ...(companyAccessByEmployee.get(e.id) ?? [])],
+  }));
 
   // 2026-09-11 (Payroll Phase 3) — "Reports To" options stay scoped to
   // the SAME company as the employee (an org chart spanning companies
@@ -158,39 +167,8 @@ export default async function EmployeesAdminPage() {
       />
 
       {/* 2026-11-21 — strict store access warning, visible before the table
-          so nobody has to open an employee to discover it. */}
-      {lockedOutEmployees.length > 0 && (
-        <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <div className="flex items-start gap-3">
-            <span className="text-lg leading-none" aria-hidden>
-              ⚠️
-            </span>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-amber-900">
-                {lockedOutEmployees.length} login{lockedOutEmployees.length === 1 ? "" : "s"} have Ad Spend access but no store ticked
-              </h2>
-              <p className="mt-1 text-xs text-amber-800">
-                Store Ad Spend now shows each login ONLY the stores ticked for it under <b>Store Access</b> — never every
-                store of the company. These people would see an empty Ad Spend module until a store is ticked:
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {lockedOutEmployees.map((e) => (
-                  <span
-                    key={e.id}
-                    className="rounded-full border border-amber-300 bg-white px-2.5 py-0.5 text-xs font-medium text-amber-900"
-                  >
-                    {e.name}
-                  </span>
-                ))}
-              </div>
-              <p className="mt-2 text-[11px] text-amber-700">
-                Fix: use <b>Store Access</b> in that employee&apos;s Actions column and tick their store(s). Roles with the
-                complete-report capability (MD/Admin/Finance/Higher Authority) are not affected — they already see every store.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+          and fixable from the banner itself (assign stores inline). */}
+      <LockoutWarning employees={lockedOutProps} stores={stores ?? []} />
 
       {/* 2026-09-15 — "screen auto adjust hojaye": @lg: variants respond to
           THIS page's own width (DashboardMain is a CSS container), not the
