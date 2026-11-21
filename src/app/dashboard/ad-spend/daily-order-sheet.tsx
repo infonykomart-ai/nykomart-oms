@@ -20,6 +20,7 @@
 // module, this component only renders what it is handed, so screen, PDF
 // and exports can never disagree.
 
+import { useState } from "react";
 import { ExportBar } from "@/components/export-bar";
 import type { ExportColumn } from "@/lib/export/export-table";
 import { PrintArea } from "@/components/print-view";
@@ -125,6 +126,17 @@ export function DailyOrderSheet({
   const skuColumns = groupColumns("SKU");
   const sizeColumns = groupColumns("Size");
 
+  // 2026-11-21 — "DAILY ORDER PAGE PAR ... CHIPS STIYLE ME KITNA KYA HAI
+  // FILTER KARNE KA OPTION": a store chip row + bar chart built ONLY from the
+  // day's actual orders, so a filtered view can never show a store that had
+  // none. Clicking a chip (or a bar) filters the Store-wise table; "All"
+  // clears it. The chips carry the counts, qty and amount right on them.
+  const [storeChip, setStoreChip] = useState("");
+  const storeRows = data?.storeRows ?? [];
+  const activeChip = storeRows.some((r) => r.storeId === storeChip) ? storeChip : "";
+  const visibleStoreRows = activeChip ? storeRows.filter((r) => r.storeId === activeChip) : storeRows;
+  const maxOrders = Math.max(1, ...storeRows.map((r) => r.orders));
+
   return (
     <div className="space-y-6">
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 print:hidden">
@@ -150,7 +162,8 @@ export function DailyOrderSheet({
 
       {!data ? (
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">
-          No store is in scope for this view — pick a company, or ask an Admin to assign your store(s) under Employees → Store Access.
+          No store is assigned to your login — pick another company, or ask an Admin to tick your store(s) under
+          Employees → Store Access.
         </div>
       ) : (
         <>
@@ -179,11 +192,87 @@ export function DailyOrderSheet({
             )}
           </div>
 
+          <section className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-700">🏬 Where the orders are — {data.date}</h2>
+                <p className="text-[11px] text-slate-400">
+                  Only stores with at least one order on this date are listed. Click a store to filter the Store-wise table below.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStoreChip("")}
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  activeChip ? "border border-slate-200 bg-white text-slate-500 hover:bg-slate-50" : "bg-amber-500 text-white"
+                }`}
+              >
+                All stores · {data.totals.orders} order(s)
+              </button>
+            </div>
+
+            <div className="mb-4 flex flex-wrap gap-2">
+              {storeRows.map((r) => {
+                const active = activeChip === r.storeId;
+                return (
+                  <button
+                    key={r.storeId}
+                    type="button"
+                    onClick={() => setStoreChip(active ? "" : r.storeId)}
+                    className={`rounded-full border px-3 py-1 text-left text-xs transition ${
+                      active
+                        ? "border-amber-500 bg-amber-50 text-amber-800"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50/50"
+                    }`}
+                    title={`${r.companyName} · ${r.storeName} — ${r.orders} order(s)`}
+                  >
+                    <span className="font-semibold">{r.storeName}</span>
+                    <span className="ml-1.5 text-[11px] text-slate-400">
+                      {r.orders} ord · {r.qty} qty · ${r.usd.toFixed(2)}
+                    </span>
+                  </button>
+                );
+              })}
+              {storeRows.length === 0 && <p className="text-xs text-slate-400">No orders on this date.</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              {storeRows.map((r) => {
+                const active = activeChip === r.storeId;
+                return (
+                  <button
+                    key={r.storeId}
+                    type="button"
+                    onClick={() => setStoreChip(active ? "" : r.storeId)}
+                    className={`block w-full rounded-lg px-2 py-1 text-left transition ${active ? "bg-amber-50" : "hover:bg-slate-50"}`}
+                    title={`Filter the table to ${r.storeName}`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                      <span className="font-medium text-slate-700">{r.storeName}</span>
+                      <span className="text-slate-400">
+                        {r.orders} order(s) · {r.qty} qty · ${r.usd.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={`h-2 rounded-full ${active ? "bg-amber-600" : "bg-amber-400"}`}
+                        style={{ width: `${Math.max(4, (r.orders / maxOrders) * 100)}%` }}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
           <PrintArea id="daily-order-sheet-print"><div className="space-y-8">
             <section>
               <div className="mb-2 flex items-center justify-between print:hidden">
-                <h2 className="text-sm font-semibold text-slate-700">Store-wise — {data.date}</h2>
-                <ExportBar title="Daily Order Sheet — Store-wise" filenameBase="daily-order-sheet-stores" columns={STORE_COLUMNS} rows={data.storeRows} printAreaId="daily-order-sheet-print" />
+                <h2 className="text-sm font-semibold text-slate-700">
+                  Store-wise — {data.date}
+                  {activeChip && <span className="ml-2 text-xs font-normal text-amber-700">filtered · {visibleStoreRows[0]?.storeName}</span>}
+                </h2>
+                <ExportBar title="Daily Order Sheet — Store-wise" filenameBase="daily-order-sheet-stores" columns={STORE_COLUMNS} rows={visibleStoreRows} printAreaId="daily-order-sheet-print" />
               </div>
               <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -195,7 +284,7 @@ export function DailyOrderSheet({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {data.storeRows.map((r) => (
+                    {visibleStoreRows.map((r) => (
                       <tr key={r.storeId} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.companyName}</td>
                         <td className="whitespace-nowrap px-3 py-2 font-medium text-slate-700">{r.storeName}</td>
@@ -204,7 +293,7 @@ export function DailyOrderSheet({
                         <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.usd.toFixed(2)}</td>
                       </tr>
                     ))}
-                    {data.storeRows.length === 0 && (
+                    {visibleStoreRows.length === 0 && (
                       <tr>
                         <td colSpan={STORE_COLUMNS.length} className="px-3 py-8 text-center text-slate-400">No orders on this date.</td>
                       </tr>

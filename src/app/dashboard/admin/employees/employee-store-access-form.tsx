@@ -39,9 +39,9 @@ export function EmployeeStoreAccessForm({
       {state.success && <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">✓ Saved successfully.</p>}
 
       <p className="text-xs text-slate-500">
-        Only matters for Store Ad Spend. Leave every box unticked and the login follows Order Entry access — every store of
-        the companies it can enter orders for. Tick store(s) to narrow it to just those. Finance/Higher Authority/MD/Admin and
-        any login approved for the complete report (ad_spend_report_all) always see every store.
+        Store Ad Spend shows a login ONLY the store(s) ticked here — never every store of the company. Leave every box
+        unticked and that login sees no store at all. Finance/Higher Authority/MD/Admin and any login approved for the
+        complete report (ad_spend_report_all) always see every store regardless.
       </p>
 
       <div className="flex flex-wrap gap-2">

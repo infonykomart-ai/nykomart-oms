@@ -23,6 +23,9 @@ import { DailyOrderSheet, type DailyOrderSheetData } from "./daily-order-sheet";
 import { buildDailySheet } from "./daily-sheet-stats";
 import { todayIST } from "@/lib/attendance/ist-date";
 import { storesForAdSpend } from "./store-scope";
+// 2026-11-21 — the Daily Entry's channel metrics (Amazon / eBay / Etsy) and
+// their 14-day chart read the same stored columns the save action writes.
+import type { ChannelMetricRow } from "./channel-metrics";
 
 /** The columns the Recent Entries list reads; ad_orders is optional because
  *  it ships in its own migration (db/2026-11-20e-…). */
@@ -35,6 +38,15 @@ type AdSpendListRow = {
   spend_usd: number;
   updated_at: string;
   ad_orders?: number | null;
+  clicks?: number | null;
+  impressions?: number | null;
+  visits?: number | null;
+  etsy_visits_daily?: number | null;
+  etsy_visits_monthly?: number | null;
+  etsy_conversion_rate_monthly?: number | null;
+  etsy_revenue_usd?: number | null;
+  etsy_orders?: number | null;
+  etsy_ad_clicks?: number | null;
 };
 
 // Store-level Daily Spend tracking (pending item 3, 2026-08-08 —
@@ -85,12 +97,12 @@ export default async function AdSpendPage({
   // JISME SABHI COMPANY STORE KA DATA DEKHA JA SAKE." Anyone with the
   // separate ad_spend_report_all capability (Finance/Higher Authority/MD/
   // Admin, or any role an Admin grants it to) sees everything. Everyone else
-  // with plain ad_spend_entry follows their ORDER-ENTRY access — every store
-  // of the companies they can enter orders for — and can additionally be
-  // narrowed to specific stores by an explicit Store Access assignment
-  // (employee_store_access, db/2026-08-08-employee-store-access.sql). The
-  // whole rule lives in store-scope.ts so the three tabs and the save/delete
-  // actions can never disagree.
+  // sees ONLY the store(s) ticked for them under Employees → Store Access
+  // (employee_store_access, db/2026-08-08-employee-store-access.sql) —
+  // 2026-11-21: "JISKE PASS JO STORE HO VAHI DIKHE SARE STORE NAHI", so a
+  // company with no explicit store grant now shows no store at all instead
+  // of every store of the company. The whole rule lives in store-scope.ts so
+  // the three tabs and the save/delete actions can never disagree.
   const canSeeAllStores = employee.capabilities.includes("ad_spend_report_all");
   const storeScope = {
     companyIds: employee.companyIds,
@@ -139,10 +151,38 @@ export default async function AdSpendPage({
     budget: number;
     spend: number;
     adOrders: number | null;
+    clicks: number | null;
+    impressions: number | null;
+    visits: number | null;
+    etsyVisitsDaily: number | null;
+    etsyVisitsMonthly: number | null;
+    etsyConversionRateMonthly: number | null;
+    etsyRevenueUsd: number | null;
+    etsyOrders: number | null;
+    etsyAdClicks: number | null;
     enteredAt: string;
   }[] = [];
+  // 2026-11-21 — the channel chart's history (last 14 days) and the Etsy
+  // monthly spend % (this month's summed spend) share this read.
+  let channelRows: ChannelMetricRow[] = [];
   if (tab === "entry") {
     const allStoreIds = (stores ?? []).map((s) => s.id);
+    if (allStoreIds.length > 0) {
+      const today = todayIST();
+      const chartFromDate = new Date(`${today}T00:00:00Z`);
+      chartFromDate.setUTCDate(chartFromDate.getUTCDate() - 13);
+      const chartFrom = chartFromDate.toISOString().slice(0, 10);
+      const monthFrom = `${defaultMonth}-01`;
+      const from = chartFrom < monthFrom ? chartFrom : monthFrom;
+      // "*" so the optional metric columns simply come back when their
+      // migration has been run, and are absent (→ null) before that.
+      const { data: historyData } = await supabase
+        .from("store_ad_spend")
+        .select("*")
+        .in("store_id", allStoreIds)
+        .gte("spend_date", from);
+      channelRows = (historyData ?? []) as unknown as ChannelMetricRow[];
+    }
     // 2026-10-15 — country_code rides along so an Amazon day's rows
     // are told apart in this list (see the entry form).
     // 2026-10-19 — "koi bhi entry ho ... uska time and date aani
@@ -175,6 +215,16 @@ export default async function AdSpendPage({
       budget: Number(r.budget_usd ?? 0),
       spend: Number(r.spend_usd ?? 0),
       adOrders: typeof r.ad_orders === "number" ? r.ad_orders : null,
+      clicks: typeof r.clicks === "number" ? r.clicks : null,
+      impressions: typeof r.impressions === "number" ? r.impressions : null,
+      visits: typeof r.visits === "number" ? r.visits : null,
+      etsyVisitsDaily: typeof r.etsy_visits_daily === "number" ? r.etsy_visits_daily : null,
+      etsyVisitsMonthly: typeof r.etsy_visits_monthly === "number" ? r.etsy_visits_monthly : null,
+      etsyConversionRateMonthly:
+        typeof r.etsy_conversion_rate_monthly === "number" ? r.etsy_conversion_rate_monthly : null,
+      etsyRevenueUsd: typeof r.etsy_revenue_usd === "number" ? r.etsy_revenue_usd : null,
+      etsyOrders: typeof r.etsy_orders === "number" ? r.etsy_orders : null,
+      etsyAdClicks: typeof r.etsy_ad_clicks === "number" ? r.etsy_ad_clicks : null,
       enteredAt: r.updated_at,
     }));
   }
@@ -294,8 +344,8 @@ export default async function AdSpendPage({
           {!canSeeAllStores && (
             <p className="mt-1 text-xs text-amber-700">
               {stores.length > 0
-                ? "All three tabs show only the store(s) you can enter orders for. A Store Access assignment under Employees narrows that list further; the complete report is shown to logins approved for it (ad_spend_report_all — MD/Admin/Finance by default)."
-                : "No store is available to your login — Order Entry access to a company with stores is required. Ask an Admin to check your company access (and, if used, Employees → Store Access)."}
+                ? "All three tabs show only the store(s) assigned to you under Employees → Store Access (never every store of a company). The complete report is shown to logins approved for it (ad_spend_report_all — MD/Admin/Finance by default)."
+                : "No store is assigned to your login yet. Ask an Admin to tick your store(s) under Employees → Store Access — only the stores given to you are shown here."}
             </p>
           )}
         </div>
@@ -314,7 +364,13 @@ export default async function AdSpendPage({
       </div>
 
       {tab === "entry" ? (
-        <AdSpendEntrySection companies={visibleCompanies} stores={stores ?? []} recentEntries={recentEntries} />
+        <AdSpendEntrySection
+        companies={visibleCompanies}
+        stores={stores ?? []}
+        recentEntries={recentEntries}
+        channelRows={channelRows}
+        month={defaultMonth}
+      />
       ) : tab === "sheet" ? (
         <DailyOrderSheet companies={visibleCompanies} filters={{ date: sheetDate, companyId: companyFilter }} data={sheet} />
       ) : (

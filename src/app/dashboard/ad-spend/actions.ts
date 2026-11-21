@@ -18,6 +18,15 @@ import { loadFxSnapshot } from "@/lib/fx/rates";
 // 2026-11-21 — the same store-scope rule the page uses, so a login can only
 // save/delete for a store that all three Ad Spend tabs would actually show it.
 import { canWorkOnAdSpendStore, type AdSpendStoreScope } from "./store-scope";
+// 2026-11-21 — the marketplace-specific numbers typed on the Daily Entry
+// (Amazon / eBay / Etsy). Only the selected store's own channel columns are
+// written, so saving an Amazon day can never blank an Etsy store's numbers.
+import {
+  CHANNEL_METRIC_KEYS,
+  parseMetricNumber,
+  storeChannel,
+  type ChannelMetrics,
+} from "./channel-metrics";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -80,6 +89,32 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
     return fail("You do not have access to this store.");
   }
 
+  // 2026-11-21 — channel metrics (Amazon clicks/impressions/visiting, eBay
+  // visits/impressions/clicks, Etsy's daily+monthly block). A blank box is
+  // "not recorded" (null); something that is not a non-negative number is
+  // rejected rather than silently turning into 0. CTR and the Etsy monthly
+  // spend % are NEVER accepted from the form — both are derived on read.
+  const channel = storeChannel(store.name);
+  const metricLabels: Record<keyof ChannelMetrics, string> = {
+    clicks: "Clicks",
+    impressions: "Impressions / Views",
+    visits: "Visits",
+    etsy_visits_daily: "Etsy visits (daily)",
+    etsy_visits_monthly: "Etsy visits (monthly)",
+    etsy_conversion_rate_monthly: "Etsy conversion rate (monthly)",
+    etsy_revenue_usd: "Etsy revenue (USD)",
+    etsy_orders: "Etsy orders",
+    etsy_ad_clicks: "Etsy ads clicks",
+  };
+  const metrics: Partial<ChannelMetrics> = {};
+  for (const key of CHANNEL_METRIC_KEYS[channel]) {
+    const parsed = parseMetricNumber(str(formData, key));
+    if (parsed === undefined) {
+      return fail(`${metricLabels[key]} must be zero or a positive number, or left blank.`);
+    }
+    metrics[key] = parsed;
+  }
+
   // 2026-10-15 — an Amazon store's numbers are per marketplace country, so
   // the country is mandatory there and must be one of the 12 codes; every
   // other store keeps the single per-day row (country_code ''), which the
@@ -101,23 +136,19 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase
-    .from("store_ad_spend")
-    .upsert({ ...base, ad_orders: adOrders }, { onConflict: "store_id,spend_date,country_code" });
+  const upsert = (payload: Record<string, unknown>) =>
+    supabase.from("store_ad_spend").upsert(payload as never, { onConflict: "store_id,spend_date,country_code" });
+
+  let { error } = await upsert({ ...base, ad_orders: adOrders, ...metrics });
 
   if (error) {
-    // The optional ad-orders column ships as its own migration; until it is
-    // run, Budget/Spend must still save exactly as before rather than failing
-    // the whole entry.
-    if (adOrders !== null && /ad_orders/i.test(error.message)) {
-      const retry = await supabase
-        .from("store_ad_spend")
-        .upsert(base, { onConflict: "store_id,spend_date,country_code" });
-      if (retry.error) return fail(`Failed to save: ${retry.error.message}`);
-      revalidatePath("/dashboard/ad-spend");
-      return ok;
-    }
-    return fail(`Failed to save: ${error.message}`);
+    // The ad-orders and channel-metric columns each ship in their own
+    // migration. Until those are run, Budget/Spend must still save exactly
+    // as before rather than failing the whole entry: retry with the optional
+    // columns dropped, ending at the original two-number row.
+    ({ error } = await upsert({ ...base, ad_orders: adOrders }));
+    if (error) ({ error } = await upsert(base));
+    if (error) return fail(`Failed to save: ${error.message}`);
   }
   revalidatePath("/dashboard/ad-spend");
   return ok;

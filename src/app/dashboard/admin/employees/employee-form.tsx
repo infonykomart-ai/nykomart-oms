@@ -175,9 +175,9 @@ export function EmployeeForm({
           {stores.length === 0 && <p className="text-xs text-slate-400">No stores set up yet.</p>}
         </div>
         <p className="mt-1 text-xs text-slate-400">
-          Only matters for the Store Ad Spend module. Leave all unticked and the login follows its Order Entry access (every
-          store of the companies it can enter orders for); tick stores to narrow it to just those. Finance/Higher
-          Authority/MD/Admin and any login approved for the complete report see every store regardless.
+          Store Ad Spend shows a login ONLY the stores ticked here — never every store of the company. Leave all unticked
+          and that login sees no store on Ad Spend until you grant one. Finance/Higher Authority/MD/Admin and any login
+          approved for the complete report see every store regardless.
         </p>
       </div>
 

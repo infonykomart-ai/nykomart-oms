@@ -11160,6 +11160,19 @@ export type Database = {
           spend_usd: number;
           // 2026-11-20 — ad-platform attributed orders; NULL = not recorded.
           ad_orders: number | null;
+          // 2026-11-21 — channel metrics for the Daily Entry; NULL = not
+          // recorded. CTR and the Etsy spend % are derived on read and are
+          // deliberately not columns. See
+          // db/2026-11-21-store-ad-spend-channel-metrics.sql.
+          clicks: number | null;
+          impressions: number | null;
+          visits: number | null;
+          etsy_visits_daily: number | null;
+          etsy_visits_monthly: number | null;
+          etsy_conversion_rate_monthly: number | null;
+          etsy_revenue_usd: number | null;
+          etsy_orders: number | null;
+          etsy_ad_clicks: number | null;
           entry_by_employee_id: string;
           updated_at: string;
         };
@@ -11171,6 +11184,15 @@ export type Database = {
           budget_usd?: number;
           spend_usd?: number;
           ad_orders?: number | null;
+          clicks?: number | null;
+          impressions?: number | null;
+          visits?: number | null;
+          etsy_visits_daily?: number | null;
+          etsy_visits_monthly?: number | null;
+          etsy_conversion_rate_monthly?: number | null;
+          etsy_revenue_usd?: number | null;
+          etsy_orders?: number | null;
+          etsy_ad_clicks?: number | null;
           entry_by_employee_id: string;
           updated_at?: string;
         };
@@ -11181,6 +11203,15 @@ export type Database = {
           budget_usd?: number;
           spend_usd?: number;
           ad_orders?: number | null;
+          clicks?: number | null;
+          impressions?: number | null;
+          visits?: number | null;
+          etsy_visits_daily?: number | null;
+          etsy_visits_monthly?: number | null;
+          etsy_conversion_rate_monthly?: number | null;
+          etsy_revenue_usd?: number | null;
+          etsy_orders?: number | null;
+          etsy_ad_clicks?: number | null;
           entry_by_employee_id?: string;
           updated_at?: string;
         };
