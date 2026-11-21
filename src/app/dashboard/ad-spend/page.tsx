@@ -22,6 +22,7 @@ import { DailyOrderSheet, type DailyOrderSheetData } from "./daily-order-sheet";
 // so the math can be stub-tested; this page only fetches and scopes.
 import { buildDailySheet } from "./daily-sheet-stats";
 import { todayIST } from "@/lib/attendance/ist-date";
+import { storesForAdSpend } from "./store-scope";
 
 /** The columns the Recent Entries list reads; ad_orders is optional because
  *  it ships in its own migration (db/2026-11-20e-…). */
@@ -83,21 +84,30 @@ export default async function AdSpendPage({
   // PERMISION DE USKO DIKHE COMPLEATE REPORT — ADMIN MD FINANCE KO DIKHE
   // JISME SABHI COMPANY STORE KA DATA DEKHA JA SAKE." Anyone with the
   // separate ad_spend_report_all capability (Finance/Higher Authority/MD/
-  // Admin) sees everything, exactly like before. Everyone else with plain
-  // ad_spend_entry is scoped down to only their own assigned store(s) — see
-  // employee_store_access (db/2026-08-08-employee-store-access.sql). No
-  // stores assigned yet means they see nothing until an Admin assigns one,
-  // not "everything" — never default-open.
+  // Admin, or any role an Admin grants it to) sees everything. Everyone else
+  // with plain ad_spend_entry follows their ORDER-ENTRY access — every store
+  // of the companies they can enter orders for — and can additionally be
+  // narrowed to specific stores by an explicit Store Access assignment
+  // (employee_store_access, db/2026-08-08-employee-store-access.sql). The
+  // whole rule lives in store-scope.ts so the three tabs and the save/delete
+  // actions can never disagree.
   const canSeeAllStores = employee.capabilities.includes("ad_spend_report_all");
+  const storeScope = {
+    companyIds: employee.companyIds,
+    assignedStoreIds: employee.storeIds,
+    canSeeAllStores,
+  };
 
   const [{ data: companies }, { data: allStores }] = await Promise.all([
     supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
     supabase.from("stores").select("id, name, company_id").in("company_id", employee.companyIds).order("name"),
   ]);
 
-  const stores = canSeeAllStores
-    ? (allStores ?? [])
-    : (allStores ?? []).filter((s) => employee.storeIds.includes(s.id));
+  const stores = storesForAdSpend(allStores ?? [], storeScope);
+  // Only companies that actually hold a store this login may work on are
+  // offered as filters — an empty company would just show an empty Store
+  // dropdown on all three tabs.
+  const visibleCompanies = (companies ?? []).filter((c) => stores.some((s) => s.company_id === c.id));
 
   const storeName = new Map((allStores ?? []).map((s) => [s.id, s.name]));
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
@@ -284,8 +294,8 @@ export default async function AdSpendPage({
           {!canSeeAllStores && (
             <p className="mt-1 text-xs text-amber-700">
               {stores.length > 0
-                ? "Showing your assigned store(s) only. The complete cross-company report is visible to Admin/MD/Finance."
-                : "No store is assigned to your login yet — ask an Admin to assign one under Employees → Store Access."}
+                ? "All three tabs show only the store(s) you can enter orders for. A Store Access assignment under Employees narrows that list further; the complete report is shown to logins approved for it (ad_spend_report_all — MD/Admin/Finance by default)."
+                : "No store is available to your login — Order Entry access to a company with stores is required. Ask an Admin to check your company access (and, if used, Employees → Store Access)."}
             </p>
           )}
         </div>
@@ -304,12 +314,12 @@ export default async function AdSpendPage({
       </div>
 
       {tab === "entry" ? (
-        <AdSpendEntrySection companies={companies ?? []} stores={stores ?? []} recentEntries={recentEntries} />
+        <AdSpendEntrySection companies={visibleCompanies} stores={stores ?? []} recentEntries={recentEntries} />
       ) : tab === "sheet" ? (
-        <DailyOrderSheet companies={companies ?? []} filters={{ date: sheetDate, companyId: companyFilter }} data={sheet} />
+        <DailyOrderSheet companies={visibleCompanies} filters={{ date: sheetDate, companyId: companyFilter }} data={sheet} />
       ) : (
         <AdSpendReportTable
-          companies={companies ?? []}
+          companies={visibleCompanies}
           stores={stores ?? []}
           filters={{ month, companyId: companyFilter, storeId: storeFilter }}
           dailyRows={report?.dailyRows ?? []}

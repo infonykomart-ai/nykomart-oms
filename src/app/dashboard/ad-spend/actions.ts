@@ -15,6 +15,9 @@ import { revalidatePath } from "next/cache";
 import { AMAZON_COUNTRY_CODES, AMAZON_CURRENCIES, isAmazonStore } from "./amazon-countries";
 // 2026-10-15b — live rate snapshot for the Amazon country-wise totals.
 import { loadFxSnapshot } from "@/lib/fx/rates";
+// 2026-11-21 — the same store-scope rule the page uses, so a login can only
+// save/delete for a store that all three Ad Spend tabs would actually show it.
+import { canWorkOnAdSpendStore, type AdSpendStoreScope } from "./store-scope";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -61,12 +64,19 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
     return fail("Ad orders must be a whole number (0 or more), or left blank.");
   }
 
-  // Confirm this store belongs to one of the employee's accessible
-  // companies before writing — same defense-in-depth check used across
-  // every other module (e.g. lookupOrderForEntry's employee.companyIds
-  // filter) rather than trusting the client-submitted store_id alone.
+  // Confirm this store is one the login may actually work on before writing —
+  // same defense-in-depth check used across every other module (e.g.
+  // lookupOrderForEntry's employee.companyIds filter) rather than trusting the
+  // client-submitted store_id alone. The rule itself lives in store-scope.ts
+  // (order-entry store access, narrowed by an explicit Store Access
+  // assignment, bypassed by the ad_spend_report_all approval).
   const { data: store } = await supabase.from("stores").select("id, name, company_id").eq("id", storeId).maybeSingle();
-  if (!store || !employee.companyIds.includes(store.company_id)) {
+  const storeScope: AdSpendStoreScope = {
+    companyIds: employee.companyIds,
+    assignedStoreIds: employee.storeIds,
+    canSeeAllStores: employee.capabilities.includes("ad_spend_report_all"),
+  };
+  if (!store || !canWorkOnAdSpendStore(store, storeScope)) {
     return fail("You do not have access to this store.");
   }
 
@@ -80,14 +90,6 @@ export async function saveAdSpendAction(_prev: AdSpendFormState, formData: FormD
     return fail("Amazon entries need a Country (US / UK / DE …).");
   }
   const countryCode = isAmazon ? submittedCountry : "";
-  // 2026-08-08: store-scoping — without ad_spend_report_all, a login may
-  // only enter Budget/Spend for a store it's actually assigned to (see
-  // employee_store_access). The Store dropdown already only lists these,
-  // but the client can be tampered with, so re-check here same as every
-  // other capability guard in this codebase.
-  if (!employee.capabilities.includes("ad_spend_report_all") && !employee.storeIds.includes(storeId)) {
-    return fail("You do not have access to this store.");
-  }
 
   const base = {
     store_id: storeId,
@@ -148,10 +150,12 @@ export async function deleteAdSpendAction(id: string): Promise<SimpleResult> {
   const { data: row } = await supabase.from("store_ad_spend").select("id, store_id").eq("id", id).maybeSingle();
   if (!row) return { error: "Entry not found." };
   const { data: store } = await supabase.from("stores").select("company_id").eq("id", row.store_id).maybeSingle();
-  if (!store || !employee.companyIds.includes(store.company_id)) {
-    return { error: "You do not have access to this entry." };
-  }
-  if (!employee.capabilities.includes("ad_spend_report_all") && !employee.storeIds.includes(row.store_id)) {
+  const storeScope: AdSpendStoreScope = {
+    companyIds: employee.companyIds,
+    assignedStoreIds: employee.storeIds,
+    canSeeAllStores: employee.capabilities.includes("ad_spend_report_all"),
+  };
+  if (!store || !canWorkOnAdSpendStore({ id: row.store_id, company_id: store.company_id }, storeScope)) {
     return { error: "You do not have access to this entry." };
   }
 
