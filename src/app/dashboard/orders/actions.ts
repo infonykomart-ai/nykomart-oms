@@ -9,7 +9,10 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient, createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { releaseOrderStock, reserveOrderStockOnConfirm } from "@/lib/inventory/order-stock";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
+import { closeUpUrlsForOrder, syncOrderAttachments } from "@/lib/orders/closeup-photos";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
+import { assessAddress } from "@/lib/address";
+import { tolerateMissingColumns } from "@/lib/db/missing-column";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
 import { logAudit } from "@/lib/audit/log-audit";
@@ -155,9 +158,20 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
     )
   );
 
-  const { error } = await supabase
-    .from("orders")
-    .update({
+  // 2026-11-22 — Phase 2 address engine. The status is derived from the
+  // structured fields actually being saved (never from a value the browser
+  // sent), and the pasted text is kept untouched in buyer_address_raw. Both
+  // columns are optional so an order still saves on a database where
+  // db/2026-11-22-address-engine.sql has not been run yet.
+  const addressCheck = assessAddress({
+    country: str(formData, "destination_country") || existing.destination_country || buyerCountry,
+    state: str(formData, "buyer_state"),
+    city: str(formData, "buyer_city"),
+    postalCode: str(formData, "buyer_postal_code"),
+    street: str(formData, "buyer_address1"),
+  });
+
+  const orderPayload = {
       order_date: orderDate,
       status: nextStatus as never,
       dispatch_date: strOrNull(formData, "dispatch_date"),
@@ -193,6 +207,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       buyer_city: strOrNull(formData, "buyer_city"),
       buyer_state: strOrNull(formData, "buyer_state"),
       buyer_postal_code: strOrNull(formData, "buyer_postal_code"),
+      buyer_address_raw: strOrNull(formData, "buyer_address_raw") ?? existing.buyer_address_raw ?? null,
+      address_status: addressCheck.status,
       vendor_party_id: strOrNull(formData, "vendor_party_id"),
       remark: strOrNull(formData, "remark"),
       order_currency: orderCurrency,
@@ -200,10 +216,26 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
       order_value_usd: conversion.usd,
       order_value_inr: conversion.inr,
       exchange_rate_source: conversion.source,
-    })
-    .eq("id", orderId);
+  };
+
+  const { error } = await tolerateMissingColumns(
+    orderPayload,
+    ["buyer_address_raw", "address_status"],
+    (payload) => supabase.from("orders").update(payload).eq("id", orderId)
+  );
 
   if (error) return { error: error.message, success: false };
+
+  // 2026-11-22b — Phase 3. orders.photo_urls stays authoritative; this
+  // mirrors its close-up entries into order_attachments so a Purchase Order
+  // (and any future reader) has one typed read path. Best-effort: the order
+  // is already saved, and a database where db/2026-11-22b-order-attachments.sql
+  // is still pending simply skips it (the read helper falls back to the
+  // order's own columns). The main photo is never stored as an attachment.
+  await syncOrderAttachments(
+    orderId,
+    closeUpUrlsForOrder({ photo_url: savedPhotoUrl, photo_urls: savedPhotoUrls })
+  );
 
   // Phase 4 (2026-11-16) — keep stock in step with the order lifecycle.
   // Best effort on purpose: the edit is already saved, so an Inventory module

@@ -6,6 +6,7 @@ import { PhotoUrlField } from "../photo-url-field";
 import { MultiPhotoUrls } from "../multi-photo-urls";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
+import { assessAddress } from "@/lib/address";
 import { isStairRugCategory } from "@/lib/orders/stair-rug";
 import { StairRugFields } from "../stair-rug-fields";
 
@@ -290,6 +291,11 @@ export function OrderForm({
   const itemsJsonRef = useRef<HTMLInputElement>(null);
   const nextKeyRef = useRef(1);
   const [itemKeys, setItemKeys] = useState<number[]>([0]);
+  // 2026-11-22 — live address status (Phase 2). Shown only once the employee
+  // has pasted/split/edited the address, so an untouched form isn't nagging.
+  // Advisory only: actions.ts recomputes this exact check server-side from the
+  // submitted fields, so a form can never talk the database into "Verified".
+  const [addressCheck, setAddressCheck] = useState<ReturnType<typeof assessAddress> | null>(null);
 
   useEffect(() => {
     if (state.success) {
@@ -435,11 +441,34 @@ export function OrderForm({
     if (countryInput && !countryInput.value.trim() && parsed.country) countryInput.value = parsed.country;
   }
 
+  // 2026-11-22 — keeps the hidden buyer_address_raw field in step with what
+  // was actually pasted, so the ORIGINAL text is saved even when the split
+  // later looks wrong. Never cleared by a failed parse.
+  function rememberRawAddress(text: string) {
+    const rawInput = document.getElementById("buyer_address_raw") as HTMLInputElement | null;
+    if (rawInput && text.trim()) rawInput.value = text;
+  }
+
+  function refreshAddressStatus() {
+    const value = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
+    setAddressCheck(
+      assessAddress({
+        country: value("destination_country"),
+        state: value("buyer_state"),
+        city: value("buyer_city"),
+        postalCode: value("buyer_postal_code"),
+        street: value("buyer_address1"),
+      })
+    );
+  }
+
   function handleAddress1Paste(e: React.ClipboardEvent<HTMLInputElement>) {
     const pasted = e.clipboardData.getData("text/plain");
     if (!looksLikeFullAddress(pasted)) return; // plain street paste — behave exactly as before
     e.preventDefault();
+    rememberRawAddress(pasted);
     applyParsedAddress(parseFullAddress(pasted));
+    refreshAddressStatus();
   }
 
   // "Split Address" button — same parser, but re-run against whatever is
@@ -449,7 +478,9 @@ export function OrderForm({
   function handleSplitAddressClick() {
     const address1Input = document.getElementById("buyer_address1") as HTMLInputElement | null;
     if (!address1Input || !address1Input.value.trim()) return;
+    rememberRawAddress(address1Input.value);
     applyParsedAddress(parseFullAddress(address1Input.value));
+    refreshAddressStatus();
   }
 
   return (
@@ -462,6 +493,8 @@ export function OrderForm({
       {state.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{state.error}</p>}
 
       <input type="hidden" name="items_json" ref={itemsJsonRef} />
+      {/* 2026-11-22 — the address exactly as pasted, saved untouched (Phase 2). */}
+      <input type="hidden" name="buyer_address_raw" id="buyer_address_raw" />
 
       <fieldset className="space-y-4">
         <legend className="mb-1 text-sm font-semibold text-slate-900">Order</legend>
@@ -596,7 +629,13 @@ export function OrderForm({
           </div>
           <div>
             <label className={labelClass} htmlFor="destination_country">Destination Country</label>
-            <input id="destination_country" name="destination_country" placeholder="USA / United Kingdom / Germany / ..." className={inputClass} />
+            <input
+              id="destination_country"
+              name="destination_country"
+              placeholder="USA / United Kingdom / Germany / ..."
+              className={inputClass}
+              onBlur={refreshAddressStatus}
+            />
           </div>
         </div>
 
@@ -615,6 +654,17 @@ export function OrderForm({
             fill this in accurately. Tip: paste the buyer&apos;s full address (name, street, city, state, zip,
             country) straight into Address Line 1 — it will split itself automatically into the fields below.
           </p>
+          {addressCheck && (
+            <p
+              className={`mb-3 rounded-lg px-2.5 py-1.5 text-xs ${
+                addressCheck.status === "Parsed" ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"
+              }`}
+            >
+              Address status: <strong>{addressCheck.status}</strong>
+              {addressCheck.missing.length > 0 && ` — missing ${addressCheck.missing.join(", ")}`}
+              {addressCheck.status === "Parsed" && " — country, city, state and postcode all look complete"}
+            </p>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <div className="flex items-center justify-between">
@@ -640,15 +690,23 @@ export function OrderForm({
             </div>
             <div>
               <label className={labelClass} htmlFor="buyer_city">City</label>
-              <input id="buyer_city" name="buyer_city" className={inputClass} />
+              <input id="buyer_city" name="buyer_city" className={inputClass} onBlur={refreshAddressStatus} />
             </div>
             <div>
               <label className={labelClass} htmlFor="buyer_state">State</label>
-              <input id="buyer_state" name="buyer_state" className={inputClass} />
+              <input id="buyer_state" name="buyer_state" className={inputClass} onBlur={refreshAddressStatus} />
             </div>
             <div>
               <label className={labelClass} htmlFor="buyer_postal_code">Postal / Zip Code</label>
-              <input id="buyer_postal_code" name="buyer_postal_code" className={inputClass} onBlur={handlePostalBlur} />
+              <input
+                id="buyer_postal_code"
+                name="buyer_postal_code"
+                className={inputClass}
+                onBlur={() => {
+                  void handlePostalBlur();
+                  refreshAddressStatus();
+                }}
+              />
             </div>
           </div>
         </div>

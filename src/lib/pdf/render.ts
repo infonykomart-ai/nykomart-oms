@@ -14,8 +14,11 @@ import type { ReactElement } from "react";
 // requires it — a plain ReactElement's props type is `unknown`, which
 // isn't assignable to DocumentProps, and every caller here always passes a
 // real <Document>...</Document> anyway.
-export async function renderPdfToBuffer(element: ReactElement<DocumentProps>): Promise<Buffer> {
-  const instance = pdf(element);
+export async function renderPdfToBuffer(element: ReactElement): Promise<Buffer> {
+  // The cast is contained here: every caller passes a real <Document>, but a
+  // wrapper component (src/lib/pdf/a4.tsx's <A4Document>) types its element by
+  // its OWN props, so the Document-shaped signature cannot see through it.
+  const instance = pdf(element as ReactElement<DocumentProps>);
   const blob = await instance.toBuffer();
   return streamToBuffer(blob as unknown as NodeJS.ReadableStream);
 }

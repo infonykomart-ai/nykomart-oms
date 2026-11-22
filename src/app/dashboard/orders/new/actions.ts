@@ -4,7 +4,9 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient, createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { buyerMatchKey } from "@/lib/orders/buyer-match";
 import { parseCountryFromAddress } from "@/lib/geo/parse-country";
+import { assessAddress } from "@/lib/address";
 import { computeCurrencyConversion, type ConversionResult } from "@/lib/orders/currency";
+import { closeUpUrlsForOrder, syncOrderAttachments } from "@/lib/orders/closeup-photos";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { validateDateFields } from "@/lib/fy-date";
@@ -208,6 +210,8 @@ type CreateOrderInput = {
   buyerCity: string | null;
   buyerState: string | null;
   buyerPostalCode: string | null;
+  /** 2026-11-22 — address text exactly as pasted, stored untouched. */
+  buyerAddressRaw?: string | null;
   // 2026-08-20 — Gap 2 of the 5-gaps plan (see
   // claude/five-gaps-implementation-plan-2026-08-20.md): which vendor
   // Party this order's goods are LIKELY being purchased from, filled in at
@@ -437,6 +441,7 @@ export async function createOrderCore(
     buyerCity,
     buyerState,
     buyerPostalCode,
+    buyerAddressRaw,
   } = input;
 
   // 2026-08-17 performance fix — computeCurrencyConversion() can fall
@@ -473,6 +478,18 @@ export async function createOrderCore(
   // tell "not yet computed" (NULL, old rows) apart from "computed, no
   // match" ('') and never re-attempts the same unresolved row forever.
   const buyerCountry = parseCountryFromAddress(buyerNameAddress) ?? "";
+
+  // 2026-11-22 — Phase 2 address engine. The status is derived HERE, from the
+  // structured fields actually being saved, never from a value the browser
+  // sent: "Verified" must be impossible to claim from a form. Cheap, offline
+  // and deterministic (see src/lib/address/parse.ts).
+  const addressCheck = assessAddress({
+    country: destinationCountry ?? buyerCountry,
+    state: buyerState,
+    city: buyerCity,
+    postalCode: buyerPostalCode,
+    street: buyerAddress1,
+  });
 
   for (const item of items) {
     const conversion = await cachedConversion(item.orderCurrency, item.orderValueOriginal);
@@ -518,6 +535,8 @@ export async function createOrderCore(
       buyer_city: buyerCity,
       buyer_state: buyerState,
       buyer_postal_code: buyerPostalCode,
+      buyer_address_raw: buyerAddressRaw ?? buyerNameAddress ?? null,
+      address_status: addressCheck.status,
       vendor_party_id: vendorPartyId,
       photo_type: item.photoType,
       colour: item.colour,
@@ -536,6 +555,11 @@ export async function createOrderCore(
     // before), and the write retries without them while
     // db/2026-11-02-stair-rug-set-quantity.sql is still pending — see
     // src/lib/db/missing-column.ts.
+    //
+    // 2026-11-22 — the two address-engine columns are ALWAYS optional and are
+    // retried without while db/2026-11-22-address-engine.sql is pending, so
+    // order entry keeps working on a database that hasn't run it yet.
+    const optionalColumns: (keyof OrderInsert & string)[] = ["buyer_address_raw", "address_status"];
     if (item.setsCount != null) {
       Object.assign(payload, {
         sets_count: item.setsCount,
@@ -544,14 +568,29 @@ export async function createOrderCore(
         dimension_width: item.dimensionWidth,
         dimension_unit: item.dimensionUnit,
       });
+      optionalColumns.push(...STAIR_ORDER_COLUMNS);
     }
 
-    const { error: insertError } = await tolerateMissingColumns(payload, STAIR_ORDER_COLUMNS, (p) =>
-      supabase.from("orders").insert(p)
+    // 2026-11-22b — Phase 3: the insert now returns the new id so the
+    // close-up photos just saved on this order can be mirrored into
+    // order_attachments (the typed index a Purchase Order reads). The result
+    // shape is preserved by tolerateMissingColumns, so this works exactly as
+    // before on a database where an optional column is pending.
+    const { data: insertedOrder, error: insertError } = await tolerateMissingColumns(
+      payload,
+      optionalColumns,
+      (p) => supabase.from("orders").insert(p).select("id").single()
     );
 
     if (insertError) {
       return { error: `Save failed: ${insertError.message}`, refNo: null };
+    }
+
+    if (insertedOrder?.id) {
+      await syncOrderAttachments(
+        insertedOrder.id,
+        closeUpUrlsForOrder({ photo_url: item.photoUrl, photo_urls: payload.photo_urls })
+      );
     }
   }
 
@@ -654,6 +693,7 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
     buyerCity: strOrNull(formData, "buyer_city"),
     buyerState: strOrNull(formData, "buyer_state"),
     buyerPostalCode: strOrNull(formData, "buyer_postal_code"),
+    buyerAddressRaw: strOrNull(formData, "buyer_address_raw") ?? buyerNameAddress,
     vendorPartyId: strOrNull(formData, "vendor_party_id"),
     // 2026-09-18 — multi-photo links are entered per item block; the shared
     // batch-level list (CreateOrderInput.photoUrls) stays empty here.
@@ -907,6 +947,7 @@ export async function bulkCreateOrders(_prev: BulkOrderState, formData: FormData
       buyerCity: null,
       buyerState: null,
       buyerPostalCode: null,
+      buyerAddressRaw: null,
       vendorPartyId: null, // not a CSV column — vendor is set/edited later via the Orders hub, see Gap 2 note above.
       items: [item],
       photoUrls: item.photoUrls, // 2026-09-18 — per-item photo list from the CSV row (currently just the single Photo URL cell, wrapped).

@@ -17,6 +17,12 @@ export type CapabilityInfo = {
 export const CAPABILITY_INFO: CapabilityInfo[] = [
   { code: "order_entry", label: "Order Entry", icon: "📝", href: "/dashboard/orders",
     description: "View, edit, delete orders, or enter a new one — PO/RF/RG No. assigned automatically, duplicate-dispatched-order reuse checked first." },
+  // 2026-11-22c — Phase 3: Purchase Orders. A PO links an order and reads that
+  // order's close-up photos, so it rides on order_entry instead of a new
+  // capability (a brand-new code would sit unusable until someone granted it by
+  // hand). Same-capability-second-destination precedent as Refunds & Returns.
+  { code: "order_entry", label: "Purchase Orders", icon: "🛒", href: "/dashboard/purchase-orders",
+    description: "Raise a Purchase Order against an order, with its close-up photos pulled from that order (read-only), automatic NPO-<FY>-#### numbering and A4 print." },
   { code: "csv_upload", label: "CSV Upload", icon: "📤", href: "/dashboard/csv-upload",
     description: "Bulk-load rows into the back-office log sheets from a CSV file." },
   { code: "doc_entry", label: "Document Entry", icon: "🧾", href: "/dashboard/documents",

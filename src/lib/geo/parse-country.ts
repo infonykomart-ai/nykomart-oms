@@ -151,6 +151,29 @@ function matchLineToCountry(rawLine: string): string | null {
   return null;
 }
 
+// Exported (2026-11-22) — the address engine (src/lib/address/parse.ts) needs
+// to know whether a single LINE is just a country name (to drop it before
+// splitting the rest), and must recognize it exactly the same way this file
+// does. Exposing the existing matcher keeps one alias list, not two.
+export function countryNameForLine(line: string | null | undefined): string | null {
+  if (!line) return null;
+  return matchLineToCountry(line);
+}
+
+/**
+ * True only when the WHOLE text is a country name/alias ("USA", "United
+ * States (US)", "U.S.A."). Distinct from countryNameForLine on purpose:
+ * that one also suffix-matches, which is right for a collapsed address line
+ * ("...MeathC15 VX7TIreland") but wrong for a comma segment — "Ciudad de
+ * Mexico" ends in "Mexico" and must not be thrown away as the country.
+ */
+export function isCountryOnlyText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const cleaned = stripTrailingParenthetical(text).toLowerCase().replace(/[.,]+$/, "").trim();
+  if (!cleaned) return false;
+  return ALIAS_INDEX.some(({ alias }) => cleaned === alias);
+}
+
 // Exported (2026-09-10 follow-up) — src/lib/parse-full-address.ts reuses
 // these same two sets so a US/Australia state abbreviation is recognized
 // identically whether we're just detecting the country or fully splitting

@@ -593,7 +593,15 @@ export function OrderView({
         )}
         <div className="flex items-center gap-2">
           <FlagErrorButton orderId={order.id} orderRefNo={order.ref_no} />
-          <PrintButton label="🖨 Download PDF" />
+          {/* 2026-11-22d — the real server-rendered PDF (A4, repeated header,
+              page numbers); PrintButton still opens the browser dialog. */}
+          <a
+            href={`/api/orders/${order.id}/pdf`}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            ⬇ PDF
+          </a>
+          <PrintButton label="🖨 Print" />
         </div>
       </div>
 

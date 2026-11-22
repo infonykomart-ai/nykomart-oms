@@ -217,6 +217,21 @@ export async function probeMigrations(
     // Without the file: the generator shows a "run this migration" banner and
     // refuses to create documents, because numbering, the template registry and
     // the private PDF bucket all live in it.
+    // 2026-11-22b/c — Phase 3 (Purchase Orders + typed close-up photo index).
+    // Without 2026-11-22b the reader falls back to orders.photo_urls and no
+    // attachment rows are stored; without 2026-11-22c the Purchase Orders
+    // screen shows its "run this migration" banner and can't create anything.
+    probe("db/2026-11-22b-order-attachments.sql", "Order attachments (typed close-up photo index)",
+      "Close-up photos are read from orders.photo_urls only — no attachment row (file name / sort order) is stored, and the PO photo read path stays on its fallback.",
+      [{ name: "order_attachments.file_url", promise: hasColumn(client, "order_attachments", "file_url") }]),
+
+    probe("db/2026-11-22c-purchase-orders.sql", "Purchase Order module",
+      "The Purchase Orders screen cannot create, list or print anything — it shows the \"run this migration\" banner.",
+      [
+        { name: "purchase_orders.po_no", promise: hasColumn(client, "purchase_orders", "po_no") },
+        { name: "purchase_order_items.qty", promise: hasColumn(client, "purchase_order_items", "qty") },
+      ]),
+
     probe("db/2026-11-03-vendor-agreements.sql", "Vendor agreements (numbering, versions, signatures, letterhead)",
       "The Agreement Generator cannot create or store any agreement — no NKM-AGR numbering function, no template registry, no private PDF bucket.",
       [

@@ -9080,6 +9080,9 @@ export type Database = {
           buyer_city: string | null;
           buyer_state: string | null;
           buyer_postal_code: string | null;
+          // 2026-11-22 — address engine (see db/2026-11-22-address-engine.sql).
+          buyer_address_raw: string | null;
+          address_status: "Parsed" | "Verified" | "Needs Review" | null;
           contact_no: string | null;
           email_id: string | null;
           tax_id: string | null;
@@ -9152,6 +9155,8 @@ export type Database = {
           buyer_city?: string | null;
           buyer_state?: string | null;
           buyer_postal_code?: string | null;
+          buyer_address_raw?: string | null;
+          address_status?: "Parsed" | "Verified" | "Needs Review" | null;
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;
@@ -9221,6 +9226,8 @@ export type Database = {
           buyer_city?: string | null;
           buyer_state?: string | null;
           buyer_postal_code?: string | null;
+          buyer_address_raw?: string | null;
+          address_status?: "Parsed" | "Verified" | "Needs Review" | null;
           contact_no?: string | null;
           email_id?: string | null;
           tax_id?: string | null;

@@ -8,6 +8,7 @@ import { StairRugFields } from "./stair-rug-fields";
 import { isStairRugCategory } from "@/lib/orders/stair-rug";
 import { lookupPostalCode } from "@/lib/postal-lookup";
 import { parseFullAddress, looksLikeFullAddress, type ParsedAddress } from "@/lib/parse-full-address";
+import { assessAddress } from "@/lib/address";
 
 const initialState: OrderEditState = { error: null, success: false };
 
@@ -117,6 +118,19 @@ export function OrderEditForm({
   const hasSavedSets = (order.sets_count ?? null) != null;
   const [stairOverride, setStairOverride] = useState(false);
   const isStairRug = categoryIsStair || hasSavedSets || stairOverride;
+  // 2026-11-22 — Phase 2 address status, initialised from the order as it
+  // stands so an existing incomplete address is visible the moment the row
+  // opens (and can be fixed with one click of Split Address below). Advisory
+  // only — actions.ts recomputes it server-side from the submitted fields.
+  const [addressCheck, setAddressCheck] = useState<ReturnType<typeof assessAddress>>(() =>
+    assessAddress({
+      country: order.destination_country,
+      state: order.buyer_state,
+      city: order.buyer_city,
+      postalCode: order.buyer_postal_code,
+      street: order.buyer_address1,
+    })
+  );
 
   useEffect(() => {
     if (state.success) onDone();
@@ -178,11 +192,33 @@ export function OrderEditForm({
     if (countryInput && !countryInput.value.trim() && parsed.country) countryInput.value = parsed.country;
   }
 
+  // 2026-11-22 — the pasted text goes into the hidden buyer_address_raw field
+  // so the original is saved even if the split looks wrong to the employee.
+  function rememberRawAddress(text: string) {
+    const rawInput = document.getElementById(`buyer_address_raw-${order.id}`) as HTMLInputElement | null;
+    if (rawInput && text.trim()) rawInput.value = text;
+  }
+
+  function refreshAddressStatus() {
+    const value = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
+    setAddressCheck(
+      assessAddress({
+        country: value(`destination_country-${order.id}`),
+        state: value(`buyer_state-${order.id}`),
+        city: value(`buyer_city-${order.id}`),
+        postalCode: value(`buyer_postal_code-${order.id}`),
+        street: value(`buyer_address1-${order.id}`),
+      })
+    );
+  }
+
   function handleAddress1Paste(e: React.ClipboardEvent<HTMLInputElement>) {
     const pasted = e.clipboardData.getData("text/plain");
     if (!looksLikeFullAddress(pasted)) return;
     e.preventDefault();
+    rememberRawAddress(pasted);
     applyParsedAddress(parseFullAddress(pasted));
+    refreshAddressStatus();
   }
 
   // "Split Address" — re-parses whatever is ALREADY in Address Line 1.
@@ -191,12 +227,17 @@ export function OrderEditForm({
   function handleSplitAddressClick() {
     const address1Input = document.getElementById(`buyer_address1-${order.id}`) as HTMLInputElement | null;
     if (!address1Input || !address1Input.value.trim()) return;
+    rememberRawAddress(address1Input.value);
     applyParsedAddress(parseFullAddress(address1Input.value));
+    refreshAddressStatus();
   }
 
   return (
     <form action={formAction} className="space-y-4 rounded-lg border border-amber-200 bg-amber-50/40 p-4">
       <input type="hidden" name="order_id" value={order.id} />
+      {/* 2026-11-22 — set only when a new address is pasted; blank means
+          "keep whatever is already stored" (see actions.ts). */}
+      <input type="hidden" name="buyer_address_raw" id={`buyer_address_raw-${order.id}`} />
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-900">Editing {order.ref_no}</p>
         <button type="button" onClick={onDone} className="text-xs text-slate-400 underline">
@@ -401,6 +442,14 @@ export function OrderEditForm({
             fill this in accurately. If the full address ever ends up jammed into Address Line 1 (e.g. pasted in one
             go), click &quot;Split Address&quot; to auto-fill City/State/Postcode from it.
           </p>
+          <p
+            className={`mb-2 rounded-lg px-2.5 py-1.5 text-[11px] ${
+              addressCheck.status === "Parsed" ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"
+            }`}
+          >
+            Address status: <strong>{addressCheck.status}</strong>
+            {addressCheck.missing.length > 0 && ` — missing ${addressCheck.missing.join(", ")}`}
+          </p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="sm:col-span-2">
               <div className="flex items-center justify-between">
@@ -428,11 +477,23 @@ export function OrderEditForm({
             </div>
             <div>
               <label className={labelClass} htmlFor={`buyer_city-${order.id}`}>City</label>
-              <input id={`buyer_city-${order.id}`} name="buyer_city" defaultValue={order.buyer_city ?? ""} className={inputClass} />
+              <input
+                id={`buyer_city-${order.id}`}
+                name="buyer_city"
+                defaultValue={order.buyer_city ?? ""}
+                className={inputClass}
+                onBlur={refreshAddressStatus}
+              />
             </div>
             <div>
               <label className={labelClass} htmlFor={`buyer_state-${order.id}`}>State</label>
-              <input id={`buyer_state-${order.id}`} name="buyer_state" defaultValue={order.buyer_state ?? ""} className={inputClass} />
+              <input
+                id={`buyer_state-${order.id}`}
+                name="buyer_state"
+                defaultValue={order.buyer_state ?? ""}
+                className={inputClass}
+                onBlur={refreshAddressStatus}
+              />
             </div>
             <div>
               <label className={labelClass} htmlFor={`buyer_postal_code-${order.id}`}>Postal / Zip Code</label>
@@ -441,7 +502,10 @@ export function OrderEditForm({
                 name="buyer_postal_code"
                 defaultValue={order.buyer_postal_code ?? ""}
                 className={inputClass}
-                onBlur={handlePostalBlur}
+                onBlur={() => {
+                  void handlePostalBlur();
+                  refreshAddressStatus();
+                }}
               />
             </div>
           </div>

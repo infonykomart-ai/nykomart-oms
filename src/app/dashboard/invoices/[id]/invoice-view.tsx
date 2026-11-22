@@ -567,6 +567,24 @@ export function InvoiceView({
       </div>
 
       <div>
+        {/* 2026-11-22d — downloadable server-rendered PDFs (shared A4 layout:
+            repeated letterhead + table head, "Page X of Y"). The HTML sheet
+            below stays the on-screen/editable print view. */}
+        <div className="mb-2 flex flex-wrap gap-2 print:hidden">
+          {[
+            { type: "invoice", label: "⬇ Invoice PDF" },
+            { type: "tax-invoice", label: "⬇ Tax Invoice PDF" },
+            { type: "packing-list", label: "⬇ Packing List PDF" },
+          ].map((doc) => (
+            <a
+              key={doc.type}
+              href={`/api/invoices/${invoice.id}/pdf?type=${doc.type}`}
+              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {doc.label}
+            </a>
+          ))}
+        </div>
         <PrintArea id="invoice-print-area" companyName={company?.name} companyLogoUrl={company?.logo_url}>
         <div className="mx-auto min-h-[1100px] w-full bg-white p-8 text-xs text-slate-900" style={{ fontFamily: "Arial, sans-serif" }}>
           <div className="mb-2 flex items-center justify-between">
