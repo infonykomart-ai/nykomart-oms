@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { requireCapability } from "@/lib/auth/require-capability";
 import { listPurchaseOrders, PO_STATUSES, type PoListItem } from "@/lib/purchase-orders/data";
-import { ExportBar } from "@/components/export-bar";
-import type { ExportColumn } from "@/lib/export/export-table";
+import { PoTable } from "./po-table";
 
 // 2026-11-22c — Phase 3: Purchase Orders register.
 //
@@ -11,36 +10,14 @@ import type { ExportColumn } from "@/lib/export/export-table";
 // existing `order_entry` capability: a PO links an order and shows that
 // order's close-up photos, so the people who own orders own this list — no new
 // capability had to be granted to anybody.
+//
+// 2026-11-22 — the table + export toolbar moved into po-table.tsx (client).
+// ExportBar is a client component and its column definitions are functions,
+// so passing them from this server component crashed the page on open; the
+// columns now live on the client side with the rows as plain data.
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 25;
-
-function statusClass(status: string): string {
-  switch (status) {
-    case "Received":
-      return "bg-emerald-50 text-emerald-700 border-emerald-200";
-    case "Sent":
-      return "bg-sky-50 text-sky-700 border-sky-200";
-    case "Cancelled":
-      return "bg-slate-100 text-slate-500 border-slate-200";
-    default:
-      return "bg-amber-50 text-amber-700 border-amber-200";
-  }
-}
-
-const columns: ExportColumn<PoListItem>[] = [
-  { key: "po_no", label: "PO No.", value: (row) => row.po_no },
-  { key: "po_date", label: "PO Date", value: (row) => row.po_date },
-  { key: "orderRef", label: "Order Ref", value: (row) => row.orderRef },
-  { key: "buyerName", label: "Buyer", value: (row) => row.buyerName },
-  { key: "supplierName", label: "Supplier", value: (row) => row.supplierName },
-  { key: "lineCount", label: "Lines", value: (row) => row.lineCount },
-  { key: "qtyTotal", label: "Qty", value: (row) => row.qtyTotal },
-  { key: "currency", label: "Currency", value: (row) => row.currency },
-  { key: "total_amount", label: "Total", value: (row) => row.total_amount },
-  { key: "status", label: "Status", value: (row) => row.status },
-  { key: "closeupCount", label: "Close-up Photos", value: (row) => row.closeupCount },
-];
 
 export default async function PurchaseOrdersPage({
   searchParams,
@@ -85,7 +62,8 @@ export default async function PurchaseOrdersPage({
         <div>
           <h1 className="text-xl font-semibold text-slate-800">Purchase Orders</h1>
           <p className="text-sm text-slate-500">
-            A PO links one order and shows that order&apos;s close-up photos — photos are uploaded or linked only on the Order page.
+            The document you send a supplier for one order&apos;s items — one PO per order. Its close-up photos are the
+            ones uploaded on that Order page (read live, never copied), so removing a photo there removes it here too.
           </p>
         </div>
         <Link
@@ -148,70 +126,7 @@ export default async function PurchaseOrdersPage({
         )}
       </form>
 
-      <div className="mb-3">
-        <ExportBar title="Purchase Orders" filenameBase="purchase-orders" columns={columns} rows={rows} />
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="px-3 py-2">PO No.</th>
-              <th className="px-3 py-2">Date</th>
-              <th className="px-3 py-2">Order Ref</th>
-              <th className="px-3 py-2">Buyer</th>
-              <th className="px-3 py-2">Supplier</th>
-              <th className="px-3 py-2 text-right">Lines</th>
-              <th className="px-3 py-2 text-right">Qty</th>
-              <th className="px-3 py-2 text-right">Total</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2 text-right">Photos</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.map((row) => (
-              <tr key={row.id} className="hover:bg-slate-50">
-                <td className="px-3 py-2 font-medium text-slate-800">
-                  <Link href={`/dashboard/purchase-orders/${row.id}`} className="hover:underline">
-                    {row.po_no}
-                  </Link>
-                </td>
-                <td className="px-3 py-2 text-slate-600">{row.po_date}</td>
-                <td className="px-3 py-2 text-slate-600">
-                  {row.order_id ? (
-                    <Link href={`/dashboard/orders/${row.order_id}`} className="hover:underline">
-                      {row.orderRef ?? "(order)"}
-                    </Link>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </td>
-                <td className="max-w-[220px] truncate px-3 py-2 text-slate-600">{row.buyerName ?? "—"}</td>
-                <td className="max-w-[180px] truncate px-3 py-2 text-slate-600">{row.supplierName ?? "—"}</td>
-                <td className="px-3 py-2 text-right text-slate-600">{row.lineCount}</td>
-                <td className="px-3 py-2 text-right text-slate-600">{row.qtyTotal}</td>
-                <td className="px-3 py-2 text-right text-slate-700">
-                  {row.currency ? `${row.currency} ` : ""}
-                  {row.total_amount.toFixed(2)}
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`inline-block rounded-full border px-2 py-0.5 text-xs ${statusClass(row.status)}`}>
-                    {row.status}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right text-slate-600">{row.closeupCount || "—"}</td>
-              </tr>
-            ))}
-            {!rows.length && !setupError && (
-              <tr>
-                <td colSpan={10} className="px-3 py-10 text-center text-sm text-slate-400">
-                  No purchase orders match this filter.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <PoTable rows={rows} hasError={Boolean(setupError)} />
 
       {total > PAGE_SIZE && (
         <div className="mt-3 flex items-center justify-between text-sm text-slate-500">

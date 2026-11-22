@@ -1,5 +1,5 @@
 import { getAuthedEmployee } from "@/lib/auth/require-capability";
-import { CAPABILITY_INFO } from "@/lib/capability-info";
+import { capabilityTilesFor } from "@/lib/capability-info";
 import { NavTile, NavTileGrid } from "@/components/nav-tile";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { checkSchemaStatus } from "@/lib/db/schema-status";
@@ -15,7 +15,7 @@ import { SchemaHealthCard } from "@/components/schema-health-card";
  */
 export default async function DashboardHome() {
   const employee = await getAuthedEmployee();
-  const tiles = CAPABILITY_INFO.filter((c) => !c.hidden && employee.capabilities.includes(c.code));
+  const tiles = capabilityTilesFor(employee.capabilities);
 
   // 2026-10-21 — "admin ko dikhta nahi ki kaunsi migration abhi bhi pending
   // hai": a pending SQL file degrades features through tolerant column

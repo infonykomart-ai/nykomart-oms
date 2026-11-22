@@ -12,17 +12,22 @@ export type CapabilityInfo = {
   href: string;
   /** Kept in the registry (labels, permissions) but never shown as a tile. */
   hidden?: boolean;
+  /**
+   * Suppress this tile when the employee also holds any of these codes — for a
+   * tile that is a fallback destination somebody else's tile already covers
+   * (e.g. the P&L-only Office Expenses tile). Keeps one tile per section.
+   */
+  hideWhenAny?: string[];
 };
 
 export const CAPABILITY_INFO: CapabilityInfo[] = [
   { code: "order_entry", label: "Order Entry", icon: "📝", href: "/dashboard/orders",
     description: "View, edit, delete orders, or enter a new one — PO/RF/RG No. assigned automatically, duplicate-dispatched-order reuse checked first." },
-  // 2026-11-22c — Phase 3: Purchase Orders. A PO links an order and reads that
-  // order's close-up photos, so it rides on order_entry instead of a new
-  // capability (a brand-new code would sit unusable until someone granted it by
-  // hand). Same-capability-second-destination precedent as Refunds & Returns.
-  { code: "order_entry", label: "Purchase Orders", icon: "🛒", href: "/dashboard/purchase-orders",
-    description: "Raise a Purchase Order against an order, with its close-up photos pulled from that order (read-only), automatic NPO-<FY>-#### numbering and A4 print." },
+  // 2026-11-22c — Phase 3: Purchase Orders has NO launcher tile of its own.
+  // It is one order's supplier document, so it opens from the Orders screen
+  // ("🛒 Purchase Orders" in that page's header) instead of sitting on the
+  // landing grid as an unexplained second orders section. The route stays
+  // gated on order_entry — whoever owns orders owns its POs.
   { code: "csv_upload", label: "CSV Upload", icon: "📤", href: "/dashboard/csv-upload",
     description: "Bulk-load rows into the back-office log sheets from a CSV file." },
   { code: "doc_entry", label: "Document Entry", icon: "🧾", href: "/dashboard/documents",
@@ -47,27 +52,31 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Enter/edit courier API account credentials (FedEx, UPS, Aramex, Delhivery, Shiprocket, DHL) — Admin/MD only." },
   { code: "bill_payment", label: "Bill Payment", icon: "💳", href: "/dashboard/bill-payment",
     description: "Bill-payment approval workflow." },
-  // 2026-11-19 — labelled "(P&L)" on purpose: this screen only feeds the P&L
-  // overhead line, while Purchase & Accounts posts real double-entry vouchers.
-  // Two tiles both reading "Office Expenses" made them look interchangeable,
-  // so the tile now says which one it is (the page itself carries the same note).
-  { code: "internal_expense_entry", label: "Office Expenses (P&L)", icon: "🧾", href: "/dashboard/expenses",
-    description: "Log rent, electricity, fuel and other costs not tied to a purchase order or AWB — feeds the P&L Dashboard as a separate overhead line. No ledger entry, no approval; use Expense Vouchers for an accounting voucher." },
-  // 2026-11-18b — PURCHASE & ACCOUNTS (Phase 1: office/cash expenses, petty
-  // cash, reimbursements, double-entry ledger, accounts setup). Deliberately
-  // separate from internal_expense_entry above: that module is the P&L
-  // overhead feed, this one is the accounting ledger with approval + posting.
-  // Entry and approval are their own capability because whoever raises a
-  // voucher must not be the only person who can approve it.
-  // Each tile opens its OWN section (?tab=), not the module's default view —
-  // the owner's ask: "office expance vala section or purchase account expense
-  // voucher expense approval" should be separate, comfortable destinations
-  // instead of three tiles all landing on the same first tab.
-  { code: "accounts_view", label: "Purchase & Accounts", icon: "🏦", href: "/dashboard/accounts",
-    description: "Accounts dashboard, expense register, cash book, bank book, UPI report and trial balance — from posted double-entry records only." },
-  { code: "accounts_expense_entry", label: "Expense Vouchers", icon: "🧮", href: "/dashboard/accounts?tab=expenses",
+  // 2026-11-22 — ONE Office Expenses section, per the owner's ask ("bahut
+  // confuse karta hai, normal rakho single section me"). Four launcher tiles
+  // (P&L log, Purchase & Accounts, Expense Vouchers, Expense Approvals) all
+  // described the same job, so the landing grid now has a single tile that
+  // opens the module; vouchers, approvals, petty cash, reimbursements,
+  // reports, setup and the P&L overhead log are sections inside it. The other
+  // three codes stay in the registry (hidden) because the permissions matrix
+  // and capability-sync still need their labels — entry and approval remain
+  // separate grants on purpose: whoever raises a voucher must not be the
+  // only person who can approve it.
+  { code: "accounts_view", label: "Office Expenses", icon: "🧾", href: "/dashboard/accounts",
+    description: "One place for every office/cash expense — vouchers and their approvals, petty cash, reimbursements, the P&L overhead log, cash/bank book and trial balance." },
+  // 2026-11-22 — this is a TILE only for roles that were granted the P&L log
+  // and nothing else in Accounts. It used to be hidden, which left such a role
+  // with no Office Expenses tile at all (the accounts page doesn't accept this
+  // capability, so there was no way in). When the employee holds any accounts
+  // capability, `hideWhenAny` suppresses this tile — the accounts_view tile is
+  // already their one Office Expenses entry, and the P&L log is a tile inside
+  // it. That keeps exactly one Office Expenses tile per person.
+  { code: "internal_expense_entry", label: "Office Expenses (P&L)", icon: "📈", href: "/dashboard/expenses",
+    hideWhenAny: ["accounts_view"],
+    description: "Log rent, electricity, fuel and other costs not tied to a purchase order or AWB — feeds the P&L Dashboard as a separate overhead line. No ledger entry, no approval; reached from Office Expenses → P&L Overhead Log." },
+  { code: "accounts_expense_entry", label: "Expense Vouchers", icon: "🧮", href: "/dashboard/accounts?tab=expenses", hidden: true,
     description: "Create and submit expense vouchers (cash / bank / UPI), petty cash movements and employee reimbursement claims." },
-  { code: "accounts_expense_approve", label: "Expense Approvals", icon: "✅", href: "/dashboard/accounts?tab=approvals",
+  { code: "accounts_expense_approve", label: "Expense Approvals", icon: "✅", href: "/dashboard/accounts?tab=approvals", hidden: true,
     description: "Review submitted expense vouchers and reimbursement claims, then post approved vouchers to the ledger. Self-approval is blocked." },
   // The setup screens (financial years, cash/bank accounts, opening balances,
   // approval limits) are the same page's Setup tab — kept in the registry for
@@ -284,4 +293,17 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
 
 export function capabilityInfoFor(code: string): CapabilityInfo | undefined {
   return CAPABILITY_INFO.find((c) => c.code === code);
+}
+
+/**
+ * The tiles a launcher / sidebar / dock shows this employee: one per held
+ * capability, minus hidden registry entries and minus fallback tiles whose
+ * section is already covered by another capability the employee holds
+ * (see CapabilityInfo.hideWhenAny). Shared so all three surfaces agree.
+ */
+export function capabilityTilesFor(capabilities: string[]): CapabilityInfo[] {
+  const held = new Set(capabilities);
+  return CAPABILITY_INFO.filter(
+    (c) => !c.hidden && held.has(c.code) && !(c.hideWhenAny ?? []).some((code) => held.has(code))
+  );
 }

@@ -268,7 +268,7 @@ export default async function ExpensesPage({
             <>
               For a voucher that is approved by an admin, posted as double entry and shows in the Cash/Bank Book, use{" "}
               <Link href="/dashboard/accounts?tab=expenses" className="font-semibold underline">
-                Purchase &amp; Accounts → Expense Vouchers
+                Office Expenses → Expense Vouchers
               </Link>
               .
             </>

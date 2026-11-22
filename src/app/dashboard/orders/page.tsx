@@ -261,6 +261,16 @@ export default async function OrdersPage({
           >
             📤 Bulk Upload (CSV)
           </Link>
+          {/* 2026-11-22 — Purchase Orders used to be its own launcher tile on
+              the landing grid, where it read like a second Orders module and
+              didn't explain itself. It is one order's supplier document, so it
+              now opens from here, next to the orders it belongs to. */}
+          <Link
+            href="/dashboard/purchase-orders"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            🛒 Purchase Orders
+          </Link>
           <Link
             href="/dashboard/orders/new"
             className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"

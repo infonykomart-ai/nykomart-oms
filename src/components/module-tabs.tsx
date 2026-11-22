@@ -53,6 +53,13 @@ const SUBMODULES: ModuleTab[] = [
   { href: "/dashboard/b2b/production", label: "Production & QC", icon: "🏭" },
   { href: "/dashboard/b2b/shipments", label: "Shipments", icon: "🚢" },
   { href: "/dashboard/b2b/reports", label: "B2B Reports", icon: "📊" },
+  // 2026-11-22 — two screens that are no longer launcher tiles but are still
+  // destinations of their own: Purchase Orders (opened from the Orders header)
+  // and the P&L overhead log (opened from Office Expenses). Without these, a
+  // visit to either would fall through to CAPABILITY_INFO and open a "Home"
+  // tab, since both were removed from the launcher grid.
+  { href: "/dashboard/purchase-orders", label: "Purchase Orders", icon: "🛒" },
+  { href: "/dashboard/expenses", label: "P&L Overhead Log", icon: "📈" },
 ];
 
 /** Longest-prefix module match over SUBMODULES + CAPABILITY_INFO — /dashboard/orders/123 → the Orders module. */

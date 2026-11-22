@@ -67,7 +67,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const SECTIONS = [
-  { id: "dashboard", label: "Purchase & Accounts", icon: "🏦", hint: "Overview, KPIs and what still needs setting up" },
+  { id: "dashboard", label: "Overview", icon: "🏦", hint: "KPIs and what still needs setting up" },
   { id: "expenses", label: "Expense Vouchers", icon: "🧮", hint: "Office & cash expenses — enter a voucher, then track it" },
   { id: "approvals", label: "Expense Approvals", icon: "✅", hint: "Review submitted vouchers and post them to the ledger" },
   { id: "petty-cash", label: "Petty Cash", icon: "👛", hint: "Floats, spends, replenishments, physical count" },
@@ -134,7 +134,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
   if (schema.state === "missing") {
     return (
       <main className="mx-auto max-w-3xl p-6">
-        <h1 className="text-xl font-semibold text-stone-900">Purchase &amp; Accounts</h1>
+        <h1 className="text-xl font-semibold text-stone-900">Office Expenses</h1>
         <div className={`${card} mt-4 border-amber-300 bg-amber-50`}>
           <p className="text-sm font-medium text-amber-900">The accounting tables are not in the database yet.</p>
           <p className="mt-1 text-sm text-amber-800">
@@ -280,9 +280,9 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
     <main className="mx-auto max-w-7xl space-y-4 p-4 sm:p-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">Purchase &amp; Accounts</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">Office Expenses &amp; Accounts</p>
           <h1 className="text-2xl font-semibold text-stone-900">
-            {tab === "dashboard" ? "Purchase & Accounts" : SECTIONS.find((s) => s.id === tab)?.label}
+            {tab === "dashboard" ? "Office Expenses" : SECTIONS.find((s) => s.id === tab)?.label}
           </h1>
           <p className="text-xs text-stone-500">
             {companyName} · every voucher is approved before it reaches the ledger · {today}
@@ -331,6 +331,26 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
             </span>
           </Link>
         ))}
+        {/* 2026-11-22 — the P&L overhead log used to be its own launcher tile
+            next to this module, which made "office expenses" look like four
+            different features. It is one more destination inside the same
+            section: same page bar, clearer purpose. */}
+        {employee.capabilities.includes("internal_expense_entry") ? (
+          <Link
+            href="/dashboard/expenses"
+            className="flex items-start gap-2.5 rounded-xl border border-stone-200 bg-white p-3 transition hover:border-amber-300 hover:bg-amber-50/40"
+          >
+            <span className="text-lg leading-none" aria-hidden>
+              📈
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-stone-800">P&amp;L Overhead Log</span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-stone-500">
+                Quick expense log that only feeds the P&amp;L — no voucher, no approval
+              </span>
+            </span>
+          </Link>
+        ) : null}
       </nav>
 
       {/* ================= DASHBOARD ================= */}

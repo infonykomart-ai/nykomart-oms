@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useRef } from "react";
-import { CAPABILITY_INFO } from "@/lib/capability-info";
+import { capabilityTilesFor } from "@/lib/capability-info";
 import { useNavStyle } from "@/components/nav-style-context";
 
 /**
@@ -58,7 +58,7 @@ import { useNavStyle } from "@/components/nav-style-context";
 export function DashboardDock({ capabilities }: { capabilities: string[] }) {
   const pathname = usePathname();
   const { navStyle, mounted, setNavStyle } = useNavStyle();
-  const items = CAPABILITY_INFO.filter((c) => !c.hidden && capabilities.includes(c.code));
+  const items = capabilityTilesFor(capabilities);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);

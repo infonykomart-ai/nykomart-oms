@@ -19,14 +19,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CAPABILITY_INFO } from "@/lib/capability-info";
+import { capabilityTilesFor } from "@/lib/capability-info";
 
 const HIDDEN_STORAGE_KEY = "oms_sidebar_hidden";
 export const SIDEBAR_OPEN_EVENT = "oms:sidebar-open";
 
 export function DashboardSidebar({ capabilities }: { capabilities: string[] }) {
   const pathname = usePathname();
-  const items = CAPABILITY_INFO.filter((c) => !c.hidden && capabilities.includes(c.code));
+  const items = capabilityTilesFor(capabilities);
 
   const [hidden, setHidden] = useState(false);
   const [mounted, setMounted] = useState(false);
