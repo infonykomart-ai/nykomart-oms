@@ -253,16 +253,26 @@ export function InvoiceView({
   // hand-edited totals) keeps ITS OWN percentage selected instead of the
   // picker showing blank while the recalculation would silently drop back to 60%.
   const basisChoices = valueBasisOptions(invoice.value_percent);
+  // 2026-11-23 — "vaha manual hona chahiye ki kitne % par banana hai": the
+  // basis is typed, not picked from two fixed options (60/100 stay as
+  // suggestions in the datalist). An invalid/blank entry keeps the invoice's
+  // own basis, exactly like the server's normalizeValueBasisPercent.
+  const typedBasis = Math.round(Number(basisPercent));
+  const basisValid = Number.isFinite(typedBasis) && typedBasis >= 1 && typedBasis <= 100;
   const expectedBreakdown = isCsbV
-    ? computeValueBreakdownAt(liveOrderValueSum, Number(basisPercent) || savedBasis)
+    ? computeValueBreakdownAt(liveOrderValueSum, basisValid ? typedBasis : savedBasis)
     : null;
   const savedTotal = invoiceValueUsd ? Number(invoiceValueUsd) : null;
   const totalDrift = expectedBreakdown && savedTotal != null ? round2(expectedBreakdown.invoiceValueUsd - savedTotal) : 0;
 
   function handleRecalculate() {
     setRefreshMessage(null);
+    if (!basisValid) {
+      setRefreshMessage("Enter a value basis between 1 and 100 (e.g. 60 or 100).");
+      return;
+    }
     startRefresh(async () => {
-      const result = await refreshInvoiceTotals(invoice.id, { valuePercent: Number(basisPercent) || savedBasis });
+      const result = await refreshInvoiceTotals(invoice.id, { valuePercent: typedBasis });
       if (result.error || !result.updated) {
         setRefreshMessage(`Error: ${result.error ?? "Recalculation failed."}`);
         return;
@@ -452,30 +462,31 @@ export function InvoiceView({
               <label className="text-[11px] font-medium text-slate-500" htmlFor="basis_percent">
                 Value basis
               </label>
-              <select
+              <input
                 id="basis_percent"
+                type="number"
+                min={1}
+                max={100}
+                step={1}
                 value={basisPercent}
                 onChange={(e) => setBasisPercent(e.target.value)}
-                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
-              >
+                list="basis_percent_suggestions"
+                className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
+              />
+              <datalist id="basis_percent_suggestions">
                 {basisChoices.map((p) => (
-                  <option key={p} value={String(p)}>
-                    {p === 60
-                      ? "60% of order value (standard)"
-                      : p === 100
-                        ? "100% of order value (full PO value)"
-                        : `${p}% of order value (this invoice's saved basis)`}
-                  </option>
+                  <option key={p} value={String(p)} />
                 ))}
-              </select>
-              {Number(basisPercent) !== savedBasis && (
+              </datalist>
+              <span className="text-[11px] text-slate-500">% of order value</span>
+              {basisValid && typedBasis !== savedBasis && (
                 <button
                   type="button"
                   onClick={handleRecalculate}
                   disabled={isRefreshing}
                   className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50"
                 >
-                  {isRefreshing ? "Applying…" : `Apply ${basisPercent}% and recalculate`}
+                  {isRefreshing ? "Applying…" : `Apply ${typedBasis}% and recalculate`}
                 </button>
               )}
             </div>

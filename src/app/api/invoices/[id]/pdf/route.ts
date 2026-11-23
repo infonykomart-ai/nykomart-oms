@@ -60,24 +60,51 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     hsnByRef[order.ref_no] = hsnById.get(order.item_category_id) ?? null;
   }
 
-  const model = buildInvoiceDocument({
-    kind,
-    invoice: {
-      invoice_no: invoice.invoice_no,
-      invoice_date: invoice.invoice_date,
-      master_invoice_no: invoice.master_invoice_no,
-    },
-    orders: orders ?? [],
-    company,
-    profile,
-    storeName: store?.name ?? null,
-    hsnByRef,
-  });
+  // 2026-11-23 — Invoice / Tax Invoice must print the INVOICE, not a PO
+  // summary. The order-document builder (one line per order, no value
+  // breakdown, no declared value, no customs identifiers) is kept for the
+  // Packing List only, which genuinely is a quantities sheet.
+  const fileName =
+    documentFileName({ kind, docNo: invoice.invoice_no }) || `${DOCUMENT_TITLES[kind]}.pdf`;
+  const buffer =
+    kind === "packing-list"
+      ? await (async () => {
+          const model = buildInvoiceDocument({
+            kind,
+            invoice: {
+              invoice_no: invoice.invoice_no,
+              invoice_date: invoice.invoice_date,
+              master_invoice_no: invoice.master_invoice_no,
+            },
+            orders: orders ?? [],
+            company,
+            profile,
+            storeName: store?.name ?? null,
+            hsnByRef,
+          });
+          const { renderOrderDocumentPdf } = await import("@/lib/documents/order-pdf");
+          return renderOrderDocumentPdf(model);
+        })()
+      : await (async () => {
+          const { renderInvoicePdf } = await import("@/lib/documents/invoice-pdf");
+          return renderInvoicePdf({
+            kind: kind === "tax-invoice" ? "tax-invoice" : "invoice",
+            invoice,
+            orders: (orders ?? []).map((order) => ({
+              ref_no: order.ref_no,
+              sku_label: order.sku_label,
+              size_label: order.size_label,
+              qty: order.qty,
+              order_value_original: order.order_value_original,
+              order_currency: order.order_currency,
+              hsn: hsnByRef[order.ref_no] ?? null,
+            })),
+            company,
+            profile,
+            storeName: store?.name ?? null,
+          });
+        })();
 
-  const { renderOrderDocumentPdf } = await import("@/lib/documents/order-pdf");
-  const buffer = await renderOrderDocumentPdf(model);
-
-  const fileName = documentFileName(model) || `${DOCUMENT_TITLES[kind]}.pdf`;
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",

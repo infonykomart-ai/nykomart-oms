@@ -10,12 +10,29 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
+// 2026-11-23 — "po me jo chije hai already vo auto fill hokr aani chaiye, form
+// me blank hokar aata hai to confusion hota hai": everything already known
+// about the order(s) is passed in and shown as the field's starting value.
+// The server still auto-pulls as a backstop (see generateInvoiceCore), so an
+// old link without defaults keeps generating exactly the same invoice.
+export type InvoiceFormDefaults = {
+  destinationCountry?: string | null;
+  iossNumber?: string | null;
+  vatNumber?: string | null;
+  eoriNumber?: string | null;
+  awbNo?: string | null;
+  buyerEmail?: string | null;
+  buyerPhone?: string | null;
+};
+
 export function InvoiceGenerateForm({
   orderIds,
   defaultBuyerNameAddress,
+  defaults,
 }: {
   orderIds: string[];
   defaultBuyerNameAddress: string;
+  defaults?: InvoiceFormDefaults;
 }) {
   const [state, formAction, pending] = useActionState(generateInvoice, initialState);
   const [csbType, setCsbType] = useState("");
@@ -106,11 +123,11 @@ export function InvoiceGenerateForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="destination_country">Destination Country</label>
-          <input id="destination_country" name="destination_country" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
+          <input id="destination_country" name="destination_country" defaultValue={defaults?.destinationCountry ?? ""} placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="ioss_number">IOSS Number (if any)</label>
-          <input id="ioss_number" name="ioss_number" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
+          <input id="ioss_number" name="ioss_number" defaultValue={defaults?.iossNumber ?? ""} placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
       </div>
 
@@ -121,14 +138,31 @@ export function InvoiceGenerateForm({
           in by hand below. */}
       {csbType === "CSB-V" && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <label className={labelClass} htmlFor="value_basis_percent">Invoice Value Basis (CSB-V)</label>
-          <select id="value_basis_percent" name="value_basis_percent" defaultValue="60" className={inputClass}>
-            <option value="60">60% of the order value (standard)</option>
-            <option value="100">100% of the order value (full PO value)</option>
-          </select>
+          <label className={labelClass} htmlFor="value_basis_percent">Invoice Value Basis — % of the order value (CSB-V)</label>
+          {/* 2026-11-23 — "dropdown me jo % select karne ka vaha manual hona
+              chahiye": any whole percentage can be typed, not just 60/100.
+              60 and 100 stay as one-click suggestions in the datalist. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id="value_basis_percent"
+              name="value_basis_percent"
+              type="number"
+              min={1}
+              max={100}
+              step={1}
+              defaultValue={60}
+              list="value_basis_suggestions"
+              className={`${inputClass} max-w-[110px]`}
+            />
+            <datalist id="value_basis_suggestions">
+              <option value="60" />
+              <option value="100" />
+            </datalist>
+            <span className="text-xs text-slate-500">% of the order value</span>
+          </div>
           <p className="mt-1 text-[11px] text-slate-500">
-            60% is the normal customs value. Choose 100% when the invoice has to show the PO&apos;s entire order
-            value; Item Cost / Insurance / Freight are recomputed from that basis, and you can still edit every
+            Type any percentage from 1 to 100. 60% is the normal customs value; 100% bills the PO&apos;s entire order
+            value. Item Cost / Insurance / Freight are recomputed from that basis, and you can still edit every
             figure afterwards.
           </p>
         </div>
@@ -144,11 +178,11 @@ export function InvoiceGenerateForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass} htmlFor="vat_number">VAT Number (UK/EU, if any)</label>
-          <input id="vat_number" name="vat_number" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
+          <input id="vat_number" name="vat_number" defaultValue={defaults?.vatNumber ?? ""} placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="eori_number">EORI Number (UK/EU, if any)</label>
-          <input id="eori_number" name="eori_number" placeholder="Leave blank to auto-pull from the order" className={inputClass} />
+          <input id="eori_number" name="eori_number" defaultValue={defaults?.eoriNumber ?? ""} placeholder="Leave blank to auto-pull from the order" className={inputClass} />
         </div>
       </div>
 
@@ -158,7 +192,7 @@ export function InvoiceGenerateForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelClass} htmlFor="awb_no">AWB / Tracking No.</label>
-          <input id="awb_no" name="awb_no" placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
+          <input id="awb_no" name="awb_no" defaultValue={defaults?.awbNo ?? ""} placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="courier_company_vessel">Vessel/Flight No.</label>
@@ -178,11 +212,11 @@ export function InvoiceGenerateForm({
         </div>
         <div>
           <label className={labelClass} htmlFor="buyer_email">Buyer Email</label>
-          <input id="buyer_email" name="buyer_email" type="email" placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
+          <input id="buyer_email" name="buyer_email" type="email" defaultValue={defaults?.buyerEmail ?? ""} placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
         </div>
         <div>
           <label className={labelClass} htmlFor="buyer_phone">Buyer Phone</label>
-          <input id="buyer_phone" name="buyer_phone" placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
+          <input id="buyer_phone" name="buyer_phone" defaultValue={defaults?.buyerPhone ?? ""} placeholder="Leave blank to auto-pull from Dispatch" className={inputClass} />
         </div>
       </div>
 

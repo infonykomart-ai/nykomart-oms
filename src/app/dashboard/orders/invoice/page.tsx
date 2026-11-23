@@ -64,7 +64,7 @@ export default async function OrderInvoicePage({
   const { data: orders } = await supabase
     .from("orders")
     .select(
-      "id, ref_no, ref_no_base, company_id, store_id, status, invoice_id, order_currency, order_value_original, qty, size_label, item_category_id, buyer_name_address, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, destination_country"
+      "id, ref_no, ref_no_base, company_id, store_id, status, invoice_id, order_currency, order_value_original, qty, size_label, item_category_id, buyer_name_address, buyer_address1, buyer_address2, buyer_address3, buyer_city, buyer_state, buyer_postal_code, destination_country, ioss_number, vat_number, eori_number, email_id, contact_no"
     )
     .in("id", ids);
 
@@ -98,6 +98,17 @@ export default async function OrderInvoicePage({
   const stores = new Set(ready.map((o) => o.store_id));
   const storeMix = stores.size > 1;
   const currencies = new Set(ready.map((o) => o.order_currency));
+  // AWB lives on the dispatch row, not the order — pre-fill it when a dispatch
+  // entry already exists so the form is not blank on an already-shipped PO.
+  const { data: dispatchRows } = ready.length
+    ? await supabase
+        .from("dispatch_invoices")
+        .select("order_id, awb_no")
+        .in("order_id", ready.map((o) => o.id))
+        .not("awb_no", "is", null)
+    : { data: [] };
+  const awbByOrder = new Map((dispatchRows ?? []).map((row) => [row.order_id, row.awb_no]));
+
   const categoryIds = Array.from(new Set(ready.map((o) => o.item_category_id)));
   const { data: categories } = categoryIds.length
     ? await supabase.from("item_categories").select("id, name").in("id", categoryIds)
@@ -183,6 +194,15 @@ export default async function OrderInvoicePage({
           <InvoiceGenerateForm
             orderIds={ready.map((o) => o.id)}
             defaultBuyerNameAddress={composeBuyerNameAndAddress(ready[0])}
+            defaults={{
+              destinationCountry: ready[0].destination_country,
+              iossNumber: ready[0].ioss_number,
+              vatNumber: ready[0].vat_number,
+              eoriNumber: ready[0].eori_number,
+              buyerEmail: ready[0].email_id,
+              buyerPhone: ready[0].contact_no,
+              awbNo: awbByOrder.get(ready[0].id) ?? null,
+            }}
           />
         </div>
       )}
