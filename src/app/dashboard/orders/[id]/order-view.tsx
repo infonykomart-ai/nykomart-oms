@@ -900,7 +900,19 @@ export function OrderView({
           both present (the user's own rule). Sits directly under the
           status grid so the result is immediately visible there. */}
       {shippingDefaults && (
-        <ShippingDetailsForm orderId={order.id} orderStatus={order.status} defaults={shippingDefaults} />
+        <ShippingDetailsForm
+          orderId={order.id}
+          orderStatus={order.status}
+          shipmentStatus={order.shipment_status}
+          shipments={shipments.map((s) => ({
+            id: s.id,
+            shipmentNo: s.shipmentNo,
+            awbNo: s.awbNo,
+            forwardingNo: s.forwardingNo,
+            courierName: s.courierName ?? s.bookingCourier,
+          }))}
+          defaults={shippingDefaults}
+        />
       )}
 
       {/* 2026-09-08 — Vendor Assignment History: a separate section (per

@@ -118,10 +118,19 @@ export async function refreshOrderTracking(
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/courier-booking");
 
-  const skipNote = notPollable.length > 0 ? ` Not polled (these couriers push updates instead): ${notPollable.join(", ")}.` : "";
+  // 2026-11-23 — Shipglobal / OnPoint / any free-text courier has no tracking
+  // API wired up here, so say exactly where their status is recorded instead
+  // of leaving the user with a button that appears to do nothing.
+  const skipNote =
+    notPollable.length > 0
+      ? ` Not checked automatically (no tracking API for these couriers — set their Tracking Status in the order's Shipping & Invoice Details form): ${notPollable.join(", ")}.`
+      : "";
 
   if (checked.length === 0 && errors.length > 0) {
     return { error: errors.join(" · "), message: null };
+  }
+  if (checked.length === 0) {
+    return { error: null, message: skipNote.trim() };
   }
 
   return {

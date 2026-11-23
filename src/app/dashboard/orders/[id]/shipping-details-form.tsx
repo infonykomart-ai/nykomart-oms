@@ -17,13 +17,31 @@ const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
+export type ShippingFormShipment = {
+  id: string;
+  shipmentNo: number;
+  awbNo: string | null;
+  forwardingNo: string | null;
+  courierName: string | null;
+};
+
 export function ShippingDetailsForm({
   orderId,
   orderStatus,
+  shipmentStatus,
+  shipments = [],
   defaults,
 }: {
   orderId: string;
   orderStatus: string;
+  /** Current orders.shipment_status — pre-selects the Tracking Status box. */
+  shipmentStatus?: string | null;
+  /**
+   * 2026-11-23 — every AWB on the order. A multi-shipment order shows a
+   * "Shipment" picker, because a tracking status chosen here must move only
+   * the parcel it is meant for — it used to mark every AWB Delivered.
+   */
+  shipments?: ShippingFormShipment[];
   defaults: {
     awb_no: string | null;
     forwarding_no: string | null;
@@ -94,6 +112,59 @@ export function ShippingDetailsForm({
           <div>
             <label className={labelClass} htmlFor="sd_invoice_date">Invoice Date</label>
             <input id="sd_invoice_date" name="invoice_date" type="date" defaultValue={defaults.invoice_date ?? ""} className={inputClass} />
+          </div>
+          {/* 2026-11-23 — "MANUAL TRACKING UPDATE YAHA UPDATE KYU NAHI HO
+              RAHI": one place to record where the parcel actually is, for
+              couriers this app cannot poll (Shipglobal / OnPoint) and for
+              parcels entered by hand. Saving it moves the order's own status,
+              shipment status, dispatch date and the dispatch summary together
+              — see shipping-actions.ts step 5.
+              When the order has more than one AWB the form also asks WHICH
+              parcel this status belongs to; the order itself only turns
+              Delivered once every AWB is delivered. */}
+          {shipments.length > 1 && (
+            <div>
+              <label className={labelClass} htmlFor="sd_shipment">
+                Shipment <span className="font-normal text-slate-400">(which AWB)</span>
+              </label>
+              <select id="sd_shipment" name="shipment_id" defaultValue="" className={inputClass}>
+                <option value="">Select AWB</option>
+                {shipments.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    #{s.shipmentNo} · {s.awbNo ?? s.forwardingNo ?? "no AWB"}
+                    {s.courierName ? ` · ${s.courierName}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-slate-400">
+                Required for a Tracking Status — only this AWB moves. The order turns Delivered when every AWB is.
+              </p>
+            </div>
+          )}
+          <div>
+            <label className={labelClass} htmlFor="sd_tracking_status">Tracking Status</label>
+            <select
+              id="sd_tracking_status"
+              name="tracking_status"
+              defaultValue={
+                shipmentStatus && ["Shipped", "In Transit", "Delivered", "Returned"].includes(shipmentStatus)
+                  ? shipmentStatus
+                  : ""
+              }
+              className={inputClass}
+            >
+              <option value="">No change</option>
+              <option value="Shipped">Shipped</option>
+              <option value="In Transit">In Transit</option>
+              <option value="Delivered">Delivered</option>
+              <option value="Returned">Returned</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="sd_delivered_date">
+              Delivered Date <span className="font-normal text-slate-400">(when Delivered)</span>
+            </label>
+            <input id="sd_delivered_date" name="delivered_date" type="date" className={inputClass} />
           </div>
           <div>
             <label className={labelClass} htmlFor="sd_weight">Weight (kg)</label>

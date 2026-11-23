@@ -8,6 +8,12 @@ import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summ
 // written tolerantly so an upload still lands on a database where
 // db/2026-10-26-order-shipment-forwarding-no.sql is pending.
 import { tolerateMissingColumn } from "@/lib/db/missing-column";
+// 2026-11-23 — a Shipment Status column in the sheet must move the order the
+// same way the manual form / a courier event does (orders.status + dispatch
+// date), not only orders.shipment_status. See tracking-status-sync.ts.
+import { syncOrderTrackingState } from "@/lib/orders/tracking-status-sync";
+import { isTrackingState } from "@/lib/orders/tracking-status";
+import { syncCourierShipmentRow } from "@/lib/orders/sync-courier-shipment";
 import { SHIPMENT_STATUSES, DELIVERED_STATUSES } from "./columns";
 
 export type TrackingRowResult = {
@@ -233,7 +239,7 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
         }
 
         if (awbNo || forwardingNo || courierName || deliveredStatus || deliveredDate || remark) {
-          const { error: upsertError } = await tolerateMissingColumn(
+          const { data: upsertedShipment, error: upsertError } = await tolerateMissingColumn(
             {
               order_id: orderId,
               shipment_no: shipmentNo,
@@ -246,13 +252,45 @@ export async function bulkUpdateTracking(_prev: BulkTrackingState, formData: For
               last_update_date: today,
             },
             "forwarding_no",
-            (payload) => supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" })
+            (payload) =>
+              supabase.from("order_shipments").upsert(payload, { onConflict: "order_id,shipment_no" }).select("id").single()
           );
           if (upsertError) {
             results[index] = { row: rowNum, refNo, error: `Failed to update tracking details: ${upsertError.message}` };
             return;
           }
           await resyncDispatchSummary(supabase, orderId);
+
+          // 2026-11-23 — "MANUAL TRACKING UPDATE YAHA UPDATE KYU NAHI HO
+          // RAHI": Track Shipments reads courier_shipments, which this upload
+          // never wrote, so an AWB added by CSV was invisible there (or an old
+          // cancelled booking attempt stayed on screen). Mirror it exactly like
+          // the order page's manual form does.
+          if (upsertedShipment?.id && (awbNo || forwardingNo || courierName)) {
+            const mirrorError = await syncCourierShipmentRow(supabase, {
+              orderId,
+              orderShipmentId: upsertedShipment.id,
+              awbNo,
+              forwardingNo,
+              courierName,
+              employeeId: employee.id,
+            });
+            if (mirrorError) {
+              results[index] = { row: rowNum, refNo, error: `Tracking saved, but Track Shipments could not be updated: ${mirrorError}` };
+              return;
+            }
+          }
+        }
+
+        // 2026-11-23 — the sheet can send only the status (no AWB), e.g. a
+        // daily "delivered" export. The order row still moves with it. The
+        // shipment rows were already written above, so only the order-level
+        // fields are synced here (writeShipments: false).
+        if (shipmentStatus && isTrackingState(shipmentStatus)) {
+          await syncOrderTrackingState(supabase, orderId, shipmentStatus, {
+            writeShipments: false,
+            deliveredDate,
+          });
         }
 
         results[index] = { row: rowNum, refNo, error: null };

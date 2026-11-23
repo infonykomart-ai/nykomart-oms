@@ -88,10 +88,15 @@ export function ShipmentsTracking({ shipments, filters }: { shipments: TrackedSh
                     </Link>
                   </td>
                   <td className="px-3 py-2">
+                    {/* 2026-11-23 — 'other' also carries real providers this
+                        table's enum does not have (a Shipglobal booking is
+                        stored as 'other' + its carrier name), so the name is
+                        shown as-is and "manual" only marks a hand-entered
+                        booking. */}
                     {s.courier === "other"
-                      ? `${s.manualCourierName ?? "Other"} (manual)`
+                      ? s.manualCourierName ?? "Other"
                       : COURIERS.find((c) => c.key === s.courier)?.label ?? s.courier}
-                    {s.bookedAmountSource === "manual" && s.courier !== "other" && (
+                    {s.bookedAmountSource === "manual" && (
                       <span className="ml-1 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">manual</span>
                     )}
                   </td>

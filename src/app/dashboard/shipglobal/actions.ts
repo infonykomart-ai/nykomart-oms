@@ -23,6 +23,10 @@ import {
 // src/lib/couriers/rate-card-fallback.ts's header comment.
 import { estimateBookedAmountFromRateCard } from "@/lib/couriers/rate-card-fallback";
 import { parseFullAddress, looksLikeFullAddress } from "@/lib/parse-full-address";
+// 2026-11-23 — a Shipglobal booking now appears on Track Shipments and moves
+// the order's own status, exactly like a FedEx/DHL booking does. See the two
+// writes added in the manifest branch below.
+import { syncOrderTrackingState } from "@/lib/orders/tracking-status-sync";
 
 export type ShipglobalLookupOrder = {
   id: string;
@@ -427,6 +431,12 @@ export async function createShipglobalShipment(
 
     if (manifested.trackingNo) {
       const carrierName = SHIPGLOBAL_SERVICES.find((s) => s.code === service)?.carrier ?? service;
+      // The forwarder's own number for this parcel (Shipglobal order/waybill
+      // ref), never just a copy of the carrier tracking number.
+      const forwardingNo =
+        (created.orderNumber ?? created.waybillNumber ?? null) === manifested.trackingNo
+          ? null
+          : created.orderNumber ?? created.waybillNumber ?? null;
 
       // 2026-09-01: booking-cost capture — see rate-card-fallback.ts's
       // header comment. created.chargedAmount is a best-effort opportunistic
@@ -473,10 +483,7 @@ export async function createShipglobalShipment(
           // addOrder returned no order number — and stores nothing at all
           // when that reference IS the carrier tracking number, so the second
           // field never just repeats the AWB.
-          forwarding_no:
-            (created.orderNumber ?? created.waybillNumber ?? null) === manifested.trackingNo
-              ? null
-              : created.orderNumber ?? created.waybillNumber ?? null,
+          forwarding_no: forwardingNo,
           courier_name: `${carrierName} (Shipglobal)`,
           last_update_date: new Date().toISOString().slice(0, 10),
           created_by_employee_id: employee.id,
@@ -520,8 +527,38 @@ export async function createShipglobalShipment(
             },
             { onConflict: "order_id" }
           );
+
+        // 2026-11-23 — "SHIPGLOBAL TRACK KYU NAHI HO RAHI": Courier Ops →
+        // Track Shipments reads courier_shipments ONLY, and this action wrote
+        // order_shipments alone — so a Shipglobal shipment (AWB, carrier,
+        // booked amount) never showed up there at all. Mirrored now, the same
+        // way a FedEx/DHL booking is. courier_shipments' check constraint has
+        // no 'shipglobal' value, so it is stored as 'other' with the real
+        // carrier name in manual_courier_name (the column built for exactly
+        // this — see db/2026-09-04-manual-external-booking.sql).
+        await tolerateMissingColumn(
+          {
+            courier: "other" as const,
+            manual_courier_name: `${carrierName} (Shipglobal)`,
+            order_id: orderId,
+            order_shipment_id: shipment.id,
+            service_code: service,
+            status: "created" as const,
+            awb_no: manifested.trackingNo,
+            forwarding_no: forwardingNo,
+            booked_amt: bookedAmt,
+            booked_currency: bookedCurrency,
+            booked_amount_source: bookedSource,
+            created_by: employee.id,
+          },
+          "forwarding_no",
+          (payload) => supabase.from("courier_shipments").upsert(payload, { onConflict: "order_id,courier" })
+        );
       }
-      await supabase.from("orders").update({ shipment_status: "Shipped" }).eq("id", orderId);
+      // 2026-11-23 — moves orders.status to Dispatched (+ dispatch date) and
+      // orders.shipment_status to Shipped, instead of only the latter. Never
+      // downgrades a terminal order (see tracking-status.ts).
+      await syncOrderTrackingState(supabase, orderId, "Shipped");
     }
 
     revalidatePath("/dashboard/shipglobal");

@@ -41,11 +41,17 @@ import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summ
 // courier reports for the same parcel) is written/read tolerantly, so a
 // database that has not had db/2026-10-26-order-shipment-forwarding-no.sql run
 // yet keeps saving AWBs instead of failing on an unknown column.
-import { isMissingSchemaPiece, tolerateMissingColumn } from "@/lib/db/missing-column";
+import { tolerateMissingColumn } from "@/lib/db/missing-column";
+// 2026-11-23 — the manual AWB → Track Shipments mirror is shared with the
+// bulk tracking CSV (src/lib/orders/sync-courier-shipment.ts).
+import { syncCourierShipmentRow } from "@/lib/orders/sync-courier-shipment";
+// 2026-11-23 — one shared tracking → order-status writer, so a manual
+// Tracking Status entry moves the order (status + shipment status + dispatch
+// date + dispatch_invoices summary) exactly like a courier event does.
+import { syncOrderTrackingState } from "@/lib/orders/tracking-status-sync";
+import { isTrackingState } from "@/lib/orders/tracking-status";
 
 export type ShippingDetailsState = { error: string | null; success: boolean; dispatched: boolean; trackingSync?: string | null };
-
-type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -59,115 +65,6 @@ function numOrNull(formData: FormData, key: string): number | null {
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-const KNOWN_COURIERS = ["fedex", "ups", "aramex", "delhivery", "shiprocket", "dhl"] as const;
-type CourierRowKey = (typeof KNOWN_COURIERS)[number] | "other";
-
-// Free-text courier -> the courier_shipments.courier enum value. Matches on
-// substring because staff type "FedEx", "fedex india", "FedEx Express"…
-function courierRowForName(courierName: string | null): { courier: CourierRowKey; manual_courier_name: string | null } {
-  const name = (courierName ?? "").trim();
-  const lower = name.toLowerCase();
-  const known = KNOWN_COURIERS.find((k) => lower.includes(k));
-  if (known) return { courier: known, manual_courier_name: null };
-  return { courier: "other", manual_courier_name: name || null };
-}
-
-// 2026-10-26 — "AWB/weight/dimension/invoice no & date har jagah update kyu
-// nahi hote": this form only ever wrote order_shipments/order_packages, so
-// the same AWB never showed up on Courier Booking -> Track Shipments (which
-// reads courier_shipments), its Shipment Detail page, NDR, pickups or the
-// daily report. This mirrors that row for a manually-entered AWB.
-//
-// Deliberately conservative: a row already owned by a real courier API
-// booking is never rewritten (its AWB/amount/payload belong to the API),
-// and an existing row that already carries a DIFFERENT AWB is left alone
-// rather than silently repointed — this form is for the order's own
-// shipment, not for re-labelling someone else's booking.
-async function syncCourierShipmentRow(
-  supabase: ServiceClient,
-  args: {
-    orderId: string;
-    orderShipmentId: string;
-    awbNo: string | null;
-    forwardingNo?: string | null;
-    courierName: string | null;
-    employeeId: string;
-  }
-): Promise<string | null> {
-  if (!args.awbNo && !args.courierName && !args.forwardingNo) return null;
-  const mapped = courierRowForName(args.courierName);
-
-  // 2026-10-26 — forwarding_no is read tolerantly: on a database where
-  // db/2026-10-26-order-shipment-forwarding-no.sql has not been run, selecting
-  // it fails and would blank this whole lookup (and so the mirror row's AWB),
-  // so the base columns are retried instead (src/lib/db/missing-column.ts).
-  type CourierRow = { id: string; courier: string; awb_no: string | null; forwarding_no: string | null; booked_amount_source: string | null };
-  let rows: CourierRow[] | null = null;
-  const full = await supabase
-    .from("courier_shipments")
-    .select("id, courier, awb_no, forwarding_no, booked_amount_source")
-    .eq("order_id", args.orderId);
-  if (full.error && isMissingSchemaPiece(full.error)) {
-    const base = await supabase
-      .from("courier_shipments")
-      .select("id, courier, awb_no, booked_amount_source")
-      .eq("order_id", args.orderId);
-    rows = (base.data ?? []).map((r) => ({ ...r, forwarding_no: null }));
-  } else if (full.error) {
-    return full.error.message;
-  } else {
-    rows = full.data;
-  }
-
-  const sameCourier = (rows ?? []).find((r) => r.courier === mapped.courier) ?? null;
-  if (sameCourier) {
-    if (sameCourier.booked_amount_source === "api") return null;
-    if (sameCourier.awb_no && args.awbNo && sameCourier.awb_no !== args.awbNo) return null;
-    const { error: updateError } = await tolerateMissingColumn(
-      {
-        order_shipment_id: args.orderShipmentId,
-        awb_no: args.awbNo ?? sameCourier.awb_no,
-        // never blanks a forwarding no. that came from a real API booking
-        forwarding_no: args.forwardingNo ?? sameCourier.forwarding_no,
-        manual_courier_name: mapped.manual_courier_name,
-      },
-      "forwarding_no",
-      (patch) => supabase.from("courier_shipments").update(patch).eq("id", sameCourier.id)
-    );
-    return updateError?.message ?? null;
-  }
-
-  const sameAwb = args.awbNo ? (rows ?? []).find((r) => r.awb_no === args.awbNo) ?? null : null;
-  if (sameAwb) {
-    const { error: updateError } = await tolerateMissingColumn(
-      {
-        order_shipment_id: args.orderShipmentId,
-        ...(args.forwardingNo ? { forwarding_no: args.forwardingNo } : {}),
-      },
-      "forwarding_no",
-      (patch) => supabase.from("courier_shipments").update(patch).eq("id", sameAwb.id)
-    );
-    return updateError?.message ?? null;
-  }
-
-  const { error: insertError } = await tolerateMissingColumn(
-    {
-      courier: mapped.courier,
-      manual_courier_name: mapped.manual_courier_name,
-      order_id: args.orderId,
-      order_shipment_id: args.orderShipmentId,
-      status: "created" as const,
-      awb_no: args.awbNo,
-      forwarding_no: args.forwardingNo ?? null,
-      booked_amount_source: "manual" as const,
-      created_by: args.employeeId,
-    },
-    "forwarding_no",
-    (payload) => supabase.from("courier_shipments").insert(payload)
-  );
-  return insertError?.message ?? null;
 }
 
 // Standard international air-freight volumetric divisor — the same formula
@@ -213,7 +110,18 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
   const widthCm = numOrNull(formData, "width_cm");
   const heightCm = numOrNull(formData, "height_cm");
 
-  if (!awbNo && !forwardingNo && !courierName && !invoiceNo && !invoiceDate && weightKg == null && lengthCm == null && widthCm == null && heightCm == null) {
+  if (
+    !awbNo &&
+    !forwardingNo &&
+    !courierName &&
+    !invoiceNo &&
+    !invoiceDate &&
+    weightKg == null &&
+    lengthCm == null &&
+    widthCm == null &&
+    heightCm == null &&
+    !str(formData, "tracking_status")
+  ) {
     return { error: "Nothing entered — fill at least one field.", success: false, dispatched: false };
   }
   if ((lengthCm == null) !== (widthCm == null) || (widthCm == null) !== (heightCm == null)) {
@@ -398,9 +306,56 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
     trackingSync = order.shipment_status && order.shipment_status !== "Shipped" ? order.shipment_status : "Shipped";
   }
 
+  // 5. 2026-11-23 — an explicit Tracking Status from the form. This is the
+  //    manual path for couriers with no tracking API here (Shipglobal /
+  //    OnPoint, or a parcel entered by hand): it moves the order the same way
+  //    a courier webhook would — orders.status, dispatch date, shipment status,
+  //    order_shipments delivered fields and the dispatch summary all together,
+  //    so the Order page, Orders list, Track Shipments and the PDF agree.
+  //
+  //    2026-11-23b — "Delivered marks every AWB": the call below used to have
+  //    no shipment scope, so syncOrderTrackingState wrote delivered_status to
+  //    EVERY order_shipments row of a multi-shipment order. A tracking status
+  //    now moves exactly one shipment — the one picked in the form's Shipment
+  //    dropdown, or the shipment this same save just created/updated — and a
+  //    multi-AWB order refuses the save until it is picked. The ORDER still
+  //    follows the weakest-link rule inside syncOrderTrackingState, so it only
+  //    turns Delivered once every AWB is.
+  const trackingStatus = str(formData, "tracking_status");
+  if (trackingStatus) {
+    if (!isTrackingState(trackingStatus)) {
+      return { error: `Tracking status "${trackingStatus}" is not valid.`, success: false, dispatched };
+    }
+    const { data: shipmentRows, error: shipmentListError } = await supabase
+      .from("order_shipments")
+      .select("id")
+      .eq("order_id", orderId);
+    if (shipmentListError) return { error: shipmentListError.message, success: false, dispatched };
+    const orderShipmentIds = (shipmentRows ?? []).map((row) => row.id);
+    const requestedShipmentId = strOrNull(formData, "shipment_id");
+    if (requestedShipmentId && !orderShipmentIds.includes(requestedShipmentId)) {
+      return { error: "That shipment doesn't belong to this order.", success: false, dispatched };
+    }
+    const targetShipmentId = requestedShipmentId ?? shipmentId;
+    if (!targetShipmentId && orderShipmentIds.length > 1) {
+      return {
+        error: "This order has more than one AWB — choose the Shipment this tracking status applies to.",
+        success: false,
+        dispatched,
+      };
+    }
+    await syncOrderTrackingState(supabase, orderId, trackingStatus, {
+      force: true,
+      deliveredDate: strOrNull(formData, "delivered_date"),
+      shipmentIds: targetShipmentId ? [targetShipmentId] : undefined,
+    });
+    trackingSync = trackingStatus;
+  }
+
   revalidatePath(`/dashboard/orders/${orderId}`);
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/order-packages");
   revalidatePath("/dashboard/courier-booking");
+  revalidatePath(`/dashboard/courier-booking/shipment`);
   return { error: null, success: true, dispatched, trackingSync };
 }

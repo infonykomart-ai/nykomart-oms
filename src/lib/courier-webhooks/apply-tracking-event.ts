@@ -23,8 +23,8 @@
 // orders if the same AWB text was mistakenly entered twice (a pre-existing
 // data-quality risk, no worse than before) — handling every match keeps
 // that case a "processed all of them" rather than a silent pick-one.
-import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summary";
 import type { createServiceRoleClient } from "@/lib/supabase/server";
+import { syncOrderTrackingState } from "@/lib/orders/tracking-status-sync";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -76,54 +76,68 @@ export async function markCourierWebhookProcessed(supabase: ServiceClient, logId
  * race, not an error, per the header comment above).
  *
  * Deliberately conservative about what it writes:
- *  - DELIVERED: sets delivered_status/delivered_date on dispatch_invoices,
- *    shipment_status='Delivered' on the order.
- *  - RTO: shipment_status='Returned' on the order (delivered_status left
- *    alone — the enum only has 'Delivered'/'NOT Delivered', RTO isn't
- *    really either).
- *  - IN_TRANSIT: shipment_status='In Transit', but ONLY if the order isn't
- *    already Delivered/Returned/Cancelled — a late/out-of-order IN_TRANSIT
- *    event should never downgrade a real terminal status.
+ *  - DELIVERED: delivered_status/delivered_date on the matching shipment(s),
+ *    then syncOrderTrackingState applies the weakest-link rule and moves the
+ *    order to Delivered (status + shipment_status + dispatch date).
+ *  - RTO: shipment_status='Returned' + orders.status='Returned' (delivered_
+ *    status left alone — the enum only has 'Delivered'/'NOT Delivered', RTO
+ *    isn't really either).
+ *  - IN_TRANSIT: shipment_status='In Transit' and orders.status='Dispatched',
+ *    but ONLY if the order isn't already Delivered/Returned/Cancelled — a
+ *    late/out-of-order IN_TRANSIT event never downgrades a terminal status.
  *  - LOST / OTHER: not written anywhere (no clean, courier-confirmed
  *    signal for either across Delhivery/FedEx/UPS per the research this
  *    was built from) — logged to courier_webhook_log only, for manual
  *    follow-up.
+ *
+ * 2026-11-23 — the event's number is matched against BOTH awb_no and
+ * forwarding_no. An aggregator courier (Shiprocket / Shipglobal / OnPoint /
+ * Delhivery) reports the forwarder's own ref for the same parcel, and the
+ * user asked specifically that a forwarding number be enough to update the
+ * order. The forwarding read is tolerant so a database without
+ * db/2026-10-26-order-shipment-forwarding-no.sql keeps matching by AWB.
  */
 export async function applyTrackingEvent(
   supabase: ServiceClient,
   event: NormalizedTrackingEvent
 ): Promise<{ matched: boolean }> {
-  const { data: shipmentRows } = await supabase
+  const byAwb = await supabase
     .from("order_shipments")
     .select("id, order_id")
     .ilike("awb_no", event.awbNo);
 
-  if (!shipmentRows || shipmentRows.length === 0) return { matched: false };
+  const byForwarding = await supabase
+    .from("order_shipments")
+    .select("id, order_id")
+    .ilike("forwarding_no", event.awbNo);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const merged = new Map<string, { id: string; order_id: string }>();
+  for (const row of byAwb.data ?? []) merged.set(row.id, row);
+  // A missing forwarding_no column simply yields no extra matches.
+  for (const row of byForwarding.data ?? []) merged.set(row.id, row);
+
+  const shipmentRows = Array.from(merged.values());
+  if (shipmentRows.length === 0) return { matched: false };
+
   const shipmentIds = shipmentRows.map((s) => s.id);
   const orderIds = Array.from(new Set(shipmentRows.map((s) => s.order_id)));
 
   if (event.bucket === "DELIVERED") {
-    await supabase
-      .from("order_shipments")
-      .update({ delivered_status: "Delivered", delivered_date: event.deliveredDate, last_update_date: today })
-      .in("id", shipmentIds);
-    // resyncDispatchSummary applies the weakest-link rule — orders.shipment_status
-    // only flips to 'Delivered' once EVERY shipment on that order is delivered.
-    for (const orderId of orderIds) await resyncDispatchSummary(supabase, orderId);
+    for (const orderId of orderIds) {
+      await syncOrderTrackingState(supabase, orderId, "Delivered", {
+        deliveredDate: event.deliveredDate,
+        shipmentIds,
+      });
+    }
   } else if (event.bucket === "RTO") {
-    await supabase.from("order_shipments").update({ last_update_date: today }).in("id", shipmentIds);
     // RTO on any one AWB is treated as an order-level exception, same as before
     // this became multi-shipment-aware — a partial return still needs eyes on it.
-    for (const orderId of orderIds) await supabase.from("orders").update({ shipment_status: "Returned" }).eq("id", orderId);
-  } else if (event.bucket === "IN_TRANSIT") {
-    await supabase.from("order_shipments").update({ last_update_date: today }).in("id", shipmentIds);
     for (const orderId of orderIds) {
-      const { data: order } = await supabase.from("orders").select("shipment_status").eq("id", orderId).single();
-      if (order && !["Delivered", "Returned", "Cancelled"].includes(order.shipment_status)) {
-        await supabase.from("orders").update({ shipment_status: "In Transit" }).eq("id", orderId);
-      }
+      await syncOrderTrackingState(supabase, orderId, "Returned", { force: true, shipmentIds });
+    }
+  } else if (event.bucket === "IN_TRANSIT") {
+    for (const orderId of orderIds) {
+      await syncOrderTrackingState(supabase, orderId, "In Transit", { shipmentIds });
     }
   }
   // LOST / OTHER: logged only, nothing written — see doc comment above.
