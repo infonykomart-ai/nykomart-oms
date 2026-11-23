@@ -145,6 +145,8 @@ export const a4Styles = StyleSheet.create({
     fontSize: 8,
   },
   note: { fontSize: 7, color: "#6b7280", marginTop: 4 },
+  /** Space between wrapped label/value rows (see A4FactsGrid). */
+  factRowGap: { marginTop: 3 },
   signatures: { flexDirection: "row", justifyContent: "space-between", marginTop: 26 },
   signatureBox: { width: "40%", borderTopWidth: 0.75, borderTopColor: "#6b7280", paddingTop: 3 },
   signatureText: { fontSize: 7, color: "#4b5563" },
@@ -271,6 +273,41 @@ export type A4TableRow = {
   bold?: boolean;
   muted?: boolean;
 };
+
+/**
+ * Same label/value pairs as A4Facts, wrapped into rows of at most `columns`.
+ *
+ * A4Facts lays every fact out in ONE row — perfect for the 3-4 facts the other
+ * documents carry, unreadable for a customs invoice's 16 identifiers (they all
+ * squeeze into a single line). This keeps each row short and readable instead.
+ */
+export function A4FactsGrid({
+  facts,
+  columns = 4,
+}: {
+  facts: { label: string; value: string | null | undefined }[];
+  columns?: number;
+}) {
+  const visible = facts.filter(
+    (fact) => fact.value !== null && fact.value !== undefined && `${fact.value}`.trim() !== ""
+  );
+  if (!visible.length) return null;
+  const size = Number.isFinite(columns) && columns >= 1 ? Math.floor(columns) : 4;
+  const rows: { label: string; value: string }[][] = [];
+  for (let index = 0; index < visible.length; index += size) {
+    rows.push(visible.slice(index, index + size).map((fact) => ({ label: fact.label, value: `${fact.value}` })));
+  }
+
+  return (
+    <View>
+      {rows.map((row, index) => (
+        <View key={index} style={index > 0 ? a4Styles.factRowGap : undefined}>
+          <A4Facts facts={row} />
+        </View>
+      ))}
+    </View>
+  );
+}
 
 /**
  * Column table. The header row is `fixed`, so a table that spills onto a

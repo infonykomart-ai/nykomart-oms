@@ -13,7 +13,7 @@
 // the declaration and the customs identifiers. Packing List keeps using the
 // order-document builder, because a packing list really is quantities only.
 import React from "react";
-import { A4Document, A4Facts, A4Note, A4Page, A4Section, A4Signatures, A4Table, type A4Column } from "@/lib/pdf/a4";
+import { A4Document, A4FactsGrid, A4Note, A4Page, A4Section, A4Signatures, A4Table, type A4Column } from "@/lib/pdf/a4";
 import { renderPdfToBuffer } from "@/lib/pdf/render";
 import { formatMoney, LINES_PER_PAGE, paginateLines } from "./order-document";
 import { itemCostForOrder } from "@/lib/invoices/value-breakdown";
@@ -160,34 +160,60 @@ export async function renderInvoicePdf(input: InvoicePdfInput): Promise<Buffer> 
         totalPages={totalPages}
       >
         {chunkIndex === 0 ? (
-          <A4Section title="Consignee / Export details">
-            <A4Facts
-              facts={[
-                { label: "Consignee", value: invoice.buyer_name_address },
-                { label: "Destination", value: invoice.destination_country },
-                { label: "Shipment term", value: invoice.shipment_term },
-                { label: "Courier", value: invoice.courier_company },
-                { label: "AWB no.", value: invoice.awb_no },
-                { label: "Vessel / flight", value: invoice.vessel_flight_no },
-                { label: "Port of discharge", value: invoice.port_of_discharge },
-                { label: "Marks & nos.", value: invoice.marks_and_nos },
-                { label: "No. of packages", value: invoice.no_of_packages != null ? String(invoice.no_of_packages) : null },
-                { label: "IOSS", value: invoice.ioss_number },
-                { label: "VAT", value: invoice.vat_number },
-                { label: "EORI", value: invoice.eori_number },
-                { label: "Buyer email", value: invoice.buyer_email },
-                { label: "Buyer phone", value: invoice.buyer_phone },
-                {
-                  label: "Duty & taxes payable by",
-                  value:
-                    invoice.duty_payable_by === "Other"
-                      ? `Other — ${invoice.duty_payable_other_specify ?? ""}`.trim()
-                      : invoice.duty_payable_by,
-                },
-                { label: "Other than consignee", value: invoice.other_than_consignee },
-              ]}
-            />
-          </A4Section>
+          <>
+            {/* 2026-11-23 — "16 detail fields in one unreadable row": one fact
+                per column across a single line made every value a squeezed
+                sliver. Grouped into short rows (max 3-4 each) instead, so the
+                customs identifiers stay legible. */}
+            <A4Section title="Consignee">
+              <A4FactsGrid
+                columns={2}
+                facts={[
+                  { label: "Consignee", value: invoice.buyer_name_address },
+                  { label: "Other than consignee", value: invoice.other_than_consignee },
+                  { label: "Buyer email", value: invoice.buyer_email },
+                  { label: "Buyer phone", value: invoice.buyer_phone },
+                  { label: "Destination", value: invoice.destination_country },
+                ]}
+              />
+            </A4Section>
+
+            <A4Section title="Shipment">
+              <A4FactsGrid
+                columns={3}
+                facts={[
+                  { label: "Shipment term", value: invoice.shipment_term },
+                  { label: "Courier", value: invoice.courier_company },
+                  { label: "AWB no.", value: invoice.awb_no },
+                  { label: "Vessel / flight", value: invoice.vessel_flight_no },
+                  { label: "Port of discharge", value: invoice.port_of_discharge },
+                  { label: "Marks & nos.", value: invoice.marks_and_nos },
+                  {
+                    label: "No. of packages",
+                    value: invoice.no_of_packages != null ? String(invoice.no_of_packages) : null,
+                  },
+                ]}
+              />
+            </A4Section>
+
+            <A4Section title="Customs & tax identifiers">
+              <A4FactsGrid
+                columns={4}
+                facts={[
+                  { label: "IOSS", value: invoice.ioss_number },
+                  { label: "VAT", value: invoice.vat_number },
+                  { label: "EORI", value: invoice.eori_number },
+                  {
+                    label: "Duty & taxes payable by",
+                    value:
+                      invoice.duty_payable_by === "Other"
+                        ? `Other — ${invoice.duty_payable_other_specify ?? ""}`.trim()
+                        : invoice.duty_payable_by,
+                  },
+                ]}
+              />
+            </A4Section>
+          </>
         ) : null}
 
         <A4Section title={`Items (${orders.length})`}>
