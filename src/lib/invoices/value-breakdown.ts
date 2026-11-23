@@ -66,7 +66,39 @@ function round2(n: number): number {
  * validation) so one valuePercent applies to the whole invoice.
  */
 export function computeValueBreakdown(orderValueSum: number, storeName: string): ValueBreakdown {
-  const valuePercent = valuePercentForStore(storeName);
+  return computeValueBreakdownAt(orderValueSum, valuePercentForStore(storeName));
+}
+
+/**
+ * 2026-11-23 — same maths, with the percentage supplied instead of looked up
+ * from the store name. The invoice's own saved `value_percent` is what an
+ * existing invoice must recalculate at (the store's rule may have been
+ * changed since), so refreshInvoiceTotals() calls this directly.
+ */
+/**
+ * The two invoice value bases the screens offer: the standard marketplace
+ * percentage (60%) and the full order value (100%). Anything else is still
+ * accepted if it comes from an existing invoice's own `value_percent`.
+ */
+export const VALUE_BASIS_PERCENTS = [60, 100] as const;
+
+/**
+ * 2026-11-23 — "AGAR KISI PO KA 100% VALUE PAR INVOICE BANA PADE": the invoice
+ * value basis can now be 100% of the order value instead of only the store's
+ * 60%. Returns `fallback` for anything unusable (blank, 0, negative, >100,
+ * NaN), so a bad input can never quietly bill 0%.
+ */
+export function normalizeValueBasisPercent(
+  input: number | string | null | undefined,
+  fallback: number
+): number {
+  const parsed = typeof input === "string" ? Number(input.trim()) : input;
+  if (typeof parsed !== "number" || !Number.isFinite(parsed)) return fallback;
+  if (parsed <= 0 || parsed > 100) return fallback;
+  return Math.round(parsed);
+}
+
+export function computeValueBreakdownAt(orderValueSum: number, valuePercent: number): ValueBreakdown {
   const invoiceValueUsd = round2(orderValueSum * (valuePercent / 100));
   const itemCostTotal = round2(invoiceValueUsd * ITEM_COST_FRACTION);
   const insuranceTotal = FLAT_INSURANCE_USD;

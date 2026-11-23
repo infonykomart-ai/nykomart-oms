@@ -3,10 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PrintArea } from "@/components/print-view";
-import { updateInvoiceFields, deleteInvoice } from "../actions";
+import { updateInvoiceFields, deleteInvoice, refreshInvoiceTotals, attachPendingPoOrders } from "../actions";
 import { UploadToFedexButton } from "./upload-to-fedex-button";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
-import { itemCostForOrder } from "@/lib/invoices/value-breakdown";
+import { computeValueBreakdownAt, itemCostForOrder } from "@/lib/invoices/value-breakdown";
 import {
   isEuDestination,
   merchantProductId,
@@ -113,6 +113,8 @@ export function InvoiceView({
   profile,
   storeName,
   relatedNotes,
+  liveOrderValueSum,
+  pendingSamePo,
 }: {
   invoice: Invoice;
   items: Item[];
@@ -120,6 +122,10 @@ export function InvoiceView({
   profile: Profile;
   storeName: string;
   relatedNotes?: { creditNotes: RelatedNote[]; debitNotes: RelatedNote[] };
+  /** Sum of the linked orders' order_value_original, read live (2026-11-23). */
+  liveOrderValueSum: number;
+  /** Un-invoiced order rows sitting on the same PO/RF/RG number. */
+  pendingSamePo: { refNo: string }[];
 }) {
   const [destinationCountry, setDestinationCountry] = useState(invoice.destination_country ?? "");
   const [originDeclaration, setOriginDeclaration] = useState(invoice.origin_declaration ?? "");
@@ -153,6 +159,12 @@ export function InvoiceView({
   const [dutyPayableBy, setDutyPayableBy] = useState<string>(invoice.duty_payable_by ?? "");
   const [dutyPayableOtherSpecify, setDutyPayableOtherSpecify] = useState(invoice.duty_payable_other_specify ?? "");
   const [isSaving, startSave] = useTransition();
+  const [isRefreshing, startRefresh] = useTransition();
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const [isAttaching, startAttach] = useTransition();
+  // 2026-11-23 — the basis this invoice is quoted at (60% standard / 100% of
+  // the PO's full order value); recalculate applies whichever is selected.
+  const [basisPercent, setBasisPercent] = useState(invoice.value_percent != null ? String(invoice.value_percent) : "60");
   const [saved, setSaved] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, startDelete] = useTransition();
@@ -202,6 +214,50 @@ export function InvoiceView({
 
   function handleRefillDeclaration() {
     setOriginDeclaration(originDeclarationFor(destinationCountry));
+  }
+
+  // 2026-11-23 — the saved breakdown is a snapshot; the rows are live. Compare
+  // the two so a value/qty edit made after generation is visible here instead
+  // of silently disagreeing with the printed total. CSB-IV is excluded: its
+  // figures were typed by hand and are supposed to differ.
+  const savedBasis = invoice.value_percent ?? 60;
+  const expectedBreakdown = isCsbV
+    ? computeValueBreakdownAt(liveOrderValueSum, Number(basisPercent) || 60)
+    : null;
+  const savedTotal = invoiceValueUsd ? Number(invoiceValueUsd) : null;
+  const totalDrift = expectedBreakdown && savedTotal != null ? round2(expectedBreakdown.invoiceValueUsd - savedTotal) : 0;
+
+  function handleRecalculate() {
+    setRefreshMessage(null);
+    startRefresh(async () => {
+      const result = await refreshInvoiceTotals(invoice.id, { valuePercent: Number(basisPercent) || 60 });
+      if (result.error || !result.updated) {
+        setRefreshMessage(`Error: ${result.error ?? "Recalculation failed."}`);
+        return;
+      }
+      setInvoiceValueUsd(String(result.updated.invoiceValue));
+      setItemCostTotal(String(result.updated.itemCostTotal));
+      setInsuranceTotal(String(result.updated.insuranceTotal));
+      setFreightTotal(String(result.updated.freightTotal));
+      if (result.updated.taxableValueInr != null) setTaxableValueInr(String(result.updated.taxableValueInr));
+      if (result.updated.declaredValueWords) setDeclaredValueWords(result.updated.declaredValueWords);
+      setRefreshMessage(`Recalculated from the linked orders — total is now ${result.updated.invoiceValue.toFixed(2)} ${displayCurrency}.`);
+    });
+  }
+
+  function handleAttachPending() {
+    setRefreshMessage(null);
+    startAttach(async () => {
+      const result = await attachPendingPoOrders(invoice.id);
+      if (result.error) {
+        setRefreshMessage(`Error: ${result.error}`);
+        return;
+      }
+      setRefreshMessage(
+        `${result.attached.length} item${result.attached.length === 1 ? "" : "s"} added to this invoice: ${result.attached.join(", ")}.`
+      );
+      router.refresh();
+    });
   }
 
   function handleSave() {
@@ -355,6 +411,36 @@ export function InvoiceView({
           <p className="mb-2 text-xs font-semibold text-slate-700">
             Value Breakdown {invoice.value_percent != null && `(${invoice.value_percent}% of order value — ${invoice.csb_type})`}
           </p>
+
+          {/* 2026-11-23 — switch an existing invoice between the standard 60%
+              and the PO's full 100% order value. Nothing changes until the
+              button is pressed (and saved), so a printed invoice stays put. */}
+          {isCsbV && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <label className="text-[11px] font-medium text-slate-500" htmlFor="basis_percent">
+                Value basis
+              </label>
+              <select
+                id="basis_percent"
+                value={basisPercent}
+                onChange={(e) => setBasisPercent(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
+              >
+                <option value="60">60% of order value (standard)</option>
+                <option value="100">100% of order value (full PO value)</option>
+              </select>
+              {Number(basisPercent) !== savedBasis && (
+                <button
+                  type="button"
+                  onClick={handleRecalculate}
+                  disabled={isRefreshing}
+                  className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50"
+                >
+                  {isRefreshing ? "Applying…" : `Apply ${basisPercent}% and recalculate`}
+                </button>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <div>
               <label className={labelClass} htmlFor="item_cost_total">Item Cost ({displayCurrency})</label>
@@ -378,6 +464,58 @@ export function InvoiceView({
               Note: Item Cost + Insurance + Freight = {computedTotal.toFixed(2)}, which doesn&apos;t match Total ({Number(invoiceValueUsd).toFixed(2)}) — a real
               customs invoice&apos;s line items should sum to the total.
             </p>
+          )}
+
+          {/* 2026-11-23 — the item rows below are read live from the orders,
+              but these four figures were a snapshot. Show the gap and let the
+              employee apply the recalculation — never silently. */}
+          {isCsbV && expectedBreakdown && savedTotal != null && Math.abs(totalDrift) > 0.01 && (
+            <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+              <p>
+                The linked orders now total {liveOrderValueSum.toFixed(2)} {displayCurrency}, which makes this
+                invoice&apos;s total {expectedBreakdown.invoiceValueUsd.toFixed(2)} — but the saved total is{" "}
+                {savedTotal.toFixed(2)}. An order or item changed after this invoice was generated.
+              </p>
+              <button
+                type="button"
+                onClick={handleRecalculate}
+                disabled={isRefreshing}
+                className="mt-2 rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                {isRefreshing ? "Recalculating…" : "Recalculate totals from the linked orders"}
+              </button>
+            </div>
+          )}
+          {isCsbV && expectedBreakdown && savedTotal != null && Math.abs(totalDrift) <= 0.01 && !refreshMessage && (
+            <p className="mt-2 text-[11px] text-slate-400">
+              Totals match the linked orders ({liveOrderValueSum.toFixed(2)} {displayCurrency}).
+            </p>
+          )}
+          {refreshMessage && <p className="mt-2 text-[11px] text-slate-600">{refreshMessage}</p>}
+
+          {pendingSamePo.length > 0 && (
+            <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+              <p className="font-medium text-slate-800">
+                {pendingSamePo.length} more item{pendingSamePo.length === 1 ? "" : "s"} on the same PO number{" "}
+                {pendingSamePo.length === 1 ? "is" : "are"} not in any invoice yet:{" "}
+                {pendingSamePo.map((o) => o.refNo).join(", ")}
+              </p>
+              <p className="mt-0.5">
+                Add {pendingSamePo.length === 1 ? "it" : "them"} to this invoice and the totals below are
+                recalculated from every linked item — no second invoice, no deleting and re-creating this one. The
+                added row(s) are marked Dispatched, exactly as generating an invoice does.
+              </p>
+              <button
+                type="button"
+                onClick={handleAttachPending}
+                disabled={isAttaching}
+                className="mt-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+              >
+                {isAttaching
+                  ? "Adding…"
+                  : `Add ${pendingSamePo.length} pending item${pendingSamePo.length === 1 ? "" : "s"} to this invoice`}
+              </button>
+            </div>
           )}
           <div className="mt-2 grid grid-cols-2 gap-3">
             <div>

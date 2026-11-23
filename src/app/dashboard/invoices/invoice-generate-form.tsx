@@ -114,6 +114,26 @@ export function InvoiceGenerateForm({
         </div>
       </div>
 
+      {/* 2026-11-23 — "AGAR KISI PO KA 100% VALUE PAR INVOICE BANA PADE":
+          the CSB-V invoice value has always been the store's 60% of the order
+          value. Now the basis is chosen here: keep 60% as before, or bill the
+          PO's full order value. CSB-IV is unaffected — its figures are typed
+          in by hand below. */}
+      {csbType === "CSB-V" && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <label className={labelClass} htmlFor="value_basis_percent">Invoice Value Basis (CSB-V)</label>
+          <select id="value_basis_percent" name="value_basis_percent" defaultValue="60" className={inputClass}>
+            <option value="60">60% of the order value (standard)</option>
+            <option value="100">100% of the order value (full PO value)</option>
+          </select>
+          <p className="mt-1 text-[11px] text-slate-500">
+            60% is the normal customs value. Choose 100% when the invoice has to show the PO&apos;s entire order
+            value; Item Cost / Insurance / Freight are recomputed from that basis, and you can still edit every
+            figure afterwards.
+          </p>
+        </div>
+      )}
+
       {/* 2026-08-10/11: "agar uk & europe ki shipment hai or agar usme
           IOSS, VAT, EORI no vagera aaya hua hai according to destination
           country guideline" — VAT/EORI alongside the existing IOSS field

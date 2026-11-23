@@ -40,6 +40,24 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     harmonized_tariff_number: categoryMap.get(o.item_category_id)?.harmonized_tariff_number ?? "",
   }));
 
+  // 2026-11-23 — "dusara jo PO me add ho gaya hai usko pura update ho jaye":
+  // a PO/RF/RG can gain another order row AFTER this invoice was generated.
+  // That row is untouched by this invoice (orders.invoice_id is null), so the
+  // page lists how many are still un-invoiced on the same PO number instead of
+  // letting the invoice look like it covers the whole PO.
+  const invoiceRefBases = Array.from(
+    new Set((orders ?? []).map((o) => o.ref_no_base).filter((v): v is string => !!v))
+  );
+  const { data: pendingSamePo } = invoiceRefBases.length
+    ? await supabase
+        .from("orders")
+        .select("id, ref_no")
+        .eq("company_id", invoice.company_id)
+        .in("ref_no_base", invoiceRefBases)
+        .is("invoice_id", null)
+        .not("status", "in", "(Hold,Cancelled)")
+    : { data: [] };
+
   // 2026-08-07: surface the order -> credit/debit-note connection here too
   // (not just in Document Entry's lookup box) — see claude/document-entry-
   // and-pending-work-notes.md follow-up. This invoice's own orders may
@@ -76,6 +94,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       profile={profile ?? null}
       storeName={store?.name ?? ""}
       relatedNotes={relatedNotes}
+      liveOrderValueSum={(orders ?? []).reduce((sum, o) => sum + Number(o.order_value_original || 0), 0)}
+      pendingSamePo={(pendingSamePo ?? []).map((o) => ({ refNo: o.ref_no }))}
     />
   );
 }

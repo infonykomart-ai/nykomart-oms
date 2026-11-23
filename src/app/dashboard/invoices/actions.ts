@@ -4,7 +4,11 @@ import { requireCapability, type AuthedEmployee } from "@/lib/auth/require-capab
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
 import { computeDepartmentReferenceNo, isFedEx } from "@/lib/invoices/department-reference";
-import { computeValueBreakdown } from "@/lib/invoices/value-breakdown";
+import {
+  computeValueBreakdownAt,
+  normalizeValueBasisPercent,
+  valuePercentForStore,
+} from "@/lib/invoices/value-breakdown";
 import { amountInWords } from "@/lib/invoices/number-to-words";
 import { dutyPayableByForShipmentTerm } from "@/lib/invoices/duty-payable";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
@@ -80,6 +84,10 @@ type GenerateInvoiceParams = {
   // CSB-IV only ("csv-4 me manual rakho value kitni rakhnai hai") — manual
   // value-breakdown entry, ignored entirely for CSB-V (which always
   // auto-computes these from the 60% marketplace formula instead).
+  // 2026-11-23 — CSB-V value basis: 60 (standard marketplace value) or 100
+  // ("kisi PO ka 100% value par invoice"). Omitted/null keeps the old
+  // behaviour exactly — the store's own percentage.
+  valueBasisPercent?: number | null;
   manualInvoiceValueUsd: number | null;
   manualItemCostTotal: number | null;
   manualInsuranceTotal: number | null;
@@ -299,7 +307,15 @@ export async function generateInvoiceCore(
   let invoiceCurrency: string | null = null;
   if (csbType === "CSB-V") {
     const orderValueSum = orders.reduce((sum, o) => sum + Number(o.order_value_original || 0), 0);
-    const breakdown = computeValueBreakdown(orderValueSum, store.name);
+    // 2026-11-23 — "AGAR KISI PO KA 100% VALUE PAR INVOICE BANA PADE": the
+    // value basis is now chosen on the generate form (60% standard / 100%
+    // full order value). Blank or anything unusable keeps the store's own
+    // rule, so every existing caller behaves exactly as before.
+    const basisPercent = normalizeValueBasisPercent(
+      params.valueBasisPercent,
+      valuePercentForStore(store.name)
+    );
+    const breakdown = computeValueBreakdownAt(orderValueSum, basisPercent);
     valuePercent = breakdown.valuePercent;
     invoiceValueUsd = breakdown.invoiceValueUsd;
     itemCostTotal = breakdown.itemCostTotal;
@@ -583,6 +599,8 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
     brokerContact: strOrNull(formData, "broker_contact"),
     // 2026-09-13 (#7) — manual numbering option (see
     // GenerateInvoiceParams.manualInvoiceNo). Blank = automatic, unchanged.
+    // 2026-11-23 — 60 (standard) or 100 (full order value); see GenerateInvoiceParams.
+    valueBasisPercent: numOrNull(formData, "value_basis_percent"),
     manualInvoiceNo: strOrNull(formData, "manual_invoice_no"),
     manualMasterInvoiceNo: strOrNull(formData, "manual_master_invoice_no"),
     manualDepartmentReferenceNo: strOrNull(formData, "manual_department_reference_no"),
@@ -911,4 +929,272 @@ export async function updateInvoiceFields(
   if (error) return { error: error.message };
   revalidatePath(`/dashboard/invoices/${invoiceId}`);
   return { error: null };
+}
+
+// ============================================================================
+// Recalculate an invoice's value breakdown from its own linked orders
+// (2026-11-23) — "AGAR INVOICE SE KUCH UPDATE HUA HAI TO NAHI": the invoice's
+// item rows are read LIVE from the orders (orders.invoice_id), but the four
+// value-breakdown figures were a snapshot taken at generation time and were
+// never resynced. So editing a linked order's value/qty left the printed rows
+// updated and the printed TOTAL stale.
+//
+// Deliberately a button, never automatic: a customs invoice that has already
+// been printed/uploaded must not change number by itself. The page shows the
+// difference and the employee decides when to apply it. CSB-IV is refused here
+// because its breakdown was typed in by hand on purpose — recalculating it
+// from the orders would overwrite a deliberate figure.
+// ============================================================================
+export type RefreshInvoiceTotalsResult = {
+  error: string | null;
+  updated: {
+    invoiceValue: number;
+    itemCostTotal: number;
+    insuranceTotal: number;
+    freightTotal: number;
+    taxableValueInr: number | null;
+    declaredValueWords: string | null;
+  } | null;
+};
+
+async function recalculateInvoiceBreakdownCore(
+  supabase: ServiceClient,
+  invoiceId: string,
+  valuePercentOverride?: number
+): Promise<{
+  error: string | null;
+  updated: RefreshInvoiceTotalsResult["updated"];
+  orderValueSum: number;
+  orderCount: number;
+}> {
+  const { data: invoice } = await supabase
+    .from("sales_invoices")
+    .select("id, company_id, store_id, csb_type, invoice_date, invoice_currency, value_percent")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice) {
+    return { error: "Invoice not found.", updated: null, orderValueSum: 0, orderCount: 0 };
+  }
+  if (invoice.csb_type !== "CSB-V") {
+    return {
+      error:
+        "This is a CSB-IV invoice — its value breakdown was entered by hand and is never recalculated from the orders.",
+      updated: null,
+      orderValueSum: 0,
+      orderCount: 0,
+    };
+  }
+
+  const [{ data: orders }, { data: store }] = await Promise.all([
+    supabase
+      .from("orders")
+      .select("id, order_value_original, order_currency")
+      .eq("invoice_id", invoiceId),
+    supabase.from("stores").select("id, name").eq("id", invoice.store_id).single(),
+  ]);
+  const rows = orders ?? [];
+  if (rows.length === 0) {
+    return {
+      error: "This invoice has no linked orders left to recalculate from.",
+      updated: null,
+      orderValueSum: 0,
+      orderCount: 0,
+    };
+  }
+
+  // Same currency rule generateInvoiceCore enforces: one invoice, one sum.
+  const currency = rows[0].order_currency;
+  if (rows.some((o) => o.order_currency !== currency)) {
+    return {
+      error: "The linked orders are in different currencies — fix the orders before recalculating.",
+      updated: null,
+      orderValueSum: 0,
+      orderCount: rows.length,
+    };
+  }
+
+  const orderValueSum = rows.reduce((sum, o) => sum + Number(o.order_value_original || 0), 0);
+  // The invoice's OWN saved percentage, not today's store rule — unless the
+  // caller explicitly asks for another basis (60 -> 100 on the invoice page).
+  const valuePercent = normalizeValueBasisPercent(
+    valuePercentOverride,
+    invoice.value_percent ?? valuePercentForStore(store?.name ?? "")
+  );
+  const breakdown = computeValueBreakdownAt(orderValueSum, valuePercent);
+  const conversion = await computeCurrencyConversion(
+    supabase,
+    currency ?? "USD",
+    invoice.invoice_date,
+    breakdown.invoiceValueUsd
+  );
+  const declaredValueWords = amountInWords(breakdown.invoiceValueUsd, currency ?? "USD");
+
+  const { error } = await supabase
+    .from("sales_invoices")
+    .update({
+      value_percent: breakdown.valuePercent,
+      invoice_value_usd: breakdown.invoiceValueUsd,
+      item_cost_total: breakdown.itemCostTotal,
+      insurance_total: breakdown.insuranceTotal,
+      freight_total: breakdown.freightTotal,
+      invoice_currency: currency,
+      taxable_value_inr: conversion.inr,
+      declared_value_words: declaredValueWords,
+    })
+    .eq("id", invoiceId);
+  if (error) {
+    return {
+      error: `Could not update the invoice: ${error.message}`,
+      updated: null,
+      orderValueSum,
+      orderCount: rows.length,
+    };
+  }
+
+  return {
+    error: null,
+    updated: {
+      invoiceValue: breakdown.invoiceValueUsd,
+      itemCostTotal: breakdown.itemCostTotal,
+      insuranceTotal: breakdown.insuranceTotal,
+      freightTotal: breakdown.freightTotal,
+      taxableValueInr: conversion.inr,
+      declaredValueWords,
+    },
+    orderValueSum,
+    orderCount: rows.length,
+  };
+}
+
+/**
+ * Recompute this invoice's value breakdown from its linked orders.
+ * `options.valuePercent` switches the basis (60 -> 100) at the same time.
+ */
+export async function refreshInvoiceTotals(
+  invoiceId: string,
+  options: { valuePercent?: number } = {}
+): Promise<RefreshInvoiceTotalsResult> {
+  const employee = await requireCapability("invoicing");
+  const supabase = createServiceRoleClient();
+
+  const { data: invoice } = await supabase
+    .from("sales_invoices")
+    .select("id, company_id")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
+    return { error: "Invoice not found or you don't have access to this company.", updated: null };
+  }
+
+  const result = await recalculateInvoiceBreakdownCore(supabase, invoiceId, options.valuePercent);
+  if (result.error) return { error: result.error, updated: null };
+
+  revalidatePath(`/dashboard/invoices/${invoiceId}`);
+  revalidatePath("/dashboard/invoices");
+  return { error: null, updated: result.updated };
+}
+
+// ============================================================================
+// Add the PO's still-un-invoiced items to THIS invoice (2026-11-23)
+// — "DUSARA JO PO ME ADD HO GAYA HAI USKO PURA UPDATE HOYE": a PO/RF/RG can gain
+// another order row after its invoice was generated. Until now the invoice page
+// could only warn about that row; there was no way to put it on the invoice.
+//
+// What this does, in one request: link every pending order row on the same PO
+// number to this invoice, mark those rows Dispatched exactly as generation
+// does, and recalculate the CSB-V breakdown. Rows on Hold/Cancelled are left
+// alone (same rule as generation), and a row from a different store or
+// currency is refused rather than silently mixed.
+// ============================================================================
+export type AttachPendingPoResult = RefreshInvoiceTotalsResult & { attached: string[] };
+
+export async function attachPendingPoOrders(invoiceId: string): Promise<AttachPendingPoResult> {
+  const employee = await requireCapability("invoicing");
+  const supabase = createServiceRoleClient();
+
+  const { data: invoice } = await supabase
+    .from("sales_invoices")
+    .select("id, company_id, store_id, csb_type, invoice_date, invoice_currency")
+    .eq("id", invoiceId)
+    .single();
+  if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
+    return { error: "Invoice not found or you don't have access to this company.", updated: null, attached: [] };
+  }
+
+  const { data: linked } = await supabase
+    .from("orders")
+    .select("id, ref_no_base, order_currency")
+    .eq("invoice_id", invoiceId);
+  const refBases = Array.from(
+    new Set((linked ?? []).map((o) => o.ref_no_base).filter((v): v is string => !!v))
+  );
+  if (refBases.length === 0) {
+    return {
+      error: "This invoice has no linked orders, so there is no PO number to look the pending items up by.",
+      updated: null,
+      attached: [],
+    };
+  }
+
+  const { data: pending } = await supabase
+    .from("orders")
+    .select("id, ref_no, store_id, order_currency, status, dispatch_date")
+    .eq("company_id", invoice.company_id)
+    .in("ref_no_base", refBases)
+    .is("invoice_id", null)
+    .not("status", "in", "(Hold,Cancelled)");
+  const rows = pending ?? [];
+  if (rows.length === 0) {
+    return { error: "There are no pending items on this PO number to add.", updated: null, attached: [] };
+  }
+
+  if (rows.some((o) => o.store_id !== invoice.store_id)) {
+    return {
+      error: "A pending item on this PO belongs to a different store — an invoice can only cover one store.",
+      updated: null,
+      attached: [],
+    };
+  }
+
+  const invoiceCurrency = invoice.invoice_currency ?? linked?.[0]?.order_currency ?? null;
+  if (
+    invoice.csb_type === "CSB-V" &&
+    invoiceCurrency &&
+    rows.some((o) => o.order_currency && o.order_currency !== invoiceCurrency)
+  ) {
+    return {
+      error: `A pending item is in a different currency than this invoice (${invoiceCurrency}) — fix the order first.`,
+      updated: null,
+      attached: [],
+    };
+  }
+
+  const ids = rows.map((o) => o.id);
+  const { error: linkError } = await supabase.from("orders").update({ invoice_id: invoiceId }).in("id", ids);
+  if (linkError) {
+    return { error: `Could not add the pending items: ${linkError.message}`, updated: null, attached: [] };
+  }
+
+  // Same dispatch rule as generateInvoiceCore: Dispatched, Delivered untouched.
+  const notYetDispatched = rows.filter((o) => o.status !== "Dispatched" && o.status !== "Delivered");
+  if (notYetDispatched.length > 0) {
+    await Promise.all(
+      notYetDispatched.map((o) =>
+        supabase
+          .from("orders")
+          .update({ status: "Dispatched", dispatch_date: o.dispatch_date ?? invoice.invoice_date })
+          .eq("id", o.id)
+      )
+    );
+  }
+
+  const result =
+    invoice.csb_type === "CSB-V"
+      ? await recalculateInvoiceBreakdownCore(supabase, invoiceId)
+      : { error: null, updated: null, orderValueSum: 0, orderCount: rows.length };
+
+  revalidatePath(`/dashboard/invoices/${invoiceId}`);
+  revalidatePath("/dashboard/invoices");
+  revalidatePath("/dashboard/orders");
+  return { error: result.error ?? null, updated: result.updated, attached: rows.map((o) => o.ref_no) };
 }
