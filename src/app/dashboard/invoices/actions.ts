@@ -13,6 +13,7 @@ import { amountInWords } from "@/lib/invoices/number-to-words";
 import { dutyPayableByForShipmentTerm } from "@/lib/invoices/duty-payable";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
+import type { Json } from "@/types/database";
 import { revalidatePath } from "next/cache";
 
 export type InvoiceFormState = {
@@ -718,6 +719,24 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
     }
 
     const csbType = cellStr(raw, byHeader, "CSB Type");
+    // 2026-11-23 — the bulk upload can bill at 100% too, not just the screen.
+    // Blank keeps the standard store basis exactly as every existing CSV did;
+    // a value outside 1..100 fails THIS row instead of quietly billing 60%.
+    const basisCell = cellStr(raw, byHeader, "Invoice Value Basis (60 or 100)");
+    let valueBasisPercent: number | null = null;
+    if (basisCell) {
+      const parsedBasis = Number(basisCell);
+      if (!Number.isFinite(parsedBasis) || parsedBasis <= 0 || parsedBasis > 100) {
+        rowErrors.push({
+          row: rowNum,
+          refNo,
+          invoiceNo: null,
+          error: `Invoice Value Basis "${basisCell}" must be a percentage between 1 and 100 (normally 60 or 100).`,
+        });
+        continue;
+      }
+      valueBasisPercent = Math.round(parsedBasis);
+    }
     resolved.push({
       rowNum,
       refNo,
@@ -729,6 +748,7 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
         orderIds: [],
         shipmentTerm: cellStr(raw, byHeader, "Shipment Term"),
         csbType,
+        valueBasisPercent,
         courierCompany: cellStr(raw, byHeader, "Courier Company"),
         destinationCountry: cellStr(raw, byHeader, "Destination Country") || null,
         iossNumber: cellStr(raw, byHeader, "IOSS Number") || null,
@@ -960,7 +980,8 @@ export type RefreshInvoiceTotalsResult = {
 async function recalculateInvoiceBreakdownCore(
   supabase: ServiceClient,
   invoiceId: string,
-  valuePercentOverride?: number
+  valuePercentOverride: number | undefined,
+  actor: { employeeId: string; employeeName: string }
 ): Promise<{
   error: string | null;
   updated: RefreshInvoiceTotalsResult["updated"];
@@ -969,7 +990,9 @@ async function recalculateInvoiceBreakdownCore(
 }> {
   const { data: invoice } = await supabase
     .from("sales_invoices")
-    .select("id, company_id, store_id, csb_type, invoice_date, invoice_currency, value_percent")
+    .select(
+      "id, company_id, store_id, invoice_no, csb_type, invoice_date, invoice_currency, value_percent, invoice_value_usd, item_cost_total, insurance_total, freight_total, taxable_value_inr, declared_value_words"
+    )
     .eq("id", invoiceId)
     .single();
   if (!invoice) {
@@ -1029,6 +1052,59 @@ async function recalculateInvoiceBreakdownCore(
   );
   const declaredValueWords = amountInWords(breakdown.invoiceValueUsd, currency ?? "USD");
 
+  // 2026-11-23 — keep the figures that are about to be replaced. The totals are
+  // a snapshot on purpose (a customs invoice may already be printed/uploaded),
+  // so the only acceptable way to rewrite them is to leave the old breakdown
+  // verifiable in audit_log first — the invoice page lists these rows as
+  // "Previous totals".
+  // Deliberately REQUIRED, unlike logAudit()'s best-effort contract: if the
+  // history cannot be written, the invoice is left exactly as it was rather
+  // than silently losing its printed figures.
+  const { error: historyError } = await supabase.from("audit_log").insert({
+    company_id: invoice.company_id,
+    employee_id: actor.employeeId,
+    employee_name: actor.employeeName,
+    action: "sales_invoice.value_breakdown_recalculated",
+    entity_type: "sales_invoice",
+    entity_id: invoiceId,
+    entity_label: invoice.invoice_no,
+    changes: {
+      previous: {
+        value_percent: invoice.value_percent,
+        invoice_value_usd: invoice.invoice_value_usd,
+        item_cost_total: invoice.item_cost_total,
+        insurance_total: invoice.insurance_total,
+        freight_total: invoice.freight_total,
+        invoice_currency: invoice.invoice_currency,
+        taxable_value_inr: invoice.taxable_value_inr,
+        declared_value_words: invoice.declared_value_words,
+      },
+      next: {
+        value_percent: breakdown.valuePercent,
+        invoice_value_usd: breakdown.invoiceValueUsd,
+        item_cost_total: breakdown.itemCostTotal,
+        insurance_total: breakdown.insuranceTotal,
+        freight_total: breakdown.freightTotal,
+        invoice_currency: currency,
+        taxable_value_inr: conversion.inr,
+        declared_value_words: declaredValueWords,
+      },
+      order_value_sum: orderValueSum,
+      order_count: rows.length,
+    } as Json,
+  });
+  if (historyError) {
+    const reason = /audit_log/i.test(historyError.message)
+      ? "the audit_log table is missing — run db/2026-08-24-audit-log.sql, then try again"
+      : historyError.message;
+    return {
+      error: `Could not save the previous totals as history (${reason}). This invoice was left unchanged.`,
+      updated: null,
+      orderValueSum,
+      orderCount: rows.length,
+    };
+  }
+
   const { error } = await supabase
     .from("sales_invoices")
     .update({
@@ -1086,7 +1162,10 @@ export async function refreshInvoiceTotals(
     return { error: "Invoice not found or you don't have access to this company.", updated: null };
   }
 
-  const result = await recalculateInvoiceBreakdownCore(supabase, invoiceId, options.valuePercent);
+  const result = await recalculateInvoiceBreakdownCore(supabase, invoiceId, options.valuePercent, {
+    employeeId: employee.id,
+    employeeName: employee.name,
+  });
   if (result.error) return { error: result.error, updated: null };
 
   revalidatePath(`/dashboard/invoices/${invoiceId}`);
@@ -1190,7 +1269,10 @@ export async function attachPendingPoOrders(invoiceId: string): Promise<AttachPe
 
   const result =
     invoice.csb_type === "CSB-V"
-      ? await recalculateInvoiceBreakdownCore(supabase, invoiceId)
+      ? await recalculateInvoiceBreakdownCore(supabase, invoiceId, undefined, {
+          employeeId: employee.id,
+          employeeName: employee.name,
+        })
       : { error: null, updated: null, orderValueSum: 0, orderCount: rows.length };
 
   revalidatePath(`/dashboard/invoices/${invoiceId}`);

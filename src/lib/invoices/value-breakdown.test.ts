@@ -6,6 +6,7 @@ import {
   itemCostForOrder,
   normalizeValueBasisPercent,
   VALUE_BASIS_PERCENTS,
+  valueBasisOptions,
 } from "./value-breakdown";
 
 // 2026-11-23 — the invoice value breakdown. These numbers were originally
@@ -67,6 +68,18 @@ test("a value basis is only accepted inside 1..100, otherwise the fallback wins"
   assert.equal(normalizeValueBasisPercent(101, 60), 60);
   assert.equal(normalizeValueBasisPercent("abc", 60), 60);
   assert.equal(normalizeValueBasisPercent(99.6, 60), 100);
+});
+
+test("the basis picker keeps an invoice's own percentage instead of showing blank", () => {
+  assert.deepEqual(valueBasisOptions(60), [60, 100]);
+  assert.deepEqual(valueBasisOptions(100), [60, 100]);
+  assert.deepEqual(valueBasisOptions(null), [60, 100]);
+  assert.deepEqual(valueBasisOptions(undefined), [60, 100]);
+  // An invoice saved at another basis (older rule, bulk upload) stays visible.
+  assert.deepEqual(valueBasisOptions(80), [60, 100, 80]);
+  assert.deepEqual(valueBasisOptions(59.6), [60, 100]);
+  assert.deepEqual(valueBasisOptions(NaN), [60, 100]);
+  assert.deepEqual(valueBasisOptions(0), [60, 100]);
 });
 
 test("an order's own row value is its share of the item cost", () => {

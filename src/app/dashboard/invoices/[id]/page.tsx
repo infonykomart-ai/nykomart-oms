@@ -70,6 +70,50 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       ])
     : [{ data: [] }, { data: [] }];
 
+  // 2026-11-23 — every recalculation writes the breakdown it replaced to
+  // audit_log FIRST (see recalculateInvoiceBreakdownCore), because the printed
+  // totals are a snapshot that may already be on a customs invoice. Read the
+  // last few back so the page can show them. A missing audit_log table just
+  // yields no history; it never breaks this page.
+  const { data: totalsHistoryRows } = await supabase
+    .from("audit_log")
+    .select("id, employee_name, created_at, changes")
+    .eq("entity_type", "sales_invoice")
+    .eq("entity_id", id)
+    .eq("action", "sales_invoice.value_breakdown_recalculated")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  const asNumber = (v: unknown): number | null => {
+    if (v == null || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const totalsHistory = (totalsHistoryRows ?? []).map((row) => {
+    const changes = (row.changes ?? {}) as { previous?: Record<string, unknown>; next?: Record<string, unknown> };
+    const previous = changes.previous ?? {};
+    const next = changes.next ?? {};
+    const currency =
+      typeof previous.invoice_currency === "string"
+        ? previous.invoice_currency
+        : typeof next.invoice_currency === "string"
+          ? next.invoice_currency
+          : null;
+    return {
+      id: row.id,
+      employeeName: row.employee_name,
+      createdAt: row.created_at,
+      previousPercent: asNumber(previous.value_percent),
+      previousTotal: asNumber(previous.invoice_value_usd),
+      previousItemCost: asNumber(previous.item_cost_total),
+      previousInsurance: asNumber(previous.insurance_total),
+      previousFreight: asNumber(previous.freight_total),
+      nextPercent: asNumber(next.value_percent),
+      nextTotal: asNumber(next.invoice_value_usd),
+      currency,
+    };
+  });
+
   const refNoByOrderId = new Map((orders ?? []).map((o) => [o.id, o.ref_no]));
   const relatedNotes = {
     creditNotes: (relatedCreditNotes ?? []).map((c) => ({
@@ -96,6 +140,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
       relatedNotes={relatedNotes}
       liveOrderValueSum={(orders ?? []).reduce((sum, o) => sum + Number(o.order_value_original || 0), 0)}
       pendingSamePo={(pendingSamePo ?? []).map((o) => ({ refNo: o.ref_no }))}
+      totalsHistory={totalsHistory}
     />
   );
 }

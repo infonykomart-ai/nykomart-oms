@@ -385,7 +385,15 @@ export function OrderListTable({
           {o.whatsapp_sent_at && (
             <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">✓ WA sent</span>
           )}
-          {o.invoice_id && <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">Invoiced</span>}
+          {o.invoice_id && (
+            <Link
+              href={`/dashboard/invoices/${o.invoice_id}`}
+              title="Open this order's invoice"
+              className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-200"
+            >
+              Invoiced
+            </Link>
+          )}
           {o.shipment_status && o.shipment_status !== "Order Placed" && (
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${shipmentBadgeClass(o.shipment_status)}`}>
               🚚 {o.shipment_status}
@@ -724,6 +732,10 @@ export function OrderListTable({
     });
   }
   const printSelectedHref = `/dashboard/orders/print?ids=${Array.from(selectedIds).join(",")}`;
+  // 2026-11-23 — invoice generation now lives on this page: the same row
+  // selection that drives Print / bulk party assignment also feeds the
+  // generate-invoice screen (see orders/invoice/page.tsx).
+  const generateInvoiceHref = `/dashboard/orders/invoice?ids=${Array.from(selectedIds).join(",")}`;
 
   type ExportRow = {
     ref_no: string;
@@ -856,6 +868,12 @@ export function OrderListTable({
           )}
           {selectedIds.size > 0 && (
             <>
+              <Link
+                href={generateInvoiceHref}
+                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+              >
+                🧾 Generate Invoice ({selectedIds.size})
+              </Link>
               <Link
                 href={printSelectedHref}
                 target="_blank"

@@ -77,11 +77,11 @@ export default async function ShipmentDetailPage({ params }: { params: Promise<{
             </a>
           ) : (
             <Link
-              href="/dashboard/invoices"
+              href="/dashboard/orders"
               className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100"
-              title="No invoice was auto-generated for this shipment (or it isn't an export/DDP-DDU booking) — create one manually here."
+              title="No invoice was auto-generated for this shipment (or it isn't an export/DDP-DDU booking) — select the order on the Orders page and press Generate Invoice."
             >
-              No invoice generated yet — create one manually →
+              No invoice generated yet — create one from Orders →
             </Link>
           )}
           {detail.labelUrl && detail.order.invoiceId && <AllDocumentsButton labelUrl={detail.labelUrl} invoiceId={detail.order.invoiceId} />}

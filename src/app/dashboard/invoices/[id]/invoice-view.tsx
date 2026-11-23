@@ -6,7 +6,7 @@ import { PrintArea } from "@/components/print-view";
 import { updateInvoiceFields, deleteInvoice, refreshInvoiceTotals, attachPendingPoOrders } from "../actions";
 import { UploadToFedexButton } from "./upload-to-fedex-button";
 import { originDeclarationFor } from "@/lib/invoices/origin-declaration";
-import { computeValueBreakdownAt, itemCostForOrder } from "@/lib/invoices/value-breakdown";
+import { computeValueBreakdownAt, itemCostForOrder, valueBasisOptions } from "@/lib/invoices/value-breakdown";
 import {
   isEuDestination,
   merchantProductId,
@@ -99,6 +99,25 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 type RelatedNote = { id: string; no: string; amount: number; refNo: string };
 
+/**
+ * 2026-11-23 — the figures a recalculation replaced, read back from audit_log
+ * (recalculateInvoiceBreakdownCore writes them BEFORE it rewrites the invoice,
+ * because a customs invoice may already be printed/uploaded).
+ */
+export type TotalsHistoryEntry = {
+  id: string;
+  employeeName: string;
+  createdAt: string;
+  previousPercent: number | null;
+  previousTotal: number | null;
+  previousItemCost: number | null;
+  previousInsurance: number | null;
+  previousFreight: number | null;
+  nextPercent: number | null;
+  nextTotal: number | null;
+  currency: string | null;
+};
+
 const DECLARATION_STATEMENT =
   "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.";
 
@@ -115,6 +134,7 @@ export function InvoiceView({
   relatedNotes,
   liveOrderValueSum,
   pendingSamePo,
+  totalsHistory,
 }: {
   invoice: Invoice;
   items: Item[];
@@ -126,6 +146,8 @@ export function InvoiceView({
   liveOrderValueSum: number;
   /** Un-invoiced order rows sitting on the same PO/RF/RG number. */
   pendingSamePo: { refNo: string }[];
+  /** Previous breakdowns saved before each recalculation (newest first). */
+  totalsHistory: TotalsHistoryEntry[];
 }) {
   const [destinationCountry, setDestinationCountry] = useState(invoice.destination_country ?? "");
   const [originDeclaration, setOriginDeclaration] = useState(invoice.origin_declaration ?? "");
@@ -164,7 +186,13 @@ export function InvoiceView({
   const [isAttaching, startAttach] = useTransition();
   // 2026-11-23 — the basis this invoice is quoted at (60% standard / 100% of
   // the PO's full order value); recalculate applies whichever is selected.
-  const [basisPercent, setBasisPercent] = useState(invoice.value_percent != null ? String(invoice.value_percent) : "60");
+  // Rounded to match the option values below — value_percent is numeric(5,2),
+  // and a stray 59.6 must still land on a real option instead of blank.
+  const [basisPercent, setBasisPercent] = useState(
+    invoice.value_percent != null && Number.isFinite(Number(invoice.value_percent))
+      ? String(Math.round(Number(invoice.value_percent)))
+      : "60"
+  );
   const [saved, setSaved] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, startDelete] = useTransition();
@@ -220,9 +248,13 @@ export function InvoiceView({
   // the two so a value/qty edit made after generation is visible here instead
   // of silently disagreeing with the printed total. CSB-IV is excluded: its
   // figures were typed by hand and are supposed to differ.
-  const savedBasis = invoice.value_percent ?? 60;
+  const savedBasis = invoice.value_percent != null ? Math.round(invoice.value_percent) : 60;
+  // An invoice saved at a basis other than 60/100 (older store rule, bulk CSV,
+  // hand-edited totals) keeps ITS OWN percentage selected instead of the
+  // picker showing blank while the recalculation would silently drop back to 60%.
+  const basisChoices = valueBasisOptions(invoice.value_percent);
   const expectedBreakdown = isCsbV
-    ? computeValueBreakdownAt(liveOrderValueSum, Number(basisPercent) || 60)
+    ? computeValueBreakdownAt(liveOrderValueSum, Number(basisPercent) || savedBasis)
     : null;
   const savedTotal = invoiceValueUsd ? Number(invoiceValueUsd) : null;
   const totalDrift = expectedBreakdown && savedTotal != null ? round2(expectedBreakdown.invoiceValueUsd - savedTotal) : 0;
@@ -230,7 +262,7 @@ export function InvoiceView({
   function handleRecalculate() {
     setRefreshMessage(null);
     startRefresh(async () => {
-      const result = await refreshInvoiceTotals(invoice.id, { valuePercent: Number(basisPercent) || 60 });
+      const result = await refreshInvoiceTotals(invoice.id, { valuePercent: Number(basisPercent) || savedBasis });
       if (result.error || !result.updated) {
         setRefreshMessage(`Error: ${result.error ?? "Recalculation failed."}`);
         return;
@@ -308,7 +340,7 @@ export function InvoiceView({
     startDelete(async () => {
       const result = await deleteInvoice(invoice.id);
       if (result.error) setDeleteError(result.error);
-      else router.push("/dashboard/invoices");
+      else router.push("/dashboard/orders");
     });
   }
 
@@ -426,8 +458,15 @@ export function InvoiceView({
                 onChange={(e) => setBasisPercent(e.target.value)}
                 className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
               >
-                <option value="60">60% of order value (standard)</option>
-                <option value="100">100% of order value (full PO value)</option>
+                {basisChoices.map((p) => (
+                  <option key={p} value={String(p)}>
+                    {p === 60
+                      ? "60% of order value (standard)"
+                      : p === 100
+                        ? "100% of order value (full PO value)"
+                        : `${p}% of order value (this invoice's saved basis)`}
+                  </option>
+                ))}
               </select>
               {Number(basisPercent) !== savedBasis && (
                 <button
@@ -492,6 +531,35 @@ export function InvoiceView({
             </p>
           )}
           {refreshMessage && <p className="mt-2 text-[11px] text-slate-600">{refreshMessage}</p>}
+
+          {/* 2026-11-23 — every recalculation saves the figures it replaced
+              before rewriting the invoice; show them so an already-printed
+              invoice can always be compared with what it now says. */}
+          {totalsHistory.length > 0 && (
+            <details className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <summary className="cursor-pointer text-[11px] font-medium text-slate-600">
+                Previous totals ({totalsHistory.length}) — saved before each recalculation
+              </summary>
+              <ul className="mt-1 space-y-1.5">
+                {totalsHistory.map((h) => (
+                  <li key={h.id} className="text-[11px] leading-snug text-slate-600">
+                    <span className="font-medium text-slate-700">
+                      {new Date(h.createdAt).toLocaleString()} · {h.employeeName}
+                    </span>
+                    <br />
+                    Total {h.previousTotal != null ? h.previousTotal.toFixed(2) : "—"} {h.currency ?? displayCurrency}
+                    {h.previousPercent != null && ` at ${h.previousPercent}%`} →{" "}
+                    {h.nextTotal != null ? h.nextTotal.toFixed(2) : "—"} {h.currency ?? displayCurrency}
+                    {h.nextPercent != null && ` at ${h.nextPercent}%`}
+                    <br />
+                    Old breakdown: Cost {h.previousItemCost != null ? h.previousItemCost.toFixed(2) : "—"} · Insurance{" "}
+                    {h.previousInsurance != null ? h.previousInsurance.toFixed(2) : "—"} · Freight{" "}
+                    {h.previousFreight != null ? h.previousFreight.toFixed(2) : "—"}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {pendingSamePo.length > 0 && (
             <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
@@ -765,8 +833,8 @@ export function InvoiceView({
             <div>
               <div className="font-semibold">Buyer&apos;s Order No. &amp; Date</div>
               {/* 2026-08-11: an invoice can now cover orders from more than
-                  one PO/RF/RG batch (see invoice-po-selector.tsx's
-                  multi-select) — e.g. two orders from the same buyer placed
+                  one PO/RF/RG batch (see the Orders page's
+                  multi-row selection) — e.g. two orders from the same buyer placed
                   4 days apart, shipped together on the buyer's request. List
                   every distinct PO/RF/RG BASE number involved (ref_no_base
                   — e.g. "PO24-25-014"), not each line's own suffixed

@@ -261,6 +261,14 @@ export default async function OrdersPage({
           >
             📤 Bulk Upload (CSV)
           </Link>
+          {/* 2026-11-23 — the Invoices section was folded into this page; its
+              bulk CSV generator moves here with it. */}
+          <Link
+            href="/dashboard/invoices/bulk-upload"
+            className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+          >
+            🧾 Bulk Invoice (CSV)
+          </Link>
           <Link
             href="/dashboard/orders/new"
             className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"

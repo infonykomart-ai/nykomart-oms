@@ -48,6 +48,15 @@ export const BULK_INVOICE_COLUMNS: BulkInvoiceColumn[] = [
   { label: "Other Than Consignee", example: "", required: false, help: "Second consignee block, if applicable — usually blank." },
   { label: "VAT Number", example: "", required: false, help: "UK/EU shipments only. Leave blank to auto-pull from the order." },
   { label: "EORI Number", example: "", required: false, help: "UK/EU shipments only. Leave blank to auto-pull from the order." },
+  // 2026-11-23 — CSB-V value basis, same choice as the Generate Invoice form:
+  // 60 (standard marketplace value) or 100 (the PO's full order value).
+  // Ignored for CSB-IV, whose figures are typed in by hand below.
+  {
+    label: "Invoice Value Basis (60 or 100)",
+    example: "",
+    required: false,
+    help: "CSB-V only — 60 (standard) or 100 (full PO value). Leave blank for the standard basis.",
+  },
   { label: "Manual Invoice Value (USD, CSB-IV only)", example: "", required: false, help: "CSB-IV only — CSB-V always auto-computes this." },
   { label: "Manual Item Cost (USD, CSB-IV only)", example: "", required: false },
   { label: "Manual Insurance (USD, CSB-IV only)", example: "", required: false },

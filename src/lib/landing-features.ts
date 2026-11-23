@@ -101,8 +101,8 @@ export const MODULE_GROUPS: LandingGroup[] = [
       {
         icon: "🧾",
         label: "Export Invoices",
-        blurb: "Generate CSB-V / CSB-IV export invoices against dispatched orders.",
-        href: "/dashboard/invoices",
+        blurb: "Generate CSB-V / CSB-IV export invoices against dispatched orders — straight from the Orders page.",
+        href: "/dashboard/orders",
       },
       {
         icon: "💳",

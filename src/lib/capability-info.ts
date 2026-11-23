@@ -171,8 +171,15 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Set which role gets which capability — self-service, no code change needed." },
   { code: "reports", label: "Reports", icon: "📈", href: "/dashboard/reports",
     description: "The Reports suite." },
-  { code: "invoicing", label: "Invoices", icon: "🧾", href: "/dashboard/invoices",
-    description: "Generate export sales invoices (CSB-V/CSB-IV) against dispatched orders." },
+  // 2026-11-23 — "ORDER PAGE ME HI KAR DO NA ADD KI SELECT GENRATE INVOICE, JO
+  // INVOICE KA SECTION HAI USKO VAHA SE REMOVE KAR KE SARE SYSTEM IDHR HI KAR
+  // DO": invoice generation lives on the Orders hub now (select rows →
+  // Generate Invoice). The separate Invoices tile/section is hidden, but the
+  // capability itself stays in this registry so Roles & Permissions keeps
+  // showing who may generate/print invoices — and /dashboard/invoices
+  // redirects to Orders for old bookmarks.
+  { code: "invoicing", label: "Invoices", icon: "🧾", href: "/dashboard/orders", hidden: true,
+    description: "Generate export sales invoices (CSB-V/CSB-IV) — done from the Orders page by selecting rows and pressing Generate Invoice." },
   { code: "ad_spend_entry", label: "Store Ad Spend", icon: "📈", href: "/dashboard/ad-spend",
     description: "Enter daily Budget/Spend per store and view the combined Orders + Ad Spend report." },
   // 2026-11-14 — finished-goods Inventory became a full module. The legacy
