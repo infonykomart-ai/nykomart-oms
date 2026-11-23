@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { requireCapability } from "@/lib/auth/require-capability";
+import { requireAnyCapability } from "@/lib/auth/require-capability";
 import { createClient } from "@/lib/supabase/server";
 import { getOrderStatusSummaries } from "@/lib/orders/order-status-summary";
 import { matchMarketplaceFees } from "@/lib/orders/marketplace-fees";
 import { OrderListTable } from "./order-list-table";
+import { RecentInvoicesSection } from "./recent-invoices-section";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { sanitizeSearchTerm } from "@/lib/orders/find-order";
 
@@ -18,7 +19,15 @@ export default async function OrdersPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const employee = await requireCapability("order_entry");
+  // 2026-11-23 — invoice generation moved onto this page (see
+  // orders/invoice/page.tsx), so an employee whose ONLY capability is
+  // `invoicing` must be able to open it. They get the list read-only: every
+  // order-entry action below is hidden for them and the server actions behind
+  // those buttons still require `order_entry`, so nothing they can see can
+  // fail on click.
+  const employee = await requireAnyCapability("order_entry", "invoicing");
+  const canManageOrders = employee.capabilities.includes("order_entry");
+  const canInvoice = employee.capabilities.includes("invoicing");
   const supabase = await createClient();
   const sp = await searchParams;
 
@@ -133,6 +142,23 @@ export default async function OrdersPage({
 
   const { data: orders } = await query;
 
+  // 2026-11-23 — "add a recent-invoices list on the Orders page so older
+  // invoices can be opened directly": with the separate Invoices list gone,
+  // this screen is the way back to an invoice that has already been generated.
+  // Read-only shortcut — viewing/printing/deleting an invoice still happens on
+  // the invoice's own page.
+  const recentStoreName = new Map((stores ?? []).map((s) => [s.id, s.name]));
+  const { data: recentInvoices } = canInvoice
+    ? await supabase
+        .from("sales_invoices")
+        .select(
+          "id, invoice_no, master_invoice_no, invoice_date, buyer_name_address, csb_type, courier_company, store_id, invoice_currency, invoice_value_usd"
+        )
+        .in("company_id", effectiveCompanyIds)
+        .order("created_at", { ascending: false })
+        .limit(100)
+    : { data: [] };
+
   // 2026-08-14: "sabhi order upar niche aa rahe hai to ye sabhi order me
   // aaye a2z formate me" — the list was coming out in entry_timestamp order
   // (whatever order rows were bulk-uploaded/entered in), which scatters PO/
@@ -237,9 +263,13 @@ export default async function OrdersPage({
       <AutoRefresh intervalMs={15000} />
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">📋 Orders — Edit / Modify / Delete</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">
+            📋 Orders — {canManageOrders ? "Edit / Modify / Delete" : "Generate Invoice"}
+          </h1>
         </div>
         <div className="flex shrink-0 gap-2">
+          {canManageOrders && (
+            <>
           <Link
             href="/dashboard/orders/bulk-tracking-update"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
@@ -262,19 +292,24 @@ export default async function OrdersPage({
             📤 Bulk Upload (CSV)
           </Link>
           {/* 2026-11-23 — the Invoices section was folded into this page; its
-              bulk CSV generator moves here with it. */}
-          <Link
-            href="/dashboard/invoices/bulk-upload"
-            className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-          >
-            🧾 Bulk Invoice (CSV)
-          </Link>
+              bulk CSV generator moves here with it. Only shown to someone who
+              can actually invoice. */}
+          {canInvoice && (
+            <Link
+              href="/dashboard/invoices/bulk-upload"
+              className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+            >
+              🧾 Bulk Invoice (CSV)
+            </Link>
+          )}
           <Link
             href="/dashboard/orders/new"
             className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
           >
             + New Order
           </Link>
+            </>
+          )}
         </div>
       </div>
 
@@ -328,6 +363,8 @@ export default async function OrdersPage({
         currencies={currencies ?? []}
         parties={parties ?? []}
         stores={stores ?? []}
+        canManageOrders={canManageOrders}
+        canInvoice={canInvoice}
         statuses={STATUSES}
         todayStr={todayStr}
         statusByOrder={statusByOrder}
@@ -336,6 +373,15 @@ export default async function OrdersPage({
         ebayFeesByOrder={ebayFeesByOrder}
         amazonFeesByOrder={amazonFeesByOrder}
       />
+
+      {canInvoice && (
+        <RecentInvoicesSection
+          invoices={(recentInvoices ?? []).map((inv) => ({
+            ...inv,
+            storeLabel: recentStoreName.get(inv.store_id) ?? "",
+          }))}
+        />
+      )}
     </div>
   );
 }

@@ -161,6 +161,8 @@ export function OrderListTable({
   amazonFeesByOrder,
   initialSearch = "",
   preservedQuery = "",
+  canManageOrders,
+  canInvoice,
 }: {
   orders: OrderRow[];
   itemCategories: { id: string; name: string }[];
@@ -193,6 +195,16 @@ export function OrderListTable({
   /** Current URL query string WITHOUT `q`, so the search keeps company /
    *  status / date / late filters intact when it navigates. */
   preservedQuery?: string;
+  /**
+   * 2026-11-23 — invoice generation lives on this page now, so an
+   * invoicing-only employee can open it (see orders/page.tsx).
+   * `canManageOrders` hides every order-entry control for them (the server
+   * actions behind those controls still require `order_entry`);
+   * `canInvoice` decides whether the Generate Invoice action is offered at
+   * all, so nobody gets a button that only fails.
+   */
+  canManageOrders: boolean;
+  canInvoice: boolean;
 }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -868,12 +880,14 @@ export function OrderListTable({
           )}
           {selectedIds.size > 0 && (
             <>
-              <Link
-                href={generateInvoiceHref}
-                className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-              >
-                🧾 Generate Invoice ({selectedIds.size})
-              </Link>
+              {canInvoice && (
+                <Link
+                  href={generateInvoiceHref}
+                  className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  🧾 Generate Invoice ({selectedIds.size})
+                </Link>
+              )}
               <Link
                 href={printSelectedHref}
                 target="_blank"
@@ -900,7 +914,7 @@ export function OrderListTable({
           single-order button. Also answers "konse order ka abhi tak
           purchase bill nahi aaya" per-order via the existing PB Entry
           column (✓ INV… / No PB yet) + its Yes/No filter. */}
-      {selectedIds.size > 0 && (
+      {canManageOrders && selectedIds.size > 0 && (
         <BulkVendorAssignBar
           selectedIds={Array.from(selectedIds)}
           parties={parties}
@@ -1111,23 +1125,27 @@ export function OrderListTable({
                               >
                                 👁️
                               </button>
-                              <button
-                                type="button"
-                                title="Edit"
-                                onClick={() => setEditingId(o.id)}
-                                className="rounded border border-slate-300 bg-white px-1.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-                              >
-                                ✏️
-                              </button>
-                              <button
-                                type="button"
-                                title="Delete"
-                                disabled={isPending}
-                                onClick={() => handleDelete(o.id, o.ref_no)}
-                                className="rounded border border-red-200 bg-red-50 px-1.5 py-1 text-[11px] text-red-600 hover:bg-red-100 disabled:opacity-50"
-                              >
-                                🗑️
-                              </button>
+                              {canManageOrders && (
+                                <>
+                                  <button
+                                    type="button"
+                                    title="Edit"
+                                    onClick={() => setEditingId(o.id)}
+                                    className="rounded border border-slate-300 bg-white px-1.5 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+                                  >
+                                    ✏️
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Delete"
+                                    disabled={isPending}
+                                    onClick={() => handleDelete(o.id, o.ref_no)}
+                                    className="rounded border border-red-200 bg-red-50 px-1.5 py-1 text-[11px] text-red-600 hover:bg-red-100 disabled:opacity-50"
+                                  >
+                                    🗑️
+                                  </button>
+                                </>
+                              )}
                               <button
                                 type="button"
                                 title="More details / actions"
@@ -1289,6 +1307,8 @@ export function OrderListTable({
                                 )}
                               </div>
                               <div className="flex shrink-0 flex-col items-end gap-2">
+                                {canManageOrders && (
+                                  <>
                                 <OrderHoldCancelActions
                                   order={{
                                     id: o.id,
@@ -1320,6 +1340,8 @@ export function OrderListTable({
                                       : undefined
                                   }
                                 />
+                                  </>
+                                )}
                                 <Link
                                   href={`/dashboard/orders/${o.id}`}
                                   className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"

@@ -178,8 +178,8 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // capability itself stays in this registry so Roles & Permissions keeps
   // showing who may generate/print invoices — and /dashboard/invoices
   // redirects to Orders for old bookmarks.
-  { code: "invoicing", label: "Invoices", icon: "🧾", href: "/dashboard/orders", hidden: true,
-    description: "Generate export sales invoices (CSB-V/CSB-IV) — done from the Orders page by selecting rows and pressing Generate Invoice." },
+  { code: "invoicing", label: "Invoices", icon: "🧾", href: "/dashboard/orders",
+    description: "Generate export sales invoices (CSB-V/CSB-IV) — done from the Orders page by selecting rows and pressing Generate Invoice. This tile is how invoicing-only staff reach that page; order entry/edit/delete actions stay hidden for them." },
   { code: "ad_spend_entry", label: "Store Ad Spend", icon: "📈", href: "/dashboard/ad-spend",
     description: "Enter daily Budget/Spend per store and view the combined Orders + Ad Spend report." },
   // 2026-11-14 — finished-goods Inventory became a full module. The legacy
