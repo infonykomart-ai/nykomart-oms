@@ -573,7 +573,7 @@ export async function createOrderCore(
 
     // 2026-11-22b — Phase 3: the insert now returns the new id so the
     // close-up photos just saved on this order can be mirrored into
-    // order_attachments (the typed index a Purchase Order reads). The result
+    // order_attachments (the typed close-up photo index). The result
     // shape is preserved by tolerateMissingColumns, so this works exactly as
     // before on a database where an optional column is pending.
     const { data: insertedOrder, error: insertError } = await tolerateMissingColumns(

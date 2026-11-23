@@ -82,10 +82,6 @@ const CAPABILITY_OVERRIDES: { prefix: string; codes: string[] }[] = [
   // (requireAnyCapability("stock_entry", "doc_entry")), so neither prefix
   // guess is right on its own.
   { prefix: "/dashboard/printing-register", codes: ["stock_entry", "doc_entry"] },
-  // 2026-11-22 — Purchase Orders has no launcher tile of its own any more
-  // (it opens from the Orders header), so there is no CAPABILITY_INFO href to
-  // guess from; it is gated on order_entry on the server.
-  { prefix: "/dashboard/purchase-orders", codes: ["order_entry"] },
 ];
 
 function requiredCapabilitiesFor(pathname: string): string[] | null {

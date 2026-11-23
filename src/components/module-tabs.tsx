@@ -53,12 +53,11 @@ const SUBMODULES: ModuleTab[] = [
   { href: "/dashboard/b2b/production", label: "Production & QC", icon: "🏭" },
   { href: "/dashboard/b2b/shipments", label: "Shipments", icon: "🚢" },
   { href: "/dashboard/b2b/reports", label: "B2B Reports", icon: "📊" },
-  // 2026-11-22 — two screens that are no longer launcher tiles but are still
-  // destinations of their own: Purchase Orders (opened from the Orders header)
-  // and the P&L overhead log (opened from Office Expenses). Without these, a
-  // visit to either would fall through to CAPABILITY_INFO and open a "Home"
-  // tab, since both were removed from the launcher grid.
-  { href: "/dashboard/purchase-orders", label: "Purchase Orders", icon: "🛒" },
+  // 2026-11-22 — the P&L overhead log is no longer a launcher tile but is
+  // still a destination of its own (opened from Office Expenses). Without
+  // this, a visit would fall through to CAPABILITY_INFO and open a "Home"
+  // tab.
+  // 2026-11-23 — the Purchase Orders entry was removed with that module.
   { href: "/dashboard/expenses", label: "P&L Overhead Log", icon: "📈" },
 ];
 

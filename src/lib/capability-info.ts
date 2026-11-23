@@ -23,11 +23,9 @@ export type CapabilityInfo = {
 export const CAPABILITY_INFO: CapabilityInfo[] = [
   { code: "order_entry", label: "Order Entry", icon: "📝", href: "/dashboard/orders",
     description: "View, edit, delete orders, or enter a new one — PO/RF/RG No. assigned automatically, duplicate-dispatched-order reuse checked first." },
-  // 2026-11-22c — Phase 3: Purchase Orders has NO launcher tile of its own.
-  // It is one order's supplier document, so it opens from the Orders screen
-  // ("🛒 Purchase Orders" in that page's header) instead of sitting on the
-  // landing grid as an unexplained second orders section. The route stays
-  // gated on order_entry — whoever owns orders owns its POs.
+  // 2026-11-23 — the Purchase Orders section was removed from the app at the
+  // owner's request (its tables stay in the database, untouched). Orders and
+  // their own status grid are the only order module now.
   { code: "csv_upload", label: "CSV Upload", icon: "📤", href: "/dashboard/csv-upload",
     description: "Bulk-load rows into the back-office log sheets from a CSV file." },
   { code: "doc_entry", label: "Document Entry", icon: "🧾", href: "/dashboard/documents",

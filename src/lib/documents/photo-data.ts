@@ -1,7 +1,7 @@
 // 2026-11-22d — Phase 4: turn photo URLs into data URIs for @react-pdf.
 //
 // react-pdf can take a remote URL, but a single unreachable / expired /
-// non-image URL makes the whole render fail — and a Purchase Order must never
+// non-image URL makes the whole render fail — and an order PDF must never
 // fail because one close-up photo's storage URL expired. So every image is
 // fetched here first, one by one, and anything that is not a small, real image
 // is simply left out of the PDF (the document prints without that thumbnail).

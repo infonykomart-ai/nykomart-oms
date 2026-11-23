@@ -227,8 +227,8 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
   if (error) return { error: error.message, success: false };
 
   // 2026-11-22b — Phase 3. orders.photo_urls stays authoritative; this
-  // mirrors its close-up entries into order_attachments so a Purchase Order
-  // (and any future reader) has one typed read path. Best-effort: the order
+  // mirrors its close-up entries into order_attachments so every reader has
+  // one typed read path. Best-effort: the order
   // is already saved, and a database where db/2026-11-22b-order-attachments.sql
   // is still pending simply skips it (the read helper falls back to the
   // order's own columns). The main photo is never stored as an attachment.
