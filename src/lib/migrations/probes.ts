@@ -69,6 +69,41 @@ async function hasColumn(client: ServiceClient, table: string, column: string): 
 }
 
 /**
+ * A dated file that is a pure DATA repair has no schema object to look for.
+ * `2026-11-14b` is the first one: it rescales debit-note adjustment rows that
+ * were written before the GST fix. Reading every note with its adjustment rows
+ * and judging them by the same predicate the file uses answers the only useful
+ * question — "does this database still hold rows that file would change?".
+ * Read-only; honestly "applied" when there is nothing left to repair (which is
+ * also true of a database that never needed the repair).
+ */
+async function debitNoteAdjustmentsRepaired(client: ServiceClient): Promise<ProbeState> {
+  const { data, error } = await (client as unknown as UntypedClient)
+    .from("debit_notes")
+    .select("id, debit_amount, total_amount, bill_pass_register_adjustments(amount)");
+  if (error) return isMissingSchemaPiece(error) ? "missing" : "unknown";
+
+  type NoteRow = {
+    debit_amount: number | string | null;
+    total_amount: number | string | null;
+    bill_pass_register_adjustments: { amount: number | string | null }[] | null;
+  };
+  const notes = (data ?? []) as unknown as NoteRow[];
+
+  const stillPreGst = notes.some((note) => {
+    const adjustments = note.bill_pass_register_adjustments ?? [];
+    if (adjustments.length === 0) return false;
+    const total = Number(note.total_amount ?? 0);
+    if (!(total > 0)) return false;
+    const sum = adjustments.reduce((acc, a) => acc + Number(a.amount ?? 0), 0);
+    const debit = Number(note.debit_amount ?? 0);
+    return Math.abs(sum - debit) < 0.01 && Math.abs(sum - total) >= 0.01;
+  });
+
+  return stillPreGst ? "missing" : "applied";
+}
+
+/**
  * One probe per dated SQL file, oldest first. A file counts as applied only
  * when EVERY check for it is "applied" — half-run files are real (the CREATE
  * TABLE and the ALTER TABLE are separate statements, and PostgREST's schema
@@ -237,6 +272,135 @@ export async function probeMigrations(
         // strictly read-only. The counters table existing is proof enough that
         // the file ran.
         { name: "agreement_number_counters table", promise: hasColumn(client, "agreement_number_counters", "last_value") },
+      ]),
+
+    // ---------------------------------------------------------------------
+    // 2026-11-23 — every SQL file from 2026-11-14 onward now has a probe.
+    // The panel could not see these files at all, which is exactly how a fix
+    // ships and the screen keeps showing the old figure: the code is tolerant
+    // of the missing object, so nothing looks broken. Oldest first.
+    // ---------------------------------------------------------------------
+
+    probe("db/2026-11-14-customs-exchange-rate-module.sql", "Customs exchange-rate module (verified rates, audit, sync log, as-of lookup)",
+      "Customs rates are read from the pre-2026-11-14 table: no verification, no audit trail, no sync log and no as-of (historical-date) rate lookup — and the old table was renamed to customs_rate_snapshot by this file.",
+      [
+        { name: "customs_exchange_rates.currency_unit", promise: hasColumn(client, "customs_exchange_rates", "currency_unit") },
+        { name: "customs_exchange_rate_audit.action", promise: hasColumn(client, "customs_exchange_rate_audit", "action") },
+        { name: "customs_rate_sync_log.status", promise: hasColumn(client, "customs_rate_sync_log", "status") },
+      ]),
+
+    // Data repair only — no table or column is created by this file.
+    probe("db/2026-11-14b-debit-note-gst-adjustment.sql", "Debit Note GST repair (adjustment rows already written with the pre-GST amount)",
+      "Debit notes created before the fix still reduce vendor bills by their PRE-GST amount (e.g. 4,140 instead of 4,347), leaving the GST portion showing as payable.",
+      [{ name: "no pre-GST adjustment rows remain", promise: debitNoteAdjustmentsRepaired(client) }]),
+
+    probe("db/2026-11-14c-inventory-management-module.sql", "Inventory management module (ledger, balances, reservations, challans, adjustments)",
+      "The Inventory module has no ledger, balances, reservations or challans — stock cannot be counted, reserved, moved or issued.",
+      [
+        { name: "inventory_balances.stage", promise: hasColumn(client, "inventory_balances", "stage") },
+        { name: "inventory_challans.chalan_no", promise: hasColumn(client, "inventory_challans", "chalan_no") },
+        { name: "inventory_idempotency.idempotency_key", promise: hasColumn(client, "inventory_idempotency", "idempotency_key") },
+      ]),
+
+    probe("db/2026-11-16-phase4-order-stock.sql", "Order stock reservation (purchase requirements + reserve/release RPCs)",
+      "Placing an order never creates a purchase requirement nor reserves stock, so overselling stays invisible until dispatch.",
+      [
+        { name: "inventory_purchase_requirements.purchased_pcs", promise: hasColumn(client, "inventory_purchase_requirements", "purchased_pcs") },
+      ]),
+
+    probe("db/2026-11-16c-office-asset-expenses.sql", "Office Asset expenses excluded from the P&L views",
+      "The P&L still counts Office Asset spend (building work, office equipment) as an operating cost, so that money wrongly reduces net profit and appears in monthly rows.",
+      [
+        { name: "pl_dashboard_by_company_view.net_earn_after_overhead", promise: hasColumn(client, "pl_dashboard_by_company_view", "net_earn_after_overhead") },
+        { name: "pl_dashboard_by_month_view.net_earn_after_overhead", promise: hasColumn(client, "pl_dashboard_by_month_view", "net_earn_after_overhead") },
+      ]),
+
+    probe("db/2026-11-17-etsy-translations.sql", "Etsy product translations",
+      "Etsy translations cannot be stored — there is no product/translation table, so translated titles and descriptions have nowhere to live.",
+      [
+        { name: "etsy_products.original_title", promise: hasColumn(client, "etsy_products", "original_title") },
+        { name: "etsy_product_translations.language_code", promise: hasColumn(client, "etsy_product_translations", "language_code") },
+      ]),
+
+    probe("db/2026-11-18-etsy-seo-generator.sql", "Etsy SEO generator (projects, listings, versions, keywords, usage)",
+      "The Etsy SEO Generator has no schema: generated titles/descriptions, keyword research, listing versions and AI usage cannot be saved.",
+      [
+        { name: "etsy_seo_projects.sku", promise: hasColumn(client, "etsy_seo_projects", "sku") },
+        { name: "etsy_seo_listings.validation_status", promise: hasColumn(client, "etsy_seo_listings", "validation_status") },
+        { name: "etsy_seo_categories.name", promise: hasColumn(client, "etsy_seo_categories", "name") },
+      ]),
+
+    probe("db/2026-11-18b-purchase-accounts-phase1.sql", "Purchase accounts phase 1 (chart of accounts, financial years, vouchers, journal)",
+      "There is no chart of accounts, financial year, expense voucher or journal entry table — expense vouchers cannot be posted to accounts.",
+      [
+        { name: "fin_accounts.code", promise: hasColumn(client, "fin_accounts", "code") },
+        { name: "expense_vouchers.voucher_no", promise: hasColumn(client, "expense_vouchers", "voucher_no") },
+        { name: "fin_settings.gstin", promise: hasColumn(client, "fin_settings", "gstin") },
+      ]),
+
+    probe("db/2026-11-18d-expense-line-units.sql", "Expense voucher lines: base quantity and unit",
+      "Expense voucher lines store only the entered quantity, not the base quantity/unit, so lines entered in mixed units total wrongly.",
+      [
+        { name: "expense_voucher_items.base_qty", promise: hasColumn(client, "expense_voucher_items", "base_qty") },
+        { name: "expense_voucher_items.base_unit", promise: hasColumn(client, "expense_voucher_items", "base_unit") },
+      ]),
+
+    probe("db/2026-11-20-whatsapp-reference-photos.sql", "WhatsApp reference-photo message log",
+      "Automated WhatsApp photo sends are not recorded, so a resend cannot be recognised as a duplicate and delivery status is unknown.",
+      [{ name: "order_whatsapp_messages.event_id", promise: hasColumn(client, "order_whatsapp_messages", "event_id") }]),
+
+    probe("db/2026-11-20b-inventory-master-sku-foundation.sql", "Inventory master SKUs (master product/variant, store SKU map, stock entries, photos, reviews)",
+      "The Inventory Master is unavailable: no master SKU or variant, no store-SKU mapping, no stock entries, entry photos, corrections or order matches.",
+      [
+        { name: "inventory_master_products.master_code", promise: hasColumn(client, "inventory_master_products", "master_code") },
+        { name: "inventory_store_sku_map.store_sku", promise: hasColumn(client, "inventory_store_sku_map", "store_sku") },
+        { name: "inventory_stock_entries.master_variant_id", promise: hasColumn(client, "inventory_stock_entries", "master_variant_id") },
+        { name: "inventory_reviews.match_id", promise: hasColumn(client, "inventory_reviews", "match_id") },
+      ]),
+
+    probe("db/2026-11-20c-inventory-master-merge.sql", "Inventory master-variant merge + merge log",
+      "Duplicate master variants cannot be merged — the merge log table and the merge function do not exist.",
+      [{ name: "inventory_master_merge_log.source_master_sku", promise: hasColumn(client, "inventory_master_merge_log", "source_master_sku") }]),
+
+    probe("db/2026-11-20d-inventory-master-photos.sql", "Inventory master-variant photos",
+      "Master-variant photos (product main / size measurement) cannot be stored at all.",
+      [{ name: "inventory_master_variant_photos.image_path", promise: hasColumn(client, "inventory_master_variant_photos", "image_path") }]),
+
+    probe("db/2026-11-20e-store-ad-spend-attributed-orders.sql", "Store Ad Spend: ad-attributed orders",
+      "Ad-attributed order counts cannot be recorded, so the report hides the ad/organic split instead of showing it.",
+      [{ name: "store_ad_spend.ad_orders", promise: hasColumn(client, "store_ad_spend", "ad_orders") }]),
+
+    probe("db/2026-11-21-store-ad-spend-channel-metrics.sql", "Store Ad Spend: channel metrics (clicks, impressions, visits, Etsy conversions)",
+      "Clicks, impressions, visits and Etsy conversion/revenue figures are dropped on save — the ad report can only show budget and spend.",
+      [
+        { name: "store_ad_spend.clicks", promise: hasColumn(client, "store_ad_spend", "clicks") },
+        { name: "store_ad_spend.etsy_conversion_rate_monthly", promise: hasColumn(client, "store_ad_spend", "etsy_conversion_rate_monthly") },
+      ]),
+
+    probe("db/2026-11-21b-ad-spend-report-upgrades.sql", "Ad spend report upgrades (ad revenue, store targets, access validity + log)",
+      "Ad revenue cannot be stored, store targets do not exist, and store access has no expiry date or access log.",
+      [
+        { name: "store_ad_spend.ad_revenue_usd", promise: hasColumn(client, "store_ad_spend", "ad_revenue_usd") },
+        { name: "store_ad_targets.roas_target", promise: hasColumn(client, "store_ad_targets", "roas_target") },
+        { name: "employee_store_access.valid_until", promise: hasColumn(client, "employee_store_access", "valid_until") },
+        { name: "employee_store_access_log.action", promise: hasColumn(client, "employee_store_access_log", "action") },
+      ]),
+
+    probe("db/2026-11-22-address-engine.sql", "Address engine: original paste + Parsed / Verified / Needs Review status",
+      "Orders still save, but the pasted address and its review status are not stored — the order list and detail cannot show whether an address was checked.",
+      [
+        { name: "orders.buyer_address_raw", promise: hasColumn(client, "orders", "buyer_address_raw") },
+        { name: "orders.address_status", promise: hasColumn(client, "orders", "address_status") },
+      ]),
+
+    // The Purchase Orders feature was removed on 2026-11-23, so this file can
+    // be left unrun. It is listed only because the panel should cover every
+    // dated file on disk — no data is lost by skipping it.
+    probe("db/2026-11-22c-purchase-orders.sql", "Purchase Orders tables (feature removed 2026-11-23 — optional)",
+      "Nothing. The Purchase Orders section no longer exists, so this file is optional; the app does not read these tables.",
+      [
+        { name: "purchase_orders.po_no", promise: hasColumn(client, "purchase_orders", "po_no") },
+        { name: "purchase_order_items.qty", promise: hasColumn(client, "purchase_order_items", "qty") },
       ]),
   ]);
 }

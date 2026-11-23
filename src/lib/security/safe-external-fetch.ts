@@ -45,6 +45,16 @@ function isPrivateOrReservedIp(ip: string): boolean {
   return true; // not a parseable IP at all — treat as unsafe rather than guessing
 }
 
+// 2026-11-23 — optional request settings, added for the PDF photo fetch, which
+// needs its own short timeout and an image-only Accept header. Every existing
+// caller passes nothing and keeps the original behaviour (no headers, no
+// signal, default cache) exactly.
+export type SafeFetchOptions = {
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+  cache?: RequestCache;
+};
+
 export type SafeFetchResult =
   | { ok: true; response: Response }
   // 2026-09-13 — `location` added: a redirect result previously forced
@@ -65,7 +75,10 @@ export type SafeFetchResult =
  * any other failure — surface a generic "could not fetch" to the caller,
  * don't chase the redirect.
  */
-export async function safeExternalFetch(rawUrl: string): Promise<SafeFetchResult> {
+export async function safeExternalFetch(
+  rawUrl: string,
+  options: SafeFetchOptions = {}
+): Promise<SafeFetchResult> {
   let target: URL;
   try {
     target = new URL(rawUrl);
@@ -89,7 +102,12 @@ export async function safeExternalFetch(rawUrl: string): Promise<SafeFetchResult
 
   let upstream: Response;
   try {
-    upstream = await fetch(target.toString(), { redirect: "manual" });
+    upstream = await fetch(target.toString(), {
+      redirect: "manual",
+      signal: options.signal,
+      headers: options.headers,
+      cache: options.cache,
+    });
   } catch {
     return { ok: false, error: "Could not fetch photo", status: 502 };
   }
