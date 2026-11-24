@@ -10,6 +10,7 @@
 // loader server-side (loadDocStatement) — a document outside the caller's
 // access returns 403/404 and the sheet shows exactly that error.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { DocStatementActions } from "./doc-statement-actions";
 import { DocStatementDocument } from "./doc-statement-document";
 import type { DocStatementData, DocType } from "@/lib/doc-statement";
@@ -132,7 +133,7 @@ function Sheet({
   // 2026-10-17 — same print-flow fix as bill-statement-dialog.tsx: fixed
   // positioning/clipping caps print output to one page, so the sheet is
   // returned to normal flow while printing.
-  return (
+  const sheet = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 md:p-6 print:static print:block print:bg-transparent print:p-0"
       onClick={close}
@@ -169,4 +170,10 @@ function Sheet({
       </div>
     </div>
   );
+
+  // 2026-11-24 — portalled to <body> for the same reason as the bill
+  // statement: inside <main> a `position: fixed` sheet is only viewport-
+  // fixed until an ancestor adds a transform/contain, after which the app
+  // chrome around it stays visible — on screen and in print.
+  return typeof document === "undefined" ? null : createPortal(sheet, document.body);
 }

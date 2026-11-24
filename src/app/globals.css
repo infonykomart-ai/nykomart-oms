@@ -1152,3 +1152,112 @@ body:has([data-theme]) {
   overflow: hidden;
 }
 
+/* ==========================================================================
+ * 2026-11-24 — GLOBAL PRINT / SAVE-AS-PDF LAYER
+ *
+ * Before this block the app had print CSS in exactly two places: the
+ * per-page PrintArea style (src/components/print-view.tsx, 56 call sites)
+ * and the A4 dialog. Everything else — a page that prints without a
+ * PrintArea, a dark theme, a wide report — had no rules at all, which is
+ * where "dark background on paper", "sidebar visible in print", "content
+ * clipped to one page" and "table header only on page 1" came from.
+ *
+ * This layer is deliberately global and low-specificity-adjacent: it only
+ * touches things that are never wanted on paper (viewport locks, app
+ * chrome, theme surfaces, shadows, pagination behaviour), so every module
+ * inherits it without each page repeating the rules.
+ * ========================================================================== */
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  /* The shell is locked to the viewport on screen (2026-09-29 note above).
+     That lock also survives into print and clips any document to a single
+     page, so it is released here for the whole app — not only for pages
+     that happen to render a PrintArea. */
+  body:has([data-theme]) {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  div[data-theme] {
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  div[data-theme] > div {
+    width: auto !important;
+  }
+
+  /* Application chrome — sidebar and top bar — never belongs on paper. */
+  div[data-theme] > aside,
+  div[data-theme] > div > header {
+    display: none !important;
+  }
+
+  main {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Paper is always the light document, even on the night/nova themes. */
+  :root,
+  html,
+  [data-theme] {
+    --oms-canvas: #ffffff;
+    --oms-header-bg: #ffffff;
+    --oms-header-border: #e5e7eb;
+    --oms-surface: #ffffff;
+    --oms-surface-border: #e5e7eb;
+    --oms-text: #111111;
+    --oms-text-muted: #333333;
+  }
+
+  /* No screen-only decoration on paper. */
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /* Pagination: headers repeat on every page, rows/images are never split. */
+  thead {
+    display: table-header-group;
+  }
+  tfoot {
+    display: table-footer-group;
+  }
+  tr,
+  img,
+  svg,
+  canvas {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Browsers append the URL after every link; documents should not show it. */
+  a[href]::after {
+    content: none !important;
+  }
+}
+

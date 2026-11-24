@@ -127,8 +127,21 @@ export async function downloadXLSX<T>(
   const XLSX = await import("xlsx");
   const aoa = rowsToAoA(columns, rows);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  // Reasonable column widths so the sheet isn't unreadable on open.
-  ws["!cols"] = columns.map((c) => ({ wch: Math.max(c.label.length + 2, 12) }));
+  // 2026-11-24 — widths used to come from the HEADER label only, so a
+  // "Tracking" or "Buyer Address" column opened cut off even though the
+  // data was there. Fit to the widest value in each column (capped, so one
+  // long address can't make the sheet unusable).
+  // Values are written as text cells, so IDs/postal codes/AWB numbers keep
+  // their leading zeros exactly as shown in the OMS.
+  ws["!cols"] = columns.map((c, index) => ({
+    wch: Math.min(
+      60,
+      Math.max(
+        12,
+        aoa.reduce((widest, line) => Math.max(widest, String(line[index] ?? "").length), c.label.length + 2)
+      )
+    ),
+  }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sanitizeSheetName(sheetName));
   const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });

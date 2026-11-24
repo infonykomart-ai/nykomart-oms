@@ -19,6 +19,7 @@
 // applies to this fixed-position sheet too).
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BillStatementActions } from "./bill-statement-actions";
 import { BillStatementDocument } from "./bill-statement-document";
 import { PoLineActions } from "./po-line-actions";
@@ -145,7 +146,7 @@ function Sheet({
   // same single-page clipping bug print-view.tsx documents for the dashboard
   // shell. These classes put the sheet back into normal flow for print so
   // "🖨 Print" from this A4 dialog paginates the whole document.
-  return (
+  const sheet = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 md:p-6 print:static print:block print:bg-transparent print:p-0"
       onClick={close}
@@ -202,4 +203,14 @@ function Sheet({
       </div>
     </div>
   );
+
+  // 2026-11-24 — "print me left menu bar / page ka UI dikh raha hai": the
+  // sheet used `position: fixed` while still rendered deep inside <main>.
+  // Any ancestor with a transform/filter/contain (the page-transition
+  // wrapper, sticky toolbars) becomes the containing block for a fixed
+  // child, so the overlay only covered the scroll pane — the app header and
+  // the list behind it stayed visible, on screen AND in print. Portalled to
+  // <body> like A4Dialog, `fixed inset-0` again means the real viewport and
+  // the statement is the only thing the print rules have to keep.
+  return typeof document === "undefined" ? null : createPortal(sheet, document.body);
 }

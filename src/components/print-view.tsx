@@ -95,6 +95,8 @@
 // lays out on A4 with a real margin the header/footer content sits inside
 // of, instead of relying on whatever the browser/OS happened to default
 // to.
+import { printDocument, printPageRule, type PrintOrientation } from "@/lib/print/print-document";
+
 function ReportFooter({ companyName, companyLogoUrl }: { companyName?: string; companyLogoUrl?: string | null }) {
   return (
     <div className="print:fixed print:bottom-2 print:right-3 mt-6 flex items-center justify-end gap-2 border-t border-slate-200 pt-2 text-right print:mt-0 print:border-0 print:pt-0">
@@ -115,12 +117,22 @@ export function PrintArea({
   children,
   companyName,
   companyLogoUrl,
+  orientation = "portrait",
 }: {
   id: string;
   children: React.ReactNode;
   /** Which company this specific document belongs to — omit for cross-company/company-agnostic pages. */
   companyName?: string;
   companyLogoUrl?: string | null;
+  /**
+   * 2026-11-24 — the default A4 page box for this document. Portrait suits
+   * letters, invoices and bills; wide reports (20-column freight/duty,
+   * courier bills, order lists) pass "landscape" instead of having their
+   * right-hand columns clipped. The shared print buttons also re-decide
+   * this at click time (see @/lib/print/print-document), which rewrites
+   * this same @page rule — so a manual choice still wins.
+   */
+  orientation?: PrintOrientation;
 }) {
   return (
     <>
@@ -134,10 +146,7 @@ export function PrintArea({
           strips its @page block before printing (it re-injects the correct
           page box), so keep this id in sync with print-dialog.tsx. */}
       <style id="oms-printarea-page">{`
-        @page {
-          size: A4;
-          margin: 14mm 12mm 16mm 12mm;
-        }
+        ${printPageRule(orientation)}
         @media print {
           /* 2026-11-16 — "print sahi nahi ho raha": the printed document came
              out at roughly half size, centred, with half an A4 sheet blank.
@@ -180,6 +189,38 @@ export function PrintArea({
           body * { visibility: hidden; }
           #${id}, #${id} * { visibility: visible; }
           #${id} { position: static; width: 100%; max-width: 100%; }
+          /* 2026-11-24 — paper, not screen: pure white sheet, black text, no
+             shadows/rounded/decorative backgrounds, and no theme surface
+             leaking through on the night/nova themes. Table structure
+             (borders/collapse) is kept so documents stay readable. */
+          #${id},
+          #${id} * {
+            background-color: #ffffff !important;
+            background-image: none !important;
+            box-shadow: none !important;
+            text-shadow: none !important;
+            border-radius: 0 !important;
+            color: #111111 !important;
+          }
+          /* Report tables live in an overflow-x-auto wrapper on screen (so
+             they can be scrolled). In print that wrapper still CLIPS, which
+             is the other half of "right-hand columns are cut off" — there is
+             no scrolling on paper, so every clipping wrapper is released. */
+          #${id} .overflow-x-auto,
+          #${id} .overflow-y-auto,
+          #${id} .overflow-hidden,
+          #${id} .overflow-auto {
+            overflow: visible !important;
+            max-width: none !important;
+          }
+          #${id} table { width: 100% !important; border-collapse: collapse !important; table-layout: auto !important; }
+          #${id} thead { display: table-header-group; }
+          #${id} tfoot { display: table-footer-group; }
+          #${id} tr, #${id} img, #${id} svg, #${id} canvas {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          #${id} a { text-decoration: none !important; }
         }
       `}</style>
       <div id={id}>
@@ -194,7 +235,7 @@ export function PrintButton({ label = "🖨 Download PDF" }: { label?: string })
   return (
     <button
       type="button"
-      onClick={() => window.print()}
+      onClick={() => printDocument({ orientation: "auto" })}
       className="print:hidden rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700"
     >
       {label}

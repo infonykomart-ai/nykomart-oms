@@ -13,6 +13,7 @@ import {
   sharePdfWithText,
   preloadExportLibs,
 } from "@/lib/export/export-table";
+import { printDocument } from "@/lib/print/print-document";
 
 // Reusable export/send toolbar — item 6 (Universal Reports/Export/Send
 // system). Drop this under ANY report/list once you have { columns, rows }
@@ -122,7 +123,7 @@ export function ExportBar<T>({
     if (!pdfEndpoint) return;
     startShare(async () => {
       await runSafely(async () => {
-        const summary = buildSummaryText(title, columns, rows);
+        const summary = buildSummaryText(title, exportColumns, rows);
         const result = await sharePdfWithText({
           target,
           pdfEndpoint,
@@ -144,6 +145,13 @@ export function ExportBar<T>({
   // Data rows + summary rows, for the FILE downloads below only (see the
   // summaryRows prop for why the share/print paths keep using `rows`).
   const fileRows = summaryRows && summaryRows.length > 0 ? [...rows, ...summaryRows] : rows;
+
+  // 2026-11-24 — "exported data must match the records shown": the Columns
+  // picker hid columns on screen (and in print) while CSV/Excel/Word/the
+  // share text still carried every column, so a hidden column reappeared in
+  // the download. Every export path now uses the columns the user can
+  // actually see.
+  const exportColumns = hiddenKeys ? columns.filter((c) => !hiddenKeys.has(c.key)) : columns;
 
   const btnClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40";
@@ -167,7 +175,7 @@ export function ExportBar<T>({
     <>
       <a
         className={btnClass}
-        href={mailtoLink(title, buildSummaryText(title, columns, rows))}
+        href={mailtoLink(title, buildSummaryText(title, exportColumns, rows))}
         onClick={() => flash("Email draft opened — attach the CSV/Excel file yourself if you need to send it.")}
       >
         ✉️ Email
@@ -178,7 +186,7 @@ export function ExportBar<T>({
         disabled={!rows.length || isSharing}
         onClick={() =>
           startShare(async () => {
-            await runSafely(() => shareOnWhatsApp(title, columns, rows, filenameBase, whatsappPhone));
+            await runSafely(() => shareOnWhatsApp(title, exportColumns, rows, filenameBase, whatsappPhone));
           })
         }
       >
@@ -195,7 +203,7 @@ export function ExportBar<T>({
         disabled={!rows.length || isSharing}
         onClick={() =>
           startShare(async () => {
-            await runSafely(() => shareOnTelegram(title, columns, rows));
+            await runSafely(() => shareOnTelegram(title, exportColumns, rows));
           })
         }
       >
@@ -238,14 +246,14 @@ export function ExportBar<T>({
           )}
         </div>
       )}
-      <button type="button" className={btnClass} disabled={!rows.length || downloading} onClick={() => runSafely(() => Promise.resolve(downloadCSV(filenameBase, columns, fileRows)))}>
+      <button type="button" className={btnClass} disabled={!rows.length || downloading} onClick={() => runSafely(() => Promise.resolve(downloadCSV(filenameBase, exportColumns, fileRows)))}>
         ⬇️ CSV
       </button>
       <button
         type="button"
         className={btnClass}
         disabled={!rows.length || downloading}
-        onClick={() => runSafely(() => downloadXLSX(filenameBase, title, columns, fileRows))}
+        onClick={() => runSafely(() => downloadXLSX(filenameBase, title, exportColumns, fileRows))}
       >
         {downloading ? "⏳ Preparing…" : "⬇️ Excel"}
       </button>
@@ -253,12 +261,17 @@ export function ExportBar<T>({
         type="button"
         className={btnClass}
         disabled={!rows.length || downloading}
-        onClick={() => runSafely(() => Promise.resolve(downloadDoc(filenameBase, title, columns, fileRows)))}
+        onClick={() => runSafely(() => Promise.resolve(downloadDoc(filenameBase, title, exportColumns, fileRows)))}
       >
         ⬇️ Word
       </button>
       {printAreaId && (
-        <button type="button" className={btnClass} onClick={() => window.print()}>
+        <button
+          type="button"
+          className={btnClass}
+          onClick={() => printDocument({ areaId: printAreaId, orientation: "auto" })}
+          title="Prints / saves this report on A4 — landscape is picked automatically for wide tables"
+        >
           🖨️ PDF / Print
         </button>
       )}
