@@ -51,6 +51,7 @@ import { resyncDispatchSummary } from "@/lib/order-packages/resync-dispatch-summ
 import { logAudit } from "@/lib/audit/log-audit";
 import { groupBills } from "@/lib/bill-grouping";
 import { round2 } from "@/lib/round-off";
+import { apportionByWeight, nextGroupTotal } from "@/lib/ledger/apportion";
 import { resolveOrderByReference, sanitizeSearchTerm } from "@/lib/orders/find-order";
 // 2026-10-21 — the field-by-field diff written to the audit chain (pure, so it
 // is testable outside this server-action module).
@@ -2191,13 +2192,10 @@ export async function sendPurchaseBillInvoiceToFinance(
   }
 
   // Distribute what is still unbooked across the item rows that have no
-  // ledger row yet — last row absorbs the paise so the sum is EXACTLY the
-  // remaining figure (and the invoice total is exactly the approved one).
+  // ledger row yet. The split lives in one shared helper so an edit re-splits
+  // an existing group onto exactly the same paise (src/lib/ledger/apportion.ts).
   const rowTotals = unpostedRows.map((r) => Number(r.g_total_plus_gst ?? r.total_amount ?? 0));
-  const rawSum = Math.round(rowTotals.reduce((s, n) => s + n, 0) * 100) / 100;
-  const amounts = rowTotals.map((n) => (rawSum > 0 ? Math.round((n / rawSum) * remainingTotal * 100) / 100 : 0));
-  const drift = Math.round((remainingTotal - amounts.reduce((s, n) => s + n, 0)) * 100) / 100;
-  if (amounts.length > 0) amounts[amounts.length - 1] = Math.round((amounts[amounts.length - 1] + drift) * 100) / 100;
+  const amounts = apportionByWeight(rowTotals, remainingTotal);
 
   const invoiceType = purchaseInvoiceType((first as { bill_kind?: string | null }).bill_kind);
   let firstBprId: string | null = null;
@@ -2714,6 +2712,109 @@ export async function savePurchaseBillMultiItems(
   return { error: null, results };
 }
 
+// 2026-11-25 — an edit must re-SPLIT the invoice, never overwrite one row.
+//
+// A vendor invoice is booked as one bill_pass_register row per item, each
+// holding a proportional share of the invoice total (apportionByWeight). The
+// 2026-08-18 sync-back wrote the edited item's own g_total into its row, which
+// for a multi-item invoice replaced one share with a whole line value: the
+// group's payable moved by that difference and every sibling share was left
+// stale. These helpers read the group once (party + invoice no. + date, the
+// same identity the posting path uses) and re-split it after the save.
+
+type LedgerShare = { mirrorId: string; billId: string; weight: number; amount: number };
+type PurchaseBillGroupShares = { shares: LedgerShare[]; postedTotal: number; billSum: number };
+
+async function loadPurchaseBillGroupShares(
+  supabase: ServiceClient,
+  bill: { id: string; vendor_party_id: string | null; vendor_invoice_no: string | null; vendor_invoice_date: string | null }
+): Promise<PurchaseBillGroupShares | null> {
+  const invoiceNo = (bill.vendor_invoice_no ?? "").trim();
+  if (!invoiceNo || !bill.vendor_party_id) return null;
+
+  let query = supabase
+    .from("purchase_bills")
+    .select("id, g_total_plus_gst, total_amount")
+    .eq("vendor_party_id", bill.vendor_party_id)
+    .ilike("vendor_invoice_no", invoiceNo);
+  // Only when the date is known: an undated row could belong to another year.
+  if (bill.vendor_invoice_date) query = query.eq("vendor_invoice_date", bill.vendor_invoice_date);
+  const { data: bills } = await query;
+  if (!bills?.length) return null;
+
+  const weights = new Map(bills.map((b) => [b.id, Number(b.g_total_plus_gst ?? b.total_amount ?? 0)]));
+  const { data: mirrors } = await supabase
+    .from("bill_pass_register")
+    .select("id, source_id, total_amt, merged_into_bill_id")
+    .eq("source", "purchase_bill")
+    .in("source_id", bills.map((b) => b.id));
+  // A merged duplicate is audit-only (its amount was zeroed) and never a share.
+  const live = (mirrors ?? []).filter((m) => !m.merged_into_bill_id && m.source_id);
+  if (live.length === 0) return null;
+
+  return {
+    shares: live.map((m) => {
+      const billId = m.source_id as string;
+      return { mirrorId: m.id, billId, weight: weights.get(billId) ?? 0, amount: Number(m.total_amt ?? 0) };
+    }),
+    postedTotal: round2(live.reduce((s, m) => s + Number(m.total_amt ?? 0), 0)),
+    billSum: round2(bills.reduce((s, b) => s + Number(b.g_total_plus_gst ?? b.total_amount ?? 0), 0)),
+  };
+}
+
+async function syncPurchaseBillLedgerShares(
+  supabase: ServiceClient,
+  updated: {
+    id: string;
+    vendor_party_id: string | null;
+    vendor_invoice_no: string | null;
+    vendor_invoice_date: string | null;
+    g_total_plus_gst: number | null;
+    total_amount: number | null;
+  },
+  group: PurchaseBillGroupShares | null
+): Promise<void> {
+  const meta = {
+    party_id: updated.vendor_party_id,
+    vendor_invoice_no: updated.vendor_invoice_no,
+    invoice_date: updated.vendor_invoice_date,
+    invoice_recv_date: updated.vendor_invoice_date,
+  };
+  const ownTotal = Number(updated.g_total_plus_gst ?? updated.total_amount ?? 0);
+
+  // Nothing readable to group (no party/number, or the invoice was never in
+  // Finance): keep the single-row sync for the row we do know about.
+  if (!group) {
+    if (!updated.vendor_invoice_no) return;
+    await supabase
+      .from("bill_pass_register")
+      .update({ ...meta, total_amt: ownTotal })
+      .eq("source", "purchase_bill")
+      .eq("source_id", updated.id);
+    return;
+  }
+
+  const self = group.shares.find((share) => share.billId === updated.id);
+  if (!self) return; // this item was never posted, so it holds no share
+
+  const billSumAfter = round2(group.billSum - self.weight + ownTotal);
+  // A group already out of step with its bills keeps the reviewed total; the
+  // shares are re-split underneath it (see nextGroupTotal).
+  const target = nextGroupTotal({ postedTotal: group.postedTotal, billSumBefore: group.billSum, billSumAfter });
+  const weights = group.shares.map((share) => (share.billId === updated.id ? ownTotal : share.weight));
+  const amounts = apportionByWeight(weights, target);
+
+  for (let i = 0; i < group.shares.length; i++) {
+    const share = group.shares[i];
+    const isSelf = share.billId === updated.id;
+    if (!isSelf && round2(share.amount) === round2(amounts[i])) continue;
+    await supabase
+      .from("bill_pass_register")
+      .update(isSelf ? { ...meta, total_amt: amounts[i] } : { total_amt: amounts[i] })
+      .eq("id", share.mirrorId);
+  }
+}
+
 export async function updatePurchaseBill(_prev: DocEditState, formData: FormData): Promise<DocEditState> {
   const employee = await requireCapability("doc_entry");
   const supabase = createServiceRoleClient();
@@ -2793,6 +2894,11 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
   // migration not being run yet (retried without it below).
   const sizeMode = str(formData, "size_mode") === "as_billed" ? ("as_billed" as const) : ("area" as const);
 
+  // 2026-11-25 — snapshot the invoice group BEFORE the write. The re-split
+  // below needs the pre-edit bill total to tell a group that was in step with
+  // its bills from one that was already drifted (see nextGroupTotal).
+  const groupBeforeEdit = await loadPurchaseBillGroupShares(supabase, existingBill);
+
   let { data: updated, error } = await supabase
     .from("purchase_bills")
     .update({ ...nextValues, ...measurementColumns, size_mode: sizeMode })
@@ -2823,31 +2929,16 @@ export async function updatePurchaseBill(_prev: DocEditState, formData: FormData
     return { error: msg, success: false };
   }
 
-  // 2026-08-18 fix — "why to cannot update": editing a Purchase Bill (e.g.
-  // fixing qty/rate/GST) updated purchase_bills correctly, but the mirrored
-  // bill_pass_register row (source='purchase_bill') was NEVER re-synced, so
-  // Bill Payment / Party Ledger kept showing whatever total_amt was frozen
-  // at from the ORIGINAL save — looking like the edit silently did nothing.
-  // This is the exact "source discriminator" sync-back rule (see BRAIN.md
-  // §4) that every other mirrored-row edit path already follows; Purchase
-  // Bill's edit path was the one that never got it. Also carries
-  // vendor_party_id/vendor_invoice_no/invoice_date through in case those
-  // were changed too — matches what the ledger row should reflect either
-  // way. Missing mirror row (e.g. the original insert's Finance-ledger step
-  // failed, see savePurchaseBillCore) is not an error here — nothing to
-  // sync in that case, the bill just was never in Finance to begin with.
+  // 2026-08-18 / 2026-11-25 — "why to cannot update": an edited Purchase Bill
+  // must still reach Bill Payment, but through the INVOICE, not one row. The
+  // ledger rows are proportional shares of the invoice total, so writing this
+  // item's own g_total into its row would move the group's payable and leave
+  // every sibling share stale. syncPurchaseBillLedgerShares re-splits the whole
+  // group instead: a group in step with its bills follows the edit, a group
+  // already out of step keeps its reviewed total and only the shares move.
+  // Missing mirror row (the invoice was never in Finance) is not an error.
   if (updated) {
-    await supabase
-      .from("bill_pass_register")
-      .update({
-        total_amt: Number(updated.g_total_plus_gst ?? updated.total_amount ?? 0),
-        party_id: updated.vendor_party_id,
-        vendor_invoice_no: updated.vendor_invoice_no,
-        invoice_date: updated.vendor_invoice_date,
-        invoice_recv_date: updated.vendor_invoice_date,
-      })
-      .eq("source", "purchase_bill")
-      .eq("source_id", id);
+    await syncPurchaseBillLedgerShares(supabase, updated, groupBeforeEdit);
   }
 
   // 2026-10-21 — "edit history list admin ko poori chain dikhegi (kab kisne
