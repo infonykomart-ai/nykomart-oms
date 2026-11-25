@@ -16,6 +16,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+// 2026-11-25 — the WhatsApp status-message retry sweep rides on this job: the
+// plan has only two Vercel cron slots, so it reuses this one rather than adding
+// a third. Same shared sweep as /api/cron/whatsapp-status-retry.
+import { retryDueStatusMessages } from "@/lib/whatsapp/status-retry";
 import { createOrderCore } from "@/app/dashboard/orders/new/actions";
 import { decryptSecret } from "@/lib/crypto/secret-box";
 import { WooCommerceConnector } from "@/lib/connectors/woocommerce";
@@ -51,6 +55,16 @@ export async function GET(req: NextRequest) {
 
   const supabase = createServiceRoleClient();
   const summary: Array<{ storeId: string; created: number; skipped: number; error?: string }> = [];
+
+  // Runs FIRST and in its own try/catch: a slow or failing marketplace sync
+  // must never starve the retries, and a WhatsApp outage must never fail the
+  // sync. The budget keeps it well inside this route's 60s cap.
+  let whatsappRetries: Awaited<ReturnType<typeof retryDueStatusMessages>> | { error: string };
+  try {
+    whatsappRetries = await retryDueStatusMessages(supabase, { batch: 10, budgetMs: 20_000 });
+  } catch (error) {
+    whatsappRetries = { error: error instanceof Error ? error.message : String(error) };
+  }
 
   const { data: credentials, error: credError } = await supabase
     .from("marketplace_credentials")
@@ -210,5 +224,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ summary });
+  return NextResponse.json({ summary, whatsappRetries });
 }

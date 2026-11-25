@@ -80,7 +80,7 @@ export async function POST(request: Request) {
       maxOutputTokens: 2048,
       config: managerConfig(context.settings),
       parse: (text) => parseCompetitorOutput(text),
-      onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id }, log),
+      onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id, languageCode: targetLanguage.code }, log),
     });
 
     const { data: saved, error } = await supabase

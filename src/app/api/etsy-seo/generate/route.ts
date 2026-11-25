@@ -129,7 +129,7 @@ export async function POST(request: Request) {
       temperature: 0.6,
       config: managerConfig(context.settings),
       parse: (text) => parseListingOutput(text, { field, imageCount: 0 }),
-      onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id }, log),
+      onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id, languageCode: language.code }, log),
     });
 
     const generated = result.data;

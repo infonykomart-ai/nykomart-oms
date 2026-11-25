@@ -43,12 +43,17 @@ export function OrderHoldCancelActions({
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
   }
 
+  // 2026-11-25 — Hold and Cancel used to open a wa.me window for a staff
+  // member to send by hand, with the reference typed in front. The status
+  // change now sends the customer message itself ("Hold this order PO-…" /
+  // "Cancel This Order PO-…", see lib/whatsapp/order-status-notify.ts), so
+  // opening a second, differently-worded message would send it twice.
   function handleHold() {
     setError(null);
     startTransition(async () => {
       const result = await holdOrder(order.id);
       if (result.error) setError(result.error);
-      else openWhatsApp(`${order.ref_no} Hold this order`);
+      else setSavedNote(`Order put on hold — WhatsApp message to the customer queued.`);
     });
   }
 
@@ -58,7 +63,7 @@ export function OrderHoldCancelActions({
       const result = await cancelOrder(order.id);
       if (result.error) setError(result.error);
       else {
-        openWhatsApp(`${order.ref_no} Cancel this order`);
+        setSavedNote("Order cancelled — WhatsApp message to the customer queued.");
         setShowRefundForm(true);
       }
     });

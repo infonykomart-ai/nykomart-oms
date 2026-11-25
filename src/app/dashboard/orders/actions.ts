@@ -20,6 +20,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { randomUUID } from "node:crypto";
 import { sendOrderReferencePhotos } from "@/lib/whatsapp/reference-photos-send";
+import { notifyOrderStatusChange } from "@/lib/whatsapp/order-status-notify";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -270,6 +271,21 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
     }
   }
 
+  // 2026-11-25 — automatic WhatsApp status message (Hold / Cancelled /
+  // In Production). Runs AFTER the response, exactly like the reference-photo
+  // automation below: the order save must never wait on WhatsApp, and a
+  // provider outage must never fail the edit. The helper writes its log row
+  // first, skips a save that did not actually change the status, validates the
+  // customer number, and schedules a retry when the provider is down.
+  after(async () => {
+    await notifyOrderStatusChange(supabase, {
+      orderId,
+      fromStatus: existing.status,
+      toStatus: nextStatus || existing.status,
+      actorEmployeeId: employee.id,
+    });
+  });
+
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/orders/new");
   revalidatePath(`/dashboard/orders/${orderId}`);
@@ -394,7 +410,11 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: order } = await supabase.from("orders").select("id, company_id, invoice_id").eq("id", orderId).single();
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, company_id, invoice_id, status")
+    .eq("id", orderId)
+    .single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
@@ -404,6 +424,18 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
 
   const { error } = await supabase.from("orders").update({ status: "Hold" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
+
+  // 2026-11-25 — the Hold WhatsApp message ("Hold this order PO-…"). Every
+  // status write goes through the same helper, so the rules cannot drift
+  // between the Hold button, Cancel and the edit form.
+  after(async () => {
+    await notifyOrderStatusChange(supabase, {
+      orderId,
+      fromStatus: order.status,
+      toStatus: "Hold",
+      actorEmployeeId: employee.id,
+    });
+  });
 
   // Phase 4 — a held order no longer needs its stock promised.
   try {
@@ -428,13 +460,27 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
   const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { data: order } = await supabase.from("orders").select("id, company_id").eq("id", orderId).single();
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, company_id, status")
+    .eq("id", orderId)
+    .single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
   const { error } = await supabase.from("orders").update({ status: "Cancelled" }).eq("id", orderId);
   if (error) return { error: error.message, success: false };
+
+  // 2026-11-25 — the Cancel WhatsApp message ("Cancel This Order PO-…").
+  after(async () => {
+    await notifyOrderStatusChange(supabase, {
+      orderId,
+      fromStatus: order.status,
+      toStatus: "Cancelled",
+      actorEmployeeId: employee.id,
+    });
+  });
 
   // Phase 4 — release the cancelled order's reservation and open requirements.
   try {

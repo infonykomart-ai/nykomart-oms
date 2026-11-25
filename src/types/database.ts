@@ -8836,57 +8836,162 @@ export type Database = {
           },
         ];
       };
+      // 2026-11-25 — automatic WhatsApp order-status message settings, one
+      // row per company (db/2026-11-25-whatsapp-order-status.sql).
+      company_whatsapp_settings: {
+        Row: {
+          company_id: string;
+          auto_status_enabled: boolean;
+          hold_enabled: boolean;
+          cancel_enabled: boolean;
+          process_enabled: boolean;
+          hold_template: string;
+          cancel_template: string;
+          process_template: string;
+          updated_by_employee_id: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          company_id: string;
+          auto_status_enabled?: boolean;
+          hold_enabled?: boolean;
+          cancel_enabled?: boolean;
+          process_enabled?: boolean;
+          hold_template?: string;
+          cancel_template?: string;
+          process_template?: string;
+          updated_by_employee_id?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          company_id?: string;
+          auto_status_enabled?: boolean;
+          hold_enabled?: boolean;
+          cancel_enabled?: boolean;
+          process_enabled?: boolean;
+          hold_template?: string;
+          cancel_template?: string;
+          process_template?: string;
+          updated_by_employee_id?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "company_whatsapp_settings_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: true;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       order_whatsapp_messages: {
         Row: {
           id: string;
           company_id: string | null;
           order_id: string;
           order_reference: string;
-          message_type: "reference_photo" | "order_update";
+          message_type: "reference_photo" | "order_update" | "order_status";
           event_id: string;
           message_text: string | null;
           attachment_photo_ids: string[];
           whatsapp_message_ids: string[];
-          delivery_status: "pending" | "sent" | "partial" | "failed" | "skipped";
+          delivery_status:
+            | "queued"
+            | "pending"
+            | "processing"
+            | "sent"
+            | "partial"
+            | "delivered"
+            | "read"
+            | "failed"
+            | "skipped";
           error_message: string | null;
           retry_count: number;
           created_by_employee_id: string | null;
           created_at: string;
           sent_at: string | null;
+          // 2026-11-25 — 1:1 customer status messages. See
+          // db/2026-11-25-whatsapp-order-status.sql.
+          customer_phone: string | null;
+          previous_status: string | null;
+          new_status: string | null;
+          provider: string;
+          provider_message_id: string | null;
+          delivered_at: string | null;
+          read_at: string | null;
+          next_attempt_at: string | null;
+          last_attempt_at: string | null;
         };
         Insert: {
           id?: string;
           company_id?: string | null;
           order_id: string;
           order_reference: string;
-          message_type?: "reference_photo" | "order_update";
+          message_type?: "reference_photo" | "order_update" | "order_status";
           event_id: string;
           message_text?: string | null;
           attachment_photo_ids?: string[];
           whatsapp_message_ids?: string[];
-          delivery_status?: "pending" | "sent" | "partial" | "failed" | "skipped";
+          delivery_status?:
+            | "queued"
+            | "pending"
+            | "processing"
+            | "sent"
+            | "partial"
+            | "delivered"
+            | "read"
+            | "failed"
+            | "skipped";
           error_message?: string | null;
           retry_count?: number;
           created_by_employee_id?: string | null;
           created_at?: string;
           sent_at?: string | null;
+          customer_phone?: string | null;
+          previous_status?: string | null;
+          new_status?: string | null;
+          provider?: string;
+          provider_message_id?: string | null;
+          delivered_at?: string | null;
+          read_at?: string | null;
+          next_attempt_at?: string | null;
+          last_attempt_at?: string | null;
         };
         Update: {
           id?: string;
           company_id?: string | null;
           order_id?: string;
           order_reference?: string;
-          message_type?: "reference_photo" | "order_update";
+          message_type?: "reference_photo" | "order_update" | "order_status";
           event_id?: string;
           message_text?: string | null;
           attachment_photo_ids?: string[];
           whatsapp_message_ids?: string[];
-          delivery_status?: "pending" | "sent" | "partial" | "failed" | "skipped";
+          delivery_status?:
+            | "queued"
+            | "pending"
+            | "processing"
+            | "sent"
+            | "partial"
+            | "delivered"
+            | "read"
+            | "failed"
+            | "skipped";
           error_message?: string | null;
           retry_count?: number;
           created_by_employee_id?: string | null;
           created_at?: string;
           sent_at?: string | null;
+          customer_phone?: string | null;
+          previous_status?: string | null;
+          new_status?: string | null;
+          provider?: string;
+          provider_message_id?: string | null;
+          delivered_at?: string | null;
+          read_at?: string | null;
+          next_attempt_at?: string | null;
+          last_attempt_at?: string | null;
         };
         Relationships: [
           {
@@ -11216,6 +11321,12 @@ export type Database = {
           ad_revenue_usd: number | null;
           entry_by_employee_id: string;
           updated_at: string;
+          // 2026-11-25 — creation facts + soft delete. See
+          // db/2026-11-25-ad-spend-entry-audit.sql.
+          created_at: string | null;
+          created_by_employee_id: string | null;
+          deleted_at: string | null;
+          deleted_by_employee_id: string | null;
         };
         Insert: {
           id?: string;
@@ -11237,6 +11348,10 @@ export type Database = {
           ad_revenue_usd?: number | null;
           entry_by_employee_id: string;
           updated_at?: string;
+          created_at?: string | null;
+          created_by_employee_id?: string | null;
+          deleted_at?: string | null;
+          deleted_by_employee_id?: string | null;
         };
         Update: {
           id?: string;
@@ -11257,6 +11372,10 @@ export type Database = {
           ad_revenue_usd?: number | null;
           entry_by_employee_id?: string;
           updated_at?: string;
+          created_at?: string | null;
+          created_by_employee_id?: string | null;
+          deleted_at?: string | null;
+          deleted_by_employee_id?: string | null;
         };
         Relationships: [
           {

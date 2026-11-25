@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       maxOutputTokens: 2048,
       config: managerConfig(context.settings),
       parse: (text) => parseKeywordOutput(text),
-      onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id }, log),
+      onAttempt: (log) => recordUsage(supabase, { companyId: project.company_id, projectId: project.id, employeeId: me.id, languageCode: language.code }, log),
     });
 
     let records: KeywordRecord[] = recordsFromAiGroups(result.data as unknown as Record<string, string[]>, language);

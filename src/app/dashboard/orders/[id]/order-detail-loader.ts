@@ -180,6 +180,18 @@ export async function loadOrderDetail(id: string) {
     .limit(1)
     .maybeSingle();
 
+  // 2026-11-25 — newest automatic order-status WhatsApp message. Read
+  // tolerantly like the reference-photo log above: a database without
+  // db/2026-11-25-whatsapp-order-status.sql simply shows no line here.
+  const { data: statusMessage, error: statusMessageError } = await supabase
+    .from("order_whatsapp_messages")
+    .select("delivery_status, new_status, created_at, error_message")
+    .eq("order_id", id)
+    .eq("message_type", "order_status")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   return {
     order,
     companyName: company?.name ?? "",
@@ -260,6 +272,8 @@ export async function loadOrderDetail(id: string) {
     // after the main photo (see src/lib/whatsapp/reference-photos.ts).
     closeUpPhotoCount: extractCloseUpPhotoUrls(order).length,
     referencePhotoLog: referencePhotoLogError || !referencePhotoLog ? null : referencePhotoLog,
+    /** Newest automatic status message (Hold / Cancel / Process), if any. */
+    statusMessage: statusMessageError || !statusMessage ? null : statusMessage,
     refunds: (refunds ?? []).map((r) => ({ ...r, refund_amount: Number(r.refund_amount) })),
     currencies: currencies ?? [],
   };

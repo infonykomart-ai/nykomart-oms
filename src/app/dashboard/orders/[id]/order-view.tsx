@@ -5,6 +5,7 @@ import type { VendorAssignmentCycle } from "../vendor-assignment-actions";
 import { VendorAssignmentSection } from "./vendor-assignment-section";
 import { RefundEntryActions } from "@/app/dashboard/returns/refund-entry-actions";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
+import { formatIST } from "@/lib/format-ist";
 import { FlagErrorButton } from "./flag-error-button";
 import { ShippingDetailsForm } from "./shipping-details-form";
 import { OrderHoldCancelActions } from "../order-hold-cancel-actions";
@@ -27,6 +28,18 @@ import {
 // hand-rolled version predates PrintArea/PrintButton being pulled out into
 // a shared component; every printable view built since reuses the shared
 // pair instead of re-copying the CSS block again.
+/** Plain-English delivery states for the automatic status messages. */
+const statusLabels: Record<string, string> = {
+  queued: "Queued",
+  pending: "Pending",
+  processing: "Sending",
+  sent: "Sent",
+  delivered: "Delivered",
+  read: "Read",
+  failed: "Failed",
+  skipped: "Not sent",
+};
+
 export type Order = {
   id: string;
   ref_no: string;
@@ -517,6 +530,7 @@ export function OrderView({
   refunds = [],
   currencies = [],
   referencePhotoLog = null,
+  statusMessage = null,
   embedded = false,
 }: {
   order: Order;
@@ -565,6 +579,13 @@ export function OrderView({
   canManageOrders?: boolean;
   /** 2026-11-20 — newest WhatsApp reference-photo delivery attempt. */
   referencePhotoLog?: ReferencePhotoLogView | null;
+  /** 2026-11-25 — newest automatic order-status WhatsApp message. */
+  statusMessage?: {
+    delivery_status: string;
+    new_status: string | null;
+    created_at: string;
+    error_message: string | null;
+  } | null;
   /** Already-recorded refunds for this order, newest first. */
   refunds?: OrderRefund[];
   currencies?: { code: string; name: string }[];
@@ -627,6 +648,33 @@ export function OrderView({
             hasExistingRefund={refunds.length > 0}
             currencies={currencies}
           />
+        </div>
+      )}
+
+      {/* 2026-11-25 — "Display the message status in the Order Details
+          page": the last automatic status WhatsApp message, with the reason
+          when it did not go out. Screen-only, like every other side panel. */}
+      {statusMessage && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs print:hidden">
+          <span className="font-semibold text-slate-700">💬 Customer WhatsApp</span>
+          <span
+            className={`rounded-full px-2 py-0.5 font-medium ${
+              statusMessage.delivery_status === "read" || statusMessage.delivery_status === "delivered"
+                ? "bg-green-100 text-green-800"
+                : statusMessage.delivery_status === "sent"
+                  ? "bg-sky-100 text-sky-800"
+                  : statusMessage.delivery_status === "failed"
+                    ? "bg-red-100 text-red-700"
+                    : "bg-amber-100 text-amber-800"
+            }`}
+          >
+            {statusLabels[statusMessage.delivery_status] ?? statusMessage.delivery_status}
+          </span>
+          {statusMessage.new_status && <span className="text-slate-600">“{statusMessage.new_status}” message</span>}
+          <span className="text-slate-400">{formatIST(statusMessage.created_at)}</span>
+          {statusMessage.error_message && (
+            <span className="text-red-600">{statusMessage.error_message}</span>
+          )}
         </div>
       )}
 
