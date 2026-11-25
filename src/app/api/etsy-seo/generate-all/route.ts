@@ -578,8 +578,9 @@ export async function POST(request: Request) {
       return updates;
     };
 
-    // Alt text is needed for any saved listing that does not have one text per
-    // photo yet — a fully cached run does not pay for vision calls again.
+    // Alt text is needed only for a saved listing that does not have one text per
+    // photo yet. A forced regeneration keeps the previous alt texts (generate()
+    // carries them over), so forcing alone must NOT trigger another vision pass.
     const anyListingMissingAltText = images.length > 0 && ETSY_LANGUAGES.some((language) => {
       const row = existingByCode.get(language.code);
       const count = Array.isArray(row?.alt_texts) ? (row!.alt_texts as unknown[]).length : 0;
@@ -596,10 +597,9 @@ export async function POST(request: Request) {
         research,
         generate,
         save,
-        altText:
-          images.length > 0 && (anyListingMissingAltText || (forceCodes.size > 0 && images.length > 0))
-            ? { imageCount: images.length, generate: generateAltText, merge: mergeAltTexts }
-            : undefined,
+        altText: anyListingMissingAltText
+          ? { imageCount: images.length, generate: generateAltText, merge: mergeAltTexts }
+          : undefined,
         emit: (event) => {
           if (event.type === "language") {
             progress[event.languageCode] = event.status === "completed" || event.status === "cached" ? "completed" : event.status;
@@ -611,6 +611,12 @@ export async function POST(request: Request) {
       });
     } catch (error) {
       await persistJob({ status: "failed", error_message: errorMessage(error), completed_at: new Date().toISOString() });
+      // A crashed run must not leave the project flagged `running`, or every
+      // reload would resume-poll a run that is no longer alive.
+      await supabase
+        .from("etsy_seo_projects")
+        .update({ generation_status: "failed", updated_at: new Date().toISOString() })
+        .eq("id", project.id);
       throw error;
     }
 
@@ -632,7 +638,12 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     };
     if (finished) projectPatch.source_hash = hash;
-    await supabase.from("etsy_seo_projects").update(projectPatch).eq("id", project.id);
+    let projectUpdate = await supabase.from("etsy_seo_projects").update(projectPatch).eq("id", project.id);
+    if (projectUpdate.error && /source_hash/i.test(projectUpdate.error.message)) {
+      // Migration not applied: keep the status write, drop only the hash column.
+      const { source_hash: _unusedHash, ...withoutHash } = projectPatch;
+      projectUpdate = await supabase.from("etsy_seo_projects").update(withoutHash).eq("id", project.id);
+    }
   });
 }
 
