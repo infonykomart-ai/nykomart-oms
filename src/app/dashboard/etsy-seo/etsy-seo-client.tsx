@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addSeoCategory, deleteSeoProject, saveListingEdits, saveSeoProject, uploadSeoImage } from "./actions";
 import type { EtsyLanguage } from "@/lib/etsy/languages";
-import { PRODUCT_FIELDS } from "@/lib/etsy/product";
 import { charCount, formatTags, parseTags, REQUIRED_TAG_COUNT, TAG_MAX_CHARS, TITLE_MAX_CHARS, validateTags, validateTitle } from "@/lib/etsy/validation";
 import type { ValidationReport } from "@/lib/etsy/seo-validation";
 import type { ResearchAdapterInfo } from "@/lib/etsy/research";
@@ -89,6 +88,85 @@ type CompetitorRow = {
 };
 
 type Draft = { title: string; description: string; tags: string; altTexts: Array<{ image: number; text: string }>; dirty: boolean };
+
+/** One market's live state during a streaming generation run. */
+type LanguageRun = {
+  status: "queued" | "running" | "completed" | "cached" | "failed";
+  score?: number | null;
+  durationMs?: number;
+  error?: string;
+};
+
+const RUN_STATUS_LABEL: Record<LanguageRun["status"], string> = {
+  queued: "Pending",
+  running: "Processing",
+  completed: "Completed",
+  cached: "Cached",
+  failed: "Failed",
+};
+
+const RUN_STATUS_CLASS: Record<LanguageRun["status"], string> = {
+  queued: "border-slate-200 bg-slate-50 text-slate-600",
+  running: "border-sky-200 bg-sky-50 text-sky-700",
+  completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  cached: "border-indigo-200 bg-indigo-50 text-indigo-700",
+  failed: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+function runBadge(status: LanguageRun["status"]) {
+  return `inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${RUN_STATUS_CLASS[status]}`;
+}
+
+/** Events streamed by POST /api/etsy-seo/generate-all (Server-Sent Events). */
+type GenerationEvent =
+  | { type: "started"; languageCodes: string[]; concurrency: number }
+  | { type: "keywords"; status: "running" | "completed" | "cached" | "failed"; languageCodes?: string[]; durationMs?: number; missing?: string[]; error?: string }
+  | {
+      type: "language";
+      languageCode: string;
+      status: LanguageRun["status"];
+      durationMs?: number;
+      score?: number | null;
+      validationStatus?: string;
+      listing?: SeoListingRecord;
+      error?: string;
+    }
+  | {
+      type: "alt_text";
+      status: "running" | "completed" | "failed";
+      images?: number;
+      done?: number;
+      updated?: Array<{ languageCode: string; altTexts: Array<{ image: number; text: string }>; validationStatus: string; score: number | null }>;
+      error?: string;
+    }
+  | { type: "done"; summary: { generated: number; cached: number; failed: string[]; durationMs: number; keywordSource: string } }
+  | { type: "error"; error: string; fix?: string; code?: string };
+
+/** Read SSE frames from a fetch body, ignoring keep-alive comments. */
+async function readEventStream(body: ReadableStream<Uint8Array>, onEvent: (event: GenerationEvent) => void): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
+      if (dataLine) {
+        try {
+          onEvent(JSON.parse(dataLine.slice(5).trim()) as GenerationEvent);
+        } catch {
+          /* a partial frame or heartbeat comment — the next read completes it */
+        }
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+}
 
 // Three steps + settings. Product facts, images, keyword research, validation
 // and export all still exist — they are grouped so the page reads as one short
@@ -186,6 +264,7 @@ export function EtsySeoClient({
   const [keywords] = useState<KeywordRow[]>(initialKeywords);
   const [competitors] = useState<CompetitorRow[]>(initialCompetitors);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [runs, setRuns] = useState<Record<string, LanguageRun>>({});
   const [activeLanguage, setActiveLanguage] = useState(languages[0]?.code ?? "nl");
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -212,8 +291,21 @@ export function EtsySeoClient({
 
   function resetDrafts() {
     setDrafts({});
+    setRuns({});
     setError(null);
     setNotice(null);
+    setProgress(null);
+  }
+
+  /** The five mandatory inputs — the only fields the first page shows. */
+  function requiredMissing(): string[] {
+    return [
+      !form.project_name.trim() ? "project name" : null,
+      !form.category ? "category" : null,
+      !form.original_title.trim() ? "English product title" : null,
+      !form.original_description.trim() ? "existing English description" : null,
+      !form.original_tags.trim() ? "existing English tags" : null,
+    ].filter((value): value is string => !!value);
   }
 
   function chooseProject(project: SeoProjectRecord) {
@@ -236,9 +328,6 @@ export function EtsySeoClient({
     setForm((prev) => ({ ...prev, ...patch }));
   }
 
-  function patchFact(key: string, value: string) {
-    setForm((prev) => ({ ...prev, product: { ...prev.product, [key]: value } }));
-  }
 
   async function saveProject() {
     setBusy("save-project");
@@ -373,28 +462,198 @@ export function EtsySeoClient({
     return result;
   }
 
-  async function generateAll() {
-    if (!selectedId) {
+  /** Apply one streamed pipeline event to local state, immediately. */
+  function handleGenerationEvent(event: GenerationEvent) {
+    if (event.type === "started") {
+      setProgress(`Generation started — ${event.languageCodes.length} languages in parallel, up to ${event.concurrency} at a time.`);
+      return;
+    }
+    if (event.type === "keywords") {
+      if (event.status === "running") setProgress(`Researching keywords once for ${event.languageCodes?.length ?? 0} market(s)…`);
+      else if (event.status === "completed") setProgress(`Keyword research ready for ${event.languageCodes?.length ?? 0} market(s) — writing localized listings…`);
+      else if (event.status === "cached") setProgress("Source unchanged — reusing the stored keyword research.");
+      else setError(`Keyword research failed, generating from the product source instead: ${event.error ?? "unknown error"}`);
+      return;
+    }
+    if (event.type === "language") {
+      const { languageCode, status } = event;
+      setRuns((prev) => ({
+        ...prev,
+        [languageCode]: { status, score: event.score ?? prev[languageCode]?.score, durationMs: event.durationMs, error: event.error },
+      }));
+      if (event.listing) {
+        const listing = event.listing;
+        upsertListing(listing);
+        setDrafts((prev) => {
+          const next = { ...prev };
+          delete next[listing.id];
+          return next;
+        });
+      }
+      const name = languages.find((language) => language.code === languageCode)?.name ?? languageCode;
+      if (status === "completed" || status === "cached") {
+        setNotice(
+          status === "cached"
+            ? `${name}: reused — the English source has not changed.`
+            : `${name}: ${(event.validationStatus ?? "ready").toUpperCase()} · score ${event.score ?? "—"} · ${((event.durationMs ?? 0) / 1000).toFixed(1)}s`
+        );
+      }
+      if (status === "failed") setError(`${name}: ${event.error ?? "generation failed"}`);
+      return;
+    }
+    if (event.type === "alt_text") {
+      if (event.status === "running") setProgress(`Writing image alt text for all 10 languages (${event.done ?? 0}/${event.images ?? 0} images)…`);
+      if (event.status === "completed" && event.updated?.length) {
+        const updated = event.updated;
+        setListings((prev) =>
+          prev.map((listing) => {
+            const change = updated.find((entry) => entry.languageCode === listing.language_code);
+            return change && listing.project_id === selectedId
+              ? { ...listing, alt_texts: change.altTexts, validation_status: change.validationStatus, seo_score: change.score ?? listing.seo_score }
+              : listing;
+          })
+        );
+        setNotice(`Image alt text added to ${updated.length} language(s).`);
+      }
+      if (event.status === "failed") setNotice(`Image alt text: ${event.error ?? "could not be generated"}`);
+      return;
+    }
+    if (event.type === "done") {
+      const summary = event.summary;
+      setProgress(null);
+      setNotice(
+        `Finished in ${(summary.durationMs / 1000).toFixed(1)}s — ${summary.generated} generated, ${summary.cached} reused` +
+          `${summary.failed.length ? `, ${summary.failed.length} failed` : ""}. Keywords: ${summary.keywordSource}.`
+      );
+      if (summary.failed.length > 0) setError(`Not generated: ${summary.failed.join(", ")}. Retry those languages — the finished ones are kept.`);
+      return;
+    }
+    if (event.type === "error") setError(event.fix ? `${event.error}\nFix: ${event.fix}` : event.error);
+  }
+
+  /**
+   * Start a streaming run. `codes` limits + forces a retry of exactly those
+   * markets; without it the whole ten-language set runs (cache still applies).
+   * Results appear as each language settles, so nothing waits for the slowest.
+   */
+  async function startGeneration(codes?: string[], projectIdOverride?: string) {
+    const projectId = projectIdOverride ?? selectedId;
+    if (!projectId) {
       setError("Save the project first.");
       return;
     }
+    const target = codes ?? languages.map((language) => language.code);
+    setStep("generate");
     setBusy("generate-all");
     setError(null);
-    const failed: string[] = [];
-    for (let i = 0; i < languages.length; i++) {
-      const language = languages[i];
-      setProgress(`${i + 1}/${languages.length} — ${language.name}`);
-      try {
-        await generateOne(language.code);
-      } catch (err) {
-        failed.push(`${language.name}: ${err instanceof Error ? err.message : String(err)}`);
+    setNotice(null);
+    setProgress(codes ? `Retrying ${target.length} language(s)…` : "Starting generation…");
+    setRuns((prev) => {
+      const next = { ...prev };
+      for (const code of target) next[code] = { status: "queued" };
+      return next;
+    });
+
+    try {
+      const response = await fetch("/api/etsy-seo/generate-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, languages: codes, force: !!codes }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string; fix?: string };
+        throw new Error(errorText(data, `Generation failed (${response.status}).`));
       }
+      if (!response.body) throw new Error("This browser cannot stream generation results.");
+      await readEventStream(response.body, handleGenerationEvent);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+      setProgress(null);
+      startTransition(() => router.refresh());
     }
-    setProgress(null);
-    setBusy(null);
-    if (failed.length > 0) setError(`${languages.length - failed.length}/${languages.length} generated. Failed → ${failed.join(" | ")}`);
-    startTransition(() => router.refresh());
   }
+
+  /** Save the five fields, then start the run without a second click. */
+  async function generateFromForm() {
+    const missingNow = requiredMissing();
+    if (missingNow.length > 0) {
+      setError(`Fill the required fields: ${missingNow.join(", ")}.`);
+      return;
+    }
+    setBusy("save-project");
+    setError(null);
+    setNotice(null);
+    let projectId = form.id;
+    try {
+      const result = await saveSeoProject({
+        id: form.id || undefined,
+        sku: form.sku ?? undefined,
+        projectName: form.project_name,
+        category: form.category ?? undefined,
+        englishTitle: form.original_title,
+        englishDescription: form.original_description,
+        englishTags: form.original_tags,
+        product: form.product,
+        images: form.images,
+      });
+      if (!result.ok || !result.data) throw new Error(result.error ?? "Save failed.");
+      projectId = result.data.id;
+      setSelectedId(projectId);
+      setCreating(false);
+      setForm((prev) => ({ ...prev, id: projectId }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(null);
+      return;
+    }
+    setBusy(null);
+    await startGeneration(undefined, projectId);
+  }
+
+  // Returning to a project whose run is still in progress: show the real
+  // per-language state from the server (completed markets are already saved).
+  useEffect(() => {
+    if (!selectedId) return;
+    const project = projects.find((entry) => entry.id === selectedId);
+    if (!project || project.generation_status !== "running") return;
+    let cancelled = false;
+    void (async () => {
+      for (let attempt = 0; attempt < 40 && !cancelled; attempt++) {
+        try {
+          const response = await fetch(`/api/etsy-seo/generate-all?projectId=${selectedId}`);
+          if (!response.ok) return;
+          const data = (await response.json()) as {
+            ok: boolean;
+            job?: { status: string } | null;
+            languages: Array<{ languageCode: string; status: string; score: number | null }>;
+          };
+          if (cancelled || !data.ok) return;
+          setRuns((prev) => {
+            const next = { ...prev };
+            for (const row of data.languages) {
+              next[row.languageCode] = {
+                status: row.status as LanguageRun["status"],
+                score: row.score ?? prev[row.languageCode]?.score,
+              };
+            }
+            return next;
+          });
+          if (data.job?.status !== "running") {
+            startTransition(() => router.refresh());
+            return;
+          }
+        } catch {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, projects, router]);
 
   async function regenerateField(languageCode: string, field: "title" | "description" | "tags") {
     setBusy(`regen-${languageCode}-${field}`);
@@ -570,6 +829,12 @@ export function EtsySeoClient({
     total: projectKeywords.filter((k) => k.language_code === language.code).length,
     verified: projectKeywords.filter((k) => k.language_code === language.code && k.verified).length,
   }));
+  const failedCodes = languages.filter((language) => runs[language.code]?.status === "failed").map((language) => language.code);
+  const readyCount = languages.filter((language) => {
+    const status = runs[language.code]?.status;
+    return status === "completed" || status === "cached";
+  }).length;
+  const missingFields = requiredMissing();
 
   return (
     <div className="space-y-4">
@@ -664,23 +929,26 @@ export function EtsySeoClient({
         ))}
       </div>
 
-      {/* PRODUCT */}
+      {/* PRODUCT — exactly five mandatory fields */}
       {step === "product" && (
         <section className={`${cardClass} space-y-4`}>
-          <h2 className="text-sm font-bold text-slate-900">{form.id ? "Product information" : "New SEO project"}</h2>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">{form.id ? "Product information" : "New SEO project"}</h2>
+            <p className="mt-1 text-xs text-slate-600">
+              Five fields. Keyword research, the ten localized titles, descriptions, exactly 13 tags per language and image
+              alt text are all generated automatically.
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
             <label className="block">
               <span className={labelClass}>Project name *</span>
-              <input className={inputClass} value={form.project_name} onChange={(e) => patchForm({ project_name: e.target.value })} />
+              <input className={inputClass} value={form.project_name} onChange={(e) => patchForm({ project_name: e.target.value })} placeholder="Cotton block-print rug" />
             </label>
             <label className="block">
-              <span className={labelClass}>SKU</span>
-              <input className={inputClass} value={form.sku ?? ""} onChange={(e) => patchForm({ sku: e.target.value })} />
-            </label>
-            <label className="block">
-              <span className={labelClass}>Category</span>
+              <span className={labelClass}>Category *</span>
               <select className={inputClass} value={form.category ?? ""} onChange={(e) => patchForm({ category: e.target.value })}>
-                <option value="">Not set</option>
+                <option value="">Select a category</option>
                 {categories.map((name) => (
                   <option key={name} value={name}>
                     {name}
@@ -688,60 +956,49 @@ export function EtsySeoClient({
                 ))}
               </select>
             </label>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
             <label className="block md:col-span-2">
-              <span className={labelClass}>English product title * (the protected source)</span>
+              <span className={labelClass}>English product title * — protected source, never rewritten</span>
               <input className={inputClass} value={form.original_title} onChange={(e) => patchForm({ original_title: e.target.value })} />
+              <span className="mt-1 block text-[11px] text-slate-500">Kept exactly as typed. Localized titles are generated separately in each language.</span>
             </label>
             <label className="block">
-              <span className={labelClass}>Existing English description</span>
-              <textarea className={`${inputClass} h-32`} value={form.original_description} onChange={(e) => patchForm({ original_description: e.target.value })} />
+              <span className={labelClass}>Existing English description *</span>
+              <textarea className={`${inputClass} h-36`} value={form.original_description} onChange={(e) => patchForm({ original_description: e.target.value })} />
             </label>
             <label className="block">
-              <span className={labelClass}>Existing English tags</span>
-              <textarea className={`${inputClass} h-32`} value={form.original_tags} onChange={(e) => patchForm({ original_tags: e.target.value })} />
+              <span className={labelClass}>Existing English tags *</span>
+              <textarea className={`${inputClass} h-36`} value={form.original_tags} onChange={(e) => patchForm({ original_tags: e.target.value })} placeholder="cotton rug, block print rug, handmade rug" />
             </label>
           </div>
 
-          <div>
-            <p className="mb-2 text-xs font-semibold text-slate-700">Product facts — optional, never invented by the AI</p>
-            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-              {PRODUCT_FIELDS.map((field) => (
-                <label key={field.key} className="block">
-                  <span className={labelClass}>{field.label}</span>
-                  {field.multiline ? (
-                    <textarea className={`${inputClass} h-20`} value={form.product[field.key] ?? ""} placeholder={field.placeholder} onChange={(e) => patchFact(field.key, e.target.value)} />
-                  ) : (
-                    <input className={inputClass} value={form.product[field.key] ?? ""} placeholder={field.placeholder} onChange={(e) => patchFact(field.key, e.target.value)} />
-                  )}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={saveProject} disabled={busy !== null} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
-              {busy === "save-project" ? "Saving…" : form.id ? "Save changes" : "Create project"}
-            </button>
-            <AddCategory onAdd={async (name) => {
-              const result = await addSeoCategory(name);
-              if (!result.ok) setError(result.error ?? "Could not add category.");
-              else {
-                setNotice(`Category "${name}" added.`);
-                startTransition(() => router.refresh());
-              }
-            }} />
-            <span className="text-xs text-slate-500">Empty optional fields are fine — generation still works.</span>
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
             <button
               type="button"
-              onClick={() => setStep("generate")}
-              disabled={!form.id || busy !== null}
-              className="ml-auto rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              onClick={generateFromForm}
+              disabled={busy !== null || missingFields.length > 0}
+              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
             >
-              Next: generate →
+              {busy === "save-project" ? "Saving…" : busy === "generate-all" ? "Generating…" : "Generate all 10 languages"}
             </button>
+            <button type="button" onClick={saveProject} disabled={busy !== null || missingFields.length > 0} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              {form.id ? "Save only" : "Save draft"}
+            </button>
+            <details className="text-xs text-slate-600">
+              <summary className="cursor-pointer font-semibold">Add a category</summary>
+              <AddCategory
+                onAdd={async (name) => {
+                  const result = await addSeoCategory(name);
+                  if (!result.ok) setError(result.error ?? "Could not add category.");
+                  else {
+                    setNotice(`Category "${name}" added.`);
+                    startTransition(() => router.refresh());
+                  }
+                }}
+              />
+            </details>
+            {missingFields.length > 0 && (
+              <span className="text-xs text-amber-700">Required: {missingFields.join(", ")}.</span>
+            )}
           </div>
         </section>
       )}
@@ -887,19 +1144,45 @@ export function EtsySeoClient({
         </details>
       )}
 
-      {/* GENERATE */}
+      {/* GENERATE — one streaming run, per-language state */}
       {step === "generate" && (
         <section className={`${cardClass} space-y-3`}>
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-bold text-slate-900">Generate all 10 languages</h2>
-            <button type="button" onClick={generateAll} disabled={busy !== null || !selectedId} className="ml-auto rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
-              {busy === "generate-all" ? "Generating…" : "Generate all 10"}
-            </button>
+            <div className="ml-auto flex flex-wrap gap-2">
+              {failedCodes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => startGeneration(failedCodes)}
+                  disabled={busy !== null || !selectedId}
+                  className="rounded-lg border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                >
+                  Retry failed ({failedCodes.length})
+                </button>
+              )}
+              <button type="button" onClick={() => startGeneration()} disabled={busy !== null || !selectedId} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
+                {busy === "generate-all" ? "Generating…" : "Generate all 10"}
+              </button>
+            </div>
           </div>
           <p className="text-xs text-slate-600">
-            Each language is a separate request, so a failure in one market keeps the other nine. The provider used is stored
-            per listing — a backup run is visible, never silent.
+            One shared keyword research pass, then all ten markets generate in parallel — each result appears the moment it is
+            saved. A failed market keeps the other nine, and an unchanged product reuses its stored research and listings.
           </p>
+
+          <div>
+            <div className="flex items-center justify-between text-[11px] text-slate-500">
+              <span>{progress ?? (busy === "generate-all" ? "Working…" : `${projectListings.length}/${languages.length} languages saved`)}</span>
+              <span>{Math.round((Math.max(readyCount, projectListings.length) / languages.length) * 100)}%</span>
+            </div>
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-sky-500 transition-all"
+                style={{ width: `${Math.round((Math.max(readyCount, projectListings.length) / languages.length) * 100)}%` }}
+              />
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="text-slate-500">
@@ -907,40 +1190,34 @@ export function EtsySeoClient({
                   <th className="py-1">Market</th>
                   <th className="py-1">Status</th>
                   <th className="py-1">Score</th>
+                  <th className="py-1">Time</th>
                   <th className="py-1">Provider</th>
                   <th className="py-1" />
                 </tr>
               </thead>
               <tbody>
                 {languages.map((language) => {
-                  const listing = projectListings.find((l) => l.language_code === language.code);
+                  const listing = projectListings.find((entry) => entry.language_code === language.code);
+                  const run: LanguageRun = runs[language.code] ?? (listing ? { status: "completed", score: listing.seo_score } : { status: "queued" });
                   return (
-                    <tr key={language.code} className="border-t border-slate-100">
+                    <tr key={language.code} className="border-t border-slate-100 align-top">
                       <td className="py-1.5">{language.flag} {language.country} · {language.name}</td>
                       <td className="py-1.5">
-                        {listing ? <span className={statusBadge(listing.validation_status)}>{listing.validation_status}</span> : <span className="text-slate-400">not generated</span>}
+                        <span className={runBadge(run.status)}>{RUN_STATUS_LABEL[run.status]}</span>
+                        {listing && <span className={`ml-1 ${statusBadge(listing.validation_status)}`}>{listing.validation_status}</span>}
+                        {run.error && <span className="mt-1 block max-w-xs text-[10px] text-rose-600">{run.error}</span>}
                       </td>
-                      <td className="py-1.5">{listing?.seo_score ?? "—"}</td>
+                      <td className="py-1.5">{run.score ?? listing?.seo_score ?? "—"}</td>
+                      <td className="py-1.5 text-slate-500">{run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : "—"}</td>
                       <td className="py-1.5 text-slate-500">{listing?.provider ? `${listing.provider}${listing.backup_used ? " (backup)" : ""}` : "—"}</td>
                       <td className="py-1.5 text-right">
                         <button
                           type="button"
                           disabled={busy !== null || !selectedId}
-                          onClick={async () => {
-                            setBusy(`gen-${language.code}`);
-                            setError(null);
-                            try {
-                              await generateOne(language.code);
-                            } catch (err) {
-                              setError(err instanceof Error ? err.message : String(err));
-                            } finally {
-                              setBusy(null);
-                              startTransition(() => router.refresh());
-                            }
-                          }}
+                          onClick={() => startGeneration([language.code])}
                           className="rounded-md border border-slate-300 px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                         >
-                          {busy === `gen-${language.code}` ? "Working…" : listing ? "Regenerate" : "Generate"}
+                          {run.status === "running" ? "Working…" : run.status === "failed" ? "Retry" : listing ? "Regenerate" : "Generate"}
                         </button>
                       </td>
                     </tr>
@@ -959,6 +1236,10 @@ export function EtsySeoClient({
               Next: review &amp; export →
             </button>
           </div>
+          <p className="text-[11px] text-slate-500">
+            Speed note: the request starts immediately and results stream in, but full researched, validated output for ten
+            markets still takes as long as the AI provider needs. Nothing here promises one second for the whole run.
+          </p>
         </section>
       )}
 

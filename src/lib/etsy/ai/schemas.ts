@@ -179,11 +179,8 @@ const KEYWORD_KEYS: Array<[keyof KeywordGroups, string[]]> = [
   ["competitor", ["competitor", ["competitor_keywords"]].flat()],
 ];
 
-export function parseKeywordOutput(text: string): ParseResult<KeywordGroups> {
-  const raw = extractJsonObject(text);
-  if (!raw || typeof raw !== "object") return { ok: false, issues: ["The reply was not a JSON object."] };
-  const obj = raw as Record<string, unknown>;
-  const out: KeywordGroups = {
+export function emptyKeywordGroups(): KeywordGroups {
+  return {
     primary: [],
     secondary: [],
     longTail: [],
@@ -195,6 +192,13 @@ export function parseKeywordOutput(text: string): ParseResult<KeywordGroups> {
     seasonal: [],
     competitor: [],
   };
+}
+
+/** Read one keyword-groups object, tolerating the key aliases models emit. */
+export function keywordGroupsFromObject(value: unknown): KeywordGroups {
+  const out = emptyKeywordGroups();
+  if (!value || typeof value !== "object") return out;
+  const obj = value as Record<string, unknown>;
   for (const [target, aliases] of KEYWORD_KEYS) {
     for (const alias of aliases) {
       const values = asStringArray(obj[alias]);
@@ -204,10 +208,99 @@ export function parseKeywordOutput(text: string): ParseResult<KeywordGroups> {
       }
     }
   }
-  const total = Object.values(out).reduce((sum, list) => sum + list.length, 0);
+  return out;
+}
+
+export function keywordGroupCount(groups: KeywordGroups): number {
+  return Object.values(groups).reduce((sum, list) => sum + list.length, 0);
+}
+
+/** Stored keyword rows → groups, so a cached market reuses the same shape. */
+export function keywordGroupsFromRows(rows: Array<{ keyword: string; keyword_type: string }>): KeywordGroups {
+  const groups = emptyKeywordGroups();
+  const map: Record<string, keyof KeywordGroups> = {
+    primary: "primary",
+    secondary: "secondary",
+    long_tail: "longTail",
+    buyer_intent: "buyerIntent",
+    product: "product",
+    material: "material",
+    style: "style",
+    room: "room",
+    seasonal: "seasonal",
+    competitor: "competitor",
+  };
+  for (const row of rows) {
+    const key = map[row.keyword_type];
+    if (key && row.keyword) groups[key].push(row.keyword);
+  }
+  return groups;
+}
+
+export function parseKeywordOutput(text: string): ParseResult<KeywordGroups> {
+  const raw = extractJsonObject(text);
+  if (!raw || typeof raw !== "object") return { ok: false, issues: ["The reply was not a JSON object."] };
+  const out = keywordGroupsFromObject(raw);
+  const total = keywordGroupCount(out);
   if (total === 0) return { ok: false, issues: ["No keyword lists were returned."] };
   if (out.primary.length === 0) return { ok: false, issues: ["primary keyword list is empty"] };
   return { ok: true, data: out };
+}
+
+export type MultiLanguageKeywordResult =
+  | { ok: true; groups: Record<string, KeywordGroups>; missing: string[] }
+  | { ok: false; issues: string[] };
+
+/**
+ * Parse ONE reply that covers every target market at once:
+ *   { "nl": { "primary": [...], ... }, "fr": { ... } }
+ * A bare per-language object (`{"nl":[...],"fr":[...]}`) is accepted as the
+ * primary list, and an array of `{language_code|code, ...groups}` too. Unknown
+ * codes are dropped and each requested language that is absent is reported so
+ * the caller can ask for only those markets instead of redoing all ten.
+ */
+export function parseMultiLanguageKeywordOutput(text: string, expectedCodes: string[]): MultiLanguageKeywordResult {
+  const raw = extractJsonObject(text);
+  if (!raw || typeof raw !== "object") return { ok: false, issues: ["The reply was not a JSON object."] };
+
+  const wanted = expectedCodes.map((code) => code.trim().toLowerCase());
+  const groups: Record<string, KeywordGroups> = {};
+
+  const candidates = (() => {
+    if (Array.isArray(raw)) {
+      return (raw as Array<Record<string, unknown>>).map((entry) => [String(entry?.language_code ?? entry?.code ?? "").toLowerCase(), entry] as const);
+    }
+    const obj = raw as Record<string, unknown>;
+    const nested = obj.languages ?? obj.keywords;
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      return Object.entries(nested as Record<string, unknown>);
+    }
+    // A wrapper key such as { results: {...} } is tolerated once.
+    const values = Object.values(obj);
+    if (values.length === 1 && values[0] && typeof values[0] === "object" && !Array.isArray(values[0])) {
+      const inner = Object.keys(values[0] as Record<string, unknown>);
+      if (inner.some((key) => wanted.includes(key.toLowerCase()))) {
+        return Object.entries(values[0] as Record<string, unknown>);
+      }
+    }
+    return Object.entries(obj);
+  })();
+
+  for (const [code, value] of candidates) {
+    const normalized = String(code).trim().toLowerCase();
+    if (!wanted.includes(normalized) || groups[normalized]) continue;
+    if (Array.isArray(value)) {
+      const list = asStringArray(value);
+      if (list.length > 0) groups[normalized] = { ...emptyKeywordGroups(), primary: list };
+      continue;
+    }
+    const parsed = keywordGroupsFromObject(value);
+    if (keywordGroupCount(parsed) > 0) groups[normalized] = parsed;
+  }
+
+  const found = Object.keys(groups);
+  if (found.length === 0) return { ok: false, issues: ["No market in the reply contained usable keywords."] };
+  return { ok: true, groups, missing: wanted.filter((code) => !groups[code]) };
 }
 
 export type CompetitorAnalysisOutput = {

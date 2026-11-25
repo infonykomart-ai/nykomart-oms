@@ -33,11 +33,21 @@ export async function saveSeoProject(input: ProjectInput): Promise<ActionResult<
   const me = await requireCapability("etsy_seo_generator");
   const supabase = createServiceRoleClientUnchecked();
 
+  // 2026-11-24 — The form is five mandatory fields. Everything else the pipeline
+  // needs is generated, so a save can never proceed half-empty: the English
+  // title, description and tags are the protected source every market derives
+  // from, and the category drives market terminology.
   const projectName = (input.projectName ?? "").trim();
   const englishTitle = (input.englishTitle ?? "").trim();
+  const englishDescription = (input.englishDescription ?? "").trim();
+  const englishTags = (input.englishTags ?? "").trim();
+  const category = (input.category ?? "").trim();
   if (!projectName) return { ok: false, error: "Project name is required." };
+  if (!category) return { ok: false, error: "Category is required — it selects the market terminology the AI uses." };
   if (!englishTitle) return { ok: false, error: "The English product title is required — it is the source every language derives from." };
   if ([...englishTitle].length > 400) return { ok: false, error: "English title is too long to be a useful source (400 characters max)." };
+  if (!englishDescription) return { ok: false, error: "The existing English description is required — it is the source content for the localized descriptions." };
+  if (!englishTags) return { ok: false, error: "The existing English tags are required — they are the source content for the localized tags." };
 
   const images = (input.images ?? []).slice(0, 20);
   const productFacts: EtsyProductFacts = {};
@@ -50,10 +60,10 @@ export async function saveSeoProject(input: ProjectInput): Promise<ActionResult<
     company_id: me.currentCompanyId,
     sku: (input.sku ?? "").trim() || null,
     project_name: projectName,
-    category: (input.category ?? "").trim() || null,
+    category,
     original_title: englishTitle,
-    original_description: (input.englishDescription ?? "").trim(),
-    original_tags: (input.englishTags ?? "").trim(),
+    original_description: englishDescription,
+    original_tags: englishTags,
     product: productFacts,
     images,
     updated_at: new Date().toISOString(),

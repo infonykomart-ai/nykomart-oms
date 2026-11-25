@@ -159,6 +159,49 @@ ${input.competitorTitles?.length ? `Competitor titles seen publicly (do not copy
 Return the keyword research JSON in ${language.name} now. No metrics — keywords only.`;
 }
 
+// ---------------------------------------------------------------------------
+// 2026-11-24 — Shared, one-pass keyword research for all ten markets.
+//
+// The ten-language run used to call keyword research once per language. This
+// prompt asks for every market in ONE reply, so the research cost is paid once
+// and each language task receives only its own country-specific slice.
+// ---------------------------------------------------------------------------
+export function multiLanguageKeywordSystemPrompt(): string {
+  return `You are an Etsy keyword researcher who understands local buying language in ${ETSY_LANGUAGES.length} markets (Dutch, French, German, Italian, Japanese, Polish, Portuguese, Russian, Spanish, Swedish).
+
+Rules:
+- Research all requested markets in ONE pass. Write every keyword in that market's own language, as buyers actually type it — never a word-for-word translation.
+- Do not invent search volume, competition scores or sales numbers. You have no access to live metrics, so never return any.
+- Prefer 2–4 word phrases a buyer would search. Include short variants that fit ${TAG_MAX_CHARS} characters.
+- Per market return: primary (3–4), secondary (4–6), long_tail (3–4), buyer_intent (2–3), plus product, material, style, room and seasonal terms (2 each). Do not pad with duplicates.
+
+Return ONLY valid JSON keyed by language code, for example:
+{
+  "nl": { "primary": [], "secondary": [], "long_tail": [], "buyer_intent": [], "product": [], "material": [], "style": [], "room": [], "seasonal": [] },
+  "de": { … }
+}`;
+}
+
+export function multiLanguageKeywordUserPrompt(input: {
+  languages: EtsyLanguage[];
+  facts: EtsyProductFacts;
+  englishTitle: string;
+  englishDescription?: string;
+}): string {
+  const markets = input.languages
+    .map((language) => `- ${language.code} → ${language.name} (${language.locale}), market: ${language.market}`)
+    .join("\n");
+  return `Product facts (do not invent anything beyond these):
+${factLines(input.facts).join("\n") || `(only the English title is known: ${input.englishTitle})`}
+
+English source title: ${input.englishTitle}
+${input.englishDescription ? `English source description (first 1200 characters):\n${input.englishDescription.slice(0, 1200)}\n` : ""}
+Markets to research (one JSON object per language code):
+${markets}
+
+Return the JSON now, with a key for every one of the ${input.languages.length} language codes above.`;
+}
+
 export function competitorSystemPrompt(): string {
   return `You analyze publicly available Etsy competitor listings that the user supplied (title, tags, keywords, URL). You have no access to private sales, conversion or advertising data.
 

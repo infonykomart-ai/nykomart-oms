@@ -43,10 +43,34 @@ lib/etsy/seo-validation.ts   deterministic checks + 0–100 score (no AI)
 etsy_seo_listings / etsy_seo_listing_versions
 ```
 
-Why one request per language: the ten-language run is a client loop. A slow or failing
-market cannot discard the other nine, the UI gets real per-language progress, and no single
-serverless invocation comes close to its timeout. Each listing records the provider, model
-and `backup_used` flag, so a fallback is never silent.
+Why one streaming request for all ten: the page used to loop ten single-language requests
+one after another, so completion was the **sum** of ten AI calls and keyword research was
+paid for per market. `/api/etsy-seo/generate-all` now streams the whole run: keyword
+research happens **once** for every market and is distributed as per-language slices, the
+ten generations run in parallel with bounded concurrency (`ETSY_SEO_CONCURRENCY`, default
+4), and each finished market is written to the browser the moment it is saved. One failed
+market never discards the other nine — the client retries exactly the failed codes.
+
+What "fast" honestly means: the response headers and the `started` event arrive in well
+under a second, then results stream one by one. Fully researched, validated output for ten
+markets still takes as long as the provider needs; nobody can promise one second for that.
+Each listing records the provider, model and `backup_used` flag, so a fallback is never
+silent.
+
+### Content-hash cache
+
+`src/lib/etsy/generation/source-hash.ts` hashes the English source (project name, category,
+title, description, tags, product facts, image URLs) with SHA-256. The hash is stored as
+`etsy_seo_projects.source_hash` and `etsy_seo_listings.source_hash`
+(`db/2026-11-24-etsy-seo-generation-speed.sql`). A listing is reused only when its hash
+still matches the project's and it has a title, a description and exactly 13 tags;
+keywords are reused only when the project hash matches. If the hash columns are absent the
+run simply never caches — it never returns stale content. `force` (or generating a single
+language) bypasses the cache.
+
+Image alt text still comes from the photos: one vision call per image returns all ten
+languages, these run alongside generation, and the merged alt text is written back and
+revalidated before the run reports done.
 
 ### Provider fallback (spec §18)
 
@@ -104,7 +128,9 @@ All endpoints require a signed-in employee with `etsy_seo_generator`, return
 
 | Method | Path | Body / query | Notes |
 |---|---|---|---|
-| POST | `/api/etsy-seo/generate` | `{ projectId, languageCode, field }` | `field`: `all` \| `title` \| `description` \| `tags`. Returns the saved listing + validation report. |
+| POST | `/api/etsy-seo/generate-all` | `{ projectId, languages?, force? }` | Server-Sent Events: `started`, per-language `queued`/`running`/`completed`/`cached`/`failed`, `keywords`, `alt_text`, `done` (summary). Omit `languages` for all ten; `force: true` ignores the cache; the failed codes can be retried with `languages`. |
+| GET | `/api/etsy-seo/generate-all` | `?projectId=` | Last/current run status per language, used when the user returns to the page; `stalled` after 10 minutes without progress. |
+| POST | `/api/etsy-seo/generate` | `{ projectId, languageCode, field }` | Single-market regeneration. `field`: `all` \| `title` \| `description` \| `tags`. Returns the saved listing + validation report. |
 | POST | `/api/etsy-seo/alt-text` | `{ projectId, imageIndex }` | One vision call → ten alt texts; updates existing listings only. |
 | POST | `/api/etsy-seo/research/keywords` | `{ projectId, languageCode, fileText? }` | AI suggestions (unverified) + optional user file (verified metrics). |
 | POST | `/api/etsy-seo/research/competitors` | `{ projectId, languageCode, competitorUrl?, competitorTitle?, competitorTags?, competitorKeywords? }` | Patterns only; no private metrics claimed. |
@@ -169,7 +195,8 @@ Every keyword row carries `source`, `verified`, `search_volume`, `competition`,
 See the block at the end of `.env.example`. Required: `GEMINI_API_KEY` (plus the existing
 Supabase trio). Optional: `GEMINI_MODEL_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_ID`,
 `SEARCH_API_KEY`, `RESEARCH_PROVIDER_API_KEY`, `APP_BASE_URL`, `ENCRYPTION_KEY` (only if you
-store company keys from Settings), and the `*_PRICE_*` cost overrides.
+store company keys from Settings), `ETSY_SEO_CONCURRENCY` (parallel language workers,
+1–10, default 4), and the `*_PRICE_*` cost overrides.
 
 Keys are server-side only. A per-company key saved from Settings is encrypted with
 `ENCRYPTION_KEY`; no endpoint or page ever returns it.
@@ -183,6 +210,7 @@ npm ci
 cp .env.example .env.local        # fill Supabase + GEMINI_API_KEY
 # Supabase → SQL editor:
 #   db/2026-11-18-etsy-seo-generator.sql   (tables, RLS, capability, bucket, categories)
+#   db/2026-11-24-etsy-seo-generation-speed.sql (source_hash columns — enables the cache)
 #   db/2026-11-17-etsy-translations.sql    (only if you also use the older module)
 #   db/2026-11-16c-office-asset-expenses.sql (P&L views, unrelated but re-runnable)
 npm run dev
@@ -291,8 +319,13 @@ smoke-test output.
   keywords are therefore AI-suggested unless a file with real metrics is uploaded.
 * The rate limiter is per serverless instance (the durable cost control is the monthly
   budget in Settings).
-* Generation is a foreground client loop of ten requests; there is no queue worker. A closed
-  tab stops the loop (already-saved languages are kept).
+* Generation runs inside one streamed serverless request (`maxDuration = 300`); there is no
+  separate queue worker. Each market is saved as it finishes, so a closed tab or a killed
+  function loses only the markets not yet written; reopening the project reads them from the
+  database and `GET /api/etsy-seo/generate-all` reports the rest. Re-running without a
+  content change reuses the cache instead of spending credits.
+* Parallelism is bounded by `ETSY_SEO_CONCURRENCY`; a provider with a low per-minute limit
+  needs a lower value (or its retry/fallback path does more of the waiting).
 * Version history is stored but the UI shows the latest version only (previous rows are
   available with a query).
 * `estimated_cost_usd` is `NULL` for models without a published price — the UI shows "—".

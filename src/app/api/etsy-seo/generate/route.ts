@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { ETSY_LANGUAGES, etsyLanguage } from "@/lib/etsy/languages";
-import { parseListingOutput, type KeywordGroups, type ListingField } from "@/lib/etsy/ai/schemas";
+import { keywordGroupsFromRows, parseListingOutput, type ListingField } from "@/lib/etsy/ai/schemas";
 import { listingSystemPrompt, listingUserPrompt } from "@/lib/etsy/ai/prompts";
 import { ProviderError } from "@/lib/etsy/ai/types";
 import { diagnosticBody, explainProviderError } from "@/lib/etsy/ai/diagnostics";
@@ -27,38 +27,6 @@ type Body = {
 };
 
 const FIELDS: ListingField[] = ["all", "title", "description", "tags"];
-
-function keywordGroupsFromRows(rows: Array<{ keyword: string; keyword_type: string }>): KeywordGroups {
-  const groups: KeywordGroups = {
-    primary: [],
-    secondary: [],
-    longTail: [],
-    buyerIntent: [],
-    product: [],
-    material: [],
-    style: [],
-    room: [],
-    seasonal: [],
-    competitor: [],
-  };
-  const map: Record<string, keyof KeywordGroups> = {
-    primary: "primary",
-    secondary: "secondary",
-    long_tail: "longTail",
-    buyer_intent: "buyerIntent",
-    product: "product",
-    material: "material",
-    style: "style",
-    room: "room",
-    seasonal: "seasonal",
-    competitor: "competitor",
-  };
-  for (const row of rows) {
-    const key = map[row.keyword_type];
-    if (key) groups[key].push(row.keyword);
-  }
-  return groups;
-}
 
 export async function POST(request: Request) {
   const auth = await requireEtsySeoEmployee();
