@@ -23,6 +23,7 @@ import { Fragment, useActionState, useMemo, useState, useTransition } from "reac
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { saveAdSpendTargetsAction, type AdSpendFormState } from "./actions";
+import { amazonCountryLabel } from "./amazon-countries";
 import {
   buildDailyAdReport,
   buildStoreTotals,
@@ -256,9 +257,18 @@ function AllStoresTotals({ perStore, grand }: { perStore: DailyAdStoreTotal[]; g
   );
 }
 
-/** The corner TOTAL the user asked for: every figure for everything in scope,
- *  regardless of which store/country chip is selected. */
-function CornerTotal({ grand }: { grand: DailyAdTotals }) {
+/**
+ * The corner TOTAL panel.
+ *
+ * 2026-11-25 — it now follows the selection. It used to be handed
+ * `totals.grand` unconditionally with the fixed heading "Total — all stores",
+ * so picking a store changed the table below while this panel kept showing
+ * every store's combined figures — the exact bug reported against the
+ * screenshot. "All stores · TOTAL" still shows the combined figures; any
+ * individual store shows that store's own totals, which for an Amazon store
+ * already include every one of its marketplace countries.
+ */
+function CornerTotal({ grand, title, note }: { grand: DailyAdTotals; title: string; note: string }) {
   const cells: { label: string; value: string }[] = [
     { label: "TOTAL ORDER", value: n(grand.totalOrders) },
     { label: "TOTAL SPEND", value: money(grand.totalSpendUsd) },
@@ -276,8 +286,8 @@ function CornerTotal({ grand }: { grand: DailyAdTotals }) {
   return (
     <div className="rounded-xl border-2 border-slate-900 bg-slate-900 p-3 text-white print:border-slate-300 print:bg-white print:text-slate-900">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-bold uppercase tracking-wide">Total — all stores</h3>
-        <span className="text-[10px] opacity-70 print:hidden">selected range</span>
+        <h3 className="text-xs font-bold uppercase tracking-wide">{title}</h3>
+        <span className="text-[10px] opacity-70">{note} · all figures in USD</span>
       </div>
       <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 sm:grid-cols-4">
         {cells.map((c) => (
@@ -463,6 +473,13 @@ export function DailyAdReport({
     startNav(() => router.replace(`${pathname}?${params.toString()}`, { scroll: false }));
   }
 
+  // What the corner TOTAL panel shows: every store, or the selected store.
+  const panelTotals = showTotal || !active ? totals.grand : active.totals;
+  const panelTitle = showTotal || !active ? "Total — all stores" : active.storeName;
+  const countryCount = active ? active.groups.filter((g) => g.countryCode).length : 0;
+  const panelNote =
+    showTotal || !active ? "selected range" : countryCount > 1 ? `all ${countryCount} Amazon countries` : "selected range";
+
   const periodLabel = range
     ? `Last ${range} days · ${dates.length > 0 ? `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}` : "—"}`
     : monthLabel(month);
@@ -539,33 +556,35 @@ export function DailyAdReport({
         ].map(csvCell).join(",")
       );
     } else if (active) {
-      lines.push(head.map(csvCell).join(","));
-      const group = active.groups[0];
-      for (const r of group.rows) {
-        lines.push(
-          [
-            r.date,
-            r.totalOrders,
-            r.totalSpendUsd.toFixed(2),
-            r.visits,
-            r.orders,
-            r.orderAmountUsd.toFixed(2),
-            r.views,
-            r.clicks,
-            r.ctr.toFixed(2),
-            r.budgetUsd.toFixed(2),
-            r.spendUsd.toFixed(2),
-            r.revenueUsd.toFixed(2),
-            r.adOrders,
-            r.roas.toFixed(2),
-            r.acos.toFixed(2),
-          ].map(csvCell).join(",")
-        );
-      }
-      const t = group.totals;
-      lines.push(
+      // 2026-11-25 — the selected store's CSV used to write `groups[0]` only,
+      // so an Amazon store's other marketplace countries silently vanished
+      // from the file. Every group is exported now, tagged with its country,
+      // followed by that country's subtotal and the store's own total.
+      const multiCountry = active.groups.length > 1;
+      lines.push([...(multiCountry ? ["COUNTRY"] : []), ...head].map(csvCell).join(","));
+      const rowLine = (prefix: string[], r: (typeof active.groups)[number]["rows"][number]) =>
         [
-          "TOTAL",
+          ...prefix,
+          r.date,
+          r.totalOrders,
+          r.totalSpendUsd.toFixed(2),
+          r.visits,
+          r.orders,
+          r.orderAmountUsd.toFixed(2),
+          r.views,
+          r.clicks,
+          r.ctr.toFixed(2),
+          r.budgetUsd.toFixed(2),
+          r.spendUsd.toFixed(2),
+          r.revenueUsd.toFixed(2),
+          r.adOrders,
+          r.roas.toFixed(2),
+          r.acos.toFixed(2),
+        ].map(csvCell).join(",");
+      const totalLine = (label: string, prefix: string[], t: DailyAdTotals) =>
+        [
+          ...prefix,
+          label,
           t.totalOrders,
           t.totalSpendUsd.toFixed(2),
           t.visits,
@@ -580,8 +599,15 @@ export function DailyAdReport({
           t.adOrders,
           t.roas.toFixed(2),
           t.acos.toFixed(2),
-        ].map(csvCell).join(",")
-      );
+        ].map(csvCell).join(",");
+      for (const group of active.groups) {
+        const prefix = multiCountry
+          ? [group.countryCode ? amazonCountryLabel(group.countryCode) || group.countryCode : "—"]
+          : [];
+        for (const r of group.rows) lines.push(rowLine(prefix, r));
+        lines.push(totalLine(multiCountry ? "SUBTOTAL" : "TOTAL", prefix, group.totals));
+      }
+      if (multiCountry) lines.push(totalLine("TOTAL", ["ALL COUNTRIES"], active.totals));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -595,7 +621,15 @@ export function DailyAdReport({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 print:bg-white">
+      {/* 2026-11-25 — the printed / PDF copy: white page, A4 portrait, no
+          app chrome (the buttons and chips below are print:hidden), and the
+          selected store's own table — the same totals the screen shows. */}
+      <style>{`@media print {
+        @page { size: A4 portrait; margin: 10mm; }
+        html, body { background: #fff !important; }
+        .shadow, .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
+      }`}</style>
       <div className="rounded-xl border border-slate-200 bg-white p-4 print:border-0 print:p-0">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-wrap items-baseline gap-2">
@@ -655,7 +689,9 @@ export function DailyAdReport({
           </div>
         </div>
 
-        <CornerTotal grand={totals.grand} />
+        {/* The summary follows the selection; an Amazon store's totals already
+            combine every one of its marketplace countries. */}
+        <CornerTotal grand={panelTotals} title={panelTitle} note={panelNote} />
 
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           {/* Pacing is month-budget based, so a rolling window never shows it. */}

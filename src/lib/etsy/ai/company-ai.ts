@@ -135,7 +135,17 @@ export async function monthlySpendUsd(supabase: SupabaseClient, companyId: strin
 /** Write one attempt to etsy_seo_usage_logs (never throws into the request). */
 export async function recordUsage(
   supabase: SupabaseClient,
-  context: { companyId: string; projectId?: string | null; employeeId?: string | null },
+  context: {
+    companyId: string;
+    projectId?: string | null;
+    employeeId?: string | null;
+    /**
+     * The one market this call served. Leave it out for a shared research call
+     * or the ten-language alt-text bundle: those cover several markets, so the
+     * column stays NULL instead of carrying an invented code.
+     */
+    languageCode?: string | null;
+  },
   log: AttemptLog
 ): Promise<void> {
   try {
@@ -147,6 +157,7 @@ export async function recordUsage(
       provider: log.provider,
       model: log.model,
       operation: log.operation,
+      language_code: context.languageCode ?? null,
       status: log.status,
       input_tokens: log.usage?.inputTokens ?? null,
       output_tokens: log.usage?.outputTokens ?? null,

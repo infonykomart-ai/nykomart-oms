@@ -334,7 +334,10 @@ export async function POST(request: Request) {
             if (!parsed.ok) return { ok: false, issues: parsed.issues };
             return { ok: true, data: parsed.groups };
           },
-          onAttempt: (log) => recordUsage(supabase, usageContext, log),
+          // One call can serve several markets; only a single-market retry
+          // can honestly carry a code.
+          onAttempt: (log) =>
+            recordUsage(supabase, { ...usageContext, languageCode: markets.length === 1 ? markets[0].code : null }, log),
         });
         return result;
       };
@@ -416,7 +419,7 @@ export async function POST(request: Request) {
         temperature: 0.6,
         config: managerConfig(context.settings),
         parse: (text) => parseListingOutput(text, { field: "all", imageCount: 0 }),
-        onAttempt: (log) => recordUsage(supabase, usageContext, log),
+        onAttempt: (log) => recordUsage(supabase, { ...usageContext, languageCode: language.code }, log),
       });
 
       const generated = result.data;
@@ -525,6 +528,7 @@ export async function POST(request: Request) {
         temperature: 0.3,
         config: managerConfig(context.settings),
         parse: (text) => parseAltTextBundle(text, expected),
+        // Ten markets answered in one call — no single language_code to record.
         onAttempt: (log) => recordUsage(supabase, usageContext, log),
       });
       return { altTexts: result.data.altTexts, durationMs: result.latencyMs };

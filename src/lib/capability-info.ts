@@ -159,6 +159,11 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
     description: "Legal & Compliance — vendor agreements (NDA, supplier, design IP, e-commerce, data protection, software, photography, logistics, custom) as numbered PDFs on the official letterhead, with version history, WhatsApp sharing, signed-copy upload and activation." },
   { code: "employee_admin", label: "Employees", icon: "👥", href: "/dashboard/admin/employees",
     description: "Manage the employee roster." },
+  // 2026-11-25 — automatic WhatsApp order-status messages (Hold / Cancel /
+  // Process). Admin-controlled like the roster: enable/disable, per-trigger
+  // toggles, templates, connection test, history and manual retry.
+  { code: "employee_admin", label: "WhatsApp Messages", icon: "💬", href: "/dashboard/admin/whatsapp",
+    description: "Automatic customer WhatsApp messages when an order becomes Hold, Cancelled or In Production — toggles, templates, connection test, delivery history and manual retry." },
   // 2026-10-21 — same capability, a second destination (same pattern as
   // doc_entry's multiple entries below): which one-time db/2026-*.sql files
   // this database has actually had run. See src/lib/migrations/probes.ts for

@@ -315,6 +315,43 @@ export async function probeMigrations(
     // back to orders.photo_urls and no attachment row (file name / sort
     // order) is stored.
     // 2026-11-23 — the Purchase Orders probe was removed with that module.
+    // 2026-11-24 — Etsy SEO generator: source-content hashes for cache reuse.
+    // The app tolerates the columns being absent by never caching, which is
+    // exactly the invisible degradation this panel exists to surface: the
+    // generator still works, it just spends AI credits regenerating every
+    // language and re-running keyword research on unchanged products.
+    probe("db/2026-11-24-etsy-seo-generation-speed.sql", "Etsy SEO generator: source hashes for cache reuse",
+      "Unchanged products are regenerated from scratch: keyword research and all ten localized listings are re-run (and re-charged as AI usage) instead of being reused, because etsy_seo_projects.source_hash and etsy_seo_listings.source_hash never match.",
+      [
+        { name: "etsy_seo_projects.source_hash", promise: hasColumn(client, "etsy_seo_projects", "source_hash") },
+        { name: "etsy_seo_listings.source_hash", promise: hasColumn(client, "etsy_seo_listings", "source_hash") },
+        // An index has no PostgREST-visible shape — listed so the file is fully
+        // accounted for, and "manual" alone never makes a file look applied
+        // (the two column checks above still decide that).
+        { name: "idx_etsy_seo_listings_source_hash (index, not API-visible)", promise: manualProbe() },
+      ]),
+
+    // 2026-11-25 — automatic order-status WhatsApp messages. Until this file
+    // is run there is no delivery lifecycle on order_whatsapp_messages and no
+    // settings row: status changes still save, but no customer message is
+    // queued and the admin WhatsApp page has nothing to configure.
+    probe("db/2026-11-25-whatsapp-order-status.sql", "Automatic WhatsApp order-status messages + admin settings",
+      "Changing an order to Hold / Cancelled / In Production queues no customer WhatsApp message — and the admin settings page has no toggles, templates or history.",
+      [
+        { name: "order_whatsapp_messages.new_status", promise: hasColumn(client, "order_whatsapp_messages", "new_status") },
+        { name: "order_whatsapp_messages.provider_message_id", promise: hasColumn(client, "order_whatsapp_messages", "provider_message_id") },
+        { name: "company_whatsapp_settings table", promise: hasColumn(client, "company_whatsapp_settings", "auto_status_enabled") },
+      ]),
+
+    // 2026-11-25 — Daily Entry edit + soft delete. Without it, edits have no
+    // creation facts to keep, and delete has to stay a hard DELETE.
+    probe("db/2026-11-25-ad-spend-entry-audit.sql", "Store Ad Spend: entry edit + soft delete",
+      "An edited day has no original creation time/author, and Delete physically removes the row instead of hiding it restorably.",
+      [
+        { name: "store_ad_spend.created_at", promise: hasColumn(client, "store_ad_spend", "created_at") },
+        { name: "store_ad_spend.deleted_at", promise: hasColumn(client, "store_ad_spend", "deleted_at") },
+      ]),
+
     probe("db/2026-11-22b-order-attachments.sql", "Order attachments (typed close-up photo index)",
       "Close-up photos are read from orders.photo_urls only — no attachment row (file name / sort order) is stored.",
       [{ name: "order_attachments.file_url", promise: hasColumn(client, "order_attachments", "file_url") }]),

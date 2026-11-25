@@ -34,6 +34,8 @@ import { storesForAdSpend } from "./store-scope";
 // 2026-11-21 — the Daily Entry's channel metrics (Amazon / eBay / Etsy) and
 // their 14-day chart read the same stored columns the save action writes.
 import type { DailyAdOrderRow, DailyAdSpendRow } from "./daily-ad-report";
+// 2026-11-25 — one filtered+paged read for the entry list and its export.
+import { listAdSpendEntries, parseEntryFilters } from "@/lib/ad-spend/entries";
 
 /** The columns the Recent Entries list reads; ad_orders is optional because
  *  it ships in its own migration (db/2026-11-20e-…). */
@@ -45,6 +47,8 @@ type AdSpendListRow = {
   budget_usd: number;
   spend_usd: number;
   updated_at: string;
+  created_at?: string | null;
+  deleted_at?: string | null;
   ad_orders?: number | null;
   clicks?: number | null;
   impressions?: number | null;
@@ -136,6 +140,8 @@ export default async function AdSpendPage({
   // dropdown on all three tabs.
   const visibleCompanies = (companies ?? []).filter((c) => stores.some((s) => s.company_id === c.id));
 
+  const entryFilters = parseEntryFilters(sp as Record<string, string | string[] | undefined>, stores.map((s) => s.id));
+
   const storeName = new Map((allStores ?? []).map((s) => [s.id, s.name]));
   const companyName = new Map((companies ?? []).map((c) => [c.id, c.name]));
   const storeCompanyId = new Map((allStores ?? []).map((s) => [s.id, s.company_id]));
@@ -177,7 +183,14 @@ export default async function AdSpendPage({
     etsyAdClicks: number | null;
     adRevenueUsd: number | null;
     enteredAt: string;
+    created: string;
+    updated: string;
   }[] = [];
+  // 2026-11-25 — the entry list is filtered + paged by the URL (store, date
+  // range, search) and the same filter set drives the CSV/Excel export.
+  let recentTotal = 0;
+  let recentPage = 1;
+  let deletedEntries: typeof recentEntries = [];
   // 2026-11-21 — the channel chart's history (last 14 days) and the Etsy
   // monthly spend % (this month's summed spend) share this read.
   let channelRows: DailyAdSpendRow[] = [];
@@ -217,31 +230,16 @@ export default async function AdSpendPage({
         .select("*")
         .in("store_id", allStoreIds)
         .gte("spend_date", from);
-      channelRows = (historyData ?? []) as unknown as DailyAdSpendRow[];
+      // Soft-deleted days must not reach the trend chart or the Etsy
+      // monthly-spend tile (2026-11-25); filtered here so a database that
+      // has not run the soft-delete migration still works.
+      channelRows = ((historyData ?? []) as unknown as (DailyAdSpendRow & { deleted_at?: string | null })[]).filter(
+        (r) => !r.deleted_at
+      );
     }
-    // 2026-10-15 — country_code rides along so an Amazon day's rows
-    // are told apart in this list (see the entry form).
-    // 2026-10-19 — "koi bhi entry ho ... uska time and date aani
-    // chahiye": updated_at is when these numbers were last entered/
-    // re-saved (the row is an upsert, see saveAdSpendAction), so the
-    // list can show the entry timestamp next to the spend date.
-    // 2026-11-20 — ad_orders is optional and ships in its own migration, so
-    // the read falls back to the old column list instead of breaking this
-    // list before that migration is run.
-    const recentQuery = async (withAdOrders: boolean) => {
-      const res = withAdOrders
-        ? await supabase.from("store_ad_spend").select("*").in("store_id", allStoreIds).order("spend_date", { ascending: false }).limit(30)
-        : await supabase
-            .from("store_ad_spend")
-            .select("id, store_id, spend_date, country_code, budget_usd, spend_usd, updated_at")
-            .in("store_id", allStoreIds)
-            .order("spend_date", { ascending: false })
-            .limit(30);
-      return { data: (res.data ?? []) as unknown as AdSpendListRow[], error: res.error };
-    };
-    const recentRes = allStoreIds.length ? await recentQuery(true) : { data: [] as AdSpendListRow[], error: null };
-    const recent = recentRes.error && allStoreIds.length ? (await recentQuery(false)).data : recentRes.data;
-    recentEntries = (recent ?? []).map((r) => ({
+    // country_code rides along so an Amazon day's rows are told apart; the
+    // entry timestamp is created_at (first save) and updated_at (last change).
+    const mapEntry = (r: AdSpendListRow) => ({
       id: r.id,
       storeId: r.store_id,
       storeName: storeName.get(r.store_id) ?? "—",
@@ -262,8 +260,36 @@ export default async function AdSpendPage({
       etsyOrders: typeof r.etsy_orders === "number" ? r.etsy_orders : null,
       etsyAdClicks: typeof r.etsy_ad_clicks === "number" ? r.etsy_ad_clicks : null,
       adRevenueUsd: typeof r.ad_revenue_usd === "number" ? r.ad_revenue_usd : null,
-      enteredAt: r.updated_at,
-    }));
+      // 2026-11-25 — the entry time (when it was first saved) and the last
+      // change are now separate columns; older rows only have updated_at.
+      enteredAt: r.created_at ?? r.updated_at,
+      created: r.created_at ?? "",
+      updated: r.updated_at ?? "",
+    });
+
+    // 2026-11-25 — the list now honours the store/date/search filters in the
+    // URL and pages 25 at a time instead of silently showing the last 30
+    // rows of everything. Same query the export uses (lib/ad-spend/entries).
+    const listed = await listAdSpendEntries(supabase, {
+      ...entryFilters,
+      storeName: (id) => storeName.get(id) ?? "",
+    });
+    recentTotal = listed.total;
+    recentPage = listed.page;
+    recentEntries = listed.rows.map((row) => mapEntry(row as unknown as AdSpendListRow));
+
+    // Admin-only: soft-deleted rows, so a delete can be undone rather than
+    // being gone for good.
+    if (canSeeAllStores) {
+      const { data: deleted } = await supabase
+        .from("store_ad_spend")
+        .select("*")
+        .in("store_id", (stores ?? []).map((s) => s.id))
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false })
+        .limit(50);
+      deletedEntries = ((deleted ?? []) as unknown as AdSpendListRow[]).map((row) => mapEntry(row));
+    }
   }
 
   if (tab === "daily") {
@@ -293,7 +319,11 @@ export default async function AdSpendPage({
           .select("store_id, monthly_budget_usd, roas_target")
           .in("store_id", allStoreIds),
       ]);
-      dailySpendRows = (dailySpend ?? []) as unknown as DailyAdSpendRow[];
+      // Soft-deleted days never reach the report (2026-11-25); filtered here
+      // so the read also works on a database without the soft-delete columns.
+      dailySpendRows = ((dailySpend ?? []) as unknown as (DailyAdSpendRow & { deleted_at?: string | null })[]).filter(
+        (r) => !r.deleted_at
+      );
       dailyOrderRows = (dailyOrders ?? []) as unknown as DailyAdOrderRow[];
       for (const t of targetRows ?? []) {
         if (!allStoreIds.includes(t.store_id)) continue;
@@ -351,7 +381,9 @@ export default async function AdSpendPage({
         ),
       spendQuery(true),
     ]);
-    const spend = (spendRes.error ? (await spendQuery(false)).data : spendRes.data) ?? [];
+    const spend = ((spendRes.error ? (await spendQuery(false)).data : spendRes.data) ?? []).filter(
+      (r) => !(r as AdSpendSpendRow & { deleted_at?: string | null }).deleted_at
+    );
 
     const monthOrders = orders ?? [];
     // 2026-10-15 — "STORE KI MONTHLY STATEMENT SE BHI VERFY... OR LINK HO
@@ -472,6 +504,17 @@ export default async function AdSpendPage({
           recentEntries={recentEntries}
           channelRows={channelRows}
           month={defaultMonth}
+          filters={{
+            storeId: entryFilters.storeId,
+            from: entryFilters.from,
+            to: entryFilters.to,
+            q: entryFilters.q,
+          }}
+          total={recentTotal}
+          page={recentPage}
+          pageSize={entryFilters.pageSize}
+          canRestore={canSeeAllStores}
+          deletedEntries={deletedEntries}
         />
       ) : tab === "daily" ? (
         <DailyAdReport

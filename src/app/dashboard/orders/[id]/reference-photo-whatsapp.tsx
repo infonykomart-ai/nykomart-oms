@@ -13,7 +13,18 @@ import { useState } from "react";
 export type ReferencePhotoLogView = {
   id: string;
   event_id: string;
-  delivery_status: "pending" | "sent" | "partial" | "failed" | "skipped";
+  // 2026-11-25 — the table's CHECK now also carries the 1:1 message states
+  // (queued/processing/delivered/read) used by the order-status messages.
+  delivery_status:
+    | "queued"
+    | "pending"
+    | "processing"
+    | "sent"
+    | "partial"
+    | "delivered"
+    | "read"
+    | "failed"
+    | "skipped";
   error_message: string | null;
   sent_at: string | null;
   created_at: string;
@@ -28,6 +39,12 @@ const STATUS_STYLE: Record<ReferencePhotoLogView["delivery_status"], { label: st
   failed: { label: "Failed", className: "border-red-200 bg-red-50 text-red-700" },
   pending: { label: "Sending…", className: "border-slate-200 bg-slate-50 text-slate-600" },
   skipped: { label: "Nothing to send", className: "border-slate-200 bg-slate-50 text-slate-500" },
+  // 2026-11-25 — states the order-status messages use; never reached by a
+  // reference-photo row, listed so the shared union stays total.
+  queued: { label: "Queued", className: "border-slate-200 bg-slate-50 text-slate-600" },
+  processing: { label: "Sending…", className: "border-slate-200 bg-slate-50 text-slate-600" },
+  delivered: { label: "Delivered", className: "border-green-200 bg-green-50 text-green-700" },
+  read: { label: "Read", className: "border-green-200 bg-green-50 text-green-700" },
 };
 
 function formatWhen(value: string | null): string {
