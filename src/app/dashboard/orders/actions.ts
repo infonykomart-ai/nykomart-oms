@@ -19,8 +19,9 @@ import { logAudit } from "@/lib/audit/log-audit";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { randomUUID } from "node:crypto";
-import { sendOrderReferencePhotos } from "@/lib/whatsapp/reference-photos-send";
-import { notifyOrderStatusChange } from "@/lib/whatsapp/order-status-notify";
+import { resolveOrderWhatsappGroupId, sendOrderReferencePhotos } from "@/lib/whatsapp/reference-photos-send";
+import { deliverQueuedMessage, notifyOrderStatusChange } from "@/lib/whatsapp/order-status-notify";
+import { groupRecipient } from "@/lib/whatsapp/order-status";
 
 function str(formData: FormData, key: string): string {
   return String(formData.get(key) ?? "").trim();
@@ -453,6 +454,82 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
   // 2026-10-17 — the order's own page now has these controls too.
   revalidatePath(`/dashboard/orders/${orderId}`);
   return { error: null, success: true };
+}
+
+/**
+ * 2026-11-26 — retry an automatic status message straight from the Orders page.
+ *
+ * `retryWhatsAppMessageAction` (admin settings) needs employee_admin, but the
+ * people who actually change an order's status — and who notice the amber
+ * "did not reach the order group" row — hold order_entry. This is the same
+ * delivery function behind its own capability check and its own order scope,
+ * so a skipped message can be re-sent by whoever can already see the order.
+ *
+ * The recipient is re-resolved from the company NOW rather than replayed from
+ * the row: the usual reason a message was skipped is that no order group was
+ * configured yet, and copying the (empty) old recipient would keep failing.
+ * The stored recipient is only used when the company still has no group and
+ * the row was written for a phone — never to invent a customer number.
+ */
+export async function retryOrderStatusMessageAction(orderId: string): Promise<SimpleResult> {
+  const employee = await requireCapability("order_entry");
+  const supabase = createServiceRoleClient();
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, company_id, ref_no")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "This order was not found, or you don't have access to this company.", success: false };
+  }
+
+  const { data: message } = await supabase
+    .from("order_whatsapp_messages")
+    .select("id, customer_phone, message_text, retry_count, delivery_status")
+    .eq("order_id", orderId)
+    .eq("message_type", "order_status")
+    .in("delivery_status", ["failed", "skipped", "queued"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!message) {
+    return { error: "There is no undelivered status message on this order to retry.", success: false };
+  }
+  if (!message.message_text) {
+    return { error: "That message has no text on record — change the status again instead.", success: false };
+  }
+
+  const groupId = await resolveOrderWhatsappGroupId(supabase, order.company_id);
+  const recipient = groupId ? groupRecipient(groupId) : message.customer_phone;
+  if (!recipient) {
+    return {
+      error: "No WhatsApp order group is set for this company — set companies.whapi_group_id or WHAPI_GROUP_ID first.",
+      success: false,
+    };
+  }
+
+  const result = await deliverQueuedMessage(supabase, {
+    id: message.id,
+    recipient,
+    messageText: message.message_text,
+    retryCount: Number(message.retry_count ?? 0),
+  });
+
+  await logAudit(supabase, {
+    companyId: order.company_id,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "whatsapp.status_retry",
+    entityType: "order",
+    entityId: order.id,
+    entityLabel: order.ref_no,
+    changes: { message_id: message.id, result: result.status, error: result.error },
+  });
+
+  revalidatePath("/dashboard/orders");
+  if (result.status === "sent") return { error: null, success: true };
+  return { error: result.error ?? "The message could not be sent.", success: false };
 }
 
 /** Sets an order to Cancelled — the Refund step (if any) happens separately via saveOrderRefund below. */

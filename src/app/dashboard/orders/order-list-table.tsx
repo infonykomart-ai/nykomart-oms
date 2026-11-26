@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { deleteOrder } from "./actions";
+import { deleteOrder, retryOrderStatusMessageAction } from "./actions";
 import { OrderPhotoThumb } from "./order-photo-thumb";
 import { OrderEditForm, type EditableOrder } from "./order-edit-form";
 import { OrderHoldCancelActions } from "./order-hold-cancel-actions";
@@ -226,6 +226,10 @@ export function OrderListTable({
   const [expandedEbayFeesId, setExpandedEbayFeesId] = useState<string | null>(null);
   const [expandedAmazonFeesId, setExpandedAmazonFeesId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
+  // 2026-11-26 — retry of one order's undelivered status message, straight
+  // from its amber banner (see orders/actions.ts retryOrderStatusMessageAction).
+  const [whatsappRetry, setWhatsappRetry] = useState<{ orderId: string; error: string | null } | null>(null);
+  const [whatsappRetryingId, setWhatsappRetryingId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [globalSearch, setGlobalSearch] = useState(initialSearch);
@@ -265,6 +269,17 @@ export function OrderListTable({
   // src/lib/orders/order-status-summary.ts) instead of re-deriving
   // purchased-from-vendor here; "(planned)" still means the same thing it
   // always did — orders.vendor_party_id with no Purchase Bill raised yet.
+  function handleWhatsAppRetry(orderId: string) {
+    setWhatsappRetry(null);
+    setWhatsappRetryingId(orderId);
+    startTransition(async () => {
+      const result = await retryOrderStatusMessageAction(orderId);
+      setWhatsappRetryingId(null);
+      setWhatsappRetry({ orderId, error: result.error });
+      if (result.success) router.refresh();
+    });
+  }
+
   function purchasedFromText(o: OrderRow): string {
     const s = statusByOrder[o.id];
     if (!s?.purchasedFromName) return "";
@@ -1108,12 +1123,23 @@ export function OrderListTable({
                           <td colSpan={visibleColumns.length + 2} className="px-2 py-1 text-[11px] text-amber-900">
                             ⚠ Status WhatsApp for <strong>{o.ref_no}</strong> did not reach the order group —{" "}
                             {whatsappIssues[o.id].error || `message is ${whatsappIssues[o.id].status}.`}{" "}
-                            {canManageWhatsApp ? (
+                            {canManageOrders && (
+                              <button
+                                type="button"
+                                disabled={whatsappRetryingId === o.id}
+                                onClick={() => handleWhatsAppRetry(o.id)}
+                                className="rounded border border-amber-400 bg-white px-2 py-0.5 font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                              >
+                                {whatsappRetryingId === o.id ? "Sending…" : "Retry send"}
+                              </button>
+                            )}{" "}
+                            {canManageWhatsApp && (
                               <Link href="/dashboard/admin/whatsapp" className="font-semibold underline">
-                                Retry in WhatsApp settings →
+                                WhatsApp settings →
                               </Link>
-                            ) : (
-                              <span>Ask an admin to retry it in WhatsApp settings.</span>
+                            )}
+                            {whatsappRetry?.orderId === o.id && whatsappRetry.error && (
+                              <span className="ml-1 font-medium text-red-700">{whatsappRetry.error}</span>
                             )}
                           </td>
                         </tr>
