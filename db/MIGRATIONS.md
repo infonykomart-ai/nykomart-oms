@@ -40,11 +40,14 @@ committed `Database` types still cover the schema.
    not applied.
 4. **Update `schema.sql` in the same change.** The patch and the folded-back
    schema land together, or the CI `schema-check` job goes red.
-5. **Add a probe entry** in `src/lib/db/schema-status.ts` (and the matching
-   entry under `src/lib/migrations/probes.ts` if it needs one) when the
-   migration's absence would silently degrade a feature. Keep it to
-   highest-impact migrations — every probe costs one round-trip.
-6. **Verify before running it on production.** Read the plan it produces, run
+5. **Add a probe entry** in `src/lib/migrations/probes.ts` (if it needs one; use
+   `manualProbe()` for an index / RLS policy / data repair that the API cannot
+   see). This is now enforced: `src/lib/migrations/coverage.test.ts` fails when
+   a `db/*.sql` file has no probe entry.
+6. **Regenerate the hash manifest** — `npm run migrations:manifest`. It writes
+   `src/lib/migrations/manifest.ts` (file + SHA-256 for every patch), which the
+   ledger compares against; the same test fails if it is stale.
+7. **Verify before running it on production.** Read the plan it produces, run
    it against a restored snapshot first (see §5), and only then run it in the
    live SQL Editor.
 
@@ -52,27 +55,45 @@ committed `Database` types still cover the schema.
 
 ## 3. How "is it applied?" is answered
 
-There is **no migration ledger table** — adding one would itself require a
-migration. Instead each tracked migration declares the single object it is
-guaranteed to create (a column or table), and the app probes for it:
+Two layers, because they answer different questions.
 
-- `src/lib/db/schema-status.ts` → `SCHEMA_CHECKS` — the newer, curated list.
+**Layer 1 — probes: does the object exist?** Each tracked migration declares
+the one object it creates (a column/table) or is marked `manual` when nothing is
+API-visible (index, RLS policy, data repair):
+
 - `src/lib/migrations/probes.ts` → `probeMigrations()` — powers the Admin page.
-- **Admin → Database / Migration Status** (`/dashboard/admin/migrations`) shows
-  pending files newest-first with the exact file to run, and what each one
-  restores. It is read-only and admin-gated by `employee_admin`.
+- `src/lib/db/schema-status.ts` → `SCHEMA_CHECKS` — the dashboard card's short list.
 
-A probe reports exactly three states, and they must not be conflated:
-
-| State | Meaning |
+| Probe state | Meaning |
 |---|---|
 | `applied` | the object exists — the migration has been run |
 | `missing` | PostgREST says the object does not exist — **run the SQL** |
-| `unverified` | the check itself failed (network / auth / permissions) — **not** a pending migration; never treat it as one |
+| `unknown` | the check itself failed (network / auth / permissions) — **not** a pending migration |
+| `manual` | nothing the API can verify — run it by hand if unsure |
 
-**Known limitation:** probes only cover the curated list, not all ~144 files.
-An unprobed migration that is missing will silently keep the old behaviour.
-When in doubt, check the object directly in the SQL Editor.
+Coverage is mechanical now: `src/lib/migrations/coverage.test.ts` fails when a
+`db/*.sql` file has no probe entry, so a merged file cannot go invisible.
+
+**Layer 2 — the ledger: which VERSION was applied?** Probes cannot tell a file
+that was run from one that was **edited after it was run**. `schema_migrations`
+(`db/2026-11-26-schema-migrations-ledger.sql`) records one row per file with the
+file's SHA-256 at the moment it was recorded. `src/lib/migrations/manifest.ts`
+(`npm run migrations:manifest`) holds the committed hashes, and
+`src/lib/migrations/ledger.ts` compares the two:
+
+| Ledger state | Meaning |
+|---|---|
+| recorded | applied per probe, hash matches the committed file |
+| recordable | probe says applied, no ledger row yet — the page's button records it |
+| drifted | the file changed after it was recorded — **re-run the current file** |
+| conflict | recorded as applied, but this database does not have the object (restore / manual drop) |
+| manual | nothing verifiable, so never recorded automatically |
+
+A ledger row is only ever written after a fresh probe run confirms the object
+is present ("/dashboard/admin/migrations" → *Record N verified files*), never
+from memory. **Known limitation:** a `manual` file is therefore never recorded,
+and a database that restored an old backup keeps its old hashes until the files
+are re-run and re-recorded.
 
 ---
 

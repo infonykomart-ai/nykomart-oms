@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { retryDueStatusMessages } from "@/lib/whatsapp/status-retry";
+import { STATUS_RETRY_BATCH, retryDueStatusMessages, statusMessageBacklog } from "@/lib/whatsapp/status-retry";
 
 export const maxDuration = 60;
 
@@ -20,8 +20,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const summary = await retryDueStatusMessages(createServiceRoleClient(), { batch: 20 });
-    return NextResponse.json(summary);
+    const supabase = createServiceRoleClient();
+    const summary = await retryDueStatusMessages(supabase, { batch: STATUS_RETRY_BATCH });
+    // 2026-11-26 — report what is still owed, not just what this run reached.
+    const backlog = await statusMessageBacklog(supabase);
+    return NextResponse.json({ ...summary, backlog });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },

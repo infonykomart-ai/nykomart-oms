@@ -1500,6 +1500,19 @@ CREATE INDEX idx_entry_errors_company_created ON entry_errors(company_id, create
 CREATE INDEX idx_entry_errors_status           ON entry_errors(status, created_at DESC);
 CREATE INDEX idx_entry_errors_reference         ON entry_errors(reference_type, reference_id);
 
+-- 2026-11-26: the migration LEDGER — see
+-- db/2026-11-26-schema-migrations-ledger.sql. One row per one-time db/*.sql
+-- patch, with the file's SHA-256 when it was recorded as applied, so an edited
+-- file that was already run shows up as drift instead of as "applied".
+-- service_role only (RLS on, no policy).
+CREATE TABLE schema_migrations (
+  file       text PRIMARY KEY,
+  sha256     text NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now(),
+  applied_by text,
+  note       text
+);
+
 CREATE TABLE automation_rules (
   id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id             uuid REFERENCES companies(id),
@@ -2015,18 +2028,33 @@ CREATE TABLE order_whatsapp_messages (
   order_id                uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
   order_reference         text NOT NULL,
   message_type            text NOT NULL DEFAULT 'reference_photo'
-                            CHECK (message_type IN ('reference_photo', 'order_update')),
+                            CHECK (message_type IN ('reference_photo', 'order_update', 'order_status')),
   event_id                text NOT NULL,
   message_text            text,
   attachment_photo_ids    text[] NOT NULL DEFAULT '{}',
   whatsapp_message_ids    text[] NOT NULL DEFAULT '{}',
   delivery_status         text NOT NULL DEFAULT 'pending'
-                            CHECK (delivery_status IN ('pending', 'sent', 'partial', 'failed', 'skipped')),
+                            CHECK (delivery_status IN (
+                              'queued', 'pending', 'processing', 'sent', 'partial',
+                              'delivered', 'read', 'failed', 'skipped'
+                            )),
   error_message           text,
   retry_count             integer NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
   created_by_employee_id  uuid REFERENCES employees(id) ON DELETE SET NULL,
   created_at              timestamptz NOT NULL DEFAULT now(),
   sent_at                 timestamptz,
+  -- 2026-11-25 — automatic order-status messages (folded from
+  -- db/2026-11-25-whatsapp-order-status.sql). The same log carries both kinds;
+  -- these columns are NULL on a reference-photo row.
+  customer_phone          text,
+  previous_status         text,
+  new_status              text,
+  provider                text NOT NULL DEFAULT 'whapi',
+  provider_message_id     text,
+  delivered_at            timestamptz,
+  read_at                 timestamptz,
+  next_attempt_at         timestamptz,
+  last_attempt_at         timestamptz,
   UNIQUE (order_id, message_type, event_id)
 );
 CREATE INDEX idx_order_whatsapp_messages_order_created
@@ -2034,11 +2062,38 @@ CREATE INDEX idx_order_whatsapp_messages_order_created
 CREATE INDEX idx_order_whatsapp_messages_status
   ON order_whatsapp_messages (delivery_status, created_at DESC)
   WHERE delivery_status IN ('failed', 'partial', 'pending');
+CREATE INDEX idx_order_whatsapp_retry
+  ON order_whatsapp_messages (delivery_status, next_attempt_at)
+  WHERE message_type = 'order_status';
+CREATE INDEX idx_order_whatsapp_provider_message
+  ON order_whatsapp_messages (provider_message_id)
+  WHERE provider_message_id IS NOT NULL;
 
 ALTER TABLE order_whatsapp_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_whatsapp_messages FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS allow_authenticated_all ON order_whatsapp_messages;
 CREATE POLICY allow_authenticated_all ON order_whatsapp_messages
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- 2026-11-25 — admin-controlled automatic order-status messages (folded from
+-- db/2026-11-25-whatsapp-order-status.sql). One row per company; a missing row
+-- means the built-in defaults (all three triggers on, default templates).
+-- No token column: the Whapi token lives only in the deployment environment.
+CREATE TABLE company_whatsapp_settings (
+  company_id                uuid PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+  auto_status_enabled       boolean NOT NULL DEFAULT true,
+  hold_enabled              boolean NOT NULL DEFAULT true,
+  cancel_enabled            boolean NOT NULL DEFAULT true,
+  process_enabled           boolean NOT NULL DEFAULT true,
+  hold_template             text NOT NULL DEFAULT 'Hold this order {po}',
+  cancel_template           text NOT NULL DEFAULT 'Cancel This Order {po}',
+  process_template          text NOT NULL DEFAULT 'Process This Order {po}',
+  updated_by_employee_id    uuid REFERENCES employees(id) ON DELETE SET NULL,
+  updated_at                timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE company_whatsapp_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS company_whatsapp_settings_authenticated_all ON company_whatsapp_settings;
+CREATE POLICY company_whatsapp_settings_authenticated_all ON company_whatsapp_settings
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 CREATE TABLE order_refunds (

@@ -14,6 +14,7 @@ import { dutyPayableByForShipmentTerm } from "@/lib/invoices/duty-payable";
 import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
 import type { Json } from "@/types/database";
+import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { revalidatePath } from "next/cache";
 
 export type InvoiceFormState = {
@@ -537,14 +538,32 @@ export async function generateInvoiceCore(
     .not("status", "in", "(Dispatched,Delivered)");
 
   if (notYetDispatched && notYetDispatched.length > 0) {
-    await Promise.all(
-      notYetDispatched.map((o) =>
-        supabase
+    // 2026-11-26 — audit 3.8: these updates were fire-and-forget inside
+    // Promise.all, so an order that failed to move to Dispatched left the
+    // invoice created with no record of why the order still showed its old
+    // status. The result is now inspected and every failure is logged.
+    const dispatchResults = await Promise.all(
+      notYetDispatched.map(async (o) => {
+        const { error } = await supabase
           .from("orders")
           .update({ status: "Dispatched", dispatch_date: o.dispatch_date ?? invoiceDate })
-          .eq("id", o.id)
-      )
+          .eq("id", o.id);
+        return { orderId: o.id, error };
+      })
     );
+    for (const result of dispatchResults) {
+      if (!result.error) continue;
+      await logEntryError(supabase, {
+        companyId: employee.currentCompanyId,
+        source: "system",
+        reason: `Invoice ${invoice.invoice_no} was created but this order could not be marked Dispatched: ${result.error.message}`,
+        referenceType: "order",
+        referenceId: result.orderId,
+        referenceLabel: invoice.invoice_no,
+        raisedByEmployeeId: employee.id,
+        raisedByName: employee.name,
+      });
+    }
   }
 
   revalidatePath("/dashboard/invoices");

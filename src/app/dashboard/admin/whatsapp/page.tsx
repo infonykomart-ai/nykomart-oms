@@ -9,6 +9,12 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { checkStatusProvider } from "@/lib/whatsapp/status-sender";
 import { DEFAULT_TEMPLATES } from "@/lib/whatsapp/order-status";
+import {
+  STATUS_BACKLOG_ALERT_HOURS,
+  STATUS_RETRY_BATCH,
+  statusMessageBacklog,
+  type StatusBacklog,
+} from "@/lib/whatsapp/status-retry";
 import { WhatsAppSettingsClient, type WhatsAppSettingsRow } from "./client";
 
 export default async function WhatsAppSettingsPage() {
@@ -59,6 +65,17 @@ export default async function WhatsAppSettingsPage() {
 
   const provider = await checkStatusProvider();
 
+  // 2026-11-26 — audit 3.6. The sweep runs once a day, so a growing queue used
+  // to be invisible until someone opened the history and counted. This reads
+  // the due rows themselves; the table may not exist yet on a deployment that
+  // hasn't run the migration, hence the guard.
+  let backlog: StatusBacklog | null = null;
+  try {
+    backlog = await statusMessageBacklog(supabase, { companyIds: employee.companyIds });
+  } catch {
+    backlog = null;
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -74,6 +91,20 @@ export default async function WhatsAppSettingsPage() {
           ← Dashboard
         </Link>
       </div>
+
+      {backlog?.behind && (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <strong>{backlog.pending} status message(s) are still waiting to be sent.</strong>{" "}
+          {backlog.oldestHours != null && (
+            <>
+              The oldest has waited {backlog.oldestHours} hour(s).{" "}
+            </>
+          )}
+          The retry sweep runs once a day and clears up to {STATUS_RETRY_BATCH} at a time; more
+          than that, or a message waiting over {STATUS_BACKLOG_ALERT_HOURS} hour(s), means the
+          backlog is growing. Fix the cause in the message history below.
+        </p>
+      )}
 
       {settingsMissing && (
         <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">

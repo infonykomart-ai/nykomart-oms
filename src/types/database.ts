@@ -7934,6 +7934,8 @@ export type Database = {
           colour: string;
           variant_attributes: Json;
           active: boolean;
+          // 2026-11-26 — set when this variant was merged into another one.
+          merged_into_id: string | null;
           created_by_employee_id: string | null;
           created_at: string;
           updated_at: string;
@@ -7949,6 +7951,7 @@ export type Database = {
           colour?: string;
           variant_attributes?: Json;
           active?: boolean;
+          merged_into_id?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -7964,6 +7967,7 @@ export type Database = {
           colour?: string;
           variant_attributes?: Json;
           active?: boolean;
+          merged_into_id?: string | null;
           created_by_employee_id?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -10596,6 +10600,30 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      schema_migrations: {
+        Row: {
+          file: string;
+          sha256: string;
+          applied_at: string;
+          applied_by: string | null;
+          note: string | null;
+        };
+        Insert: {
+          file: string;
+          sha256: string;
+          applied_at?: string;
+          applied_by?: string | null;
+          note?: string | null;
+        };
+        Update: {
+          file?: string;
+          sha256?: string;
+          applied_at?: string;
+          applied_by?: string | null;
+          note?: string | null;
+        };
+        Relationships: [];
       };
       sequence_counters: {
         Row: {

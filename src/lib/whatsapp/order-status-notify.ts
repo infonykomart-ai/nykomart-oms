@@ -15,6 +15,13 @@
 //     of disappearing.
 
 import type { createServiceRoleClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
+
+// 2026-11-26 — audit 3.9: these writes were cast to `never`, which switches off
+// type checking for every column in them. The generated types already carry
+// the full delivery_status union, so the real Insert/Update shapes are used.
+type MessageInsert = Database["public"]["Tables"]["order_whatsapp_messages"]["Insert"];
+type MessageUpdate = Database["public"]["Tables"]["order_whatsapp_messages"]["Update"];
 import {
   MAX_STATUS_RETRIES,
   buildStatusMessage,
@@ -151,7 +158,7 @@ export async function notifyOrderStatusChange(
         attachment_photo_ids: [],
         whatsapp_message_ids: [],
         next_attempt_at: recipient ? new Date().toISOString() : null,
-      } as never)
+      } satisfies MessageInsert)
       .select("id")
       .single();
 
@@ -205,7 +212,7 @@ export async function deliverQueuedMessage(
   const claim = () =>
     supabase
       .from("order_whatsapp_messages")
-      .update({ delivery_status: "processing", last_attempt_at: now } as never)
+      .update({ delivery_status: "processing", last_attempt_at: now } satisfies MessageUpdate)
       .eq("id", params.id);
 
   const { data: claimed } = await claim()
@@ -236,7 +243,7 @@ export async function deliverQueuedMessage(
         retry_count: params.retryCount,
         last_attempt_at: now,
         next_attempt_at: null,
-      } as never)
+      } satisfies MessageUpdate)
       .eq("id", params.id);
     return { status: "failed", logId: params.id, error: "No WhatsApp sender is configured." };
   }
@@ -251,7 +258,7 @@ export async function deliverQueuedMessage(
         retry_count: params.retryCount,
         last_attempt_at: now,
         next_attempt_at: null,
-      } as never)
+      } satisfies MessageUpdate)
       .eq("id", params.id);
     return { status: "skipped", logId: params.id, error: "No usable WhatsApp recipient." };
   }
@@ -272,7 +279,7 @@ export async function deliverQueuedMessage(
         error_message: null,
         retry_count: params.retryCount,
         next_attempt_at: null,
-      } as never)
+      } satisfies MessageUpdate)
       .eq("id", params.id);
     return { status: "sent", logId: params.id, error: null };
   }
@@ -285,7 +292,7 @@ export async function deliverQueuedMessage(
       error_message: result.error,
       retry_count: params.retryCount + 1,
       next_attempt_at: canRetry ? nextAttemptAt(params.retryCount + 1) : null,
-    } as never)
+    } satisfies MessageUpdate)
     .eq("id", params.id);
   return { status: "failed", logId: params.id, error: result.error };
 }

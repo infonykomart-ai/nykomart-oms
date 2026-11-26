@@ -20,6 +20,13 @@ import {
 } from "@/lib/orders/stair-rug";
 import type { Database } from "@/types/database";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+// 2026-11-26 — audit 3.7: a created order can arrive already in a trigger
+// status (Hold / Cancelled / In Production) — e.g. a marketplace import — and
+// the group was never told. The same notification helper the edit path uses is
+// called here, with no "from" status (the order did not exist before).
+import { notifyOrderStatusChange } from "@/lib/whatsapp/order-status-notify";
+import { triggerForStatus } from "@/lib/whatsapp/order-status";
 
 type OrderInsert = Database["public"]["Tables"]["orders"]["Insert"];
 
@@ -175,6 +182,13 @@ function parseItems(formData: FormData): { items: ParsedItem[] | null; error: st
 type CreateOrderInput = {
   storeId: string;
   orderDate: string;
+  /**
+   * 2026-11-26 — the status the new row starts in. Omitted by manual entry and
+   * CSV bulk upload (the column default, 'Pending', applies). An importer that
+   * knows the order is already on Hold / In Production passes it here so the
+   * create is recorded with the real status and the group is notified.
+   */
+  status?: Database["public"]["Enums"]["order_status"];
   marketplaceOrderNo: string | null;
   buyerNameAddress: string | null;
   contactNo: string | null;
@@ -491,6 +505,11 @@ export async function createOrderCore(
     street: buyerAddress1,
   });
 
+  // 2026-11-26 — every row this call inserts, with the status it was created
+  // in, so the notification below can be sent after the response (never making
+  // the save wait on WhatsApp).
+  const createdOrders: { id: string; status: string }[] = [];
+
   for (const item of items) {
     const conversion = await cachedConversion(item.orderCurrency, item.orderValueOriginal);
     siblingCount += 1;
@@ -549,6 +568,7 @@ export async function createOrderCore(
       order_value_inr: conversion.inr,
       exchange_rate_source: conversion.source,
     };
+    if (input.status) payload.status = input.status;
 
     // 2026-11-02 — Stair Rug's set columns ride along only when the item
     // actually has set data (Cotton/Jute/Tufted payloads are byte-identical to
@@ -579,7 +599,7 @@ export async function createOrderCore(
     const { data: insertedOrder, error: insertError } = await tolerateMissingColumns(
       payload,
       optionalColumns,
-      (p) => supabase.from("orders").insert(p).select("id").single()
+      (p) => supabase.from("orders").insert(p).select("id, status").single()
     );
 
     if (insertError) {
@@ -587,6 +607,7 @@ export async function createOrderCore(
     }
 
     if (insertedOrder?.id) {
+      createdOrders.push({ id: insertedOrder.id, status: String(insertedOrder.status ?? "Pending") });
       await syncOrderAttachments(
         insertedOrder.id,
         closeUpUrlsForOrder({ photo_url: item.photoUrl, photo_urls: payload.photo_urls })
@@ -616,6 +637,23 @@ export async function createOrderCore(
   }
 
   const finalRefNo = batch && batch.length > 1 ? `${baseRefNo} (batch of ${batch.length})` : baseRefNo!;
+
+  // 2026-11-26 — audit 3.7. Only trigger statuses produce a message, and the
+  // helper itself re-checks that, so an ordinary "Pending" create stays
+  // silent. Runs after the response like every other WhatsApp side-effect.
+  if (createdOrders.some((row) => triggerForStatus(row.status))) {
+    after(async () => {
+      for (const row of createdOrders) {
+        if (!triggerForStatus(row.status)) continue;
+        await notifyOrderStatusChange(supabase, {
+          orderId: row.id,
+          fromStatus: null,
+          toStatus: row.status,
+          actorEmployeeId: employee.id,
+        });
+      }
+    });
+  }
 
   // 2026-09-05 — AI Companion: "kisi ne order dala to vo kabhi left se
   // aakr bolegi congratulation order successfully save in OMS" — notifies

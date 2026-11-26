@@ -16,10 +16,12 @@
 // refund was requested, releases the refund through the same capped core.
 import { revalidatePath } from "next/cache";
 import { requireAnyCapability, requireCapability } from "@/lib/auth/require-capability";
-import { createServiceRoleClient } from "@/lib/supabase/server";
+import { createServiceRoleClient, createServiceRoleClientUnchecked } from "@/lib/supabase/server";
 import { saveOrderRefundCore } from "@/app/dashboard/orders/actions";
+import { releaseOrderStock } from "@/lib/inventory/order-stock";
 import { isMissingAgreementSchema } from "@/lib/agreements/migration";
 import { logAudit } from "@/lib/audit/log-audit";
+import { logEntryError } from "@/lib/error-log/log-entry-error";
 
 // NOT exported: a "use server" module may only export async functions, and a
 // const here fails the production build (Turbopack: "Only async functions are
@@ -285,6 +287,53 @@ export async function decideReturnRequest(input: {
     }
   }
 
+  // 2026-11-26 — P0 audit fix: an approved return is a returned order, and a
+  // returned order must stop promising the stock it was holding. The Orders
+  // module already releases on Hold/Cancel/Returned (orders/actions.ts), but
+  // this path writes `Returned` itself, so without this the reservation stayed
+  // ACTIVE forever and the same pieces kept looking "sold" to every other
+  // order — the exact silent drift the audit flagged at this line.
+  //
+  // Runs AFTER the refund block on purpose: a rejected refund reverts the order
+  // status and leaves the request Pending, and in that state the reservation
+  // must still be held. A release failure never fails the approval (the order
+  // is already Returned and the money, if any, already moved) but is recorded
+  // on the Error Log and in this request's audit row, so it is not silent.
+  let stockReleased: number | null = null;
+  try {
+    const release = await releaseOrderStock(createServiceRoleClientUnchecked(), {
+      orderId: effective.order_id,
+      actorId: employee.id,
+      reason: "Return approved",
+    });
+    stockReleased = release.released;
+    if (release.error) {
+      await logEntryError(supabase, {
+        companyId: request.company_id,
+        source: "system",
+        reason: `Return approved but the order's stock reservation was not released: ${release.error}`,
+        referenceType: "order",
+        referenceId: effective.order_id,
+        referenceLabel: request.id,
+        raisedByEmployeeId: employee.id,
+        raisedByName: employee.name,
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await logEntryError(supabase, {
+      companyId: request.company_id,
+      source: "system",
+      reason: `Return approved but the stock release crashed: ${message}`,
+      referenceType: "order",
+      referenceId: effective.order_id,
+      referenceLabel: request.id,
+      raisedByEmployeeId: employee.id,
+      raisedByName: employee.name,
+    });
+  }
+  revalidatePath("/dashboard/inventory");
+
   await logAudit(supabase, {
     companyId: request.company_id,
     employeeId: employee.id,
@@ -299,6 +348,7 @@ export async function decideReturnRequest(input: {
       refund_currency: effective.refund_currency,
       refund_date: effective.refund_date,
       applied_refund_id: appliedRefundId,
+      stock_released: stockReleased,
     },
   });
 

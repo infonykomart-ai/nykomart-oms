@@ -16,6 +16,9 @@ import { tolerateMissingColumns } from "@/lib/db/missing-column";
 import { notifyCompanion } from "@/lib/companion/notify";
 import { validateDateFields } from "@/lib/fy-date";
 import { logAudit } from "@/lib/audit/log-audit";
+// 2026-11-26 — audit 3.8: a stock action that fails after the order save used
+// to leave no trace at all. These paths now write a system entry.
+import { logEntryError } from "@/lib/error-log/log-entry-error";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -266,9 +269,20 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
         });
       }
       revalidatePath("/dashboard/inventory");
-    } catch {
+    } catch (error) {
       // Inventory not configured yet, or a transient failure — the order edit
-      // itself stays saved. The requirements list is the visible record.
+      // itself stays saved. Still, the reservation is now out of step with the
+      // status, so record it instead of swallowing it (audit 3.8).
+      await logEntryError(supabase, {
+        companyId: existing.company_id,
+        source: "system",
+        reason: `Inventory could not follow the status change to ${nextStatus}: ${error instanceof Error ? error.message : String(error)}`,
+        referenceType: "order",
+        referenceId: orderId,
+        referenceLabel: existing.ref_no,
+        raisedByEmployeeId: employee.id,
+        raisedByName: employee.name,
+      });
     }
   }
 
@@ -326,10 +340,21 @@ export async function updateOrder(_prev: OrderEditState, formData: FormData): Pr
           photo_type: strOrNull(formData, "photo_type"),
         },
       });
-    } catch {
+    } catch (error) {
       // Best effort — the order edit is already saved, and a WhatsApp
       // failure must never surface as a failed edit. The log row (when the
-      // migration is applied) is where a failure is visible and retryable.
+      // migration is applied) is where a failure is visible and retryable;
+      // this entry covers a crash before that row was written.
+      await logEntryError(supabase, {
+        companyId: existing.company_id,
+        source: "system",
+        reason: `Reference-photo WhatsApp message failed after the order save: ${error instanceof Error ? error.message : String(error)}`,
+        referenceType: "order",
+        referenceId: orderId,
+        referenceLabel: existing.ref_no,
+        raisedByEmployeeId: employee.id,
+        raisedByName: employee.name,
+      });
     }
   });
 
@@ -445,8 +470,18 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
       actorId: employee.id,
       reason: "Order put on hold",
     });
-  } catch {
-    // Inventory not configured — nothing to release.
+  } catch (error) {
+    // The status change is saved; only the stock release failed. Record it so
+    // the reservation drift has a visible owner (audit 3.8).
+    await logEntryError(supabase, {
+      companyId: order.company_id,
+      source: "system",
+      reason: `Stock release failed after the order status changed: ${error instanceof Error ? error.message : String(error)}`,
+      referenceType: "order",
+      referenceId: orderId,
+      raisedByEmployeeId: employee.id,
+      raisedByName: employee.name,
+    });
   }
 
   revalidatePath("/dashboard/orders");
@@ -577,8 +612,18 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
       actorId: employee.id,
       reason: "Order cancelled",
     });
-  } catch {
-    // Inventory not configured — nothing to release.
+  } catch (error) {
+    // The status change is saved; only the stock release failed. Record it so
+    // the reservation drift has a visible owner (audit 3.8).
+    await logEntryError(supabase, {
+      companyId: order.company_id,
+      source: "system",
+      reason: `Stock release failed after the order status changed: ${error instanceof Error ? error.message : String(error)}`,
+      referenceType: "order",
+      referenceId: orderId,
+      raisedByEmployeeId: employee.id,
+      raisedByName: employee.name,
+    });
   }
 
   revalidatePath("/dashboard/orders");
@@ -621,8 +666,18 @@ export async function returnOrder(orderId: string): Promise<SimpleResult> {
       actorId: employee.id,
       reason: "Order returned",
     });
-  } catch {
-    // Inventory not configured — nothing to release.
+  } catch (error) {
+    // The status change is saved; only the stock release failed. Record it so
+    // the reservation drift has a visible owner (audit 3.8).
+    await logEntryError(supabase, {
+      companyId: order.company_id,
+      source: "system",
+      reason: `Stock release failed after the order status changed: ${error instanceof Error ? error.message : String(error)}`,
+      referenceType: "order",
+      referenceId: orderId,
+      raisedByEmployeeId: employee.id,
+      raisedByName: employee.name,
+    });
   }
 
   revalidatePath("/dashboard/orders");

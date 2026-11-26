@@ -182,3 +182,52 @@ export async function listBackupRuns(config: R2Config | null = r2ConfigFromEnv()
     return { configured: true, error: describeError(err), runs: [] };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Freshness (2026-11-26, P0 audit fix)
+//
+// The weekly snapshot is triggered from OUTSIDE Vercel
+// (.github/workflows/weekly-backup.yml) because this plan's two cron slots are
+// taken. That has one failure mode this code can see and nobody else would:
+// the workflow gets disabled, loses its CRON_SECRET, or its run fails, and the
+// bucket simply stops growing — silently. So freshness is computed from the
+// stored runs themselves (the bucket is the only source of truth; a local
+// "last backup" flag could disagree with it) and shown as a warning, and the
+// daily sync-orders cron re-runs a due backup as a fallback.
+// ---------------------------------------------------------------------------
+
+/** Weekly target + one day of grace before the newest snapshot counts as stale. */
+export const BACKUP_STALE_AFTER_HOURS = 8 * 24;
+
+export type BackupFreshness = {
+  latestRunId: string | null;
+  latestAt: string | null;
+  ageHours: number | null;
+  stale: boolean;
+};
+
+/** runId is "YYYY-MM-DD_HHMMSS" in UTC (see runIdFor above). */
+function runIdDate(runId: string): Date | null {
+  const match = /^(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(runId);
+  if (!match) return null;
+  const date = new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Newest stored run vs now. No runs at all counts as stale (nothing to restore). */
+export function backupFreshness(runs: BackupRun[], now: Date = new Date()): BackupFreshness {
+  let newest: { runId: string; at: Date } | null = null;
+  for (const run of runs) {
+    const at = runIdDate(run.runId);
+    if (!at) continue;
+    if (!newest || at.getTime() > newest.at.getTime()) newest = { runId: run.runId, at };
+  }
+  if (!newest) return { latestRunId: null, latestAt: null, ageHours: null, stale: true };
+  const ageHours = (now.getTime() - newest.at.getTime()) / 3_600_000;
+  return {
+    latestRunId: newest.runId,
+    latestAt: newest.at.toISOString(),
+    ageHours: Math.round(ageHours * 10) / 10,
+    stale: ageHours > BACKUP_STALE_AFTER_HOURS,
+  };
+}

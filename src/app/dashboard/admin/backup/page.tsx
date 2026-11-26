@@ -1,5 +1,5 @@
 import { requireCapability } from "@/lib/auth/require-capability";
-import { listBackupRuns, type BackupRunList } from "@/lib/backup/run";
+import { BACKUP_STALE_AFTER_HOURS, backupFreshness, listBackupRuns, type BackupRunList } from "@/lib/backup/run";
 import { R2_ENV_VARS } from "@/lib/backup/r2";
 import { BackupExportButton } from "./backup-export-button";
 import { BuyerCountryBackfillButton } from "./buyer-country-backfill-button";
@@ -55,6 +55,30 @@ function fileLabel(name: string): string {
   if (name.endsWith(".pdf")) return "⬇️ PDF report";
   if (name.endsWith(".json")) return "⬇️ Manifest";
   return `⬇️ ${name}`;
+}
+
+// 2026-11-26 — P0 audit fix: the weekly snapshot's clock is the GitHub Action,
+// not Vercel, so a disabled workflow / missing CRON_SECRET / failed run would
+// leave this page looking normal while no new backup appeared. The bucket is
+// the source of truth for "when did we last have a copy", so the warning is
+// derived from the stored runs, never from a remembered timestamp.
+function StalenessWarning({ state }: { state: BackupRunList }) {
+  if (!state.configured || state.error) return null;
+  const freshness = backupFreshness(state.runs);
+  if (!freshness.stale) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      <p className="font-medium">⚠️ No recent cloud backup</p>
+      <p className="mt-1 text-xs">
+        {freshness.latestRunId
+          ? `The newest stored snapshot is ${Math.round(freshness.ageHours ?? 0)} hours old (target: every ${BACKUP_STALE_AFTER_HOURS / 24} days).`
+          : "No snapshot has been stored yet."}{" "}
+        Run one below, and check the <b>Weekly Cloud Backup</b> GitHub Action — a disabled workflow or a missing
+        CRON_SECRET repository secret means the schedule never reaches this app. The daily sync-orders cron also takes
+        an overdue backup automatically and records a failure under Error Log → system.
+      </p>
+    </div>
+  );
 }
 
 function StoredRuns({ state }: { state: BackupRunList }) {
@@ -178,6 +202,7 @@ export default async function BackupExportPage() {
           </p>
           <CloudBackupButton disabled={!runs.configured} />
           <div className="mt-4">
+            <StalenessWarning state={runs} />
             <StoredRuns state={runs} />
           </div>
         </div>

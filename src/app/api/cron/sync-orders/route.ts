@@ -16,10 +16,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCronAuthorized } from "@/lib/auth/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+// 2026-11-26 — P0 audit fix: an overdue weekly snapshot is taken here.
+import { backupFreshness, listBackupRuns, runSnapshotBackup } from "@/lib/backup/run";
+import { logEntryError } from "@/lib/error-log/log-entry-error";
 // 2026-11-25 — the WhatsApp status-message retry sweep rides on this job: the
 // plan has only two Vercel cron slots, so it reuses this one rather than adding
 // a third. Same shared sweep as /api/cron/whatsapp-status-retry.
-import { retryDueStatusMessages } from "@/lib/whatsapp/status-retry";
+import { STATUS_RETRY_BATCH, retryDueStatusMessages, statusMessageBacklog } from "@/lib/whatsapp/status-retry";
 import { createOrderCore } from "@/app/dashboard/orders/new/actions";
 import { decryptSecret } from "@/lib/crypto/secret-box";
 import { WooCommerceConnector } from "@/lib/connectors/woocommerce";
@@ -56,12 +59,74 @@ export async function GET(req: NextRequest) {
   const supabase = createServiceRoleClient();
   const summary: Array<{ storeId: string; created: number; skipped: number; error?: string }> = [];
 
+  // 2026-11-26 — BACKUP SAFETY NET (P0 from the 26 Nov audit).
+  //
+  // The weekly snapshot's clock lives outside Vercel
+  // (.github/workflows/weekly-backup.yml) because this plan's two cron slots
+  // are spent. If that workflow is disabled, loses CRON_SECRET, or its run
+  // fails, nothing in the app noticed before — the bucket just stopped
+  // growing. So each daily run checks the newest stored run and takes one when
+  // it is overdue. Runs FIRST and in its own try/catch: a backup failure must
+  // never stop the sync, and the sync must never stop the backup.
+  //
+  // It costs one R2 LIST per day, and the full snapshot at most once a week.
+  // On the days it does run, this route's remaining time is smaller — the
+  // WhatsApp retry budget below (20s) still leaves room inside maxDuration 60.
+  let backup: Record<string, unknown>;
+  try {
+    const listing = await listBackupRuns();
+    if (!listing.configured) {
+      backup = { status: "skipped", reason: "not-configured", missing: listing.missing };
+    } else if (listing.error) {
+      backup = { status: "skipped", reason: "list-failed", error: listing.error };
+      await logEntryError(supabase, {
+        source: "system",
+        reason: `Weekly backup freshness check failed: ${listing.error}`,
+        referenceType: "backup",
+        raisedByName: "Backup scheduler",
+      });
+    } else {
+      const freshness = backupFreshness(listing.runs);
+      if (!freshness.stale) {
+        backup = { status: "fresh", latestRunId: freshness.latestRunId, ageHours: freshness.ageHours };
+      } else {
+        const result = await runSnapshotBackup({ trigger: "cron" });
+        if (result.ok) {
+          backup = { status: "taken", runId: result.runId, rows: result.manifest.totalRows, tables: result.manifest.tables.length };
+        } else {
+          backup = { status: "failed", stage: result.stage, error: result.error, ageHours: freshness.ageHours };
+          await logEntryError(supabase, {
+            source: "system",
+            reason: `Weekly backup is overdue (last ${freshness.latestRunId ?? "never"}) and this run failed at ${result.stage}: ${result.error}`,
+            referenceType: "backup",
+            raisedByName: "Backup scheduler",
+          });
+        }
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    backup = { status: "failed", error: message };
+    await logEntryError(supabase, {
+      source: "system",
+      reason: `Weekly backup could not run: ${message}`,
+      referenceType: "backup",
+      raisedByName: "Backup scheduler",
+    });
+  }
+
   // Runs FIRST and in its own try/catch: a slow or failing marketplace sync
   // must never starve the retries, and a WhatsApp outage must never fail the
   // sync. The budget keeps it well inside this route's 60s cap.
+  // 2026-11-26 — the batch moved 10 → 50 (audit 3.6): a day's failures used
+  // to take days to clear. The 20s budget still wins on a slow provider, so
+  // the run stays inside maxDuration 60; whatever is left is reported as the
+  // backlog below instead of disappearing.
   let whatsappRetries: Awaited<ReturnType<typeof retryDueStatusMessages>> | { error: string };
+  let whatsappBacklog: Awaited<ReturnType<typeof statusMessageBacklog>> | { error: string } | null = null;
   try {
-    whatsappRetries = await retryDueStatusMessages(supabase, { batch: 10, budgetMs: 20_000 });
+    whatsappRetries = await retryDueStatusMessages(supabase, { batch: STATUS_RETRY_BATCH, budgetMs: 20_000 });
+    whatsappBacklog = await statusMessageBacklog(supabase);
   } catch (error) {
     whatsappRetries = { error: error instanceof Error ? error.message : String(error) };
   }
@@ -224,5 +289,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ summary, whatsappRetries });
+  return NextResponse.json({ summary, whatsappRetries, whatsappBacklog, backup });
 }

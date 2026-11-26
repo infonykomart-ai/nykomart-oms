@@ -461,6 +461,14 @@ export async function probeMigrations(
       "An invoice edited before 2026-11-25 still has one ledger row holding its whole line value instead of its proportional share — Bill Payment / Party Ledger keep showing a group payable that is not the split Finance reviewed.",
       [{ name: "invoice groups proportional to their bills", promise: purchaseBillShareSplitInStep(client) }]),
 
+    // 2026-11-26 — the migration LEDGER itself. Without this file the admin page
+    // still shows probe results (what exists), but no applied file is recorded
+    // with its SHA-256 — so an already-run file that was edited later cannot be
+    // told apart from an applied one. See db/2026-11-26-schema-migrations-ledger.sql.
+    probe("db/2026-11-26-schema-migrations-ledger.sql", "Migration ledger (schema_migrations)",
+      "Nothing records WHICH version of each file was applied — probe results show the objects exist, but a file edited after it was run is indistinguishable from an applied one.",
+      [{ name: "schema_migrations.sha256", promise: hasColumn(client, "schema_migrations", "sha256") }]),
+
     probe("db/2026-11-22b-order-attachments.sql", "Order attachments (typed close-up photo index)",
       "Close-up photos are read from orders.photo_urls only — no attachment row (file name / sort order) is stored.",
       [{ name: "order_attachments.file_url", promise: hasColumn(client, "order_attachments", "file_url") }]),

@@ -6,15 +6,20 @@
 // and nowhere else. Anything else in the payload (unknown ids, unknown
 // statuses) is ignored on purpose: the log must not claim more than it knows.
 //
-// SECURITY: set WHAPI_WEBHOOK_SECRET and configure the same value as the
-// webhook's token/header in the Whapi panel. When the secret is configured a
-// request without it is rejected; when it is not configured the endpoint still
-// accepts events but only ever touches rows that already exist by provider id.
+// SECURITY: WHAPI_WEBHOOK_SECRET is REQUIRED. Configure the same value as the
+// webhook's token/header in the Whapi panel. This route writes with the
+// service-role client, so a missing secret used to mean "anyone who finds the
+// URL can mark a message delivered/read" — the one fail-open hole the 26 Nov
+// audit found next to an otherwise fail-closed cron gate. An unset secret now
+// answers 503 (a deployment misconfiguration, retried once fixed), and a wrong
+// token answers 401, compared in constant time like src/lib/auth/cron-auth.ts.
 //
-// Always answers 200 once the body parsed: a provider that gets a 5xx retries
-// the same event for hours, and a repeated event is already a no-op here.
+// Always answers 200 once an authenticated body parsed: a provider that gets a
+// 5xx retries the same event for hours, and a repeated event is already a no-op
+// here.
 
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -52,15 +57,30 @@ function errorText(raw: unknown): string | null {
 
 export async function POST(request: NextRequest) {
   const secret = (process.env.WHAPI_WEBHOOK_SECRET ?? "").trim();
-  if (secret) {
-    const supplied =
-      request.headers.get("x-whapi-token") ??
-      request.headers.get("x-webhook-secret") ??
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-      "";
-    if (supplied.trim() !== secret) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+  if (!secret) {
+    // Deliberately NOT "accept and rely on the rows being known": with no
+    // secret there is no caller to trust, and delivery_status is exactly what
+    // the Orders page's amber retry banner is derived from. 503 tells Whapi
+    // (and whoever reads the logs) that the deployment is incomplete instead
+    // of quietly accepting forged "read" events.
+    return NextResponse.json(
+      { ok: false, error: "WHAPI_WEBHOOK_SECRET is not configured on this deployment." },
+      { status: 503 }
+    );
+  }
+
+  const supplied = (
+    request.headers.get("x-whapi-token") ??
+    request.headers.get("x-webhook-secret") ??
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+    ""
+  ).trim();
+  // timingSafeEqual throws on a length mismatch, so compare lengths first —
+  // the length is already public through the header format.
+  const suppliedBuf = Buffer.from(supplied, "utf8");
+  const secretBuf = Buffer.from(secret, "utf8");
+  if (suppliedBuf.length !== secretBuf.length || !timingSafeEqual(suppliedBuf, secretBuf)) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   let body: unknown;

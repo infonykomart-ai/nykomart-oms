@@ -8,6 +8,8 @@ import {
   summarizeMigrations,
   type ProbeState,
 } from "@/lib/migrations/probes";
+import { readMigrationLedger, summarizeMigrationLedger, type LedgerSummary } from "@/lib/migrations/ledger";
+import { recordVerifiedMigrationsAction } from "./actions";
 
 // 2026-10-21 — "kar diya run" / the reason it exists at all: every dated
 // db/2026-*.sql file has to be run ONCE by hand, and the app is deliberately
@@ -28,15 +30,19 @@ import {
 export default async function MigrationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ refresh?: string }>;
+  searchParams: Promise<{ refresh?: string; recorded?: string; ledger?: string }>;
 }) {
   const employee = await requireCapability("employee_admin");
   const supabase = createServiceRoleClient();
-  const { refresh } = await searchParams;
+  const { refresh, recorded, ledger: ledgerParam } = await searchParams;
   const { probes, ageMinutes, fromCache } = await probeMigrationsCached(supabase, employee.currentCompanyId, {
     force: refresh === "1",
   });
   const { pending, unknown, manual, total } = summarizeMigrations(probes);
+  // 2026-11-26 — the ledger half of "is it applied?". Probes answer what exists;
+  // the ledger answers WHICH version of a file was run (the file's SHA-256).
+  const ledger = await readMigrationLedger(supabase);
+  const ledgerSummary = summarizeMigrationLedger(probes, ledger);
 
   return (
     <div>
@@ -56,6 +62,31 @@ export default async function MigrationsPage({
           {" "}(each full check runs about 350 lightweight read-only queries).
         </p>
       </div>
+
+      {ledgerParam === "missing" && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Run <code className="rounded bg-amber-100 px-1">db/2026-11-26-schema-migrations-ledger.sql</code> first —
+          nothing can be recorded until the ledger table exists.
+        </div>
+      )}
+      {ledgerParam === "error" && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          The ledger write failed. Nothing was recorded; try again, and check the server logs if it repeats.
+        </div>
+      )}
+      {recorded !== undefined && ledgerParam === undefined && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+          {recorded === "0"
+            ? "Nothing new to record — every verifiable file already has a ledger row."
+            : `Recorded ${recorded} verified file${recorded === "1" ? "" : "s"} in the ledger.`}
+        </div>
+      )}
+
+      <LedgerCard
+        summary={ledgerSummary}
+        available={ledger.available}
+        unavailableReason={ledger.available ? null : ledger.error}
+      />
 
       {pending === 0 && unknown === 0 && manual === 0 && (
         <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
@@ -147,6 +178,91 @@ export default async function MigrationsPage({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// 2026-11-26 — the ledger card. Kept read-only except for the one explicit
+// "Record verified files" button, whose action re-probes before writing.
+function LedgerCard({
+  summary,
+  available,
+  unavailableReason,
+}: {
+  summary: LedgerSummary;
+  available: boolean;
+  unavailableReason: string | null;
+}) {
+  if (!available) {
+    return (
+      <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        <p className="font-semibold text-slate-800">Migration ledger not installed</p>
+        <p className="mt-1 text-xs">
+          Run <code className="rounded bg-slate-200 px-1">db/2026-11-26-schema-migrations-ledger.sql</code> to record
+          which version of each file was applied. Until then only the probe results below are available
+          {unavailableReason ? ` (${unavailableReason})` : ""}.
+        </p>
+      </div>
+    );
+  }
+
+  const thin = summary.recorded === 0;
+  return (
+    <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-800">Migration ledger</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {summary.recorded} of {summary.total} one-time files are recorded with the SHA-256 of the file that was run.
+            {thin && " Nothing recorded yet — the button records only files this page just verified."}
+          </p>
+        </div>
+        {summary.recordable.length > 0 && (
+          <form action={recordVerifiedMigrationsAction}>
+            <button
+              type="submit"
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-800"
+            >
+              Record {summary.recordable.length} verified file{summary.recordable.length === 1 ? "" : "s"}
+            </button>
+          </form>
+        )}
+      </div>
+
+      {summary.drifted.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <p className="font-semibold">{summary.drifted.length} file(s) changed after they were recorded.</p>
+          <p className="mt-1">
+            The database has an older version of these files. Re-run the current file, then record it again.
+          </p>
+          <ul className="mt-1 list-inside list-disc font-mono">
+            {summary.drifted.slice(0, 8).map((row) => (
+              <li key={row.file}>{row.file}</li>
+            ))}
+            {summary.drifted.length > 8 && <li>…and {summary.drifted.length - 8} more</li>}
+          </ul>
+        </div>
+      )}
+
+      {summary.conflicts.length > 0 && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+          <p className="font-semibold">{summary.conflicts.length} file(s) are recorded as applied but are missing here.</p>
+          <p className="mt-1">The database was restored from an older backup, or the object was dropped. Run the file again.</p>
+          <ul className="mt-1 list-inside list-disc font-mono">
+            {summary.conflicts.slice(0, 8).map((file) => (
+              <li key={file}>{file}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {(summary.orphaned.length > 0 || summary.manual.length > 0) && (
+        <p className="mt-3 text-[11px] text-slate-400">
+          {summary.orphaned.length > 0 && `${summary.orphaned.length} recorded file(s) no longer exist in db/. `}
+          {summary.manual.length > 0 &&
+            `${summary.manual.length} file(s) create nothing the API can verify (indexes, RLS policies, data repairs) — listed below as Manual and never recorded automatically.`}
+        </p>
+      )}
     </div>
   );
 }

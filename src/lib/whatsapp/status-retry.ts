@@ -16,12 +16,34 @@
 // TIME BUDGET: the cron routes are capped at 60s on this plan. Sends are
 // sequential and each can take up to 20s, so the loop stops at the deadline and
 // leaves the remainder for the next run instead of being killed mid-batch.
+//
+// 2026-11-26 — BACKLOG (audit 3.6). Batch was 10, once a day: eleven failed
+// messages took two days to clear, and the queue grew silently. The batch is
+// now 50 and `statusMessageBacklog()` answers the question the admin page
+// could not: how many are still due, and how long has the oldest waited. Both
+// are read from the table itself (no remembered counter), so they stay honest
+// after a manual retry or a successful send.
 
 import type { createServiceRoleClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
 import { MAX_STATUS_RETRIES } from "./order-status";
 import { deliverQueuedMessage } from "./order-status-notify";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
+type MessageUpdate = Database["public"]["Tables"]["order_whatsapp_messages"]["Update"];
+
+/**
+ * Rows the sweep tries to deliver per run. The deadline still stops the loop
+ * on a slow provider; this is the ceiling, not a promise to finish 50 sends.
+ */
+export const STATUS_RETRY_BATCH = 50;
+
+/**
+ * How long a due message may wait before the admin page calls it a backlog.
+ * Two hours is out of step with the daily sweep — that is the point: it turns
+ * "the queue is piling up" into a visible warning instead of silent growth.
+ */
+export const STATUS_BACKLOG_ALERT_HOURS = 2;
 
 export type RetrySummary = {
   /** Rows that were due when the sweep started. */
@@ -34,11 +56,58 @@ export type RetrySummary = {
   deferred: number;
 };
 
+/**
+ * Everything still owed after the filters the sweep uses — not just this
+ * batch. `behind` is the alert: more waiting than one run can clear, or an
+ * oldest message older than the alert window.
+ */
+export type StatusBacklog = {
+  pending: number;
+  oldestCreatedAt: string | null;
+  oldestHours: number | null;
+  behind: boolean;
+};
+
+export async function statusMessageBacklog(
+  supabase: ServiceClient,
+  options: { companyIds?: string[]; now?: Date } = {}
+): Promise<StatusBacklog> {
+  const now = options.now ?? new Date();
+  let query = supabase
+    .from("order_whatsapp_messages")
+    .select("created_at", { count: "exact" })
+    .eq("message_type", "order_status")
+    .in("delivery_status", ["queued", "failed"])
+    .lt("retry_count", MAX_STATUS_RETRIES)
+    .lte("next_attempt_at", now.toISOString());
+  if (options.companyIds?.length) query = query.in("company_id", options.companyIds);
+
+  // count is the whole filtered set (PostgREST `count: "exact"`); the single
+  // row is only there to age the oldest one.
+  const { data, count, error } = await query.order("created_at", { ascending: true }).limit(1);
+  if (error) throw new Error(error.message);
+
+  const pending = count ?? (data?.length ?? 0);
+  const oldestCreatedAt = data?.[0]?.created_at ?? null;
+  const oldestHours = oldestCreatedAt
+    ? Math.max(0, (now.getTime() - new Date(oldestCreatedAt).getTime()) / 3_600_000)
+    : null;
+
+  return {
+    pending,
+    oldestCreatedAt,
+    oldestHours: oldestHours == null ? null : Math.round(oldestHours * 10) / 10,
+    behind:
+      pending > 0 &&
+      (pending > STATUS_RETRY_BATCH || (oldestHours ?? 0) >= STATUS_BACKLOG_ALERT_HOURS),
+  };
+}
+
 export async function retryDueStatusMessages(
   supabase: ServiceClient,
   options: { batch?: number; budgetMs?: number } = {}
 ): Promise<RetrySummary> {
-  const batch = Math.max(1, Math.min(50, options.batch ?? 20));
+  const batch = Math.max(1, Math.min(STATUS_RETRY_BATCH, options.batch ?? STATUS_RETRY_BATCH));
   const deadline = Date.now() + Math.max(0, options.budgetMs ?? 25_000);
   const summary: RetrySummary = { due: 0, attempted: 0, sent: 0, failed: 0, skipped: 0, deferred: 0 };
 
@@ -61,10 +130,12 @@ export async function retryDueStatusMessages(
     if (Date.now() >= deadline) break;
     if (!row.customer_phone || !row.message_text) {
       // Nothing a retry could ever fix — record why and stop retrying it.
-      await supabase
-        .from("order_whatsapp_messages")
-        .update({ delivery_status: "skipped", next_attempt_at: null, error_message: "Message has no phone or text." } as never)
-        .eq("id", row.id);
+      const patch: MessageUpdate = {
+        delivery_status: "skipped",
+        next_attempt_at: null,
+        error_message: "Message has no phone or text.",
+      };
+      await supabase.from("order_whatsapp_messages").update(patch).eq("id", row.id);
       summary.skipped += 1;
       continue;
     }

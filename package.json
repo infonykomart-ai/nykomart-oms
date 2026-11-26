@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "migrations:manifest": "node scripts/migration-manifest.mjs",
+    "types:check": "node scripts/check-types-from-schema.mjs",
     "smoke:etsy-seo": "node --import tsx scripts/etsy-seo-smoke.ts"
   },
   "dependencies": {
