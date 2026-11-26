@@ -44,8 +44,8 @@ export default async function WhatsAppSettingsPage() {
           <h1 className="text-lg font-semibold text-slate-900">WhatsApp — order status messages</h1>
           <p className="text-xs text-slate-500">
             When an order changes to Hold, Cancelled or In Production, the message goes to the company&apos;s
-            WhatsApp order group automatically (the customer&apos;s number only when no group is set).
-            Sending runs in the background; the order save never waits for it.
+            own WhatsApp order group automatically — never to the customer&apos;s number. Sending runs in the
+            background; the order save never waits for it.
           </p>
         </div>
         <Link href="/dashboard" className="text-sm text-slate-500 hover:underline">

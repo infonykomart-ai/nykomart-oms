@@ -18,7 +18,6 @@ import type { createServiceRoleClient } from "@/lib/supabase/server";
 import {
   MAX_STATUS_RETRIES,
   buildStatusMessage,
-  checkPhone,
   groupRecipient,
   isStatusTransition,
   parseStatusRecipient,
@@ -117,15 +116,14 @@ export async function notifyOrderStatusChange(
     }
 
     // ---- Destination ------------------------------------------------------
-    // A status change is an instruction to the team, so it goes to the
+    // A status change is an instruction to OUR team, so it goes to the
     // company's own WhatsApp order group — the same group the packing and
-    // reference-photo messages already use. Only a company with no group
-    // configured falls back to the customer's own number.
+    // reference-photo messages use — and never to the customer's number. With
+    // no group configured there is nowhere honest to send it: the message is
+    // recorded as 'skipped' with that reason instead.
     const groupId = await resolveOrderWhatsappGroupId(supabase, order.company_id);
-    const phone = checkPhone(order.contact_no);
-    const recipient = groupId ? groupRecipient(groupId) : phone.ok ? phone.digits : null;
+    const recipient = groupId ? groupRecipient(groupId) : null;
     const noRecipientReason =
-      (phone.ok ? null : phone.reason) ||
       "No WhatsApp group is set for this company — set companies.whapi_group_id or WHAPI_GROUP_ID.";
 
     // ---- Log first, send second ------------------------------------------
