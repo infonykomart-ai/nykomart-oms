@@ -4,8 +4,10 @@ import {
   DEFAULT_TEMPLATES,
   buildStatusMessage,
   checkPhone,
+  groupRecipient,
   isStatusTransition,
   nextAttemptAt,
+  parseStatusRecipient,
   retryDelayMinutes,
   statusEventId,
   triggerForStatus,
@@ -70,6 +72,20 @@ test("idempotency keys are unique per transition event", () => {
   const b = statusEventId("order-1", "Pending", "Hold", 2000);
   assert.notEqual(a, b);
   assert.match(a, /^status:order-1:Pending->Hold:1000$/);
+});
+
+test("a group target and a customer number are told apart", () => {
+  const group = groupRecipient("120363012345678901");
+  assert.deepEqual(parseStatusRecipient(group), { kind: "group", groupId: "120363012345678901" });
+  // A stored group JID keeps its suffix.
+  assert.deepEqual(parseStatusRecipient(groupRecipient("120363012345678901@g.us")), {
+    kind: "group",
+    groupId: "120363012345678901@g.us",
+  });
+  // A plain number is still a customer DM, normalised like checkPhone does.
+  assert.deepEqual(parseStatusRecipient("9876543210"), { kind: "phone", digits: "919876543210" });
+  assert.equal(parseStatusRecipient("group:"), null);
+  assert.equal(parseStatusRecipient(null), null);
 });
 
 test("retry backoff grows and stops at six hours", () => {

@@ -17,6 +17,8 @@ export type StatusSender = {
   name: string;
   /** `to` is digits only, international format, no '+'. */
   sendText(to: string, body: string): Promise<SendResult>;
+  /** `groupId` is the group's own id (…@g.us, or the bare id stored on the company). */
+  sendGroupText(groupId: string, body: string): Promise<SendResult>;
 };
 
 const WHAPI_BASE_URL = "https://gate.whapi.cloud";
@@ -32,55 +34,64 @@ async function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>): Promise
   }
 }
 
-/** Whapi's 1:1 text send. Group sends (the packing messages) stay elsewhere. */
+/** One POST to Whapi's text endpoint; `chatId` is already the full WhatsApp JID. */
+async function postText(chatId: string, body: string): Promise<SendResult> {
+  const token = (process.env.WHAPI_TOKEN ?? "").trim();
+  if (!token) {
+    return { ok: false, error: "WHAPI_TOKEN is not configured on this deployment.", retryable: false };
+  }
+  let res: Response;
+  try {
+    res = await withTimeout((signal) =>
+      fetch(`${WHAPI_BASE_URL}/messages/text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ to: chatId, body }),
+        signal,
+      })
+    );
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    return {
+      ok: false,
+      error: timedOut ? "WhatsApp did not answer in time." : "Could not reach WhatsApp — please try again.",
+      retryable: true,
+    };
+  }
+
+  const json = (await res.json().catch(() => null)) as
+    | { id?: string; message?: { id?: string }; sent?: boolean; error?: unknown; detail?: string; message_text?: string }
+    | null;
+
+  if (res.ok) {
+    const id = json?.id ?? json?.message?.id ?? null;
+    return { ok: true, messageId: id };
+  }
+
+  const raw = json?.error;
+  const detail =
+    (typeof raw === "string" ? raw : (raw as { message?: string } | undefined)?.message) ||
+    json?.detail ||
+    (typeof json?.message_text === "string" ? json.message_text : undefined) ||
+    res.statusText ||
+    `HTTP ${res.status}`;
+  // 429 and 5xx are the provider's own temporary problems; 4xx is our
+  // request (bad number, rejected content) and retrying it would just fail
+  // again forever.
+  return { ok: false, error: detail, retryable: res.status === 429 || res.status >= 500 };
+}
+
+/**
+ * Whapi's text send, 1:1 and group. Order-status messages go to the company's
+ * order group; a company without one still falls back to the customer's own
+ * number (see order-status-notify.ts).
+ */
 export const whapiSender: StatusSender = {
   name: "whapi",
-  async sendText(to, body) {
-    const token = (process.env.WHAPI_TOKEN ?? "").trim();
-    if (!token) {
-      return { ok: false, error: "WHAPI_TOKEN is not configured on this deployment.", retryable: false };
-    }
-    let res: Response;
-    try {
-      res = await withTimeout((signal) =>
-        fetch(`${WHAPI_BASE_URL}/messages/text`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          // Whapi addresses 1:1 chats as <digits>@s.whatsapp.net.
-          body: JSON.stringify({ to: `${to}@s.whatsapp.net`, body }),
-          signal,
-        })
-      );
-    } catch (error) {
-      const timedOut = error instanceof Error && error.name === "AbortError";
-      return {
-        ok: false,
-        error: timedOut ? "WhatsApp did not answer in time." : "Could not reach WhatsApp — please try again.",
-        retryable: true,
-      };
-    }
-
-    const json = (await res.json().catch(() => null)) as
-      | { id?: string; message?: { id?: string }; sent?: boolean; error?: unknown; detail?: string; message_text?: string }
-      | null;
-
-    if (res.ok) {
-      const id = json?.id ?? json?.message?.id ?? null;
-      return { ok: true, messageId: id };
-    }
-
-    const raw = json?.error;
-    const detail =
-      (typeof raw === "string" ? raw : (raw as { message?: string } | undefined)?.message) ||
-      json?.detail ||
-      (typeof json?.message_text === "string" ? json.message_text : undefined) ||
-      res.statusText ||
-      `HTTP ${res.status}`;
-    // 429 and 5xx are the provider's own temporary problems; 4xx is our
-    // request (bad number, rejected content) and retrying it would just fail
-    // again forever.
-    return { ok: false, error: detail, retryable: res.status === 429 || res.status >= 500 };
-  },
+  // Whapi addresses 1:1 chats as <digits>@s.whatsapp.net.
+  sendText: (to, body) => postText(`${to}@s.whatsapp.net`, body),
+  // Groups are <id>@g.us; the stored id may or may not already carry the suffix.
+  sendGroupText: (groupId, body) => postText(groupId.includes("@") ? groupId : `${groupId}@g.us`, body),
 };
 
 /**

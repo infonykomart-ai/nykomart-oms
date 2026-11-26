@@ -28,6 +28,9 @@ export default async function OrdersPage({
   const employee = await requireAnyCapability("order_entry", "invoicing");
   const canManageOrders = employee.capabilities.includes("order_entry");
   const canInvoice = employee.capabilities.includes("invoicing");
+  // 2026-11-26 — the automatic Hold/Cancel/Process messages are set up here:
+  // the WhatsApp screen is no longer its own dashboard tile, this is its way in.
+  const canManageWhatsApp = employee.capabilities.includes("employee_admin");
   const supabase = await createClient();
   const sp = await searchParams;
 
@@ -309,6 +312,14 @@ export default async function OrdersPage({
             + New Order
           </Link>
             </>
+          )}
+          {canManageWhatsApp && (
+            <Link
+              href="/dashboard/admin/whatsapp"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              💬 WhatsApp Messages
+            </Link>
           )}
         </div>
       </div>

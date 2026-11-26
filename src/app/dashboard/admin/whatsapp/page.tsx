@@ -43,8 +43,9 @@ export default async function WhatsAppSettingsPage() {
         <div>
           <h1 className="text-lg font-semibold text-slate-900">WhatsApp — order status messages</h1>
           <p className="text-xs text-slate-500">
-            When an order changes to Hold, Cancelled or In Production, the customer gets the matching
-            message automatically. Sending runs in the background; the order save never waits for it.
+            When an order changes to Hold, Cancelled or In Production, the message goes to the company&apos;s
+            WhatsApp order group automatically (the customer&apos;s number only when no group is set).
+            Sending runs in the background; the order save never waits for it.
           </p>
         </div>
         <Link href="/dashboard" className="text-sm text-slate-500 hover:underline">
@@ -74,7 +75,11 @@ export default async function WhatsAppSettingsPage() {
           readAt: (m.read_at as string | null) ?? "",
           error: (m.error_message as string | null) ?? "",
           retryCount: Number(m.retry_count ?? 0),
-          phoneMasked: m.customer_phone ? `••••${String(m.customer_phone).slice(-4)}` : "",
+          phoneMasked: m.customer_phone
+            ? String(m.customer_phone).startsWith("group:")
+              ? `Group ••${String(m.customer_phone).slice(-4)}`
+              : `••••${String(m.customer_phone).slice(-4)}`
+            : "",
         }))}
         provider={provider}
         // The panel labels the three triggers the way the order statuses are

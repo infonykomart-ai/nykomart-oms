@@ -6,7 +6,8 @@
 // own /api/cron/whatsapp-status-retry endpoint (kept for manual/external
 // triggers). Both paths run THIS code, so the states written can never differ.
 //
-// WHAT IT DOES: finds messages still owed to a customer — 'queued' (never
+// WHAT IT DOES: finds messages still owed to a chat (the company's WhatsApp
+// group, or a customer number) — 'queued' (never
 // attempted) or 'failed' with a retry scheduled — whose next_attempt_at is due,
 // and hands each to deliverQueuedMessage (the same function the immediate send
 // uses). A message with no usable phone/text can never succeed, so it is moved
@@ -70,7 +71,7 @@ export async function retryDueStatusMessages(
     summary.attempted += 1;
     const outcome = await deliverQueuedMessage(supabase, {
       id: row.id,
-      customerPhone: row.customer_phone,
+      recipient: row.customer_phone,
       messageText: row.message_text,
       retryCount: Number(row.retry_count ?? 0),
     });

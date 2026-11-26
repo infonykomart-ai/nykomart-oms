@@ -127,12 +127,12 @@ export async function retryWhatsAppMessageAction(id: string): Promise<WhatsAppSe
     return { error: "This message already went out — retrying would send it twice.", success: false };
   }
   if (!message.customer_phone) {
-    return { error: "This message has no valid customer number on record.", success: false };
+    return { error: "This message has no recipient on record.", success: false };
   }
 
   const result = await deliverQueuedMessage(supabase, {
     id: message.id,
-    customerPhone: message.customer_phone,
+    recipient: message.customer_phone,
     messageText: message.message_text ?? "",
     retryCount: Number(message.retry_count ?? 0),
   });

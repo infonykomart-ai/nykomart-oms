@@ -39,7 +39,7 @@ function loadEnv(path) {
   if (!fs.existsSync(path)) return {};
   const out = {};
   for (const line of fs.readFileSync(path, "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (!m) continue;
     out[m[1]] = m[2].trim().replace(/^(['"])(.*)\1$/, "$2");
   }
@@ -47,9 +47,12 @@ function loadEnv(path) {
 }
 
 const env = loadEnv(".env.local");
-const URL = env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE = env.SUPABASE_SERVICE_ROLE_KEY;
+// Shell environment wins, so `KEY=... node scripts/verify-messaging-rls.mjs`
+// works without editing the file (and CI can inject secrets the usual way).
+const pick = (key) => (process.env[key] ?? "").trim() || (env[key] ?? "");
+const URL = pick("NEXT_PUBLIC_SUPABASE_URL");
+const ANON = pick("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+const SERVICE = pick("SUPABASE_SERVICE_ROLE_KEY");
 
 const missing = [
   ["NEXT_PUBLIC_SUPABASE_URL", URL],
@@ -58,7 +61,7 @@ const missing = [
 ].filter(([, v]) => !v).map(([k]) => k);
 
 if (missing.length) {
-  console.error("Cannot run: these are empty or missing in .env.local:");
+  console.error("Cannot run: these are empty or missing in .env.local (and the shell environment):");
   for (const k of missing) console.error(`  - ${k}`);
   console.error("\nRLS can only be exercised through PostgREST/Realtime with a real JWT;");
   console.error("SQL cannot do it (the query role has BYPASSRLS). Fill these in and re-run.");

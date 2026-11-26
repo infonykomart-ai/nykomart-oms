@@ -19,7 +19,9 @@ import {
   MAX_STATUS_RETRIES,
   buildStatusMessage,
   checkPhone,
+  groupRecipient,
   isStatusTransition,
+  parseStatusRecipient,
   nextAttemptAt,
   statusEventId,
   triggerForStatus,
@@ -29,6 +31,7 @@ import {
   type StatusTrigger,
 } from "./order-status";
 import { getStatusSender } from "./status-sender";
+import { resolveOrderWhatsappGroupId } from "./reference-photos-send";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -113,7 +116,17 @@ export async function notifyOrderStatusChange(
       return { ...base, status: "skipped", error: "The order has no usable reference number for the message." };
     }
 
+    // ---- Destination ------------------------------------------------------
+    // A status change is an instruction to the team, so it goes to the
+    // company's own WhatsApp order group — the same group the packing and
+    // reference-photo messages already use. Only a company with no group
+    // configured falls back to the customer's own number.
+    const groupId = await resolveOrderWhatsappGroupId(supabase, order.company_id);
     const phone = checkPhone(order.contact_no);
+    const recipient = groupId ? groupRecipient(groupId) : phone.ok ? phone.digits : null;
+    const noRecipientReason =
+      (phone.ok ? null : phone.reason) ||
+      "No WhatsApp group is set for this company — set companies.whapi_group_id or WHAPI_GROUP_ID.";
 
     // ---- Log first, send second ------------------------------------------
     // One insert either way: a message that can't be sent (no usable number)
@@ -130,14 +143,14 @@ export async function notifyOrderStatusChange(
         message_text: text,
         previous_status: fromStatus,
         new_status: toStatus,
-        customer_phone: phone.ok ? phone.digits : null,
+        customer_phone: recipient,
         provider: getStatusSender()?.name ?? "none",
-        delivery_status: phone.ok ? "queued" : "skipped",
-        error_message: phone.ok ? null : phone.reason,
+        delivery_status: recipient ? "queued" : "skipped",
+        error_message: recipient ? null : noRecipientReason,
         created_by_employee_id: params.actorEmployeeId ?? null,
         attachment_photo_ids: [],
         whatsapp_message_ids: [],
-        next_attempt_at: phone.ok ? new Date().toISOString() : null,
+        next_attempt_at: recipient ? new Date().toISOString() : null,
       } as never)
       .select("id")
       .single();
@@ -147,13 +160,13 @@ export async function notifyOrderStatusChange(
       // this exact transition was already queued. Either way: no second send.
       return { ...base, status: "skipped", error: insertError?.message ?? "Could not write the message log." };
     }
-    if (!phone.ok) {
-      return { status: "skipped", logId: row.id, error: phone.reason };
+    if (!recipient) {
+      return { status: "skipped", logId: row.id, error: noRecipientReason };
     }
 
     return deliverQueuedMessage(supabase, {
       id: row.id,
-      customerPhone: phone.digits,
+      recipient,
       messageText: text,
       retryCount: 0,
     });
@@ -174,7 +187,7 @@ export async function notifyOrderStatusChange(
  */
 export async function deliverQueuedMessage(
   supabase: ServiceClient,
-  params: { id: string; customerPhone: string; messageText: string; retryCount: number }
+  params: { id: string; recipient: string; messageText: string; retryCount: number }
 ): Promise<NotifyResult> {
   const sender = getStatusSender();
   const now = new Date().toISOString();
@@ -198,7 +211,25 @@ export async function deliverQueuedMessage(
     .update({ delivery_status: "processing", last_attempt_at: now } as never)
     .eq("id", params.id);
 
-  const result = await sender.sendText(params.customerPhone, params.messageText);
+  const target = parseStatusRecipient(params.recipient);
+  if (!target) {
+    await supabase
+      .from("order_whatsapp_messages")
+      .update({
+        delivery_status: "skipped",
+        error_message: "This message has no usable WhatsApp recipient.",
+        retry_count: params.retryCount,
+        last_attempt_at: now,
+        next_attempt_at: null,
+      } as never)
+      .eq("id", params.id);
+    return { status: "skipped", logId: params.id, error: "No usable WhatsApp recipient." };
+  }
+
+  const result =
+    target.kind === "group"
+      ? await sender.sendGroupText(target.groupId, params.messageText)
+      : await sender.sendText(target.digits, params.messageText);
 
   if (result.ok) {
     await supabase
