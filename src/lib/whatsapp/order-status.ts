@@ -131,3 +131,29 @@ export function nextAttemptAt(retryCount: number, now: Date = new Date()): strin
 }
 
 export const MAX_STATUS_RETRIES = 5;
+
+/**
+ * The message log's `customer_phone` holds whichever chat a message went to.
+ * A group target is stored with this prefix so a retry (and the admin history)
+ * can tell "the company order group" from "the customer's own number" — the
+ * same column, no migration, and no group id mistaken for a phone number.
+ */
+export const GROUP_RECIPIENT_PREFIX = "group:";
+
+export function groupRecipient(groupId: string): string {
+  return `${GROUP_RECIPIENT_PREFIX}${groupId.trim()}`;
+}
+
+/** The chat a logged message actually goes to, or null when it is unusable. */
+export function parseStatusRecipient(
+  raw: string | null | undefined
+): { kind: "group"; groupId: string } | { kind: "phone"; digits: string } | null {
+  const value = (raw ?? "").trim();
+  if (!value) return null;
+  if (value.startsWith(GROUP_RECIPIENT_PREFIX)) {
+    const groupId = value.slice(GROUP_RECIPIENT_PREFIX.length).trim();
+    return groupId ? { kind: "group", groupId } : null;
+  }
+  const phone = checkPhone(value);
+  return phone.ok ? { kind: "phone", digits: phone.digits } : null;
+}

@@ -162,8 +162,13 @@ export const CAPABILITY_INFO: CapabilityInfo[] = [
   // 2026-11-25 — automatic WhatsApp order-status messages (Hold / Cancel /
   // Process). Admin-controlled like the roster: enable/disable, per-trigger
   // toggles, templates, connection test, history and manual retry.
-  { code: "employee_admin", label: "WhatsApp Messages", icon: "💬", href: "/dashboard/admin/whatsapp",
-    description: "Automatic customer WhatsApp messages when an order becomes Hold, Cancelled or In Production — toggles, templates, connection test, delivery history and manual retry." },
+  // 2026-11-26 — "ye whatsapp ka alag se button kyu banaya hai": sending is
+  // automatic (Hold/Cancel/Process → the company's WhatsApp order group), so
+  // this is not a tile of its own. The settings screen is still here for
+  // admins; it is reached from the Orders page header, next to the message
+  // history it belongs to.
+  { code: "employee_admin", label: "WhatsApp Messages", icon: "💬", href: "/dashboard/admin/whatsapp", hidden: true,
+    description: "Automatic WhatsApp messages to the company's order group when an order becomes Hold, Cancelled or In Production — toggles, templates, connection test, delivery history and manual retry. Reached from the Orders page." },
   // 2026-10-21 — same capability, a second destination (same pattern as
   // doc_entry's multiple entries below): which one-time db/2026-*.sql files
   // this database has actually had run. See src/lib/migrations/probes.ts for

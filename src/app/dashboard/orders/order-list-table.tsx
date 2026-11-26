@@ -163,8 +163,20 @@ export function OrderListTable({
   preservedQuery = "",
   canManageOrders,
   canInvoice,
+  whatsappIssues = {},
+  canManageWhatsApp = false,
 }: {
   orders: OrderRow[];
+  /**
+   * 2026-11-26 — an automatic Hold / Cancelled / In Production message that
+   * never reached the order group, keyed by order id (see orders/page.tsx).
+   * Shown as its own row above the order so the team sees it without opening
+   * the admin WhatsApp page — a held order nobody was told about is the exact
+   * failure the message exists to prevent.
+   */
+  whatsappIssues?: Record<string, { status: string; error: string }>;
+  /** Only an employee_admin can retry a status message — see the settings page. */
+  canManageWhatsApp?: boolean;
   itemCategories: { id: string; name: string }[];
   sizes: { id: string; label: string }[];
   currencies: { code: string; name: string }[];
@@ -1090,6 +1102,21 @@ export function OrderListTable({
                             className="h-full min-h-[60vh] w-full border-0"
                           />
                         </A4Dialog>
+                      )}
+                      {whatsappIssues[o.id] && (
+                        <tr className="bg-amber-50 print:hidden">
+                          <td colSpan={visibleColumns.length + 2} className="px-2 py-1 text-[11px] text-amber-900">
+                            ⚠ Status WhatsApp for <strong>{o.ref_no}</strong> did not reach the order group —{" "}
+                            {whatsappIssues[o.id].error || `message is ${whatsappIssues[o.id].status}.`}{" "}
+                            {canManageWhatsApp ? (
+                              <Link href="/dashboard/admin/whatsapp" className="font-semibold underline">
+                                Retry in WhatsApp settings →
+                              </Link>
+                            ) : (
+                              <span>Ask an admin to retry it in WhatsApp settings.</span>
+                            )}
+                          </td>
+                        </tr>
                       )}
                       <tr className={`${rowBg} hover:bg-amber-50/60`}>
                           <td className={`${CELL} print:hidden`}>

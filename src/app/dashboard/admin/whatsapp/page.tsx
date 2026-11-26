@@ -16,7 +16,7 @@ export default async function WhatsAppSettingsPage() {
   const supabase = createServiceRoleClient();
 
   const [{ data: companies }, settingsRes] = await Promise.all([
-    supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
+    supabase.from("companies").select("id, name, whapi_group_id").in("id", employee.companyIds).order("name"),
     supabase.from("company_whatsapp_settings").select("*").in("company_id", employee.companyIds),
   ]);
 
@@ -25,7 +25,29 @@ export default async function WhatsAppSettingsPage() {
 
   // The query is already limited to the login's companies; the WhatsApp page
   // has no store-level scope of its own.
-  const visibleCompanies = companies ?? [];
+  //
+  // 2026-11-26 — "kyu message group me gaya ya customer ko": the destination is
+  // not visible anywhere else on this page, and the sender resolves it as
+  // companies.whapi_group_id || WHAPI_GROUP_ID (resolveOrderWhatsappGroupId,
+  // the same rule the packing/reference-photo messages use). Each company's row
+  // therefore carries the RESOLVED answer — which company field, the deployment
+  // fallback, or nothing at all — so "skipped" in the history below always has
+  // a visible reason.
+  const envGroupId = (process.env.WHAPI_GROUP_ID ?? "").trim();
+  const visibleCompanies = (companies ?? []).map((c) => {
+    const ownGroup = (c.whapi_group_id ?? "").trim();
+    const resolved = ownGroup || envGroupId;
+    return {
+      id: c.id,
+      name: c.name,
+      group: {
+        source: ownGroup ? ("company" as const) : envGroupId ? ("env" as const) : ("none" as const),
+        // Only the tail is shown: enough to tell two groups apart, not a
+        // group id to copy out of a screenshot.
+        masked: resolved ? `••••${resolved.slice(-4)}` : "",
+      },
+    };
+  });
 
   const { data: messages } = await supabase
     .from("order_whatsapp_messages")
@@ -43,8 +65,9 @@ export default async function WhatsAppSettingsPage() {
         <div>
           <h1 className="text-lg font-semibold text-slate-900">WhatsApp — order status messages</h1>
           <p className="text-xs text-slate-500">
-            When an order changes to Hold, Cancelled or In Production, the customer gets the matching
-            message automatically. Sending runs in the background; the order save never waits for it.
+            When an order changes to Hold, Cancelled or In Production, the message goes to the company&apos;s
+            own WhatsApp order group automatically — never to the customer&apos;s number. Sending runs in the
+            background; the order save never waits for it.
           </p>
         </div>
         <Link href="/dashboard" className="text-sm text-slate-500 hover:underline">
@@ -74,7 +97,11 @@ export default async function WhatsAppSettingsPage() {
           readAt: (m.read_at as string | null) ?? "",
           error: (m.error_message as string | null) ?? "",
           retryCount: Number(m.retry_count ?? 0),
-          phoneMasked: m.customer_phone ? `••••${String(m.customer_phone).slice(-4)}` : "",
+          phoneMasked: m.customer_phone
+            ? String(m.customer_phone).startsWith("group:")
+              ? `Group ••${String(m.customer_phone).slice(-4)}`
+              : `••••${String(m.customer_phone).slice(-4)}`
+            : "",
         }))}
         provider={provider}
         // The panel labels the three triggers the way the order statuses are

@@ -23,6 +23,7 @@
 // problem this page exists to solve.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { round2 } from "@/lib/ledger/apportion";
 
 type ServiceClient = ReturnType<typeof createServiceRoleClient>;
 
@@ -155,6 +156,104 @@ async function debitNoteAdjustmentsRepaired(client: ServiceClient): Promise<Prob
   });
 
   return stillPreGst ? "missing" : "applied";
+}
+
+/**
+ * 2026-11-26 — the Purchase Bill share-split invariant.
+ *
+ * A Purchase Bill invoice is booked as one bill_pass_register row per item,
+ * each holding a PROPORTIONAL share of the invoice group total. An edit used to
+ * overwrite one row with its own whole g_total, so the group's payable moved
+ * and every sibling share stayed stale (fixed in code 2026-11-25; repaired by
+ * db/2026-11-26-purchase-bill-share-resplit.sql).
+ *
+ * Read-only check of exactly what that repair restores: every invoice group
+ * (vendor party + vendor invoice no. + invoice date) must have its live shares
+ * proportional to the items' own weights, splitting that group's OWN posted
+ * total — so at most the one remainder row may sit a paise or two away, never
+ * a row carrying a whole line value. Groups with a single live share are
+ * trivially proportional and are skipped, and a group with no usable weight is
+ * left alone exactly as the repair leaves it.
+ *
+ * "applied" therefore means "no group this file would change" — true both of
+ * a repaired database and of one that never drifted.
+ */
+async function purchaseBillShareSplitInStep(client: ServiceClient): Promise<ProbeState> {
+  const billsRes = await withProbeSlot(async () =>
+    (client as unknown as UntypedClient)
+      .from("purchase_bills")
+      .select("id, vendor_party_id, vendor_invoice_no, vendor_invoice_date, g_total_plus_gst, total_amount")
+  );
+  if (billsRes.error) return isMissingSchemaPiece(billsRes.error) ? "missing" : "unknown";
+
+  const mirrorsRes = await withProbeSlot(async () =>
+    (client as unknown as UntypedClient)
+      .from("bill_pass_register")
+      .select("id, source_id, total_amt, merged_into_bill_id")
+      .eq("source", "purchase_bill")
+  );
+  if (mirrorsRes.error) return isMissingSchemaPiece(mirrorsRes.error) ? "missing" : "unknown";
+
+  type BillRow = {
+    id: string;
+    vendor_party_id: string | null;
+    vendor_invoice_no: string | null;
+    vendor_invoice_date: string | null;
+    g_total_plus_gst: number | string | null;
+    total_amount: number | string | null;
+  };
+  type MirrorRow = {
+    id: string;
+    source_id: string | null;
+    total_amt: number | string | null;
+    merged_into_bill_id: string | null;
+  };
+
+  const bills = new Map<string, BillRow>();
+  for (const bill of (billsRes.data ?? []) as unknown as BillRow[]) bills.set(bill.id, bill);
+
+  // Same group identity and same "live" rule the posting/edit path and the
+  // SQL repair use: source_id set, not a merged duplicate, party + number known.
+  const groups = new Map<string, { mirrorId: string; weight: number; amount: number }[]>();
+  for (const mirror of (mirrorsRes.data ?? []) as unknown as MirrorRow[]) {
+    if (!mirror.source_id || mirror.merged_into_bill_id) continue;
+    const bill = bills.get(mirror.source_id);
+    if (!bill || !bill.vendor_party_id) continue;
+    const invoiceNo = (bill.vendor_invoice_no ?? "").trim().toLowerCase();
+    if (!invoiceNo) continue;
+    const key = `${bill.vendor_party_id}\u0000${invoiceNo}\u0000${bill.vendor_invoice_date ?? ""}`;
+    const weight = Math.max(0, Number(bill.g_total_plus_gst ?? bill.total_amount ?? 0));
+    const entry = { mirrorId: mirror.id, weight, amount: Number(mirror.total_amt ?? 0) };
+    const list = groups.get(key);
+    if (list) list.push(entry);
+    else groups.set(key, [entry]);
+  }
+
+  for (const shares of groups.values()) {
+    if (shares.length < 2) continue;
+    // The repair's remainder row is the highest ledger-row id in the group.
+    shares.sort((a, b) => (a.mirrorId < b.mirrorId ? -1 : a.mirrorId > b.mirrorId ? 1 : 0));
+    const total = round2(shares.reduce((sum, share) => sum + share.amount, 0));
+    const weightSum = shares.reduce((sum, share) => sum + share.weight, 0);
+    if (!(weightSum > 0)) continue;
+
+    let offCount = 0;
+    let maxOff = 0;
+    for (const share of shares) {
+      const exact = round2((share.weight / weightSum) * total);
+      const diff = Math.abs(round2(share.amount) - exact);
+      if (diff > 0.01) {
+        offCount += 1;
+        maxOff = Math.max(maxOff, diff);
+      }
+    }
+    // One row may absorb the paise remainder; anything more is the pre-fix
+    // shape (a row holding its whole line value).
+    if (offCount > 1) return "missing";
+    if (offCount === 1 && maxOff > round2(0.01 * (shares.length - 1)) + 0.001) return "missing";
+  }
+
+  return "applied";
 }
 
 /** A file the API cannot check — see ProbeState's "manual". */
@@ -351,6 +450,16 @@ export async function probeMigrations(
         { name: "store_ad_spend.created_at", promise: hasColumn(client, "store_ad_spend", "created_at") },
         { name: "store_ad_spend.deleted_at", promise: hasColumn(client, "store_ad_spend", "deleted_at") },
       ]),
+
+    // 2026-11-26 — one-off repair of the Purchase Bill share drift the
+    // 2026-11-25 edit fix stopped creating. Until it is run, an invoice edited
+    // before that fix keeps one ledger row holding its whole line value: Bill
+    // Payment / Party Ledger show a payable that is not the split finance
+    // reviewed. Nothing degrades in the app itself — the code is already right
+    // — so this probe is the only place the pending repair is visible.
+    probe("db/2026-11-26-purchase-bill-share-resplit.sql", "Purchase Bill: re-split drifted Finance shares",
+      "An invoice edited before 2026-11-25 still has one ledger row holding its whole line value instead of its proportional share — Bill Payment / Party Ledger keep showing a group payable that is not the split Finance reviewed.",
+      [{ name: "invoice groups proportional to their bills", promise: purchaseBillShareSplitInStep(client) }]),
 
     probe("db/2026-11-22b-order-attachments.sql", "Order attachments (typed close-up photo index)",
       "Close-up photos are read from orders.photo_urls only — no attachment row (file name / sort order) is stored.",

@@ -11,8 +11,9 @@ import { requireCapability } from "@/lib/auth/require-capability";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit/log-audit";
-import { checkStatusProvider } from "@/lib/whatsapp/status-sender";
+import { checkStatusProvider, getStatusSender } from "@/lib/whatsapp/status-sender";
 import { deliverQueuedMessage } from "@/lib/whatsapp/order-status-notify";
+import { resolveOrderWhatsappGroupId } from "@/lib/whatsapp/reference-photos-send";
 import { DEFAULT_TEMPLATES } from "@/lib/whatsapp/order-status";
 
 export type WhatsAppSettingsState = { error: string | null; success: boolean; detail?: string };
@@ -107,6 +108,71 @@ export async function testWhatsAppConnectionAction(): Promise<WhatsAppSettingsSt
 }
 
 /**
+ * "Send test message to group" — prove the RESOLVED group works, not just the
+ * token. `checkStatusProvider` only asks Whapi whether the token answers; a
+ * typo'd or wrong `companies.whapi_group_id` passes that check and then turns
+ * every status message into a 'skipped'/'failed' row nobody sees. This action
+ * takes the exact id the sender resolves (companies.whapi_group_id ||
+ * WHAPI_GROUP_ID) and posts one harmless line to it, in the same way the real
+ * message is posted — so a wrong id fails HERE, once, while an admin is
+ * looking, instead of silently later.
+ */
+export async function testWhatsAppGroupAction(companyId: string): Promise<WhatsAppSettingsState> {
+  const employee = await requireCapability("employee_admin");
+  if (!employee.companyIds.includes(companyId)) {
+    return { error: "You do not have access to this company.", success: false };
+  }
+
+  const supabase = createServiceRoleClient();
+  const groupId = await resolveOrderWhatsappGroupId(supabase, companyId);
+  if (!groupId) {
+    return {
+      error: "No order group is set for this company — set companies.whapi_group_id or WHAPI_GROUP_ID.",
+      success: false,
+    };
+  }
+
+  const sender = getStatusSender();
+  if (!sender) {
+    return { error: "No WhatsApp sender is configured (WHAPI_TOKEN is missing).", success: false };
+  }
+
+  const { data: company } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle();
+  const groupTail = groupId.slice(-4);
+  // Deliberately says what it is: a person reading the group must not mistake
+  // a test for a real order update.
+  const result = await sender.sendGroupText(
+    groupId,
+    `Test message from the OMS${company?.name ? ` (${company.name})` : ""} — automatic Hold / Cancelled / In Production updates will be posted to this group.`
+  );
+
+  await logAudit(supabase, {
+    companyId,
+    employeeId: employee.id,
+    employeeName: employee.name,
+    action: "whatsapp.group_test",
+    entityType: "companies",
+    entityId: companyId,
+    entityLabel: `order group ••••${groupTail}`,
+    changes: { group_tail: groupTail, result: result.ok ? "sent" : "failed", error: result.ok ? null : result.error },
+  });
+
+  revalidatePath(PATH);
+  if (result.ok) {
+    return {
+      error: null,
+      success: true,
+      detail: `Test message sent to the order group (••••${groupTail}). Check that it arrived — if it did not, the group id is wrong.`,
+    };
+  }
+  return {
+    error: result.error,
+    success: false,
+    detail: `WhatsApp rejected the test for group ••••${groupTail} — ${result.error}`,
+  };
+}
+
+/**
  * Manual retry of one failed/skipped message. Uses the same delivery function
  * as the automatic send and the cron, so the recorded states cannot differ.
  */
@@ -127,12 +193,12 @@ export async function retryWhatsAppMessageAction(id: string): Promise<WhatsAppSe
     return { error: "This message already went out — retrying would send it twice.", success: false };
   }
   if (!message.customer_phone) {
-    return { error: "This message has no valid customer number on record.", success: false };
+    return { error: "This message has no recipient on record.", success: false };
   }
 
   const result = await deliverQueuedMessage(supabase, {
     id: message.id,
-    customerPhone: message.customer_phone,
+    recipient: message.customer_phone,
     messageText: message.message_text ?? "",
     retryCount: Number(message.retry_count ?? 0),
   });

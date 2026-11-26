@@ -19,6 +19,7 @@ import {
   loadVouchers,
 } from "@/lib/accounts/data";
 import { pettyCashBalance } from "@/lib/accounts/petty-cash";
+import { PrintDialog } from "@/components/print-dialog";
 import { financialYearLabel } from "@/lib/accounts/opening-balances";
 import { formatPaise, toPaise } from "@/lib/accounts/money";
 import { ExpenseEntryForm, type AccountOption, type CategoryOption } from "./expense-form";
@@ -571,6 +572,13 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
                                   receipt
                                 </a>
                               ) : null}
+                              {["approved", "posted", "paid"].includes(voucher.status) ? (
+                                <PrintDialog
+                                  href={`/dashboard/accounts/expense-vouchers/${voucher.id}/report`}
+                                  label="🖨 Print"
+                                  title={`Expense Voucher — ${voucher.voucher_no ?? voucher.id}`}
+                                />
+                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -621,10 +629,17 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
                     </form>
                   </div>
                 ) : (
-                  <form action={postExpenseAction} className="mt-2">
-                    <input type="hidden" name="voucher_id" value={voucher.id} />
-                    <button className={btn}>Post to ledger</button>
-                  </form>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <form action={postExpenseAction}>
+                      <input type="hidden" name="voucher_id" value={voucher.id} />
+                      <button className={btn}>Post to ledger</button>
+                    </form>
+                    <PrintDialog
+                      href={`/dashboard/accounts/expense-vouchers/${voucher.id}/report`}
+                      label="🖨 Print"
+                      title={`Expense Voucher — ${voucher.voucher_no ?? voucher.id}`}
+                    />
+                  </div>
                 )}
               </div>
             ))

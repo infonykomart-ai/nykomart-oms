@@ -6,6 +6,7 @@ import {
   retryWhatsAppMessageAction,
   saveWhatsAppSettingsAction,
   testWhatsAppConnectionAction,
+  testWhatsAppGroupAction,
   type WhatsAppSettingsState,
 } from "./actions";
 
@@ -58,7 +59,12 @@ export function WhatsAppSettingsClient({
   provider,
   defaults,
 }: {
-  companies: { id: string; name: string }[];
+  companies: {
+    id: string;
+    name: string;
+    /** Where the status messages actually go — resolved server-side. */
+    group: { source: "company" | "env" | "none"; masked: string };
+  }[];
   settings: WhatsAppSettingsRow[];
   messages: WhatsAppHistoryRow[];
   provider: { ok: boolean; detail: string };
@@ -68,8 +74,14 @@ export function WhatsAppSettingsClient({
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
   const [testState, setTestState] = useState<WhatsAppSettingsState | null>(null);
   const [testPending, startTest] = useTransition();
+  // 2026-11-26 — "Send test message to group": proves the resolved group id
+  // really receives messages, which the token health check cannot.
+  const [groupTestState, setGroupTestState] = useState<WhatsAppSettingsState | null>(null);
+  const [groupTestPending, startGroupTest] = useTransition();
 
   const row = settings.find((s) => s.company_id === companyId);
+  const selectedCompany = companies.find((c) => c.id === companyId);
+  const group = selectedCompany?.group;
   const [retryError, setRetryError] = useState<string | null>(null);
   const [retried, setRetried] = useState<Set<string>>(new Set());
   const [retryPending, startRetry] = useTransition();
@@ -120,12 +132,76 @@ export function WhatsAppSettingsClient({
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-700">Automatic messages</h2>
-          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)} className={`${inputClass} ml-auto max-w-xs`}>
+          <select
+            value={companyId}
+            onChange={(e) => {
+              setCompanyId(e.target.value);
+              // The previous company's test result says nothing about this one.
+              setGroupTestState(null);
+            }}
+            className={`${inputClass} ml-auto max-w-xs`}
+          >
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>
+
+        {/* 2026-11-26 — the destination, stated before the toggles: a message
+            that was skipped for "no group" must be explainable right here. */}
+        {group && (
+          <div
+            className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
+              group.source === "none"
+                ? "border-red-300 bg-red-50 text-red-900"
+                : "border-green-300 bg-green-50 text-green-900"
+            }`}
+          >
+            {group.source === "none" ? (
+              <>
+                <p className="font-semibold">No order group set — automatic messages are skipped.</p>
+                <p className="mt-0.5">
+                  Set <code>companies.whapi_group_id</code> for {selectedCompany?.name} (or the deployment&apos;s{" "}
+                  <code>WHAPI_GROUP_ID</code>). Nothing is sent to the customer&apos;s number instead.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold">Order group: {group.masked}</p>
+                <p className="mt-0.5">
+                  {group.source === "company"
+                    ? `Set on ${selectedCompany?.name}.`
+                    : `From the deployment environment (WHAPI_GROUP_ID) — ${selectedCompany?.name} has no group of its own.`}
+                </p>
+              </>
+            )}
+            <p className="mt-1 opacity-70">
+              Hold, Cancelled and In Production messages all go here — not to the customer.
+            </p>
+            {group.source !== "none" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={groupTestPending}
+                  onClick={() => {
+                    setGroupTestState(null);
+                    startGroupTest(async () => {
+                      setGroupTestState(await testWhatsAppGroupAction(companyId));
+                    });
+                  }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {groupTestPending ? "Sending…" : "Send test message to group"}
+                </button>
+                {groupTestState && (
+                  <span className={`font-medium ${groupTestState.error ? "text-red-700" : "text-green-800"}`}>
+                    {groupTestState.error ?? groupTestState.detail}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {saveState.error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{saveState.error}</p>}
         {saveState.success && <p className="mb-3 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">Settings saved.</p>}
