@@ -16,7 +16,7 @@ export default async function WhatsAppSettingsPage() {
   const supabase = createServiceRoleClient();
 
   const [{ data: companies }, settingsRes] = await Promise.all([
-    supabase.from("companies").select("id, name").in("id", employee.companyIds).order("name"),
+    supabase.from("companies").select("id, name, whapi_group_id").in("id", employee.companyIds).order("name"),
     supabase.from("company_whatsapp_settings").select("*").in("company_id", employee.companyIds),
   ]);
 
@@ -25,7 +25,29 @@ export default async function WhatsAppSettingsPage() {
 
   // The query is already limited to the login's companies; the WhatsApp page
   // has no store-level scope of its own.
-  const visibleCompanies = companies ?? [];
+  //
+  // 2026-11-26 — "kyu message group me gaya ya customer ko": the destination is
+  // not visible anywhere else on this page, and the sender resolves it as
+  // companies.whapi_group_id || WHAPI_GROUP_ID (resolveOrderWhatsappGroupId,
+  // the same rule the packing/reference-photo messages use). Each company's row
+  // therefore carries the RESOLVED answer — which company field, the deployment
+  // fallback, or nothing at all — so "skipped" in the history below always has
+  // a visible reason.
+  const envGroupId = (process.env.WHAPI_GROUP_ID ?? "").trim();
+  const visibleCompanies = (companies ?? []).map((c) => {
+    const ownGroup = (c.whapi_group_id ?? "").trim();
+    const resolved = ownGroup || envGroupId;
+    return {
+      id: c.id,
+      name: c.name,
+      group: {
+        source: ownGroup ? ("company" as const) : envGroupId ? ("env" as const) : ("none" as const),
+        // Only the tail is shown: enough to tell two groups apart, not a
+        // group id to copy out of a screenshot.
+        masked: resolved ? `••••${resolved.slice(-4)}` : "",
+      },
+    };
+  });
 
   const { data: messages } = await supabase
     .from("order_whatsapp_messages")

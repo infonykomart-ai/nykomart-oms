@@ -58,7 +58,12 @@ export function WhatsAppSettingsClient({
   provider,
   defaults,
 }: {
-  companies: { id: string; name: string }[];
+  companies: {
+    id: string;
+    name: string;
+    /** Where the status messages actually go — resolved server-side. */
+    group: { source: "company" | "env" | "none"; masked: string };
+  }[];
   settings: WhatsAppSettingsRow[];
   messages: WhatsAppHistoryRow[];
   provider: { ok: boolean; detail: string };
@@ -70,6 +75,8 @@ export function WhatsAppSettingsClient({
   const [testPending, startTest] = useTransition();
 
   const row = settings.find((s) => s.company_id === companyId);
+  const selectedCompany = companies.find((c) => c.id === companyId);
+  const group = selectedCompany?.group;
   const [retryError, setRetryError] = useState<string | null>(null);
   const [retried, setRetried] = useState<Set<string>>(new Set());
   const [retryPending, startRetry] = useTransition();
@@ -126,6 +133,40 @@ export function WhatsAppSettingsClient({
             ))}
           </select>
         </div>
+
+        {/* 2026-11-26 — the destination, stated before the toggles: a message
+            that was skipped for "no group" must be explainable right here. */}
+        {group && (
+          <div
+            className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
+              group.source === "none"
+                ? "border-red-300 bg-red-50 text-red-900"
+                : "border-green-300 bg-green-50 text-green-900"
+            }`}
+          >
+            {group.source === "none" ? (
+              <>
+                <p className="font-semibold">No order group set — automatic messages are skipped.</p>
+                <p className="mt-0.5">
+                  Set <code>companies.whapi_group_id</code> for {selectedCompany?.name} (or the deployment&apos;s{" "}
+                  <code>WHAPI_GROUP_ID</code>). Nothing is sent to the customer&apos;s number instead.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold">Order group: {group.masked}</p>
+                <p className="mt-0.5">
+                  {group.source === "company"
+                    ? `Set on ${selectedCompany?.name}.`
+                    : `From the deployment environment (WHAPI_GROUP_ID) — ${selectedCompany?.name} has no group of its own.`}
+                </p>
+              </>
+            )}
+            <p className="mt-1 opacity-70">
+              Hold, Cancelled and In Production messages all go here — not to the customer.
+            </p>
+          </div>
+        )}
 
         {saveState.error && <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">{saveState.error}</p>}
         {saveState.success && <p className="mb-3 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">Settings saved.</p>}
