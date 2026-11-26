@@ -192,6 +192,41 @@ export async function deliverQueuedMessage(
   const sender = getStatusSender();
   const now = new Date().toISOString();
 
+  // 2026-11-26 — claim the row BEFORE sending. Every caller (this file, the
+  // cron sweep, the admin retry, the Orders-page retry) funnels through here,
+  // and none of them could see another attempt in flight: a double-click, or
+  // the cron and a retry landing together, marked and posted the same row
+  // twice, so the same Hold / Cancelled / In Production line reached the group
+  // twice. Only an undelivered row can be claimed. A `processing` row is
+  // reclaimable once its claim is STALE_CLAIM_MS old, so one crashed attempt
+  // cannot block retries for ever.
+  const STALE_CLAIM_MS = 5 * 60_000;
+  const claimCutoff = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
+  const claim = () =>
+    supabase
+      .from("order_whatsapp_messages")
+      .update({ delivery_status: "processing", last_attempt_at: now } as never)
+      .eq("id", params.id);
+
+  const { data: claimed } = await claim()
+    .in("delivery_status", ["failed", "skipped", "queued"])
+    .select("id")
+    .maybeSingle();
+  if (!claimed) {
+    const { data: reclaimed } = await claim()
+      .eq("delivery_status", "processing")
+      .lt("last_attempt_at", claimCutoff)
+      .select("id")
+      .maybeSingle();
+    if (!reclaimed) {
+      return {
+        status: "skipped",
+        logId: params.id,
+        error: "This message has already been sent, or is being sent right now — it will not be sent again.",
+      };
+    }
+  }
+
   if (!sender) {
     await supabase
       .from("order_whatsapp_messages")
@@ -205,11 +240,6 @@ export async function deliverQueuedMessage(
       .eq("id", params.id);
     return { status: "failed", logId: params.id, error: "No WhatsApp sender is configured." };
   }
-
-  await supabase
-    .from("order_whatsapp_messages")
-    .update({ delivery_status: "processing", last_attempt_at: now } as never)
-    .eq("id", params.id);
 
   const target = parseStatusRecipient(params.recipient);
   if (!target) {

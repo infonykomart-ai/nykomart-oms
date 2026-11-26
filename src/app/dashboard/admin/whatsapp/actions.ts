@@ -189,7 +189,7 @@ export async function retryWhatsAppMessageAction(id: string): Promise<WhatsAppSe
   if (!message.company_id || !employee.companyIds.includes(message.company_id)) {
     return { error: "You do not have access to this message.", success: false };
   }
-  if (message.delivery_status === "delivered" || message.delivery_status === "read" || message.delivery_status === "sent") {
+  if (["delivered", "read", "sent", "processing"].includes(message.delivery_status ?? "")) {
     return { error: "This message already went out — retrying would send it twice.", success: false };
   }
   if (!message.customer_phone) {

@@ -484,17 +484,28 @@ export async function retryOrderStatusMessageAction(orderId: string): Promise<Si
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
+  // The banner is rendered from a page load and can be stale: the message may
+  // have gone out seconds later (cron sweep, another employee). So read the
+  // LATEST status message for this order whatever its state — filtering for
+  // "undelivered" here would silently pick an older failed attempt and send
+  // that one again. `deliverQueuedMessage` then re-claims the row atomically,
+  // so two clicks cannot both send it.
   const { data: message } = await supabase
     .from("order_whatsapp_messages")
     .select("id, customer_phone, message_text, retry_count, delivery_status")
     .eq("order_id", orderId)
     .eq("message_type", "order_status")
-    .in("delivery_status", ["failed", "skipped", "queued"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (!message) {
-    return { error: "There is no undelivered status message on this order to retry.", success: false };
+    return { error: "There is no status message on this order to retry.", success: false };
+  }
+  if (["sent", "delivered", "read", "processing"].includes(message.delivery_status ?? "")) {
+    return {
+      error: "This order's status message has already gone out — it was not sent again.",
+      success: false,
+    };
   }
   if (!message.message_text) {
     return { error: "That message has no text on record — change the status again instead.", success: false };

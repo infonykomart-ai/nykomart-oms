@@ -9,9 +9,13 @@ import { retryDueStatusMessages } from "./status-retry";
 
 type Patch = Record<string, unknown>;
 
-function fakeClient(rows: unknown[]) {
+function fakeClient(rows: unknown[], opts: { claimable?: boolean } = {}) {
   const patches: { patch: Patch; id?: unknown }[] = [];
   let lastId: unknown;
+  // 2026-11-26 — deliverQueuedMessage now CLAIMS the row (a conditional
+  // update) before sending; `claimable: false` stands in for a row another
+  // attempt already took, so the "do not send twice" path can be tested.
+  const claimable = opts.claimable ?? true;
 
   const chain: Record<string, unknown> = {};
   Object.assign(chain, {
@@ -27,7 +31,20 @@ function fakeClient(rows: unknown[]) {
     limit: async () => ({ data: rows, error: null }),
     update: (patch: Patch) => {
       patches.push({ patch, id: lastId });
-      return { eq: async () => ({ error: null }) };
+      const write: Record<string, unknown> = {};
+      Object.assign(write, {
+        eq: (column: string, value: unknown) => {
+          if (column === "id") lastId = value;
+          return write;
+        },
+        in: () => write,
+        lt: () => write,
+        select: () => write,
+        maybeSingle: async () => ({ data: claimable ? { id: lastId } : null, error: null }),
+        // Plain `update(...).eq("id", …)` writes are awaited directly.
+        then: (resolve: (value: unknown) => unknown) => resolve({ error: null }),
+      });
+      return write;
     },
   });
 
@@ -55,6 +72,19 @@ test("sendable rows are attempted; a row with no number is parked as skipped", a
   const parked = patches.find((p) => p.patch.delivery_status === "skipped");
   assert.ok(parked, "the numberless row must be marked skipped");
   assert.equal(parked?.patch.next_attempt_at, null);
+});
+
+test("a row another attempt already claimed is never sent again", async () => {
+  const { client, patches } = fakeClient(
+    [{ id: "m1", customer_phone: "919876543210", message_text: "Hold this order PO-1", retry_count: 0 }],
+    { claimable: false }
+  );
+
+  const summary = await retryDueStatusMessages(client, { batch: 10 });
+
+  assert.equal(summary.sent, 0, "an unclaimable row must not reach the sender");
+  // Only the claim attempts were written: no send outcome, no re-park.
+  assert.ok(patches.every((p) => p.patch.delivery_status === "processing"));
 });
 
 test("the time budget defers the rest of the batch", async () => {
