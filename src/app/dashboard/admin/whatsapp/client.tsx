@@ -6,6 +6,7 @@ import {
   retryWhatsAppMessageAction,
   saveWhatsAppSettingsAction,
   testWhatsAppConnectionAction,
+  testWhatsAppGroupAction,
   type WhatsAppSettingsState,
 } from "./actions";
 
@@ -73,6 +74,10 @@ export function WhatsAppSettingsClient({
   const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
   const [testState, setTestState] = useState<WhatsAppSettingsState | null>(null);
   const [testPending, startTest] = useTransition();
+  // 2026-11-26 — "Send test message to group": proves the resolved group id
+  // really receives messages, which the token health check cannot.
+  const [groupTestState, setGroupTestState] = useState<WhatsAppSettingsState | null>(null);
+  const [groupTestPending, startGroupTest] = useTransition();
 
   const row = settings.find((s) => s.company_id === companyId);
   const selectedCompany = companies.find((c) => c.id === companyId);
@@ -127,7 +132,15 @@ export function WhatsAppSettingsClient({
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-700">Automatic messages</h2>
-          <select value={companyId} onChange={(e) => setCompanyId(e.target.value)} className={`${inputClass} ml-auto max-w-xs`}>
+          <select
+            value={companyId}
+            onChange={(e) => {
+              setCompanyId(e.target.value);
+              // The previous company's test result says nothing about this one.
+              setGroupTestState(null);
+            }}
+            className={`${inputClass} ml-auto max-w-xs`}
+          >
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
@@ -165,6 +178,28 @@ export function WhatsAppSettingsClient({
             <p className="mt-1 opacity-70">
               Hold, Cancelled and In Production messages all go here — not to the customer.
             </p>
+            {group.source !== "none" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={groupTestPending}
+                  onClick={() => {
+                    setGroupTestState(null);
+                    startGroupTest(async () => {
+                      setGroupTestState(await testWhatsAppGroupAction(companyId));
+                    });
+                  }}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {groupTestPending ? "Sending…" : "Send test message to group"}
+                </button>
+                {groupTestState && (
+                  <span className={`font-medium ${groupTestState.error ? "text-red-700" : "text-green-800"}`}>
+                    {groupTestState.error ?? groupTestState.detail}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
