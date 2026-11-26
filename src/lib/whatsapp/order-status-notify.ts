@@ -98,7 +98,9 @@ export async function notifyOrderStatusChange(
 
     const { data: order } = await supabase
       .from("orders")
-      .select("id, ref_no, company_id, contact_no")
+      // No contact_no: this message goes to the company's order group, never
+      // to the customer's number.
+      .select("id, ref_no, company_id")
       .eq("id", params.orderId)
       .maybeSingle();
     if (!order) return { ...base, status: "skipped", error: "Order not found when the message was prepared." };

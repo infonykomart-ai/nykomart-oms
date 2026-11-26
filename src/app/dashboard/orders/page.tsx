@@ -216,7 +216,21 @@ export default async function OrdersPage({
   // instead of a second hand-copied version drifting out of sync over
   // time. No behavior change here — same queries, same company scoping,
   // same normalizeOrderNo() (now imported from that shared module).
-  const [{ data: refunds }, marketplaceFees, statusByOrder] = await Promise.all([
+  // 2026-11-26 — an automatic Hold / Cancelled / In Production message that did
+  // NOT reach the order group was only visible on the admin WhatsApp page. The
+  // team works from this page, so the newest failed/skipped message per order
+  // is surfaced here (the row banner) instead of being discovered later.
+  const whatsappIssueRowsPromise = orderIds.length
+    ? supabase
+        .from("order_whatsapp_messages")
+        .select("order_id, delivery_status, error_message, created_at")
+        .eq("message_type", "order_status")
+        .in("order_id", orderIds)
+        .in("delivery_status", ["failed", "skipped"])
+        .order("created_at", { ascending: false })
+    : Promise.resolve({ data: [] as { order_id: string | null; delivery_status: string | null; error_message: string | null; created_at: string | null }[] });
+
+  const [{ data: refunds }, marketplaceFees, statusByOrder, { data: whatsappIssueRows }] = await Promise.all([
     orderIds.length
       ? supabase
           .from("order_refunds")
@@ -233,7 +247,18 @@ export default async function OrdersPage({
         final_tracking: o.final_tracking,
       }))
     ),
+    whatsappIssueRowsPromise,
   ]);
+
+  // Newest first, so the first row seen for an order is its latest attempt.
+  const whatsappIssuesByOrder: Record<string, { status: string; error: string }> = {};
+  for (const m of whatsappIssueRows ?? []) {
+    if (!m.order_id || whatsappIssuesByOrder[m.order_id]) continue;
+    whatsappIssuesByOrder[m.order_id] = {
+      status: m.delivery_status ?? "",
+      error: m.error_message ?? "",
+    };
+  }
   const { etsyFeesByOrder, ebayFeesByOrder, amazonFeesByOrder } = marketplaceFees;
 
   // Pending item 2 (Hold/Cancel/Refund) — surface any refund(s) already
@@ -365,6 +390,25 @@ export default async function OrdersPage({
         <Link href="/dashboard/orders" className="text-xs text-slate-400 underline">Clear</Link>
       </form>
 
+      {(Object.keys(whatsappIssuesByOrder).length > 0 || canManageWhatsApp) && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span>
+            💬 Status WhatsApp: automatic Hold / Cancelled / In Production messages are sent to the company&apos;s
+            order group only — never to the buyer&apos;s number.
+            {Object.keys(whatsappIssuesByOrder).length > 0 && (
+              <strong className="ml-1">
+                {Object.keys(whatsappIssuesByOrder).length} message(s) below did not reach it.
+              </strong>
+            )}
+          </span>
+          {canManageWhatsApp && (
+            <Link href="/dashboard/admin/whatsapp" className="font-semibold underline">
+              WhatsApp settings →
+            </Link>
+          )}
+        </div>
+      )}
+
       <OrderListTable
         initialSearch={q}
         preservedQuery={preservedQuery}
@@ -376,6 +420,8 @@ export default async function OrdersPage({
         stores={stores ?? []}
         canManageOrders={canManageOrders}
         canInvoice={canInvoice}
+        whatsappIssues={whatsappIssuesByOrder}
+        canManageWhatsApp={canManageWhatsApp}
         statuses={STATUSES}
         todayStr={todayStr}
         statusByOrder={statusByOrder}
