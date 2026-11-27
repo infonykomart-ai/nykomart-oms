@@ -859,6 +859,12 @@ CREATE TABLE orders (
   -- Entry list can show a status + only prompt again for orders not sent.
   -- Not proof of delivery — the actual send/confirm still happens inside
   -- WhatsApp itself, outside this app's control.
+  --
+  -- 2026-11-27 (audit 3.10) — DEPRECATED / READ-ONLY. The single source of
+  -- truth is order_whatsapp_messages (one row per message actually sent, with
+  -- delivery/read state). This column is no longer written; the Orders and
+  -- Order-Entry badges fall back to it only for sends that pre-date the log.
+  -- See db/2026-11-27-orders-whatsapp-sent-at-deprecated.sql.
   whatsapp_sent_at          timestamptz,
 
   -- Multi-currency (2026-08-01 round). order_value_usd/order_value_inr/

@@ -760,21 +760,59 @@ export async function createOrder(_prev: OrderFormState, formData: FormData): Pr
 /**
  * WhatsApp — item 5. No Business API is used; the order-entry employee
  * shares the order (photo + details) via their OWN WhatsApp using the
- * browser's Web Share API / a wa.me link (see order-whatsapp-button.tsx).
- * This action only records that the share was triggered, so the "Aaj ki
- * recent entries" list can show a status and hide the button once sent.
+ * browser's Web Share API / a wa.me link (see order-whatsapp-button.tsx), or
+ * the Whapi/Telegram auto-send routes. This action records that the share was
+ * triggered so the "Aaj ki recent entries" list can show a status and the
+ * button turn green once sent.
+ *
+ * 2026-11-27 (audit 3.10) — this used to write the legacy
+ * `orders.whatsapp_sent_at` column, while automatic sends were written to
+ * `order_whatsapp_messages`. Two sources of truth meant the same order could
+ * show "sent" in one place and "not sent" in another. The send log is now the
+ * only writer AND the only source the badges read: this action inserts one
+ * `order_update` row (delivery_status 'sent') and leaves the legacy column
+ * alone (read-only history).
  */
 export async function markOrderWhatsAppSent(orderId: string): Promise<{ error: string | null }> {
-  await requireCapability("order_entry");
+  const employee = await requireCapability("order_entry");
   const supabase = createServiceRoleClient();
 
-  const { error } = await supabase
+  // Company-scoped like every other order write: a server action can be called
+  // directly, so an id from another company must not be writable here.
+  const { data: order } = await supabase
     .from("orders")
-    .update({ whatsapp_sent_at: new Date().toISOString() })
-    .eq("id", orderId);
+    .select("id, ref_no, company_id")
+    .eq("id", orderId)
+    .single();
+  if (!order || !employee.companyIds.includes(order.company_id)) {
+    return { error: "Order not found or you don't have access to this company." };
+  }
+
+  const payload: Database["public"]["Tables"]["order_whatsapp_messages"]["Insert"] = {
+    company_id: order.company_id,
+    order_id: order.id,
+    order_reference: order.ref_no,
+    // Reserved in the table's own comment for exactly this: the manual
+    // order-details share (it is not a reference-photo or status message).
+    message_type: "order_update",
+    // Every manual share is its own event — a resend must be logged again, so
+    // the unique (order_id, message_type, event_id) guard is never hit.
+    event_id: `manual-${crypto.randomUUID()}`,
+    delivery_status: "sent",
+    sent_at: new Date().toISOString(),
+    // `provider` arrived with db/2026-11-25-whatsapp-order-status.sql; while
+    // that file is pending the insert retries without it, exactly like every
+    // other optional column in this codebase.
+    provider: "manual",
+    created_by_employee_id: employee.id,
+  };
+  const { error } = await tolerateMissingColumns(payload, ["provider"], (p) =>
+    supabase.from("order_whatsapp_messages").insert(p)
+  );
 
   if (error) return { error: error.message };
   revalidatePath("/dashboard/orders/new");
+  revalidatePath("/dashboard/orders");
   return { error: null };
 }
 

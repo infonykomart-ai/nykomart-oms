@@ -469,6 +469,13 @@ export async function probeMigrations(
       "Nothing records WHICH version of each file was applied — probe results show the objects exist, but a file edited after it was run is indistinguishable from an applied one.",
       [{ name: "schema_migrations.sha256", promise: hasColumn(client, "schema_migrations", "sha256") }]),
 
+    // 2026-11-27 — audit 3.10: marks orders.whatsapp_sent_at deprecated in the
+    // database itself. A column comment is not API-visible, so this one is
+    // manual-only and never auto-recorded.
+    probe("db/2026-11-27-orders-whatsapp-sent-at-deprecated.sql", "Deprecate orders.whatsapp_sent_at",
+      "Nothing this page can read from the API (a column comment) — the badges already read order_whatsapp_messages; this file only makes the deprecation visible in the schema.",
+      [{ name: "no API-visible object", promise: manualProbe() }]),
+
     probe("db/2026-11-22b-order-attachments.sql", "Order attachments (typed close-up photo index)",
       "Close-up photos are read from orders.photo_urls only — no attachment row (file name / sort order) is stored.",
       [{ name: "order_attachments.file_url", promise: hasColumn(client, "order_attachments", "file_url") }]),

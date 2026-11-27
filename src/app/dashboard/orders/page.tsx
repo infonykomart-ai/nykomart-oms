@@ -230,7 +230,25 @@ export default async function OrdersPage({
         .order("created_at", { ascending: false })
     : Promise.resolve({ data: [] as { order_id: string | null; delivery_status: string | null; error_message: string | null; created_at: string | null }[] });
 
-  const [{ data: refunds }, marketplaceFees, statusByOrder, { data: whatsappIssueRows }] = await Promise.all([
+  // 2026-11-27 (audit 3.10) — the green "✓ WA sent" badge and row tint used to
+  // read orders.whatsapp_sent_at, which only the manual share button wrote — so
+  // the column and the delivery log could disagree. The log is now the source,
+  // and the badge keeps its ORIGINAL meaning: message_type 'order_update' is the
+  // internal packing/order-details share (the one the legacy column tracked),
+  // NOT the automatic status/reference-photo messages — those must not turn a
+  // row green. The legacy column stays as the fallback for sends that pre-date
+  // the log.
+  const whatsappSentRowsPromise = orderIds.length
+    ? supabase
+        .from("order_whatsapp_messages")
+        .select("order_id, sent_at, created_at")
+        .eq("message_type", "order_update")
+        .in("order_id", orderIds)
+        .in("delivery_status", ["sent", "partial", "delivered", "read"])
+        .order("created_at", { ascending: false })
+    : Promise.resolve({ data: [] as { order_id: string | null; sent_at: string | null; created_at: string | null }[] });
+
+  const [{ data: refunds }, marketplaceFees, statusByOrder, { data: whatsappIssueRows }, { data: whatsappSentRows }] = await Promise.all([
     orderIds.length
       ? supabase
           .from("order_refunds")
@@ -248,6 +266,7 @@ export default async function OrdersPage({
       }))
     ),
     whatsappIssueRowsPromise,
+    whatsappSentRowsPromise,
   ]);
 
   // Newest first, so the first row seen for an order is its latest attempt.
@@ -259,6 +278,20 @@ export default async function OrdersPage({
       error: m.error_message ?? "",
     };
   }
+  // Newest first, so the first row seen for an order is its latest send.
+  const whatsappSentAtByOrder: Record<string, string> = {};
+  for (const m of whatsappSentRows ?? []) {
+    if (!m.order_id || whatsappSentAtByOrder[m.order_id]) continue;
+    const at = m.sent_at ?? m.created_at;
+    if (at) whatsappSentAtByOrder[m.order_id] = at;
+  }
+  for (const order of orders ?? []) {
+    const loggedAt = whatsappSentAtByOrder[order.id];
+    if (loggedAt && (!order.whatsapp_sent_at || loggedAt > order.whatsapp_sent_at)) {
+      order.whatsapp_sent_at = loggedAt;
+    }
+  }
+
   const { etsyFeesByOrder, ebayFeesByOrder, amazonFeesByOrder } = marketplaceFees;
 
   // Pending item 2 (Hold/Cancel/Refund) — surface any refund(s) already

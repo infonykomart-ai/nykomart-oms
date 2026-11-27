@@ -28,6 +28,35 @@ export default async function NewOrderPage() {
         .limit(10),
     ]);
 
+  // 2026-11-27 (audit 3.10) — the recent-entries card/button state used to read
+  // orders.whatsapp_sent_at, which markOrderWhatsAppSent() no longer writes. It
+  // now reads the delivery log (message_type 'order_update' = the manual
+  // order-details share), with the legacy column as the fallback for sends that
+  // pre-date the log. Status-message rows are deliberately NOT counted here:
+  // an automatic "In Production" update is not this button's share.
+  const recentOrderIds = (recentOrders ?? []).map((o) => o.id);
+  const { data: shareRows } = recentOrderIds.length
+    ? await supabase
+        .from("order_whatsapp_messages")
+        .select("order_id, sent_at, created_at")
+        .eq("message_type", "order_update")
+        .in("delivery_status", ["sent", "partial", "delivered", "read"])
+        .in("order_id", recentOrderIds)
+        .order("created_at", { ascending: false })
+    : { data: [] as { order_id: string | null; sent_at: string | null; created_at: string | null }[] };
+  const shareSentAtByOrder: Record<string, string> = {};
+  for (const row of shareRows ?? []) {
+    if (!row.order_id || shareSentAtByOrder[row.order_id]) continue;
+    const at = row.sent_at ?? row.created_at;
+    if (at) shareSentAtByOrder[row.order_id] = at;
+  }
+  for (const order of recentOrders ?? []) {
+    const loggedAt = shareSentAtByOrder[order.id];
+    if (loggedAt && (!order.whatsapp_sent_at || loggedAt > order.whatsapp_sent_at)) {
+      order.whatsapp_sent_at = loggedAt;
+    }
+  }
+
   const categoryName = new Map((itemCategories ?? []).map((c) => [c.id, c.name]));
   // "amazon ka AGAR ORDER HO TO WHATSAAP MSG ME TOP ME TOP PRIORITY" — store
   // is the marketplace/channel an order came in on (Amazon/Etsy/eBay/

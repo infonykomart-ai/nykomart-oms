@@ -28,8 +28,9 @@ import { useState } from "react";
  * buyer's own number.
  *
  * Deliberately does NOT persist a "customer was notified" timestamp/table
- * — unlike whatsapp_sent_at on the order itself (which tracks the internal
- * packing message), there's no reliable delivery signal to hang that on
+ * — unlike the order's internal packing-message share (logged as an
+ * 'order_update' row in order_whatsapp_messages, which is what the Orders
+ * hub badge reads), there's no reliable delivery signal to hang that on
  * here (the message is composed here but actually sent from inside
  * WhatsApp, outside this app's visibility), and adding an unreliable
  * "notified ✓" indicator would be worse than no indicator at all.

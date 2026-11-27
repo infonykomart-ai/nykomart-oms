@@ -181,6 +181,7 @@ export const MIGRATION_FILES: MigrationManifestEntry[] = [
   { file: "db/2026-11-25-whatsapp-order-status.sql", sha256: "cdbac4247f550a28a1dc79652328e8dc7d2ccf4a74895df5a53129fa37a76427" },
   { file: "db/2026-11-26-purchase-bill-share-resplit.sql", sha256: "8b4a60d616be3b3444904b567624ab2842193bbb9c119882ba9f184e0a19f224" },
   { file: "db/2026-11-26-schema-migrations-ledger.sql", sha256: "6ed823dedbcdbf516d275f483d9b7030bdcada00daec93dc99aefd7cbeea83f4" },
+  { file: "db/2026-11-27-orders-whatsapp-sent-at-deprecated.sql", sha256: "66dd3e2ddd6c6e5f1cafcc27e212c3c77cda6ed359f52cea3ba817ff011f678a" },
   { file: "db/20260805fixrlsblockinglogin.sql", sha256: "d2eecbbc504341e99ee05346c9b1dfdc6f8057fbde88628830ea960a698d9ca0" },
   { file: "db/20260806itemcategoryhsncodes.sql", sha256: "7873b4f6e378e41ea12a4a732e0a0b9635f51871adf1b7674040fb6b9007dae1" },
   { file: "db/20260806itemcategoryhsncodesbatch2.sql", sha256: "ba6feb4fae27638ee576d6fe8133d4c9ab1230afe4c7a711f1fe24da525d2582" },
