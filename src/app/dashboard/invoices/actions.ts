@@ -886,18 +886,19 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
       ...first.fields,
       orderIds: groupRows.map((r) => r.orderId),
     });
-    const failedOrderIds = new Set(result.failedDispatchOrderIds ?? []);
+    const failedOrderIds = result.failedDispatchOrderIds ?? [];
     for (const r of groupRows) {
       results.push({
         row: r.rowNum,
         refNo: r.refNo,
         invoiceNo: result.invoice?.invoice_no ?? null,
         error: result.error,
-        warning:
-          result.invoice && failedOrderIds.has(r.orderId)
-            ? `Invoice ${result.invoice.invoice_no} was created, but this order could not be marked Dispatched — ` +
-              `set its status from the Orders page (the reason is in the error log).`
-            : undefined,
+        // The row already shows the invoice number in green; the warning only
+        // has to say that THIS order needs its status fixed. A failed batch
+        // returns no ids, so this can never appear next to an error.
+        warning: failedOrderIds.includes(r.orderId)
+          ? "This order could not be marked Dispatched — set its status from the Orders page (the reason is in the error log)."
+          : undefined,
       });
     }
   }

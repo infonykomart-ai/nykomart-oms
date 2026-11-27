@@ -60,14 +60,20 @@ export function BulkInvoiceUploadForm({ columns }: { columns: BulkInvoiceColumn[
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {state.results.map((r) => (
-                  <tr key={r.row} className={r.error ? "bg-red-50" : ""}>
+                  <tr key={r.row} className={r.error ? "bg-red-50" : r.warning ? "bg-amber-50/60" : ""}>
                     <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.row}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-slate-700">{r.refNo || "—"}</td>
                     <td className="px-3 py-2">
                       {r.error ? (
                         <span className="text-red-700">{r.error}</span>
                       ) : (
-                        <span className="text-green-700">✓ {r.invoiceNo}</span>
+                        <div className="space-y-1">
+                          <span className="text-green-700">✓ {r.invoiceNo}</span>
+                          {/* 2026-11-27 (audit 3.4) — the invoice exists, only this row's
+                              order stayed on its old status. Shown against its own PO/RF/RG
+                              number so the employee knows exactly which order to fix. */}
+                          {r.warning && <p className="text-[11px] text-amber-800">⚠ {r.warning}</p>}
+                        </div>
                       )}
                     </td>
                   </tr>
