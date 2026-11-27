@@ -469,6 +469,13 @@ export async function probeMigrations(
       "Nothing records WHICH version of each file was applied — probe results show the objects exist, but a file edited after it was run is indistinguishable from an applied one.",
       [{ name: "schema_migrations.sha256", promise: hasColumn(client, "schema_migrations", "sha256") }]),
 
+    // 2026-11-27 — audit #2: company-scoped RLS. Policies are not API-visible,
+    // so this one is manual-only; src/lib/security/rls-company-scope.test.ts
+    // pins what the file covers instead.
+    probe("db/2026-11-27-company-scoped-rls.sql", "Company-scoped RLS (cross-company reads closed)",
+      "Any signed-in employee can read and write every company's orders, invoices, payroll and WhatsApp log straight through the Supabase REST API — the app's company filter never applied to that path.",
+      [{ name: "no API-visible object", promise: manualProbe() }]),
+
     // 2026-11-27 — audit 3.12: the ledger gets an EXPLICIT run order. Until this
     // file is run, "which order?" is re-derived from the file names, and the
     // compact 20260805… legacy names sort after every 2026-08-05-… file.
