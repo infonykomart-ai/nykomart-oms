@@ -20,7 +20,27 @@ import { revalidatePath } from "next/cache";
 
 export type InvoiceFormState = {
   error: string | null;
-  success: { invoiceId: string; invoiceNo: string } | null;
+  success: {
+    invoiceId: string;
+    invoiceNo: string;
+    // 2026-11-27 (audit 3.4, remainder) — "3 of 12 orders could not be marked
+    // Dispatched": the invoice itself was created successfully, so this is a
+    // warning on the SUCCESS state, not an error. Null when every order moved
+    // to Dispatched as expected.
+    warning?: string | null;
+  } | null;
+};
+
+/**
+ * What generateInvoiceCore reports back — `dispatchWarning` is set only when
+ * the invoice was created but at least one of its orders could not be moved
+ * to Dispatched (the invoice must not be rolled back for that; the employee
+ * just needs to know and finish the status by hand).
+ */
+export type GenerateInvoiceCoreResult = {
+  error: string | null;
+  invoice: { id: string; invoice_no: string } | null;
+  dispatchWarning?: string | null;
 };
 
 function str(formData: FormData, key: string): string {
@@ -207,7 +227,7 @@ export async function generateInvoiceCore(
   employee: AuthedEmployee,
   supabase: ServiceClient,
   params: GenerateInvoiceParams
-): Promise<{ error: string | null; invoice: { id: string; invoice_no: string } | null }> {
+): Promise<GenerateInvoiceCoreResult> {
   const {
     orderIds,
     shipmentTerm,
@@ -538,6 +558,7 @@ export async function generateInvoiceCore(
     .in("id", orderIds)
     .not("status", "in", "(Dispatched,Delivered)");
 
+  let dispatchWarning: string | null = null;
   if (notYetDispatched && notYetDispatched.length > 0) {
     // 2026-11-26 — audit 3.8: these updates were fire-and-forget inside
     // Promise.all, so an order that failed to move to Dispatched left the
@@ -555,8 +576,8 @@ export async function generateInvoiceCore(
         }),
       }))
     );
-    for (const { orderId, result } of dispatchResults) {
-      if (!result.error) continue;
+    const failedDispatches = dispatchResults.filter(({ result }) => result.error);
+    for (const { orderId, result } of failedDispatches) {
       await logEntryError(supabase, {
         companyId: employee.currentCompanyId,
         source: "system",
@@ -568,12 +589,25 @@ export async function generateInvoiceCore(
         raisedByName: employee.name,
       });
     }
+
+    // 2026-11-27 (audit 3.4, remainder) — the invoice is already created and
+    // its orders are already linked, so this cannot be an `error` (that would
+    // tell the employee nothing was saved). Report it as a warning instead, in
+    // the same "N of M" shape the employee can check against the order list.
+    if (failedDispatches.length > 0) {
+      const failed = failedDispatches.length;
+      const total = orderIds.length;
+      dispatchWarning =
+        `${failed} of ${total} order${total === 1 ? "" : "s"} could not be marked Dispatched — ` +
+        `the invoice was created, but ${failed === 1 ? "that order still shows" : "those orders still show"} ` +
+        `the old status. Set ${failed === 1 ? "it" : "them"} to Dispatched from the Orders page; the failure was logged for an Admin.`;
+    }
   }
 
   revalidatePath("/dashboard/invoices");
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/orders/new");
-  return { error: null, invoice: { id: invoice.id, invoice_no: invoice.invoice_no } };
+  return { error: null, invoice: { id: invoice.id, invoice_no: invoice.invoice_no }, dispatchWarning };
 }
 
 /**
@@ -631,7 +665,14 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
   });
 
   if (result.error || !result.invoice) return { error: result.error, success: null };
-  return { error: null, success: { invoiceId: result.invoice.id, invoiceNo: result.invoice.invoice_no } };
+  return {
+    error: null,
+    success: {
+      invoiceId: result.invoice.id,
+      invoiceNo: result.invoice.invoice_no,
+      warning: result.dispatchWarning ?? null,
+    },
+  };
 }
 
 // ============================================================================

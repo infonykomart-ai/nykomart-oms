@@ -45,10 +45,21 @@ export function InvoiceGenerateForm({
 
   if (state.success) {
     return (
-      <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
-        Invoice created — <strong>{state.success.invoiceNo}</strong>.{" "}
-        <Link href={`/dashboard/invoices/${state.success.invoiceId}`} className="underline">View / Print</Link>
-      </p>
+      <div className="space-y-2">
+        <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+          Invoice created — <strong>{state.success.invoiceNo}</strong>.{" "}
+          <Link href={`/dashboard/invoices/${state.success.invoiceId}`} className="underline">View / Print</Link>
+        </p>
+        {/* 2026-11-27 (audit 3.4) — the invoice saved, but some of its orders
+            could not be moved to Dispatched. Shown as a warning here (never as
+            the red error, which would wrongly suggest nothing was saved) so
+            the employee knows to finish those statuses on the Orders page. */}
+        {state.success.warning && (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            ⚠ {state.success.warning}
+          </p>
+        )}
+      </div>
     );
   }
 
