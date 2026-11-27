@@ -15,6 +15,7 @@ import { computeCurrencyConversion } from "@/lib/orders/currency";
 import { composeBuyerNameAndAddress } from "@/lib/compose-buyer-address";
 import type { Json } from "@/types/database";
 import { logEntryError } from "@/lib/error-log/log-entry-error";
+import { setOrderStatus } from "@/lib/orders/set-order-status";
 import { revalidatePath } from "next/cache";
 
 export type InvoiceFormState = {
@@ -541,24 +542,27 @@ export async function generateInvoiceCore(
     // 2026-11-26 — audit 3.8: these updates were fire-and-forget inside
     // Promise.all, so an order that failed to move to Dispatched left the
     // invoice created with no record of why the order still showed its old
-    // status. The result is now inspected and every failure is logged.
+    // status. 2026-11-27 — they now go through setOrderStatus(), the same
+    // writer every other status change uses, and every failure is logged.
     const dispatchResults = await Promise.all(
-      notYetDispatched.map(async (o) => {
-        const { error } = await supabase
-          .from("orders")
-          .update({ status: "Dispatched", dispatch_date: o.dispatch_date ?? invoiceDate })
-          .eq("id", o.id);
-        return { orderId: o.id, error };
-      })
+      notYetDispatched.map(async (o) => ({
+        orderId: o.id,
+        result: await setOrderStatus(supabase, {
+          orderId: o.id,
+          toStatus: "Dispatched",
+          patch: { dispatch_date: o.dispatch_date ?? invoiceDate },
+          actorEmployeeId: employee.id,
+        }),
+      }))
     );
-    for (const result of dispatchResults) {
+    for (const { orderId, result } of dispatchResults) {
       if (!result.error) continue;
       await logEntryError(supabase, {
         companyId: employee.currentCompanyId,
         source: "system",
-        reason: `Invoice ${invoice.invoice_no} was created but this order could not be marked Dispatched: ${result.error.message}`,
+        reason: `Invoice ${invoice.invoice_no} was created but this order could not be marked Dispatched: ${result.error}`,
         referenceType: "order",
-        referenceId: result.orderId,
+        referenceId: orderId,
         referenceLabel: invoice.invoice_no,
         raisedByEmployeeId: employee.id,
         raisedByName: employee.name,
@@ -1212,7 +1216,7 @@ export async function attachPendingPoOrders(invoiceId: string): Promise<AttachPe
 
   const { data: invoice } = await supabase
     .from("sales_invoices")
-    .select("id, company_id, store_id, csb_type, invoice_date, invoice_currency")
+    .select("id, company_id, store_id, csb_type, invoice_date, invoice_currency, invoice_no")
     .eq("id", invoiceId)
     .single();
   if (!invoice || !employee.companyIds.includes(invoice.company_id)) {
@@ -1276,14 +1280,32 @@ export async function attachPendingPoOrders(invoiceId: string): Promise<AttachPe
   // Same dispatch rule as generateInvoiceCore: Dispatched, Delivered untouched.
   const notYetDispatched = rows.filter((o) => o.status !== "Dispatched" && o.status !== "Delivered");
   if (notYetDispatched.length > 0) {
-    await Promise.all(
-      notYetDispatched.map((o) =>
-        supabase
-          .from("orders")
-          .update({ status: "Dispatched", dispatch_date: o.dispatch_date ?? invoice.invoice_date })
-          .eq("id", o.id)
-      )
+    // 2026-11-27 — same setOrderStatus() writer as generation, so a failure
+    // is visible on the error log instead of vanishing inside Promise.all.
+    const dispatchResults = await Promise.all(
+      notYetDispatched.map(async (o) => ({
+        orderId: o.id,
+        result: await setOrderStatus(supabase, {
+          orderId: o.id,
+          toStatus: "Dispatched",
+          patch: { dispatch_date: o.dispatch_date ?? invoice.invoice_date },
+          actorEmployeeId: employee.id,
+        }),
+      }))
     );
+    for (const { orderId, result } of dispatchResults) {
+      if (!result.error) continue;
+      await logEntryError(supabase, {
+        companyId: invoice.company_id,
+        source: "system",
+        reason: `Pending items were added to invoice ${invoice.invoice_no} but this order could not be marked Dispatched: ${result.error}`,
+        referenceType: "order",
+        referenceId: orderId,
+        referenceLabel: invoice.invoice_no,
+        raisedByEmployeeId: employee.id,
+        raisedByName: employee.name,
+      });
+    }
   }
 
   const result =

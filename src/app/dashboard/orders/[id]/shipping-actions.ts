@@ -50,6 +50,8 @@ import { syncCourierShipmentRow } from "@/lib/orders/sync-courier-shipment";
 // date + dispatch_invoices summary) exactly like a courier event does.
 import { syncOrderTrackingState } from "@/lib/orders/tracking-status-sync";
 import { isTrackingState } from "@/lib/orders/tracking-status";
+// 2026-11-27 — the one status writer (status + automatic WhatsApp message).
+import { setOrderStatus } from "@/lib/orders/set-order-status";
 
 export type ShippingDetailsState = { error: string | null; success: boolean; dispatched: boolean; trackingSync?: string | null };
 
@@ -281,15 +283,17 @@ export async function saveManualShippingDetails(_prev: ShippingDetailsState, for
   let dispatched = false;
   const terminalStatuses = ["Delivered", "Returned", "Cancelled"];
   if (awbNo && !terminalStatuses.includes(order.status)) {
-    if (order.status !== "Dispatched") {
-      const { error: stError } = await supabase
-        .from("orders")
-        .update({ status: "Dispatched", dispatch_date: order.dispatch_date ?? invoiceDate ?? today })
-        .eq("id", orderId);
-      if (stError) return { error: stError.message, success: false, dispatched: false };
-    } else if (!order.dispatch_date) {
-      await supabase.from("orders").update({ dispatch_date: invoiceDate ?? today }).eq("id", orderId);
-    }
+    // 2026-11-27 — setOrderStatus() owns the status column: an existing
+    // dispatch date is kept, a missing one is stamped, and the automatic
+    // status message (when this status is a trigger) goes through the same
+    // helper as every other status change.
+    const statusResult = await setOrderStatus(supabase, {
+      orderId,
+      toStatus: "Dispatched",
+      patch: order.dispatch_date ? undefined : { dispatch_date: invoiceDate ?? today },
+      actorEmployeeId: employee.id,
+    });
+    if (statusResult.error) return { error: statusResult.error, success: false, dispatched: false };
     dispatched = true;
   }
 

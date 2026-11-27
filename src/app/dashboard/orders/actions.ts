@@ -19,6 +19,7 @@ import { logAudit } from "@/lib/audit/log-audit";
 // 2026-11-26 — audit 3.8: a stock action that fails after the order save used
 // to leave no trace at all. These paths now write a system entry.
 import { logEntryError } from "@/lib/error-log/log-entry-error";
+import { setOrderStatus } from "@/lib/orders/set-order-status";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -448,20 +449,15 @@ export async function holdOrder(orderId: string): Promise<SimpleResult> {
     return { error: "This order already has an invoice — Hold no longer applies once dispatched/invoiced.", success: false };
   }
 
-  const { error } = await supabase.from("orders").update({ status: "Hold" }).eq("id", orderId);
-  if (error) return { error: error.message, success: false };
-
-  // 2026-11-25 — the Hold WhatsApp message ("Hold this order PO-…"). Every
-  // status write goes through the same helper, so the rules cannot drift
-  // between the Hold button, Cancel and the edit form.
-  after(async () => {
-    await notifyOrderStatusChange(supabase, {
-      orderId,
-      fromStatus: order.status,
-      toStatus: "Hold",
-      actorEmployeeId: employee.id,
-    });
+  // 2026-11-27 — status + WhatsApp message in one place (setOrderStatus):
+  // the helper reads the previous status itself, so the message can only ever
+  // describe a real transition.
+  const statusResult = await setOrderStatus(supabase, {
+    orderId,
+    toStatus: "Hold",
+    actorEmployeeId: employee.id,
   });
+  if (statusResult.error) return { error: statusResult.error, success: false };
 
   // Phase 4 — a held order no longer needs its stock promised.
   try {
@@ -585,25 +581,20 @@ export async function cancelOrder(orderId: string): Promise<SimpleResult> {
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, company_id, status")
+    .select("id, company_id")
     .eq("id", orderId)
     .single();
   if (!order || !employee.companyIds.includes(order.company_id)) {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
-  const { error } = await supabase.from("orders").update({ status: "Cancelled" }).eq("id", orderId);
-  if (error) return { error: error.message, success: false };
-
-  // 2026-11-25 — the Cancel WhatsApp message ("Cancel This Order PO-…").
-  after(async () => {
-    await notifyOrderStatusChange(supabase, {
-      orderId,
-      fromStatus: order.status,
-      toStatus: "Cancelled",
-      actorEmployeeId: employee.id,
-    });
+  // 2026-11-27 — same writer as Hold: status first, WhatsApp after.
+  const statusResult = await setOrderStatus(supabase, {
+    orderId,
+    toStatus: "Cancelled",
+    actorEmployeeId: employee.id,
   });
+  if (statusResult.error) return { error: statusResult.error, success: false };
 
   // Phase 4 — release the cancelled order's reservation and open requirements.
   try {
@@ -656,8 +647,14 @@ export async function returnOrder(orderId: string): Promise<SimpleResult> {
     return { error: "This order was not found, or you don't have access to this company.", success: false };
   }
 
-  const { error } = await supabase.from("orders").update({ status: "Returned" }).eq("id", orderId);
-  if (error) return { error: error.message, success: false };
+  // 2026-11-27 — one status writer. 'Returned' is not a WhatsApp trigger, so
+  // the helper writes the row and sends nothing.
+  const statusResult = await setOrderStatus(supabase, {
+    orderId,
+    toStatus: "Returned",
+    actorEmployeeId: employee.id,
+  });
+  if (statusResult.error) return { error: statusResult.error, success: false };
 
   // Phase 4 — a returned order's promised stock is free again.
   try {
