@@ -10608,6 +10608,7 @@ export type Database = {
           applied_at: string;
           applied_by: string | null;
           note: string | null;
+          sequence_no: number | null;
         };
         Insert: {
           file: string;
@@ -10615,6 +10616,7 @@ export type Database = {
           applied_at?: string;
           applied_by?: string | null;
           note?: string | null;
+          sequence_no?: number | null;
         };
         Update: {
           file?: string;
@@ -10622,6 +10624,7 @@ export type Database = {
           applied_at?: string;
           applied_by?: string | null;
           note?: string | null;
+          sequence_no?: number | null;
         };
         Relationships: [];
       };

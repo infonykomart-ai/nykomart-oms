@@ -469,6 +469,13 @@ export async function probeMigrations(
       "Nothing records WHICH version of each file was applied — probe results show the objects exist, but a file edited after it was run is indistinguishable from an applied one.",
       [{ name: "schema_migrations.sha256", promise: hasColumn(client, "schema_migrations", "sha256") }]),
 
+    // 2026-11-27 — audit 3.12: the ledger gets an EXPLICIT run order. Until this
+    // file is run, "which order?" is re-derived from the file names, and the
+    // compact 20260805… legacy names sort after every 2026-08-05-… file.
+    probe("db/2026-11-27-schema-migrations-sequence.sql", "Migration ledger: explicit run order",
+      "The ledger stores no order — the admin list re-derives it from file names, which puts the oldest 20260805… files last.",
+      [{ name: "schema_migrations.sequence_no", promise: hasColumn(client, "schema_migrations", "sequence_no") }]),
+
     // 2026-11-27 — audit 3.10: marks orders.whatsapp_sent_at deprecated in the
     // database itself. A column comment is not API-visible, so this one is
     // manual-only and never auto-recorded.

@@ -22,6 +22,14 @@ export type MigrationLedgerRow = {
   applied_at: string;
   applied_by: string | null;
   note: string | null;
+  /**
+   * 2026-11-27 (audit 3.12) — the file's explicit run order, copied from the
+   * manifest when it was recorded. Null on rows recorded before the column
+   * existed (or on a database that has not run
+   * db/2026-11-27-schema-migrations-sequence.sql yet) — the read keeps working
+   * there, the column is simply absent/null.
+   */
+  sequence_no: number | null;
 };
 
 export type MigrationLedger =
@@ -37,7 +45,7 @@ export type MigrationLedger =
 export async function readMigrationLedger(client: ServiceClient): Promise<MigrationLedger> {
   const { data, error } = await client
     .from("schema_migrations")
-    .select("file, sha256, applied_at, applied_by, note");
+    .select("file, sha256, applied_at, applied_by, note, sequence_no");
   if (error) return { available: false, error: error.message, rows: new Map() };
 
   const rows = new Map<string, MigrationLedgerRow>();

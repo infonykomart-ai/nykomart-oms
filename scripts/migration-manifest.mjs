@@ -25,17 +25,44 @@ const OUT = join(ROOT, "src/lib/migrations/manifest.ts");
 // out.
 export const DATED_MIGRATION = /^(\d{4}-\d{2}-\d{2}[a-z]?-|\d{8})/;
 
+// 2026-11-27 (audit 3.12) — EXPLICIT ORDER. Sorting the file names was wrong for
+// the compact legacy names: "20260805fixrlsblockinglogin.sql" sorts AFTER every
+// "2026-08-05-…" file because "-" sorts before a digit, so the admin page's
+// "run these in the order shown" list put the oldest files last. Order by the
+// PARSED date instead, then the optional a/b/c letter (so 2026-08-13- sorts
+// before 2026-08-13b-), then the rest of the name. The position is emitted as
+// `seq` and recorded in schema_migrations.sequence_no, so the order is stored
+// data rather than a re-derived guess.
+function orderKey(name) {
+  const match = name.match(/^(\d{4})-?(\d{2})-?(\d{2})([a-z]*)-?(.*)$/);
+  if (!match) return [`99999999`, name, name];
+  return [`${match[1]}${match[2]}${match[3]}`, match[4], match[5]];
+}
+
+function compareMigrationNames(a, b) {
+  const ka = orderKey(a);
+  const kb = orderKey(b);
+  if (ka[0] !== kb[0]) return ka[0] < kb[0] ? -1 : 1;
+  if (ka[1] !== kb[1]) return ka[1] < kb[1] ? -1 : 1;
+  if (ka[2] !== kb[2]) return ka[2] < kb[2] ? -1 : 1;
+  return 0;
+}
+
 const files = readdirSync(DB_DIR)
   .filter((name) => name.endsWith(".sql") && DATED_MIGRATION.test(name))
-  .sort();
+  .sort(compareMigrationNames);
 
-const entries = files.map((name) => {
+const entries = files.map((name, index) => {
   const buffer = readFileSync(join(DB_DIR, name));
-  return { file: `db/${name}`, sha256: createHash("sha256").update(buffer).digest("hex") };
+  return {
+    file: `db/${name}`,
+    sha256: createHash("sha256").update(buffer).digest("hex"),
+    seq: index + 1,
+  };
 });
 
 const body = entries
-  .map((entry) => `  { file: "${entry.file}", sha256: "${entry.sha256}" },`)
+  .map((entry) => `  { file: "${entry.file}", sha256: "${entry.sha256}", seq: ${entry.seq} },`)
   .join("\n");
 
 writeFileSync(
@@ -43,11 +70,12 @@ writeFileSync(
   `// AUTO-GENERATED — do not edit by hand. Run \`npm run migrations:manifest\`
 // after adding or changing any db/*.sql file (see scripts/migration-manifest.mjs).
 //
-// One entry per one-time patch in db/: the file and its SHA-256. The ledger
-// (schema_migrations) stores the hash recorded when a file was applied, so a
-// committed change to an already-run file is visible as DRIFT on
+// One entry per one-time patch in db/: the file, its SHA-256 and its 1-based
+// \`seq\` (explicit run order — parsed date, then a/b/c letter, then name). The
+// ledger (schema_migrations) stores the hash recorded when a file was applied,
+// so a committed change to an already-run file is visible as DRIFT on
 // /dashboard/admin/migrations instead of silently passing as "applied".
-export type MigrationManifestEntry = { file: string; sha256: string };
+export type MigrationManifestEntry = { file: string; sha256: string; seq: number };
 
 export const MIGRATION_FILES: MigrationManifestEntry[] = [
 ${body}
@@ -56,6 +84,15 @@ ${body}
 /** Lookup for the ledger comparison; null when the file is not in the manifest. */
 export function migrationHash(file: string): string | null {
   return MIGRATION_FILES.find((entry) => entry.file === file)?.sha256 ?? null;
+}
+
+/**
+ * The file's explicit run order (1-based), or null when it is not a tracked
+ * one-time patch. Recorded as schema_migrations.sequence_no and used to order
+ * the Admin → Database / Migration Status list.
+ */
+export function migrationSequence(file: string): number | null {
+  return MIGRATION_FILES.find((entry) => entry.file === file)?.seq ?? null;
 }
 `,
   "utf8"

@@ -31,10 +31,44 @@ const files = readdirSync("db")
 const probesSource = readFileSync(join("src", "lib", "migrations", "probes.ts"), "utf8");
 
 test("the manifest lists exactly the one-time patches in db/", () => {
+  // Sorted copies: the manifest is now in EXPLICIT RUN ORDER (audit 3.12), which
+  // is not the same as a byte-sort of the names (the compact 20260805… legacy
+  // names sort after every 2026-08-05-… file). Coverage is about the SET.
   assert.deepEqual(
-    MIGRATION_FILES.map((entry) => entry.file),
+    [...MIGRATION_FILES.map((entry) => entry.file)].sort(),
     files,
     "src/lib/migrations/manifest.ts is out of step with db/ — run `npm run migrations:manifest`"
+  );
+});
+
+test("the manifest carries an explicit 1..N run order", () => {
+  assert.deepEqual(
+    MIGRATION_FILES.map((entry) => entry.seq),
+    MIGRATION_FILES.map((_, index) => index + 1),
+    "every manifest entry needs a unique seq (1-based, in the generated order) — run `npm run migrations:manifest`"
+  );
+});
+
+// 2026-11-27 (audit 3.12) — the compact `20260805name.sql` shape is legacy only.
+// It sorts after every `2026-08-05-…` file, which is exactly how run order got
+// silently wrong. New files must use the dashed date prefix.
+const LEGACY_COMPACT_NAMES = new Set([
+  "db/20260805fixrlsblockinglogin.sql",
+  "db/20260806itemcategoryhsncodes.sql",
+  "db/20260806itemcategoryhsncodesbatch2.sql",
+  "db/20260806seeditemcategories.sql",
+  "db/20260806seedsizesandcategories.sql",
+]);
+
+test("new migration files use the YYYY-MM-DD- prefix", () => {
+  const compact = readdirSync("db")
+    .filter((name) => name.endsWith(".sql") && /^\d{8}/.test(name))
+    .map((name) => `db/${name}`)
+    .filter((file) => !LEGACY_COMPACT_NAMES.has(file));
+  assert.deepEqual(
+    compact,
+    [],
+    `compact 20260805-style names are legacy only — rename these to YYYY-MM-DD-<slug>.sql: ${compact.join(", ")}`
   );
 });
 

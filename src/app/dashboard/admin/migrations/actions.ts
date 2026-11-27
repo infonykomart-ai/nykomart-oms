@@ -18,7 +18,7 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { logAudit } from "@/lib/audit/log-audit";
 import { probeMigrationsCached } from "@/lib/migrations/probes";
 import { readMigrationLedger, summarizeMigrationLedger } from "@/lib/migrations/ledger";
-import { migrationHash } from "@/lib/migrations/manifest";
+import { migrationHash, migrationSequence } from "@/lib/migrations/manifest";
 import type { Database } from "@/types/database";
 
 type LedgerInsert = Database["public"]["Tables"]["schema_migrations"]["Insert"];
@@ -40,6 +40,9 @@ export async function recordVerifiedMigrationsAction(): Promise<void> {
       sha256: migrationHash(file) ?? "",
       applied_at: now,
       applied_by: employee.name,
+      // 2026-11-27 (audit 3.12) — the explicit run order, recorded with the
+      // row so the ledger never has to re-derive it from file names.
+      sequence_no: migrationSequence(file),
       note: "Recorded from the migration status page — the probe confirmed this file's object is present.",
     }))
     .filter((row) => row.sha256.length > 0);

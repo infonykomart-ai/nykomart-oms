@@ -9,6 +9,7 @@ import {
   type ProbeState,
 } from "@/lib/migrations/probes";
 import { readMigrationLedger, summarizeMigrationLedger, type LedgerSummary } from "@/lib/migrations/ledger";
+import { migrationSequence } from "@/lib/migrations/manifest";
 import { recordVerifiedMigrationsAction } from "./actions";
 
 // 2026-10-21 — "kar diya run" / the reason it exists at all: every dated
@@ -43,6 +44,13 @@ export default async function MigrationsPage({
   // the ledger answers WHICH version of a file was run (the file's SHA-256).
   const ledger = await readMigrationLedger(supabase);
   const ledgerSummary = summarizeMigrationLedger(probes, ledger);
+  // 2026-11-27 (audit 3.12) — "run each pending file in the order shown" is
+  // only true if the list IS in run order. That order is now explicit (manifest
+  // seq / schema_migrations.sequence_no), not a file-name sort that put the
+  // oldest 20260805… files last.
+  const orderedProbes = [...probes].sort(
+    (a, b) => (migrationSequence(a.file) ?? Number.MAX_SAFE_INTEGER) - (migrationSequence(b.file) ?? Number.MAX_SAFE_INTEGER)
+  );
 
   return (
     <div>
@@ -118,7 +126,7 @@ export default async function MigrationsPage({
       )}
 
       <div className="space-y-3">
-        {probes.map((probe) => {
+        {orderedProbes.map((probe) => {
           const applied = migrationApplied(probe);
           const missingChecks = probe.checks.filter((c) => c.state === "missing");
           return (

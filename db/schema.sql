@@ -1516,7 +1516,12 @@ CREATE TABLE schema_migrations (
   sha256     text NOT NULL,
   applied_at timestamptz NOT NULL DEFAULT now(),
   applied_by text,
-  note       text
+  note       text,
+  -- 2026-11-27 (audit 3.12) — explicit run order: the file's 1-based position
+  -- in src/lib/migrations/manifest.ts (parsed date, then a/b/c letter, then
+  -- name). NULL on rows recorded before the column existed; those sort last.
+  -- See db/2026-11-27-schema-migrations-sequence.sql.
+  sequence_no integer
 );
 
 CREATE TABLE automation_rules (

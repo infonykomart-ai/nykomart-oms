@@ -32,7 +32,13 @@ committed `Database` types still cover the schema.
 ## 2. Writing a new patch
 
 1. **Name it** `db/YYYY-MM-DD-<slug>.sql` (add `a`, `b`, `c`… for several in one
-   day). The date must be the date it is written, not the date it is run.
+   day). The date must be the date it is written, not the date it is run. The
+   older compact `20260805name.sql` shape is **legacy only** — a new file must
+   use the dashed prefix, and `src/lib/migrations/coverage.test.ts` fails on any
+   new compact name. Run order is explicit (`seq` in the manifest, then
+   `schema_migrations.sequence_no`), never a file-name sort: the compact names
+   sort after every dashed file, which is how the admin page used to show the
+   oldest migrations last.
 2. **Make it idempotent.** `IF NOT EXISTS` / `ON CONFLICT DO NOTHING` /
    `CREATE OR REPLACE`. Assume someone will run it twice.
 3. **Header comment is mandatory.** Say what request it came from, what it
@@ -86,6 +92,7 @@ file's SHA-256 at the moment it was recorded. `src/lib/migrations/manifest.ts`
 | recorded | applied per probe, hash matches the committed file |
 | recordable | probe says applied, no ledger row yet — the page's button records it |
 | drifted | the file changed after it was recorded — **re-run the current file** |
+| — | `sequence_no` records the file's 1-based position in the manifest, i.e. the order the files are meant to be run in. The admin list sorts by it; null (recorded before the column existed) sorts last by name. |
 | conflict | recorded as applied, but this database does not have the object (restore / manual drop) |
 | manual | nothing verifiable, so never recorded automatically |
 
