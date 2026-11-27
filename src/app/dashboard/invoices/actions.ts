@@ -25,22 +25,18 @@ export type InvoiceFormState = {
     invoiceNo: string;
     // 2026-11-27 (audit 3.4, remainder) — "3 of 12 orders could not be marked
     // Dispatched": the invoice itself was created successfully, so this is a
-    // warning on the SUCCESS state, not an error. Null when every order moved
-    // to Dispatched as expected.
-    warning?: string | null;
+    // warning on the SUCCESS state, not an error.
+    warning?: string;
   } | null;
 };
 
-/**
- * What generateInvoiceCore reports back — `dispatchWarning` is set only when
- * the invoice was created but at least one of its orders could not be moved
- * to Dispatched (the invoice must not be rolled back for that; the employee
- * just needs to know and finish the status by hand).
- */
-export type GenerateInvoiceCoreResult = {
+/** generateInvoiceCore's result; `failedDispatchOrderIds` exists only on the
+ * success path where some of the invoice's orders could not be moved to
+ * Dispatched. Facts only — each caller words it for its own screen. */
+type GenerateInvoiceCoreResult = {
   error: string | null;
   invoice: { id: string; invoice_no: string } | null;
-  dispatchWarning?: string | null;
+  failedDispatchOrderIds?: string[];
 };
 
 function str(formData: FormData, key: string): string {
@@ -558,7 +554,7 @@ export async function generateInvoiceCore(
     .in("id", orderIds)
     .not("status", "in", "(Dispatched,Delivered)");
 
-  let dispatchWarning: string | null = null;
+  let failedDispatchOrderIds: string[] | undefined;
   if (notYetDispatched && notYetDispatched.length > 0) {
     // 2026-11-26 — audit 3.8: these updates were fire-and-forget inside
     // Promise.all, so an order that failed to move to Dispatched left the
@@ -590,24 +586,19 @@ export async function generateInvoiceCore(
       });
     }
 
-    // 2026-11-27 (audit 3.4, remainder) — the invoice is already created and
-    // its orders are already linked, so this cannot be an `error` (that would
-    // tell the employee nothing was saved). Report it as a warning instead, in
-    // the same "N of M" shape the employee can check against the order list.
+    // 2026-11-27 (audit 3.4) — the invoice and its order links are already
+    // saved, so this is not an `error`. Return WHICH orders failed and let the
+    // caller word it: the single form shows "N of M", the CSV upload shows it
+    // on the failed order's own row.
     if (failedDispatches.length > 0) {
-      const failed = failedDispatches.length;
-      const total = orderIds.length;
-      dispatchWarning =
-        `${failed} of ${total} order${total === 1 ? "" : "s"} could not be marked Dispatched — ` +
-        `the invoice was created, but ${failed === 1 ? "that order still shows" : "those orders still show"} ` +
-        `the old status. Set ${failed === 1 ? "it" : "them"} to Dispatched from the Orders page; the failure was logged for an Admin.`;
+      failedDispatchOrderIds = failedDispatches.map(({ orderId }) => orderId);
     }
   }
 
   revalidatePath("/dashboard/invoices");
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/orders/new");
-  return { error: null, invoice: { id: invoice.id, invoice_no: invoice.invoice_no }, dispatchWarning };
+  return { error: null, invoice: { id: invoice.id, invoice_no: invoice.invoice_no }, failedDispatchOrderIds };
 }
 
 /**
@@ -619,8 +610,9 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
   const employee = await requireCapability("invoicing");
   const supabase = createServiceRoleClient();
 
+  const orderIds = formData.getAll("order_ids").map(String).filter(Boolean);
   const result = await generateInvoiceCore(employee, supabase, {
-    orderIds: formData.getAll("order_ids").map(String).filter(Boolean),
+    orderIds,
     shipmentTerm: str(formData, "shipment_term"),
     csbType: str(formData, "csb_type"),
     courierCompany: str(formData, "courier_company"),
@@ -665,12 +657,16 @@ export async function generateInvoice(_prev: InvoiceFormState, formData: FormDat
   });
 
   if (result.error || !result.invoice) return { error: result.error, success: null };
+  const failed = result.failedDispatchOrderIds?.length ?? 0;
   return {
     error: null,
     success: {
       invoiceId: result.invoice.id,
       invoiceNo: result.invoice.invoice_no,
-      warning: result.dispatchWarning ?? null,
+      warning: failed
+        ? `${failed} of ${orderIds.length} order${orderIds.length === 1 ? "" : "s"} could not be marked Dispatched — ` +
+          `set the status from the Orders page (the reason is in the error log).`
+        : undefined,
     },
   };
 }
@@ -701,7 +697,16 @@ function cellStr(row: Record<string, unknown>, byHeader: Map<string, string>, la
 
 const MAX_BULK_INVOICE_ROWS = 500;
 
-export type BulkInvoiceResult = { row: number; refNo: string; invoiceNo: string | null; error: string | null };
+export type BulkInvoiceResult = {
+  row: number;
+  refNo: string;
+  invoiceNo: string | null;
+  error: string | null;
+  /** 2026-11-27 — set only when this order's invoice was created but the order
+   * itself could not be marked Dispatched (shown on this row, so the CSV row
+   * and the PO/RF/RG number point at the exact order that needs fixing). */
+  warning?: string;
+};
 export type BulkInvoiceState = { error: string | null; results: BulkInvoiceResult[] | null };
 
 export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: FormData): Promise<BulkInvoiceState> {
@@ -881,12 +886,18 @@ export async function bulkGenerateInvoices(_prev: BulkInvoiceState, formData: Fo
       ...first.fields,
       orderIds: groupRows.map((r) => r.orderId),
     });
+    const failedOrderIds = new Set(result.failedDispatchOrderIds ?? []);
     for (const r of groupRows) {
       results.push({
         row: r.rowNum,
         refNo: r.refNo,
         invoiceNo: result.invoice?.invoice_no ?? null,
         error: result.error,
+        warning:
+          result.invoice && failedOrderIds.has(r.orderId)
+            ? `Invoice ${result.invoice.invoice_no} was created, but this order could not be marked Dispatched — ` +
+              `set its status from the Orders page (the reason is in the error log).`
+            : undefined,
       });
     }
   }
