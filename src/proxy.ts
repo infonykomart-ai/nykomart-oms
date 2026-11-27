@@ -14,11 +14,69 @@ function withCookies(to: NextResponse, from: NextResponse): NextResponse {
   return to;
 }
 
+// 2026-11-27 — CONTENT SECURITY POLICY, REPORT-ONLY FIRST (audit 3.11).
+//
+// The app shipped every other baseline security header (see next.config.ts) but
+// no CSP at all, because App Router injects inline bootstrap scripts and a blind
+// enforce would break the UI. So this ships the policy as
+// `Content-Security-Policy-Report-Only`: nothing is blocked, the browser reports
+// what WOULD have been blocked to /api/csp-report, and once the reports are clean
+// the same value can be sent as the enforcing `Content-Security-Policy` header.
+//
+// The nonce is what makes an enforcing policy possible later: Next reads it from
+// the request's CSP header (either the enforcing or the report-only one) and
+// stamps it on its own scripts and inline styles automatically — no per-tag work
+// here. `x-nonce` is exposed too for any Server Component that needs it.
+//
+// Vercel hosts this app behind HSTS, so `upgrade-insecure-requests` is left out;
+// `style-src 'unsafe-inline'` stays because React inline style props and the
+// Tailwind runtime are not nonce-aware — that is one of the things the
+// report-only phase measures.
+const CSP_REPORT_URI = "/api/csp-report";
+
+function cspHeaderValue(nonce: string): string {
+  const isDev = process.env.NODE_ENV === "development";
+  const directives = [
+    "default-src 'self'",
+    // 'strict-dynamic' lets the nonce-carrying bootstrap load its own chunks.
+    // React needs eval for its enhanced dev stack traces; production does not.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    // Order photos and generated PDF/image previews come from marketplace hosts
+    // and blobs, so https:/blob:/data: are allowed here (images only).
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https: wss:",
+    "media-src 'self' blob: https:",
+    // Dashboard pages are previewed in same-origin iframes (?embed=1).
+    "frame-src 'self'",
+    "frame-ancestors 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    `report-uri ${CSP_REPORT_URI}`,
+  ];
+  return directives.join("; ");
+}
+
 export async function proxy(request: NextRequest) {
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const policy = cspHeaderValue(nonce);
+  // Set on the REQUEST too: that is what Next parses to stamp the nonce on its
+  // scripts, and what NextResponse.next({ request }) forwards to the render.
+  request.headers.set("x-nonce", nonce);
+  request.headers.set("Content-Security-Policy-Report-Only", policy);
+
+  const response = await handleRequest(request);
+  response.headers.set("Content-Security-Policy-Report-Only", policy);
+  return response;
+}
+
+async function handleRequest(request: NextRequest) {
   // Internal Next.js runtime routes, including Server Action fetches, must
   // bypass this auth proxy so they can preserve the required request shape.
   if (request.nextUrl.pathname.startsWith("/_next")) {
-    return NextResponse.next();
+    return NextResponse.next({ request });
   }
 
   // 2026-10-19 — "agar dialog box me open ho to sirf page hi open ho, puri
@@ -46,9 +104,13 @@ export async function proxy(request: NextRequest) {
   // same, it just no longer runs for pages that ignore it.
   const pathname = request.nextUrl.pathname;
   const needsSession =
-    pathname.startsWith("/dashboard") || pathname === "/login" || pathname.startsWith("/api");
+    pathname.startsWith("/dashboard") ||
+    pathname === "/login" ||
+    // The CSP report endpoint is posted by the BROWSER, often with no session —
+    // resolving auth for it only adds two round-trips to every violation.
+    (pathname.startsWith("/api") && pathname !== CSP_REPORT_URI);
   if (!needsSession) {
-    return NextResponse.next();
+    return NextResponse.next({ request });
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -78,7 +140,7 @@ export async function proxy(request: NextRequest) {
       loginUrl.searchParams.set("redirectTo", request.nextUrl.pathname);
       return NextResponse.redirect(loginUrl);
     }
-    return NextResponse.next();
+    return NextResponse.next({ request });
   }
 
   // This is the official @supabase/ssr middleware pattern, not a

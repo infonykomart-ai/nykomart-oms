@@ -45,9 +45,11 @@ const nextConfig: NextConfig = {
   // ?embed=1 handler — so SAMEORIGIN, not DENY), referrer trimmed on
   // cross-origin hops (tokens can appear in URLs on the vendor agreement
   // page), and browser features the OMS never uses switched off.
-  // A full Content-Security-Policy is deliberately NOT set here: Next's App
-  // Router injects inline bootstrap scripts, so a policy needs per-request
-  // nonces and would break the app if shipped blind. Tracked in SECURITY.md.
+  // A full Content-Security-Policy is deliberately NOT set here: it needs a
+  // per-request nonce, so it lives in src/proxy.ts (2026-11-27, audit 3.11) and
+  // ships as Content-Security-Policy-Report-Only first — violations go to
+  // /api/csp-report, and the same policy is switched to enforcing only once
+  // those reports are clean. See SECURITY.md.
   async headers() {
     return [
       {

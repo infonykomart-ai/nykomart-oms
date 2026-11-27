@@ -477,7 +477,9 @@ src/
   secret is unset** and compares in constant time.
 - Stored marketplace/courier API keys are encrypted at rest.
 - Baseline response headers (`X-Frame-Options: SAMEORIGIN`, `nosniff`, `Referrer-Policy`,
-  `Permissions-Policy`, HSTS) are set in `next.config.ts`; a CSP is still outstanding.
+  `Permissions-Policy`, HSTS) are set in `next.config.ts`. A nonce-based CSP ships
+  **report-only** from `src/proxy.ts`; reports land on Admin → Error Log and the
+  policy is switched to enforcing once they are clean.
 - Rich-text HR letter bodies are sanitised server-side on write and on read
   (`src/lib/hr-letters/sanitize-body-html.ts`) before any `dangerouslySetInnerHTML`.
 - Current audit state: **0 high/critical advisories in production dependencies**; 16 moderate

@@ -110,9 +110,14 @@ Stated plainly, because this is **not** a complete security audit:
   actions and RLS are untested.
 - **No runtime penetration test** of the live deployment, its Supabase
   policies, deployment secrets, or third-party API integrations.
-- **No Content-Security-Policy.** App Router injects inline bootstrap scripts,
-  so a CSP needs per-request nonces; shipping one blind would break the app.
-  The other baseline headers are in place (see above).
+- **Content-Security-Policy is report-only, not enforcing (yet).** A
+  nonce-based policy ships from `src/proxy.ts` as
+  `Content-Security-Policy-Report-Only`; violations are collected by
+  `/api/csp-report` and appear on Admin → Error Log (`source=system`,
+  `reference_type=csp_report`). Nothing is blocked until those reports are
+  clean, at which point the same header is sent as `Content-Security-Policy`.
+  `style-src` still needs `'unsafe-inline'` (React inline style props). The
+  other baseline headers are in place (see above).
 - **No general rate limiting.** Only `companion-chat` throttles per employee.
   Server Actions and document/PDF routes are unbounded, so an authenticated
   caller can burn CPU on PDF rendering. Needs shared state (DB or Upstash).
