@@ -187,8 +187,8 @@ export const MIGRATION_FILES: MigrationManifestEntry[] = [
   { file: "db/2026-11-25-whatsapp-order-status.sql", sha256: "cdbac4247f550a28a1dc79652328e8dc7d2ccf4a74895df5a53129fa37a76427", seq: 176 },
   { file: "db/2026-11-26-purchase-bill-share-resplit.sql", sha256: "8b4a60d616be3b3444904b567624ab2842193bbb9c119882ba9f184e0a19f224", seq: 177 },
   { file: "db/2026-11-26-schema-migrations-ledger.sql", sha256: "6ed823dedbcdbf516d275f483d9b7030bdcada00daec93dc99aefd7cbeea83f4", seq: 178 },
-  { file: "db/2026-11-27-orders-whatsapp-sent-at-deprecated.sql", sha256: "af62cfc9b7792251b426f822356d9c79c89e5bf9d5f4217df088a7cdc2314f06", seq: 179 },
-  { file: "db/2026-11-27-schema-migrations-sequence.sql", sha256: "02ecc43fe98bfabadf352c61cfac3d4bbf29ac3095d5c187c4eacae6c31de62b", seq: 180 },
+  { file: "db/2026-11-27-orders-whatsapp-sent-at-deprecated.sql", sha256: "66dd3e2ddd6c6e5f1cafcc27e212c3c77cda6ed359f52cea3ba817ff011f678a", seq: 179 },
+  { file: "db/2026-11-27-schema-migrations-sequence.sql", sha256: "a2c5f39dc8250492a30574dab47c09346486ffaeb5290fcdc50f9b826d786efe", seq: 180 },
 ];
 
 /** Lookup for the ledger comparison; null when the file is not in the manifest. */
