@@ -6,7 +6,9 @@ import { readFileSync } from "node:fs";
 // change, so it cannot be exercised without a database. What CAN be pinned is
 // its completeness and its direction:
 //
-//   * the policy function mirrors the app's companyIds union,
+//   * the policy function mirrors the app's companyIds union AND expands it
+//     to the linked-company group (Nyko Mart / Rugara / CASA ARRA share data;
+//     a company outside the group must not),
 //   * every table in schema.sql with a NOT NULL company_id is covered by the
 //     loop (so a newly added company table is scoped automatically),
 //   * the only company tables left un-scoped are nullable ones, and that list
@@ -55,6 +57,26 @@ test("the helper mirrors the app's companyIds (home + access + live coverage)", 
     assert.ok(code.includes(source), `auth_company_ids() no longer reads ${source}`);
   }
   assert.match(code, /Asia\/Kolkata/, "coverage dates must use the app's IST day, not the DB timezone");
+});
+
+test("linked companies resolve to one group, so they keep seeing each other", () => {
+  assert.match(
+    code,
+    /ALTER TABLE public\.companies\s+ADD COLUMN IF NOT EXISTS group_company_id uuid REFERENCES public\.companies\(id\)/i,
+    "the link must be an explicit column on companies"
+  );
+  assert.match(code, /coalesce\(c\.group_company_id, c\.id\)/i, "a company's group is its root, or itself");
+  assert.match(code, /FROM public\.companies c/, "the helper must expand a login's companies through companies");
+  assert.match(
+    code,
+    /WHERE name IN \('Nyko Mart', 'Rugara', 'CASA ARRA'\)/,
+    "the seed must name today's three linked companies explicitly"
+  );
+  assert.match(code, /AND group_company_id IS NULL/, "the seed must not re-parent an already-linked company");
+  assert.ok(
+    !/group_company_id IS NULL\s+AND\s+c\.id <>/i.test(code),
+    "the seed must not group every company by default — a company created later starts on its own"
+  );
 });
 
 test("the migration refuses to install policies that would recurse", () => {

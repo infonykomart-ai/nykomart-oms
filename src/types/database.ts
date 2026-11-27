@@ -3428,6 +3428,7 @@ export type Database = {
           whapi_group_id: string | null;
           telegram_chat_id: string | null;
           master_invoice_prefix: string | null;
+          group_company_id: string | null;
           weekly_off_days: number[];
           business_address: string | null;
           iec_no: string | null;
@@ -3447,6 +3448,7 @@ export type Database = {
           whapi_group_id?: string | null;
           telegram_chat_id?: string | null;
           master_invoice_prefix?: string | null;
+          group_company_id?: string | null;
           weekly_off_days?: number[];
           business_address?: string | null;
           iec_no?: string | null;
@@ -3466,6 +3468,7 @@ export type Database = {
           whapi_group_id?: string | null;
           telegram_chat_id?: string | null;
           master_invoice_prefix?: string | null;
+          group_company_id?: string | null;
           weekly_off_days?: number[];
           business_address?: string | null;
           iec_no?: string | null;

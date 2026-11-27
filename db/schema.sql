@@ -229,6 +229,13 @@ CREATE TABLE companies (
   whapi_group_id text,
   telegram_chat_id text,
   master_invoice_prefix text,
+  -- 2026-11-27 (audit #2 — RLS scope): companies that share data (Nyko Mart /
+  -- Rugara / CASA ARRA run from one premises and share order + bill reads).
+  -- Points at the group's ROOT company; NULL = this company is its own
+  -- group. auth_company_ids() expands a session's accessible companies to
+  -- their whole group, and every company-scoped RLS policy compares against
+  -- that list — see db/2026-11-27-company-scoped-rls.sql.
+  group_company_id uuid REFERENCES companies(id),
   -- 2026-08-11: recurring weekly-off day(s) for attendance/payroll, e.g.
   -- every Sunday off. 0=Sunday..6=Saturday (matches both JS Date.getDay()
   -- and Postgres EXTRACT(DOW FROM date)). See holidays table (SECTION 16)

@@ -1,7 +1,7 @@
 -- 2026-11-27 (audit fix #2 — RLS scope, HIGH) — every table that carries a
--- company_id gets a company-scoped policy instead of the blanket
--- `allow_authenticated_all ... USING (true)` that db/2026-08-08-enable-rls.sql
--- put on every table.
+-- company_id gets a policy scoped to the caller's LINKED COMPANIES instead of
+-- the blanket `allow_authenticated_all ... USING (true)` that
+-- db/2026-08-08-enable-rls.sql put on every table.
 --
 -- WHY THE BLANKET POLICY IS NOT ENOUGH: it only keeps ANON out. A signed-in
 -- employee's session is the Postgres `authenticated` role, so anyone can open
@@ -11,26 +11,49 @@
 -- `.in("company_id", employee.companyIds)` filter. An app-level filter is not
 -- a boundary once the client is tamperable.
 --
+-- WHY NOT SCOPE TO ONE COMPANY: Nyko Mart, Rugara and CASA ARRA run from the
+-- same premises and are LINKED — a purchase invoice can cover orders from all
+-- three, a bill registered in one is settled from the same ledger, and staff
+-- work across them from one login (employee_company_access). Cutting the
+-- three apart would break exactly the linked order/bill reads this system
+-- exists for. So the boundary is the GROUP, not the single company:
+-- the three linked companies keep seeing each other's data (as before), and
+-- a company outside the group stays invisible.
+--
 -- WHAT THIS FILE DOES, IN ORDER
+--   0. `companies.group_company_id` — the link itself. NULL means "this
+--      company is its own group". The three companies that exist today are
+--      seeded into ONE group; a company added later starts on its own and is
+--      only grouped when an admin sets its group_company_id explicitly.
 --   1. `auth_company_ids()` — a SECURITY DEFINER helper answering "which
---      company ids may this session act as", mirroring
---      src/lib/auth/require-capability.ts exactly: home company,
---      employee_company_access, and the company of any store they are
---      covering today (leave_coverage_assignments). Date is IST, matching
---      todayIST().
+--      company ids may this session act as": the union the app's
+--      companyIds already builds (home company, employee_company_access,
+--      and the company of any store they cover today via
+--      leave_coverage_assignments, IST date — mirroring
+--      src/lib/auth/require-capability.ts), EXPANDED to every company in the
+--      same group.
 --   2. A guard: the helper must be owned by a role with BYPASSRLS. Otherwise
 --      the policy on `employees` would call a function that reads `employees`
---      and recurse forever. Aborts loudly instead of hanging every query.
+--      (and `companies`) and recurse forever. Aborts loudly instead of
+--      hanging every query.
 --   3. A loop over every public table with a NOT NULL company_id: drop the
 --      blanket policy, create `company_scope_all` (FOR ALL, USING + WITH
 --      CHECK `company_id = any (auth_company_ids())`). Writes stay allowed
---      inside the company, so no app flow changes; role/capability checks
---      remain the app's job exactly as before. This file only removes
---      cross-company access.
+--      inside the group, so no app flow changes; role/capability checks
+--      remain the app's job exactly as before. This file only removes access
+--      from companies OUTSIDE the group.
 --   4. `order_whatsapp_messages` explicitly: its company_id is NULLABLE
 --      (ON DELETE SET NULL), so it is not in the loop. Orphan rows with a
 --      NULL company stay invisible to every company rather than becoming
 --      readable to all.
+--
+-- LINKING ANOTHER COMPANY LATER (e.g. a fourth company of the same group):
+--   UPDATE public.companies
+--      SET group_company_id = (
+--        SELECT coalesce(group_company_id, id) FROM public.companies
+--         WHERE name = 'Nyko Mart')
+--    WHERE name = '<new company>';
+--   -- group_company_id must point at the group ROOT (one level, no chains).
 --
 -- DELIBERATELY NOT SCOPED HERE — company_id is nullable on these and a NULL
 -- is a real shared/system row, not an orphan. Each needs a policy that
@@ -42,11 +65,55 @@
 --   entry_errors, expense_categories, fin_settings, holidays,
 --   purchase_bills, shipglobal_seller_profiles
 --
--- Idempotent — safe to re-run (DROP POLICY IF EXISTS + CREATE OR REPLACE).
+-- Idempotent — safe to re-run (ADD COLUMN IF NOT EXISTS, DROP POLICY IF
+-- EXISTS + CREATE OR REPLACE, and the seed only touches the three named
+-- companies while their link is still NULL).
 -- Rollback is at the bottom in comments.
 
 -- ---------------------------------------------------------------------------
--- 1. The company ids this session may act as.
+-- 0. The link: which companies form one linked group.
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.companies
+  ADD COLUMN IF NOT EXISTS group_company_id uuid REFERENCES public.companies(id);
+
+COMMENT ON COLUMN public.companies.group_company_id IS
+  '2026-11-27 — linked-companies group: the ROOT company this one shares data with (Nyko Mart / Rugara / CASA ARRA run from one premises and share order + bill data). NULL = its own group. RLS scopes a session to its accessible companies expanded to their whole group, so companies outside the group never see each other. Set this only to a root company (one level, no chains).';
+
+-- Seed today's group. Explicit names on purpose: re-running this file must
+-- never swallow a company that was created later for a different business.
+-- Root = the earliest-created of the three, so the choice is stable.
+DO $$
+DECLARE
+  v_root   uuid;
+  v_member integer;
+BEGIN
+  SELECT id INTO v_root
+    FROM public.companies
+   WHERE name IN ('Nyko Mart', 'Rugara', 'CASA ARRA')
+   ORDER BY created_at, id
+   LIMIT 1;
+
+  IF v_root IS NULL THEN
+    RAISE WARNING
+      'No linked company (Nyko Mart / Rugara / CASA ARRA) found — group_company_id left NULL, so every company is currently its own group. Set it by hand (see the header) before relying on shared reads.';
+    RETURN;
+  END IF;
+
+  UPDATE public.companies
+     SET group_company_id = v_root
+   WHERE name IN ('Nyko Mart', 'Rugara', 'CASA ARRA')
+     AND id <> v_root
+     AND group_company_id IS NULL;
+
+  SELECT count(*) INTO v_member
+    FROM public.companies
+   WHERE coalesce(group_company_id, id) = v_root;
+
+  RAISE NOTICE 'Linked-company group % has % member(s).', v_root, v_member;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 1. The company ids this session may act as (its companies + their group).
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.auth_company_ids()
 RETURNS uuid[]
@@ -55,8 +122,7 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $fn$
-  SELECT coalesce(array_agg(DISTINCT cid), '{}'::uuid[])
-  FROM (
+  WITH accessible AS (
     -- Home company.
     SELECT e.company_id AS cid
       FROM public.employees e
@@ -79,7 +145,17 @@ AS $fn$
      WHERE e.auth_user_id = (SELECT auth.uid())
        AND e.active
        AND (now() AT TIME ZONE 'Asia/Kolkata')::date BETWEEN c.from_date AND c.to_date
-  ) scoped;
+  ),
+  -- The group root of every company the session can already reach.
+  roots AS (
+    SELECT coalesce(c.group_company_id, c.id) AS root
+      FROM public.companies c
+      JOIN accessible a ON a.company_id = c.id
+  )
+  -- …expanded to every company that belongs to those groups.
+  SELECT coalesce(array_agg(DISTINCT c.id), '{}'::uuid[])
+    FROM public.companies c
+    JOIN roots r ON coalesce(c.group_company_id, c.id) = r.root;
 $fn$;
 
 REVOKE ALL ON FUNCTION public.auth_company_ids() FROM public;
@@ -176,9 +252,15 @@ CREATE POLICY company_scope_all ON public.order_whatsapp_messages
 --                        AND a.attnotnull AND NOT a.attisdropped
 --    WHERE p.schemaname = 'public' AND p.policyname = 'allow_authenticated_all';
 --
---   -- As two logins from different companies, the same query must return
---   -- different row counts:
---   --   SELECT company_id, count(*) FROM orders GROUP BY 1;
+--   -- The three linked companies must share ONE group root.
+--   SELECT id, name, coalesce(group_company_id, id) AS group_root
+--     FROM public.companies ORDER BY group_root, name;
+--
+--   -- As a login from ANY of the three companies, all three companies' orders
+--   -- stay visible (the link is preserved):
+--   --   SELECT company_id, count(*) FROM orders GROUP BY 1 ORDER BY 1;
+--
+--   -- As a login from a company OUTSIDE the group, only its own rows appear.
 --
 -- ROLLBACK (restores the previous, blanket behaviour):
 --
@@ -201,3 +283,5 @@ CREATE POLICY company_scope_all ON public.order_whatsapp_messages
 --   CREATE POLICY allow_authenticated_all ON public.order_whatsapp_messages
 --     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 --   DROP FUNCTION IF EXISTS public.auth_company_ids();
+--   -- Optional: forget the group link too (only if no app code uses it).
+--   ALTER TABLE public.companies DROP COLUMN IF EXISTS group_company_id;

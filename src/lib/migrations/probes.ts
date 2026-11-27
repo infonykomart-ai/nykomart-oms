@@ -472,8 +472,8 @@ export async function probeMigrations(
     // 2026-11-27 — audit #2: company-scoped RLS. Policies are not API-visible,
     // so this one is manual-only; src/lib/security/rls-company-scope.test.ts
     // pins what the file covers instead.
-    probe("db/2026-11-27-company-scoped-rls.sql", "Company-scoped RLS (cross-company reads closed)",
-      "Any signed-in employee can read and write every company's orders, invoices, payroll and WhatsApp log straight through the Supabase REST API — the app's company filter never applied to that path.",
+    probe("db/2026-11-27-company-scoped-rls.sql", "Company-group-scoped RLS (linked companies share, outsiders closed)",
+      "Any signed-in employee can read and write every company's orders, invoices, payroll and WhatsApp log straight through the Supabase REST API — the app's company filter never applied to that path. The fix keeps the three linked companies seeing each other (companies.group_company_id) and closes access to companies outside the group.",
       [{ name: "no API-visible object", promise: manualProbe() }]),
 
     // 2026-11-27 — audit 3.12: the ledger gets an EXPLICIT run order. Until this
