@@ -6,7 +6,7 @@ import { matchMarketplaceFees } from "@/lib/orders/marketplace-fees";
 import { OrderListTable } from "./order-list-table";
 import { RecentInvoicesSection } from "./recent-invoices-section";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { sanitizeSearchTerm } from "@/lib/orders/find-order";
+import { buildOrderFilterExpression, parseColumnFilters } from "@/lib/orders/order-column-filters";
 
 const STATUSES = ["Pending", "Confirmed", "In Production", "Dispatched", "Delivered", "Hold", "Cancelled", "Returned"];
 
@@ -63,7 +63,9 @@ export default async function OrdersPage({
   // navigates to ?q=… and must keep company/status/date/late intact.
   const preservedParams = new URLSearchParams();
   for (const [key, value] of Object.entries(sp)) {
-    if (key === "q" || value == null) continue;
+    // `q` and `f` (the in-table column filters) are rebuilt by the table's own
+    // debounced navigation, so they are never copied through as-is.
+    if (key === "q" || key === "f" || value == null) continue;
     for (const v of Array.isArray(value) ? value : [value]) preservedParams.set(key, v);
   }
   const preservedQuery = preservedParams.toString();
@@ -106,37 +108,24 @@ export default async function OrdersPage({
   // PostgREST `or=(…)` filter, where a comma/parenthesis/percent in the
   // input produces a malformed request — PostgREST answers with an error and
   // the page renders an empty list, indistinguishable from "no such order".
-  if (q) {
-    const safeQ = sanitizeSearchTerm(q);
-    if (safeQ) {
-      // 2026-11-02 — "kabhi kabhi order search karen par show nahi hota":
-      // the in-table search box also matches email / remark / VAT-EORI-IOSS /
-      // destination / city, but THIS query never searched any of them — so
-      // those searches only worked inside the newest 300 rows the page
-      // preloads and silently found nothing for an older order. The field
-      // list below is now the single list of everything a search covers, and
-      // the table's own local filter defers to it (see order-list-table.tsx's
-      // matchesGlobalSearch) instead of keeping a narrower copy of its own.
-      query = query.or(
-        [
-          `ref_no.ilike.%${safeQ}%`,
-          `buyer_name_address.ilike.%${safeQ}%`,
-          `contact_no.ilike.%${safeQ}%`,
-          `marketplace_order_no.ilike.%${safeQ}%`,
-          `sku_label.ilike.%${safeQ}%`,
-          `email_id.ilike.%${safeQ}%`,
-          `remark.ilike.%${safeQ}%`,
-          `vat_number.ilike.%${safeQ}%`,
-          `eori_number.ilike.%${safeQ}%`,
-          `ioss_number.ilike.%${safeQ}%`,
-          `destination_country.ilike.%${safeQ}%`,
-          `buyer_city.ilike.%${safeQ}%`,
-          `advance_tracking.ilike.%${safeQ}%`,
-          `final_tracking.ilike.%${safeQ}%`,
-        ].join(",")
-      );
-    }
-  }
+  // 2026-11-28 — "ye filter kaam nahi karte puri trh se": the in-table
+  // "Filter…" boxes (Store Name / PO No. / Order No. …) only ever narrowed the
+  // newest 300 rows this page loads, so an order older than that window matched
+  // nothing even though it exists. Those filters now travel in the URL
+  // (?f=<column>=<value>) and are applied to the database query itself — see
+  // src/lib/orders/order-column-filters.ts for which columns map to a real
+  // `orders` column. The table still filters the returned rows locally for
+  // instant feedback while the request lands.
+  const columnFilters = parseColumnFilters(sp.f);
+  const { expression: filterExpression, matchesNothing } = buildOrderFilterExpression(q, columnFilters, {
+    stores: stores ?? [],
+    itemCategories: itemCategories ?? [],
+    parties: parties ?? [],
+  });
+  if (filterExpression) query = query.or(filterExpression);
+  // A filter naming a store / item / vendor that does not exist must return no
+  // rows — PostgREST cannot express an empty `in.()`.
+  if (matchesNothing) query = query.eq("id", "00000000-0000-0000-0000-000000000000");
   if (lateOnly) {
     query = query
       .lt("dispatch_date", todayStr)
@@ -445,6 +434,7 @@ export default async function OrdersPage({
       <OrderListTable
         initialSearch={q}
         preservedQuery={preservedQuery}
+        initialFilters={Object.fromEntries(columnFilters.map((f) => [f.key, f.value]))}
         orders={orders ?? []}
         itemCategories={itemCategories ?? []}
         sizes={sizes ?? []}

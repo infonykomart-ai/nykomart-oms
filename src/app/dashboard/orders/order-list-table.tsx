@@ -161,6 +161,7 @@ export function OrderListTable({
   amazonFeesByOrder,
   initialSearch = "",
   preservedQuery = "",
+  initialFilters = {},
   canManageOrders,
   canInvoice,
   whatsappIssues = {},
@@ -208,6 +209,14 @@ export function OrderListTable({
    *  status / date / late filters intact when it navigates. */
   preservedQuery?: string;
   /**
+   * 2026-11-28 — "ye filter kaam nahi karte puri trh se": the column filters
+   * that the DATABASE already applied, keyed by column key (the same shape the
+   * boxes below hold). Without it the boxes would look empty on reload while
+   * the list is still narrowed, and the first keystroke would silently drop
+   * the server-side filter. See src/lib/orders/order-column-filters.ts.
+   */
+  initialFilters?: Record<string, string>;
+  /**
    * 2026-11-23 — invoice generation lives on this page now, so an
    * invoicing-only employee can open it (see orders/page.tsx).
    * `canManageOrders` hides every order-entry control for them (the server
@@ -231,7 +240,7 @@ export function OrderListTable({
   const [whatsappRetry, setWhatsappRetry] = useState<{ orderId: string; error: string | null } | null>(null);
   const [whatsappRetryingId, setWhatsappRetryingId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<Record<string, string>>(initialFilters);
   const [globalSearch, setGlobalSearch] = useState(initialSearch);
   const [showColumnPanel, setShowColumnPanel] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -248,6 +257,17 @@ export function OrderListTable({
   const categoryName = new Map(itemCategories.map((c) => [c.id, c.name]));
   const storeName = new Map(stores.map((s) => [s.id, s.name]));
   const categoryOptions = Array.from(new Set(itemCategories.map((c) => c.name))).sort();
+
+  // Serialised forms of the column filters: the boxes the user is typing in,
+  // and the ones the server already applied. The debounced effect below only
+  // navigates when the two differ (same loop-guard as the search box).
+  const filterEntries = Object.entries(filters)
+    .filter(([, value]) => value.trim())
+    .map(([key, value]) => `${key}=${value.trim()}`)
+    .sort();
+  const initialFilterEntries = Object.entries(initialFilters)
+    .map(([key, value]) => `${key}=${value}`)
+    .sort();
 
   function persistHidden(next: Set<string>) {
     setHiddenKeys(next);
@@ -668,7 +688,8 @@ export function OrderListTable({
   const allCompaniesSearchHref = (() => {
     const params = new URLSearchParams(preservedQuery);
     params.set("company", "");
-    params.set("q", initialSearch.trim());
+    if (initialSearch.trim()) params.set("q", initialSearch.trim());
+    for (const entry of initialFilterEntries) params.append("f", entry);
     return `/dashboard/orders?${params.toString()}`;
   })();
 
@@ -686,18 +707,25 @@ export function OrderListTable({
   // against initialSearch (the server's current term) is what keeps this
   // from looping: once the navigation lands, the two match and nothing
   // fires again.
+  // 2026-11-28 — the column filters travel in the same navigation as the
+  // search term, and both are rewritten together: navigating for one while
+  // dropping the other used to make every keystroke undo the other filter.
   useEffect(() => {
     const term = globalSearch.trim();
-    if (term === initialSearch.trim()) return;
+    const typedFilters = filterEntries.join("\u0000");
+    const appliedFilters = initialFilterEntries.join("\u0000");
+    if (term === initialSearch.trim() && typedFilters === appliedFilters) return;
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams(preservedQuery);
+      params.delete("q");
+      params.delete("f");
       if (term) params.set("q", term);
-      else params.delete("q");
+      for (const entry of filterEntries) params.append("f", entry);
       const qs = params.toString();
       router.replace(`/dashboard/orders${qs ? `?${qs}` : ""}`, { scroll: false });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [globalSearch, initialSearch, preservedQuery, router]);
+  }, [globalSearch, initialSearch, filterEntries, initialFilterEntries, preservedQuery, router]);
 
   // 2026-08-26 — "SEARCH BAAR BHI JISME ORDER SE RELATED KUCH BHI SUCH KARO
   // US SE RELATED DATA NIKAL KE AAJAYE": one search box that matches ANY
@@ -977,7 +1005,11 @@ export function OrderListTable({
         </div>
       )}
 
-      {orders.length === 0 ? (
+      {/* 2026-11-28 — while a search / column filter is active the table (and
+          therefore its filter boxes) must stay on screen even when the database
+          returns nothing yet: replacing it with this panel mid-typing used to
+          take away the box the user was typing in. */}
+      {orders.length === 0 && !initialSearch.trim() && initialFilterEntries.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">
           <p>No orders found.</p>
           {/* 2026-10-22 — the most common reason a search comes back empty
